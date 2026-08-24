@@ -1,4 +1,4 @@
-# Indian Equity AI Research Assistant (POC)
+# Equity AI Research Assistant (POC)
 
 An AI-assisted research system for Indian listed companies that combines structured
 financial data, company filings, management commentary, historical data, macro data,
