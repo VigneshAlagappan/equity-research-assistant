@@ -1,0 +1,449 @@
+{% extends "base.html" %}
+
+{% block title %}Admin — Signals{% endblock %}
+
+{% block page_class %}page-wide{% endblock %}
+
+{% block extra_style %}
+  .admin-layout { display: flex; gap: var(--space-6); align-items: flex-start; }
+  .admin-sidebar {
+    width: 190px; flex: none; position: sticky; top: var(--space-4);
+  }
+  .admin-nav { display: flex; flex-direction: column; gap: 2px; }
+  .admin-nav-btn {
+    text-align: left; background: none; border: none; padding: 6px 10px;
+    border-radius: var(--radius-sm); font-size: 13px; color: var(--ink-muted);
+    cursor: pointer; opacity: 0.85;
+  }
+  .admin-nav-btn:hover { opacity: 1; }
+  .admin-nav-btn.active {
+    background: var(--color-accent-100); color: var(--color-accent-800); opacity: 1; font-weight: 600;
+  }
+  .admin-panel { flex: 1 1 auto; min-width: 0; }
+  .admin-panel[hidden] { display: none; }
+  .admin-columns-form {
+    display: flex; flex-direction: column; gap: var(--space-3); max-width: 420px;
+  }
+  .admin-columns-list { display: flex; flex-direction: column; gap: 8px; }
+  .admin-columns-list label {
+    display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;
+  }
+  .admin-columns-list .locked {
+    display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-muted);
+  }
+  @media (max-width: 900px) {
+    .admin-layout { flex-direction: column; }
+    .admin-sidebar { width: 100%; position: static; }
+    .admin-nav { flex-direction: row; flex-wrap: wrap; }
+  }
+
+  .admin-grid {
+    display: grid;
+    grid-template-columns: 150px 1fr 1fr 130px 140px 170px 280px 70px;
+    gap: var(--space-2) var(--space-3);
+    align-items: center;
+    margin-top: var(--space-4);
+    font-size: 13px;
+  }
+  .admin-grid-header {
+    display: contents;
+  }
+  .admin-grid-header > div {
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-muted);
+    padding-bottom: var(--space-2); border-bottom: 1px solid var(--color-divider);
+  }
+  .admin-row {
+    display: contents;
+  }
+  .admin-row > * {
+    padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
+  }
+  .admin-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--ink-muted); font-size: 11px;
+  }
+  .admin-grid input.input, .admin-grid select.input { min-height: 32px; font-size: 13px; }
+  .admin-dropdown-field .admin-other-input { margin-top: 4px; }
+
+  .admin-pagination {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+    gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-3);
+    border-top: 1px solid var(--color-divider); font-size: 13px;
+  }
+  .admin-pagination-links { display: flex; align-items: center; gap: var(--space-2); }
+
+  .admin-companies-filters {
+    display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;
+    margin-top: var(--space-3);
+  }
+  .admin-companies-filters .field { width: auto; flex: 1 1 180px; max-width: 280px; }
+  .admin-companies-filters .field label {
+    display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--ink-muted); margin-bottom: 4px;
+  }
+  .admin-companies-filters select.input, .admin-companies-filters input.input { min-height: 36px; }
+  .admin-grid select[multiple].input { min-height: auto; padding: 2px; font-size: 12px; }
+  .admin-grid select[multiple].input option { padding: 2px 4px; }
+  .admin-status { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; white-space: nowrap; }
+  .admin-status .tag { flex: none; }
+  .admin-status select.input { max-width: 96px; flex: none; }
+  .admin-status .btn { flex: none; padding: 0.25rem 0.6rem; font-size: 12px; }
+  .admin-save { text-align: right; }
+  .admin-save .btn { font-size: 12px; padding: 0.25rem 0.7rem; }
+
+  @media (max-width: 900px) {
+    .admin-grid { grid-template-columns: 1fr; }
+    .admin-grid-header { display: none; }
+    .admin-row { display: grid; grid-template-columns: 1fr; gap: 4px; padding: var(--space-3) 0; border-bottom: 1px solid var(--color-divider); }
+    .admin-row > * { border-bottom: none; padding: 2px 0; }
+    .admin-save { text-align: left; }
+  }
+
+  .empty-state {
+    padding: var(--space-6);
+    text-align: center;
+    color: var(--ink-muted);
+    background: var(--surface);
+    border: 1px dashed var(--color-divider);
+    border-radius: var(--radius-md);
+  }
+  .empty-state code {
+    background: var(--bg);
+    padding: 0.1rem 0.35rem;
+    border-radius: var(--radius-sm);
+  }
+
+  .import-form { display: flex; flex-direction: column; gap: var(--space-3); max-width: 460px; }
+
+  .taxonomy-section { margin-top: var(--space-5); }
+  .taxonomy-section:first-of-type { margin-top: var(--space-3); }
+  .taxonomy-section-title { font-size: 15px; font-weight: 600; }
+  .taxonomy-table { margin: var(--space-2) 0 var(--space-3); max-width: 640px; }
+  .taxonomy-table td, .taxonomy-table th { vertical-align: middle; }
+  .taxonomy-num { text-align: right; font-variant-numeric: tabular-nums; width: 90px; }
+  .taxonomy-rename-form { display: flex; gap: var(--space-2); align-items: center; }
+  .taxonomy-rename-form input.input { min-height: 30px; font-size: 13px; width: 160px; }
+  .taxonomy-add-form { display: flex; gap: var(--space-2); max-width: 400px; }
+{% endblock %}
+
+{% block content %}
+  <div class="admin-layout">
+    <aside class="admin-sidebar">
+      <nav class="admin-nav">
+        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'companies' }}" data-panel="companies">Companies</button>
+        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'taxonomy' }}" data-panel="taxonomy">Sectors, Industries &amp; Tags</button>
+        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'columns' }}" data-panel="columns">Company List Columns</button>
+        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'import' }}" data-panel="import">Import Data</button>
+      </nav>
+    </aside>
+
+    <div class="admin-panel" id="admin-panel-companies" {{ 'hidden' if active_panel != 'companies' }}>
+      <p class="muted">Edit a company's name, sector, industry, and active/archived status. Ingested financial data is edited only via Import Data (this tab) or the CLI, never here.</p>
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
+        <input type="hidden" name="panel" value="companies">
+        <div class="field">
+          <label for="admin-companies-search">Search</label>
+          <input class="input" type="text" id="admin-companies-search" name="q" value="{{ companies_query }}"
+                 placeholder="Name, ID, sector, index, status&hellip;" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="admin-companies-sector">Sector</label>
+          <select class="input" id="admin-companies-sector" name="sector" onchange="this.form.requestSubmit()">
+            <option value="">All sectors</option>
+            {% for s in sectors %}<option value="{{ s }}" {{ 'selected' if s == companies_sector_filter }}>{{ s }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="admin-companies-industry">Industry</label>
+          <select class="input" id="admin-companies-industry" name="industry" onchange="this.form.requestSubmit()">
+            <option value="">All industries</option>
+            {% for i in industries %}<option value="{{ i }}" {{ 'selected' if i == companies_industry_filter }}>{{ i }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="admin-companies-tag">Index tag</label>
+          <select class="input" id="admin-companies-tag" name="tag" onchange="this.form.requestSubmit()">
+            <option value="">All indices</option>
+            {% for t in index_names %}<option value="{{ t }}" {{ 'selected' if t == companies_tag_filter }}>{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="admin-companies-status">Status</label>
+          <select class="input" id="admin-companies-status" name="status" onchange="this.form.requestSubmit()">
+            <option value="">All statuses</option>
+            <option value="active" {{ 'selected' if companies_status_filter == 'active' }}>Active</option>
+            <option value="archived" {{ 'selected' if companies_status_filter == 'archived' }}>Archived</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Search</button>
+        {% if companies_filters_active %}
+        <a class="btn btn-ghost" href="{{ url_for('admin', panel='companies') }}">Clear</a>
+        {% endif %}
+      </form>
+
+      {% if companies %}
+      <div class="admin-grid">
+        <div class="admin-grid-header">
+          <div>ID</div>
+          <div>Display name</div>
+          <div>Full (legal) name</div>
+          <div>Sector</div>
+          <div>Industry</div>
+          <div>Tags (indices)</div>
+          <div>Status</div>
+          <div></div>
+        </div>
+        {% for c in companies %}
+        {% set sector_is_custom = c['sector'] and c['sector'] not in sectors %}
+        {% set industry_is_custom = c['industry'] and c['industry'] not in industries %}
+        <form class="admin-row" method="post" action="{{ url_for('admin_update_company', company_id=c['company_id']) }}">
+          <div class="admin-id">{{ c['company_id'] }}</div>
+          <input class="input" type="text" name="display_name" value="{{ c['display_name'] }}" required>
+          <input class="input" type="text" name="legal_name" value="{{ c['legal_name'] }}" required>
+          <div class="admin-dropdown-field">
+            <select class="input" name="sector" aria-label="Sector"
+                    onchange="this.nextElementSibling.style.display = this.value === '__new__' ? 'block' : 'none';">
+              <option value="" {{ 'selected' if not c['sector'] }}>&mdash;</option>
+              {% for s in sectors %}<option value="{{ s }}" {{ 'selected' if c['sector'] == s }}>{{ s }}</option>{% endfor %}
+              <option value="__new__" {{ 'selected' if sector_is_custom }}>+ Add new&hellip;</option>
+            </select>
+            <input type="text" class="input admin-other-input" name="sector_other" placeholder="New sector"
+                   value="{{ c['sector'] if sector_is_custom else '' }}"
+                   style="display: {{ 'block' if sector_is_custom else 'none' }};">
+          </div>
+          <div class="admin-dropdown-field">
+            <select class="input" name="industry" aria-label="Industry"
+                    onchange="this.nextElementSibling.style.display = this.value === '__new__' ? 'block' : 'none';">
+              <option value="" {{ 'selected' if not c['industry'] }}>&mdash;</option>
+              {% for i in industries %}<option value="{{ i }}" {{ 'selected' if c['industry'] == i }}>{{ i }}</option>{% endfor %}
+              <option value="__new__" {{ 'selected' if industry_is_custom }}>+ Add new&hellip;</option>
+            </select>
+            <input type="text" class="input admin-other-input" name="industry_other" placeholder="New industry"
+                   value="{{ c['industry'] if industry_is_custom else '' }}"
+                   style="display: {{ 'block' if industry_is_custom else 'none' }};">
+          </div>
+          <select class="input" name="index_tags" multiple size="3" aria-label="Index membership">
+            {% for name in index_names %}
+            <option value="{{ name }}" {{ 'selected' if name in c['index_tags'] }}>{{ name }}</option>
+            {% endfor %}
+          </select>
+          <div class="admin-status">
+            <span class="tag {{ 'tag-accent' if c['status'] == 'active' else 'tag-neutral' }}">{{ c['status'] }}</span>
+            {% if c['status'] == 'active' %}
+            <select class="input" name="archive_reason" aria-label="Archive reason">
+              {% for r in archive_reasons %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+            </select>
+            <button type="submit" name="action" value="archive" class="btn btn-ghost"
+                    onclick='return confirm("Archive " + {{ c["display_name"]|tojson }} + "?");'>Archive</button>
+            {% else %}
+            <button type="submit" name="action" value="restore" class="btn btn-ghost">Restore</button>
+            {% endif %}
+          </div>
+          <div class="admin-save">
+            <button type="submit" name="action" value="save" class="btn btn-ghost admin-save-btn">Save</button>
+          </div>
+        </form>
+        {% endfor %}
+      </div>
+
+      {% if companies_total_pages > 1 %}
+      <div class="admin-pagination">
+        <span class="muted">
+          Showing {{ (companies_page - 1) * companies_page_size + 1 }}&ndash;{{ (companies_page - 1) * companies_page_size + companies|length }}
+          of {{ companies_total }} companies
+        </span>
+        <div class="admin-pagination-links">
+          {% set pagination_args = {'panel': 'companies', 'q': companies_query, 'sector': companies_sector_filter, 'industry': companies_industry_filter, 'tag': companies_tag_filter, 'status': companies_status_filter} %}
+          {% if companies_page > 1 %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', page=companies_page - 1, **pagination_args) }}">&larr; Previous</a>
+          {% endif %}
+          <span class="muted">Page {{ companies_page }} of {{ companies_total_pages }}</span>
+          {% if companies_page < companies_total_pages %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', page=companies_page + 1, **pagination_args) }}">Next &rarr;</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      {% elif companies_filters_active %}
+      <div class="empty-state">No companies match these filters.</div>
+      {% else %}
+      <div class="empty-state">
+        No companies registered yet. Run <code>python main.py seed-companies</code> or
+        <code>python main.py add-company &lt;ID&gt; ...</code> from the CLI.
+      </div>
+      {% endif %}
+    </div>
+
+    {% macro vocab_section(kind, label, hint, items, counts) %}
+    <div class="taxonomy-section">
+      <div class="taxonomy-section-title">{{ label }}</div>
+      <p class="muted">{{ hint }}</p>
+      {% if items %}
+      <table class="table taxonomy-table">
+        <thead><tr><th>Name</th><th class="taxonomy-num">Companies</th><th>Rename</th><th></th></tr></thead>
+        <tbody>
+          {% for item in items %}
+          <tr>
+            <td>{{ item }}</td>
+            <td class="taxonomy-num">{{ counts.get(item, 0) }}</td>
+            <td>
+              <form class="taxonomy-rename-form" method="post" action="{{ url_for('admin_vocabulary_rename', kind=kind) }}">
+                <input type="hidden" name="old_name" value="{{ item }}">
+                <input class="input" type="text" name="new_name" value="{{ item }}" required>
+                <button type="submit" class="btn btn-ghost">Rename</button>
+              </form>
+            </td>
+            <td>
+              {% set n = counts.get(item, 0) %}
+              {% if n > 0 %}
+              {% set confirm_message = "Delete " ~ item ~ "? " ~ n ~ " compan" ~ ("y" if n == 1 else "ies") ~ " using it will be cleared to —, not reassigned." %}
+              {% else %}
+              {% set confirm_message = "Delete " ~ item ~ "?" %}
+              {% endif %}
+              <form method="post" action="{{ url_for('admin_vocabulary_delete', kind=kind) }}">
+                <input type="hidden" name="name" value="{{ item }}">
+                <button type="submit" class="btn btn-ghost" onclick="return confirm({{ confirm_message|tojson }});">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">Nothing here yet.</div>
+      {% endif %}
+      <form class="taxonomy-add-form" method="post" action="{{ url_for('admin_vocabulary_add', kind=kind) }}">
+        <input class="input" type="text" name="name" placeholder="Add a new {{ label[:-1].lower() if label.endswith('s') else label.lower() }}&hellip;" required>
+        <button type="submit" class="btn btn-primary">Add</button>
+      </form>
+    </div>
+    {% endmacro %}
+
+    <div class="admin-panel" id="admin-panel-taxonomy" {{ 'hidden' if active_panel != 'taxonomy' }}>
+      <p class="muted">
+        These are the same dropdown options every company's Sector, Industry, and Index tags fields
+        offer — add one here before assigning it to any company, rename one (every company using it
+        updates too), or delete one (companies using it are cleared, not silently reassigned).
+      </p>
+      {{ vocab_section('sector', 'Sectors', 'Shown on the Overview tab and used to filter the Companies list.', taxonomy['sector']['items'], taxonomy['sector']['counts']) }}
+      {{ vocab_section('industry', 'Industries', 'Also affects which ratios are computed for a company (e.g. bank-specific ratios need "Bank"/"NBFC" in the industry).', taxonomy['industry']['items'], taxonomy['industry']['counts']) }}
+      {{ vocab_section('index-tag', 'Index Tags', 'Market indices (Nifty 50, Sensex, ...) a company belongs to.', taxonomy['index-tag']['items'], taxonomy['index-tag']['counts']) }}
+    </div>
+
+    <div class="admin-panel" id="admin-panel-columns" {{ 'hidden' if active_panel != 'columns' }}>
+      <p class="muted">
+        Choose which optional columns are available on the Companies list. "Company" is always shown.
+        Visitors can further hide any of the columns enabled here for themselves, temporarily, from the
+        column icon at the top of that list.
+      </p>
+      <form class="admin-columns-form" method="post" action="{{ url_for('admin_update_columns') }}">
+        <div class="admin-columns-list">
+          <span class="locked"><input type="checkbox" checked disabled> Company (always shown)</span>
+          {% for col in list_columns %}
+          <label>
+            <input type="checkbox" name="columns" value="{{ col['key'] }}" {{ 'checked' if column_settings[col['key']] }}>
+            {{ col['label'] }}
+          </label>
+          {% endfor %}
+        </div>
+        <div>
+          <button type="submit" class="btn btn-primary">Save columns</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="admin-panel" id="admin-panel-import" {{ 'hidden' if active_panel != 'import' }}>
+      <p class="muted">
+        Upload a raw source file for one company — it's parsed, validated, stored, and reconciled the same
+        way <code>python main.py ingest</code> does. Only sources with a working adapter are listed below;
+        {% if import_sources %}today that's just {{ import_sources|join(', ') }}{% else %}no adapter is registered yet{% endif %}.
+      </p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="flash-list">
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
+
+      {% if active_companies and import_sources %}
+      <form class="import-form" method="post" action="{{ url_for('admin_import_raw_file') }}" enctype="multipart/form-data">
+        <div class="field">
+          <label for="import-company">Company</label>
+          <select class="input" id="import-company" name="company_id" required>
+            {% for c in active_companies %}
+            <option value="{{ c['company_id'] }}" {{ 'selected' if c['company_id'] == import_selected_company }}>{{ c['display_name'] }} ({{ c['company_id'] }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="import-source">Source</label>
+          <select class="input" id="import-source" name="source_id" required>
+            {% for s in import_sources %}
+            <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="import-statement-type">Statement type</label>
+          <select class="input" id="import-statement-type" name="statement_type">
+            <option value="consolidated" selected>Consolidated</option>
+            <option value="standalone">Standalone</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="import-file">Raw file</label>
+          <input class="input" type="file" id="import-file" name="file" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Upload &amp; Ingest</button>
+      </form>
+      {% elif not import_sources %}
+      <div class="empty-state">No source adapters are registered yet (see <code>ingestion/detector.py</code>'s <code>ADAPTER_CLASSES</code>).</div>
+      {% else %}
+      <div class="empty-state">No active companies to import into. Register or restore a company first.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const buttons = document.querySelectorAll('.admin-nav-btn');
+      buttons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          buttons.forEach(function (b) { b.classList.toggle('active', b === btn); });
+          document.querySelectorAll('.admin-panel').forEach(function (panel) {
+            panel.hidden = panel.id !== 'admin-panel-' + btn.dataset.panel;
+          });
+        });
+      });
+    })();
+
+    // Save only lights up (btn-ghost -> btn-primary) once a row's form
+    // actually differs from how it loaded — otherwise, with ~2,600 rows on
+    // screen across pages, every row's Save button competing for attention
+    // is just noise. Compares the live FormData against a snapshot taken on
+    // load, so it un-highlights again if an edit is undone back to the
+    // original value, not just on first touch.
+    (function () {
+      document.querySelectorAll('.admin-row').forEach(function (form) {
+        const saveBtn = form.querySelector('.admin-save-btn');
+        if (!saveBtn) return;
+        function snapshot() {
+          return JSON.stringify(Array.from(new FormData(form).entries()));
+        }
+        const initial = snapshot();
+        function updateDirty() {
+          const dirty = snapshot() !== initial;
+          saveBtn.classList.toggle('btn-primary', dirty);
+          saveBtn.classList.toggle('btn-ghost', !dirty);
+        }
+        form.addEventListener('input', updateDirty);
+        form.addEventListener('change', updateDirty);
+      });
+    })();
+  </script>
+{% endblock %}

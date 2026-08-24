@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Investigations — Signals{% endblock %}
+
+{% block extra_style %}
+  .investigations-list { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-4); }
+  .investigation-row {
+    display: flex; flex-direction: column; gap: var(--space-1);
+    text-decoration: none; color: inherit;
+  }
+  .investigation-row:hover { border-color: var(--color-accent); }
+  .investigation-top-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+  .investigation-question { font-size: 13px; opacity: 0.75; }
+
+  .empty-state {
+    padding: var(--space-6);
+    text-align: center;
+    color: var(--ink-muted);
+    background: var(--surface);
+    border: 1px dashed var(--color-divider);
+    border-radius: var(--radius-md);
+  }
+{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    {% if threads %}{{ threads|length }} research thread{{ 's' if threads|length != 1 }}, kept with {{ 'their' if threads|length != 1 else 'its' }} evidence and conclusions.{% else %}Nothing investigated yet.{% endif %}
+    Generated reports are saved and can be deleted individually — the three example investigations below always remain.
+  </p>
+
+  {% if threads %}
+  <div class="investigations-list">
+    {% for t in threads %}
+    <a class="card elev-sm investigation-row" href="{{ url_for('research_thread', thread_id=t.thread_id) }}">
+      <div class="investigation-top-row">
+        <div class="card-kicker">{{ t.kicker }}</div>
+        <span class="tag tag-outline">{{ t.confidence }} confidence</span>
+      </div>
+      <div class="card-title">{{ t.title }}</div>
+      <div class="investigation-question">{{ t.question }}</div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">No investigations yet. Start one from the Research tab.</div>
+  {% endif %}
+{% endblock %}

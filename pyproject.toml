@@ -1,0 +1,8 @@
+[project]
+name = "indian-equity-research-assistant"
+version = "0.1.0"
+description = "AI-assisted research system for Indian listed companies (POC)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

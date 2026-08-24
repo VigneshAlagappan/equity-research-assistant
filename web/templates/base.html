@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en" data-theme="{{ g.theme }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Signals{% endblock %}</title>
+<link rel="stylesheet" href="{{ static_url('classical/styles.css') }}">
+<style>
+  /* Palette is per-user now (web/templates/settings.html) — the data-theme
+     attribute on <html> above selects one of classical/styles.css's
+     :root[data-theme="..."] overrides (light is the default, no override
+     needed). These local vars just re-point at the Classical tokens, so
+     they follow whichever theme is active without changes here. */
+  :root {
+    --bg: var(--color-bg);
+    --surface: var(--color-surface);
+    --ink: var(--color-text);
+    --ink-muted: color-mix(in srgb, var(--color-text) 55%, transparent);
+    --accent: var(--color-accent);
+    --accent-ink: #fffaf0;
+    --border: var(--color-divider);
+    --fact: #3a5f7d;
+    --fact-bg: #e6edf2;
+    --calc: var(--color-accent-800);
+    --calc-bg: var(--color-accent-100);
+    --inference: #6b4a63;
+    --inference-bg: #f1e6ec;
+    --row-hover: color-mix(in srgb, var(--color-text) 4%, transparent);
+  }
+
+  * { box-sizing: border-box; }
+
+  /* Scrolling still works; the OS/browser scrollbar track is just not drawn. */
+  html { scrollbar-width: none; }
+  html::-webkit-scrollbar { display: none; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif);
+    line-height: 1.5;
+  }
+
+  /* ~80% of the browser width is the baseline for every page — scales with
+     the window instead of sitting at a fixed px column, so it doesn't look
+     stranded in a sea of margin on a wide monitor. Capped (1040px) so prose
+     doesn't stretch to an unreadable line length on very large screens.
+     Below 640px there's no spare width to give back — width reverts to the
+     viewport itself (minus padding) rather than shrinking further. */
+  .page {
+    width: 80%;
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+    transition: max-width 0.15s ease;
+  }
+  /* Data-dense screens (Companies list, Company Financials, Research
+     result) opt into this further-expanded container instead — more room
+     for tables/charts/columns, not just everything on the site getting
+     wider. */
+  .page.page-wide {
+    width: 88%;
+    max-width: 1600px;
+  }
+  @media (max-width: 640px) {
+    .page, .page.page-wide { width: auto; }
+  }
+
+  /* The site header itself (web/templates/_header.html, full-bleed edge to
+     edge) is styled once in classical/styles.css's .site-header rules,
+     shared with the standalone landing/about pages — not redefined here. */
+
+  h1 {
+    font-family: var(--font-heading, Iowan Old Style, Palatino Linotype, Georgia, serif);
+    font-weight: 600;
+    font-size: 1.8rem;
+    text-wrap: balance;
+    margin: 0 0 0.3rem;
+  }
+
+  a { color: var(--color-link); }
+
+  .muted { color: var(--ink-muted); }
+
+  .tag {
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .tag-fact { background: var(--fact-bg); color: var(--fact); }
+  .tag-calculation { background: var(--calc-bg); color: var(--calc); }
+  .tag-inference { background: var(--inference-bg); color: var(--inference); }
+
+  {% block extra_style %}{% endblock %}
+</style>
+{% block extra_head %}{% endblock %}
+</head>
+<body>
+{% include "_header.html" %}
+
+<div class="page {% block page_class %}{% endblock %}">
+  {% block content %}{% endblock %}
+</div>
+{% include "_ask_ai.html" %}
+</body>
+</html>

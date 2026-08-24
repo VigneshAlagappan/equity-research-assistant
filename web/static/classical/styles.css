@@ -1,0 +1,528 @@
+/* Classical — design-system tokens and component classes. This file is the source of truth for the system's look; retune it here and see readme.md. */
+/* Self-hosted, not @import'd from fonts.googleapis.com: this app is meant to
+   run self-hosted/offline, and the CDN fetch was unreliable enough in
+   testing to fall back to system fonts. All three files are variable fonts —
+   one file per family covers weights 400 and 600 via the wght axis, same as
+   Google's own CSS does. Re-fetch from Google Fonts (css2?family=Cormorant+
+   Garamond:wght@400;600&family=Lora:wght@400;600&family=Inter:wght@400..600)
+   if this design system is ever resynced and needs updating. */
+@font-face {
+  font-family: 'Cormorant Garamond';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('../fonts/cormorant-garamond.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Lora';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('../fonts/lora.woff2') format('woff2');
+}
+/* Headings/UI chrome went sans (Inter) instead of the Cormorant Garamond
+   display serif, following the sans-for-chrome / serif-for-reading-copy
+   split docs.claude.com uses (their proprietary anthropicSans/anthropicSerif
+   pair) — Inter is the free, widely-used equivalent for the sans half. Lora
+   stays for body copy. Cormorant Garamond is kept loaded/unused for now
+   rather than removed, in case this gets reverted. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('../fonts/inter.woff2') format('woff2');
+}
+
+:root {
+  --color-bg: #f3f2f2;
+  --color-surface: #eae9e9;
+  --color-text: #201f1d;
+  --color-accent: #b68235;
+  --color-accent-2: #ac803e;
+  --color-divider: color-mix(in srgb, #201f1d 16%, transparent);
+  /* Plain hyperlink text (About's website/NSE/BSE links, news items, ...) —
+     the conventional web-blue, kept separate from --color-accent so buttons,
+     tabs, tags and chips (which deliberately use the accent) are unaffected. */
+  --color-link: #0969da;
+  /* Actual rendered height of .site-header (18px padding + 44px logo + 1px
+     border) — pages with their own sticky bars (company.html's tab bar)
+     read this to stack correctly below the pinned header instead of guessing. */
+  --site-header-h: 81px;
+
+  /* Tonal ramps — generated in OKLCH on one shared lightness scale, so the
+     same step of any role matches the others in visual value. */
+  --color-neutral-100: #f8f4f4;
+  --color-neutral-200: #eae7e7;
+  --color-neutral-300: #d7d3d3;
+  --color-neutral-400: #bab6b6;
+  --color-neutral-500: #9b9797;
+  --color-neutral-600: #7d7979;
+  --color-neutral-700: #605d5d;
+  --color-neutral-800: #444141;
+  --color-neutral-900: #2d2b2b;
+
+  --color-accent-100: #fff3e4;
+  --color-accent-200: #ffe3bf;
+  --color-accent-300: #facb8d;
+  --color-accent-400: #e1ad66;
+  --color-accent-500: #c28d41;
+  --color-accent-600: #a06f24;
+  --color-accent-700: #7d5411;
+  --color-accent-800: #5a3b0a;
+  --color-accent-900: #3a270d;
+
+  --color-accent-2-100: #fff3e4;
+  --color-accent-2-200: #ffe3be;
+  --color-accent-2-300: #f5cd96;
+  --color-accent-2-400: #dbaf70;
+  --color-accent-2-500: #bc8f4e;
+  --color-accent-2-600: #9b7232;
+  --color-accent-2-700: #79561f;
+  --color-accent-2-800: #573d14;
+  --color-accent-2-900: #382810;
+
+  --font-heading: "Inter", system-ui, sans-serif;
+  --font-heading-weight: 600; /* review round 3: bold retired — semibold is the
+     interface headings' ceiling (they need the weight at small sizes); display
+     text goes lighter still, to the normal cut (see the deck) */
+  --font-body: "Lora", system-ui, sans-serif;
+
+  --space-1: 4.6px;
+  --space-2: 9.2px;
+  --space-3: 13.8px;
+  --space-4: 18.4px;
+  --space-6: 27.6px;
+  --space-8: 36.8px;
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 7px;
+
+  /* Elevation — derived from the ground: soft ink-tinted shadows on a
+     light theme, a hairline edge + ambient darkness on a dark one. */
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #2d2b2b 14%, transparent);
+  --shadow-md: 0 3px 10px color-mix(in srgb, #2d2b2b 16%, transparent);
+  --shadow-lg: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
+}
+
+/* Alternate themes — selected per-user (web/templates/settings.html),
+   applied via <html data-theme="..."> (web/templates/base.html). The bare
+   :root above is "light", the default when no attribute is set. Only the
+   handful of tokens that drive full-page background/text/dividers/accent
+   are overridden per theme; the tonal ramps (tag chips, card kickers) stay
+   shared — they're small, self-contained color chips that read fine
+   against any of these page backgrounds, not full surfaces that need
+   re-tuning per theme. */
+:root[data-theme="white"] {
+  --color-bg: #ffffff;
+  /* Surfaces (cards, panels, the header, table rows, ...) match --color-bg
+     exactly here — "White" is the theme with no off-white anywhere, not
+     just a white page backdrop under off-white content. Every other theme
+     keeps a surface tone distinct from bg on purpose (depth cues); this one
+     deliberately doesn't. */
+  --color-surface: #ffffff;
+  --color-text: #1a1918;
+  --color-divider: color-mix(in srgb, #1a1918 14%, transparent);
+}
+
+:root[data-theme="green"] {
+  --color-bg: #eef3ec;
+  --color-surface: #e1ebde;
+  --color-text: #16261a;
+  --color-divider: color-mix(in srgb, #16261a 16%, transparent);
+  --color-accent: #3f7d51;
+  --color-accent-2: #2f6b46;
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #1c1b1a;
+  --color-surface: #262524;
+  --color-text: #ece9e6;
+  --color-divider: color-mix(in srgb, #ece9e6 18%, transparent);
+  --color-accent: #d9a35c;
+  --color-accent-2: #cf9a52;
+  --color-link: #58a6ff;
+}
+
+/* — "Schwab" theme — modeled on a Charles Schwab Research Tools screenshot
+   (colors/fonts inferred visually, not pulled from their real CSS — see the
+   session that built this: no exact hex/font-family values were ever
+   confirmed against a live inspector). The one theme that overrides
+   --font-heading/--font-body too, not just colors: every other theme keeps
+   this app's Inter-heading/Lora-body pairing (a deliberate editorial/serif
+   choice elsewhere), but a Schwab-flavored look specifically wants an
+   all-sans-serif, utility-fintech feel instead — a system-font stack, so
+   this needs no new self-hosted font files. Card/button rules just below
+   are theme-scoped overrides of the shared .card/.btn-primary/.price-*
+   classes (specificity wins over the base rule wherever it's declared),
+   the same pattern :root[data-theme="dark"] .site-header-logo already uses
+   further down this file — kept local to this theme rather than changed
+   globally, since Schwab's visibly-bordered white-on-gray cards and
+   solid-fill primary buttons are a real structural difference from the
+   outline/ghost style every other theme here shares. */
+:root[data-theme="schwab"] {
+  --color-bg: #f7f7f8;
+  --color-surface: #ffffff;
+  --color-text: #1a1a1a;
+  --color-divider: #d9d9d9;
+  --color-accent: #0072ce;
+  --color-accent-2: #005a9c;
+  --color-link: #0072ce;
+  --font-heading: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+:root[data-theme="schwab"] .card {
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
+}
+:root[data-theme="schwab"] .btn-primary {
+  background: var(--color-accent); color: #ffffff; border-color: var(--color-accent);
+}
+:root[data-theme="schwab"] .btn-primary:hover { background: var(--color-accent-2); border-color: var(--color-accent-2); }
+:root[data-theme="schwab"] .btn,
+:root[data-theme="schwab"] .tag { border-radius: var(--radius-sm); }
+:root[data-theme="schwab"] .price-up { color: #2e7d32; }
+:root[data-theme="schwab"] .price-down { color: #c62828; }
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: var(--font-heading-weight); }
+
+.plate{filter:sepia(0.22) saturate(0.82) contrast(1.05);box-sizing:border-box;
+  border:6px solid var(--color-surface);outline:1px solid var(--color-divider)}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Components — built with the tokens above. Plain CSS
+   on plain HTML: no JavaScript, no build step. Each class is documented in
+   readme.md and demonstrated in foundations/ and components/.
+   ══════════════════════════════════════════════════════════════════════ */
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; font-size: 15px; line-height: 1.55; font-weight: 400; }
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 var(--space-2);
+}
+h1 { font-size: 42px; }
+h2 { font-size: 32px; }
+h3 { font-size: 25px; }
+h4 { font-size: 20px; }
+h5 { font-size: 16px; }
+h6 { font-size: 13px; }
+h6 { letter-spacing: 0.08em; text-transform: uppercase; }
+p { margin: 0 0 var(--space-3); }
+a { color: var(--color-link); text-underline-offset: 3px; }
+img { display: block; max-width: 100%; }
+figure { margin: 0; }
+figcaption {
+  font-size: 11px; margin-top: var(--space-1);
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.text-muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+
+/* — rules — */
+.hr {
+  height: 1px; border: 0; margin: var(--space-4) 0;
+  background: var(--color-divider);
+}
+
+/* — buttons — */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer; text-decoration: none;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 14px; line-height: 1.2; color: var(--color-text); /* matches the .input's 14px —
+     the pair sits side by side in sign-up rows */
+  background: transparent; border: 1px solid transparent;
+  padding: var(--space-2) calc(var(--space-3) * 1.2);
+  border-radius: var(--radius-md);
+}
+.btn svg { display: block; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { color: var(--color-accent); border-color: var(--color-accent); }
+.btn-primary:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.btn-primary:active { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
+.btn-secondary { border-color: var(--color-divider); }
+.btn-secondary:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.btn-secondary:active { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+.btn-ghost { color: var(--color-accent); padding-inline: var(--space-1); }
+.btn-ghost:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.btn-ghost:active { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.btn-icon { width: 36px; height: 36px; padding: 0; }
+.btn-block { width: 100%; margin-top: var(--space-2); }
+
+/* — forms — */
+.field > label {
+  display: block; font-size: 12px; margin-bottom: 5px;
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+.input {
+  width: 100%; min-height: 36px; padding: 6px 10px; font: inherit;
+  font-size: 14px; color: var(--color-text); caret-color: var(--color-accent);
+  background: transparent;
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
+textarea.input { min-height: 90px; resize: vertical; }
+.radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+.radio input, .seg-opt input {
+  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+}
+.radio .dot {
+  width: 16px; height: 16px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--color-divider);
+}
+.radio:hover .dot { border-color: var(--color-accent); }
+.radio input:checked + .dot {
+  border-color: var(--color-accent); background: var(--color-accent);
+  box-shadow: inset 0 0 0 4px var(--color-bg);
+}
+.radio input:focus-visible + .dot { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.seg {
+  display: inline-flex; overflow: hidden;
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.seg-opt {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+}
+.seg-opt + .seg-opt { border-left: 1px solid var(--color-divider); }
+.seg-opt:has(input:checked) { color: var(--color-accent); box-shadow: inset 0 0 0 1px var(--color-accent); }
+.seg-opt:not(:has(input:checked)):hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.seg-opt:has(input:focus-visible) { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+
+/* — cards — */
+.card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3); border-radius: var(--radius-md); background: transparent; border: 1px solid var(--color-divider);
+}
+.card-kicker { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-accent); }
+.card-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 17px; line-height: 1.2;
+}
+.card-body { margin: 0; font-size: 13px; opacity: 0.8; flex: 1; }
+.card-meta {
+  display: flex; align-items: center; gap: 6px; font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.elev-sm { box-shadow: var(--shadow-sm); }
+.elev-md { box-shadow: var(--shadow-md); }
+.elev-lg { box-shadow: var(--shadow-lg); }
+
+/* — tags — */
+.tag {
+  display: inline-flex; align-items: center; font-size: 11px;
+  letter-spacing: 0.02em; padding: 3px 10px;
+  border-radius: calc(var(--radius-md) * 0.75);
+}
+.tag-accent { background: var(--color-accent-100); color: var(--color-accent-800); }
+.tag-accent-2 { background: var(--color-accent-2-100); color: var(--color-accent-2-800); }
+.tag-neutral { background: var(--color-neutral-100); color: var(--color-neutral-800); }
+.tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent); }
+
+/* — navigation — */
+.nav {
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
+}
+.nav-brand {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 18px; margin-right: auto;
+}
+.nav a { color: inherit; text-decoration: none; font-size: 14px; }
+.nav a:hover, .nav a[aria-current='page'] { color: var(--color-accent); }
+
+/* — tables — */
+.table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.table th {
+  text-align: left; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  padding: var(--space-2); border-bottom: 1px solid var(--color-divider);
+}
+.table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-divider);
+}
+.table tbody tr:hover { background: color-mix(in srgb, var(--color-text) 4%, transparent); }
+
+/* — dialog — */
+.dialog-backdrop {
+  position: fixed; inset: 0; display: grid; place-items: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--color-neutral-900) 50%, transparent);
+}
+.dialog {
+  width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4); border-radius: var(--radius-lg);
+  background: var(--color-surface); box-shadow: var(--shadow-lg); border: 1px solid var(--color-divider);
+}
+.dialog-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 20px;
+}
+.dialog-body { font-size: 14px; opacity: 0.85; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Site header — one shared markup (web/templates/_header.html), included on
+   every page: the standalone landing/about pages and, via base.html, every
+   other screen. Styled once here instead of twice by hand, so the two
+   families of page can't drift back out of sync the way they had before.
+   ══════════════════════════════════════════════════════════════════════ */
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 48px;
+  border-bottom: 1px solid var(--color-divider);
+  position: sticky; top: 0; z-index: 30; background: var(--color-bg);
+}
+.site-header-nav-group { display: flex; align-items: center; gap: 40px; min-width: 0; }
+.site-header-actions { display: flex; align-items: center; gap: 20px; }
+.site-header-brand { display: flex; align-items: center; text-decoration: none; flex: none; }
+.site-header-logo { height: 44px; width: auto; object-fit: contain; mix-blend-mode: multiply; display: block; }
+/* The logo asset is dark ink on a near-white background — `multiply` erases
+   that white background on a light page (source * dest stays close to
+   dest), but the same math on the Dark theme's near-black background
+   multiplies dark-on-dark and the whole logo nearly disappears. Inverting
+   the image swaps it to light ink on near-black, and `screen` is
+   multiply's mirror (erases black instead of white), so the same trick
+   works again against a dark backdrop. */
+:root[data-theme="dark"] .site-header-logo {
+  filter: invert(1);
+  mix-blend-mode: screen;
+}
+.site-header-links { display: flex; align-items: center; gap: 28px; font-size: 14px; }
+.site-header-links a.site-nav-link {
+  color: var(--color-text);
+  text-decoration: none;
+  padding-bottom: 2px;
+  border-bottom: 2px solid transparent;
+}
+.site-header-links a.site-nav-link:hover,
+.site-header-links a.site-nav-link.current {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.profile-menu { position: relative; }
+.profile-menu summary { list-style: none; cursor: pointer; display: block; width: 30px; height: 30px; }
+.profile-menu summary::-webkit-details-marker { display: none; }
+.profile-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #fffaf0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.profile-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  min-width: 200px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: 8px;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: var(--shadow-lg);
+  z-index: 20;
+}
+.profile-email {
+  font-size: 0.78rem;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  padding: 0.3rem 0.5rem 0.6rem;
+  margin-bottom: 0.3rem;
+  border-bottom: 1px solid var(--color-divider);
+  word-break: break-all;
+}
+.profile-dropdown a, .profile-dropdown button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--color-text);
+  text-decoration: none;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 0.45rem 0.5rem;
+  margin: 0;
+  cursor: pointer;
+}
+.profile-dropdown a:hover, .profile-dropdown button:hover {
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+.profile-dropdown form { margin: 0; }
+
+.site-search { position: relative; }
+.site-search-icon {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  color: var(--ink-muted); pointer-events: none;
+}
+.site-search-input {
+  width: 200px; box-sizing: border-box; padding: 7px 10px 7px 32px;
+  border: 1px solid var(--color-divider); border-radius: 8px;
+  background: var(--color-surface); color: var(--color-text);
+  font: inherit; font-size: 13px; outline: none;
+}
+.site-search-input:focus { border-color: var(--color-accent); width: 240px; }
+.site-search-results {
+  position: absolute; right: 0; top: calc(100% + 8px); width: 320px; max-height: 360px; overflow-y: auto;
+  background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: 8px;
+  padding: 6px; box-shadow: var(--shadow-lg); z-index: 25;
+}
+.site-search-result {
+  display: block; width: 100%; text-align: left; font: inherit; background: none; border: none;
+  border-radius: 6px; padding: 8px 10px; cursor: pointer; color: var(--color-text); text-decoration: none;
+}
+.site-search-result:hover, .site-search-result.is-active { background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+.site-search-result-name { font-weight: 600; font-size: 13px; }
+.site-search-result-meta { font-size: 11px; color: var(--ink-muted); margin-top: 2px; }
+.site-search-empty { padding: 10px; font-size: 13px; color: var(--ink-muted); }
+
+@media (max-width: 900px) {
+  .site-search-input, .site-search-input:focus { width: 140px; }
+}
+
+@media (max-width: 640px) {
+  .site-header { flex-wrap: wrap; row-gap: 10px; padding: 14px 20px; }
+  .site-header-nav-group { flex-wrap: wrap; row-gap: 10px; }
+  .site-header-links { flex-wrap: wrap; justify-content: flex-end; gap: 14px; }
+  .site-search-input, .site-search-input:focus { width: 100%; }
+  .site-header-actions { flex: 1 1 100%; order: 3; }
+  .site-search { flex: 1; }
+}
+
+/* Flashed messages (Flask's flash()) — shared by every page that surfaces
+   one, e.g. Admin's Import Data panel and the company page's Reconcile
+   action. */
+.flash-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-4); max-width: 640px; }
+.flash {
+  font-size: 13px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-divider);
+}
+.flash-success { background: var(--color-accent-100); color: var(--color-accent-800); border-color: var(--color-accent-300); }
+.flash-error { background: color-mix(in srgb, #a33 12%, transparent); color: #a33; border-color: color-mix(in srgb, #a33 40%, transparent); }
+.flash-warning { color: color-mix(in srgb, var(--color-text) 55%, transparent); }

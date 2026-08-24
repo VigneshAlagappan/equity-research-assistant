@@ -1,0 +1,452 @@
+<!--
+  Ask AI — full-screen research panel, opened from the pill button on a
+  company page's tab bar (web/templates/company.html). Included once from
+  base.html so the markup/CSS/JS ship on every page, but nothing renders
+  until AskAI.open(...) is called with a company_id.
+
+  Backs onto the real /companies/<id>/ask route (web/app.py
+  `_answer_question_response`) — same evidence-grounded answer, same
+  FACT/CALCULATION/MANAGEMENT_STATEMENT/INFERENCE tagging as the Research
+  tab and /chat, just scoped to the company it was opened on. "Save as
+  note" is real too (posts to /companies/<id>/notes/add).
+
+  The model tier ("Quick"/"Standard"/"Deep research") and scope
+  ("Company archive"/"Annual reports only"/...) pickers are UI-only for
+  now — the backend has exactly one model and no per-document-type filter,
+  so changing them doesn't change what's sent. Kept visible because the
+  design calls for them and picking a tier/scope is harmless; wiring them
+  up is backend work for later (matches the rest of this app's build order:
+  wireframe first, mock what isn't backed yet).
+-->
+<style>
+  .askai-trigger {
+    display: flex; align-items: center; gap: 7px; flex: none; align-self: center;
+    font: 500 12px/1 var(--font-heading); letter-spacing: .03em;
+    padding: 7px 13px; border: 1px solid var(--color-accent); border-radius: 999px;
+    background: transparent; color: var(--color-accent-700); cursor: pointer;
+  }
+  .askai-trigger:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+  .askai-trigger:disabled { opacity: .45; cursor: not-allowed; }
+  .askai-trigger svg { display: block; }
+
+  .askai-overlay {
+    position: fixed; inset: 0; z-index: 100; background: color-mix(in srgb, var(--color-text) 35%, transparent);
+    display: flex; align-items: center; justify-content: center; padding: var(--space-6);
+  }
+  .askai-overlay[hidden] { display: none; }
+  .askai-panel {
+    width: 100%; max-width: 1180px; height: 100%; max-height: 840px;
+    display: flex; flex-direction: column;
+    background: var(--bg); border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .askai-header {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
+    padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--color-divider); flex: none;
+  }
+  .askai-header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+  .askai-company-name { font: 600 20px/1.2 var(--font-heading); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .askai-badge {
+    display: flex; align-items: center; gap: 6px; flex: none;
+    font: 500 11px/1 var(--font-heading); letter-spacing: .04em; padding: 6px 11px; border-radius: 999px;
+    background: color-mix(in srgb, var(--color-accent) 16%, transparent); color: var(--color-accent-700);
+  }
+  .askai-header-right { display: flex; align-items: center; gap: 8px; flex: none; }
+  .askai-icon-btn {
+    width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--color-divider); border-radius: var(--radius-md); background: transparent;
+    color: var(--ink-muted); cursor: pointer;
+  }
+  .askai-icon-btn:hover { border-color: var(--color-accent); color: var(--color-accent-700); }
+
+  .askai-body { flex: 1; padding: 0 var(--space-6); overflow: auto; scrollbar-width: thin; }
+
+  .askai-idle { display: flex; flex-direction: column; align-items: center; padding: 48px 0 8px; text-align: center; }
+  .askai-idle-hello { font: 400 18px/1.4 var(--font-body); color: var(--ink-muted); }
+  .askai-idle-title { margin: 6px 0 0; max-width: 22ch; font: 600 32px/1.25 var(--font-heading); color: var(--ink); }
+  .askai-suggestions { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; padding: 30px 0 24px; }
+  .askai-suggestion {
+    display: flex; flex-direction: column; justify-content: space-between; gap: 12px; min-height: 88px;
+    text-align: left; padding: 12px 12px 10px; border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+    background: transparent; cursor: pointer; font: inherit;
+  }
+  .askai-suggestion:hover { border-color: var(--color-accent); }
+  .askai-suggestion-label { font: 400 13px/1.5 var(--font-body); color: var(--ink); }
+  .askai-suggestion-arrow { font: 400 14px/1 var(--font-heading); color: var(--color-accent-700); }
+
+  .askai-thinking { padding: 48px 0; max-width: 74ch; margin: 0 auto; }
+  .askai-thinking-q { font: 500 13px/1.5 var(--font-heading); color: var(--ink-muted); }
+  .askai-thinking-status { margin: 12px 0 0; font: 400 15px/1.8 var(--font-body); color: var(--ink-muted); font-style: italic; }
+
+  .askai-answer { padding: 36px 0 28px; max-width: 74ch; margin: 0 auto; }
+  .askai-answer-q { margin: 0; font: 600 20px/1.35 var(--font-heading); color: var(--ink); }
+  /* answer_html is escaped plain text with [FACT]/[CALCULATION]/[INFERENCE]
+     spans re-wrapped in (web/app.py _highlight_tags) — no <p>/<br> markup,
+     so newlines need pre-wrap to read as paragraphs at all. */
+  .askai-answer-body { margin: 14px 0 0; font: 400 15px/1.8 var(--font-body); color: var(--ink); text-align: justify; white-space: pre-wrap; }
+  .askai-answer-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space-3); margin-top: var(--space-4); }
+  .askai-answer-charts figure { margin: 0; border: 1px solid var(--color-divider); border-radius: var(--radius-md); padding: var(--space-1); }
+  .askai-answer-charts figcaption { font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--ink-muted); padding: 0.2rem 0.3rem 0.4rem; }
+  .askai-answer-charts img { display: block; width: 100%; height: auto; border-radius: 2px; }
+  .askai-answer-error { margin: 14px 0 0; font: 400 15px/1.7 var(--font-body); color: var(--calc); }
+  .askai-answer-saved { margin: 10px 0 0; font-size: 12px; color: var(--ink-muted); }
+  .askai-answer-saved a { color: inherit; }
+  .askai-answer-actions { display: flex; gap: 10px; margin-top: 20px; }
+  .askai-answer-actions .btn { border-radius: 999px; }
+
+  .askai-composer { padding: var(--space-3) var(--space-6) var(--space-4); border-top: 1px solid var(--color-divider); flex: none; }
+  .askai-input-box { border: 1px solid var(--color-accent); border-radius: var(--radius-md); padding: 12px 14px 10px; }
+  .askai-input {
+    width: 100%; box-sizing: border-box; font: 400 15px/1.5 var(--font-body); border: none; outline: none;
+    background: transparent; color: var(--ink);
+  }
+  .askai-input-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 12px; }
+  .askai-input-controls { display: flex; gap: 8px; align-items: center; position: relative; }
+  .askai-pill {
+    display: flex; align-items: center; gap: 6px; font: 500 11px/1 var(--font-heading);
+    padding: 7px 11px; border-radius: 999px; cursor: pointer; border: 1px solid var(--color-divider);
+    color: var(--ink-muted); background: transparent;
+  }
+  .askai-pill.is-active { border-color: var(--color-accent); color: var(--color-accent-700); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+  .askai-pill svg { display: block; }
+
+  .askai-menu {
+    position: absolute; bottom: calc(100% + 10px); left: 0; z-index: 5; width: 330px;
+    background: var(--bg); border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+    box-shadow: 0 8px 28px color-mix(in srgb, var(--color-text) 14%, transparent);
+  }
+  .askai-menu[hidden] { display: none; }
+  .askai-menu-title {
+    padding: 11px 14px 7px; font: 600 10px/1.4 var(--font-heading); letter-spacing: .07em;
+    text-transform: uppercase; color: var(--ink-muted);
+  }
+  .askai-menu-item {
+    display: block; width: 100%; text-align: left; padding: 10px 14px; border: none; border-top: 1px solid var(--color-divider);
+    cursor: pointer; background: transparent; font: inherit;
+  }
+  .askai-menu-item.is-selected { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+  .askai-menu-item-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .askai-menu-item-name { font: 600 13px/1.3 var(--font-heading); color: var(--ink); }
+  .askai-menu-item-blurb { font: 400 12px/1.6 var(--font-body); color: var(--ink-muted); margin-top: 3px; }
+  .askai-menu-item-for { font: 500 10px/1.4 var(--font-heading); letter-spacing: .02em; color: var(--color-accent-700); margin-top: 5px; }
+
+  .askai-send-btn {
+    width: 38px; height: 38px; flex: none; display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--color-accent); border-radius: 999px; background: transparent; color: var(--color-accent-700); cursor: pointer;
+  }
+  .askai-send-btn:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+  .askai-send-btn:disabled { opacity: .45; cursor: not-allowed; }
+</style>
+
+<div class="askai-overlay" id="askai-overlay" hidden>
+  <div class="askai-panel" role="dialog" aria-modal="true" aria-label="Ask AI">
+    <div class="askai-header">
+      <div class="askai-header-left">
+        <span class="askai-company-name" id="askai-company-name"></span>
+        <span class="askai-badge">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"></path></svg>
+          Signals AI
+        </span>
+      </div>
+      <div class="askai-header-right">
+        <button type="button" class="askai-icon-btn" id="askai-reset" title="New conversation">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"></path></svg>
+        </button>
+        <button type="button" class="askai-icon-btn" id="askai-close" title="Close">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="askai-body scroll" id="askai-body"></div>
+
+    <div class="askai-composer">
+      <div class="askai-input-box">
+        <input type="text" id="askai-input" class="askai-input" placeholder="Ask anything…" autocomplete="off">
+        <div class="askai-input-row">
+          <div class="askai-input-controls">
+            <button type="button" class="askai-pill is-active" id="askai-model-btn">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"></path></svg>
+              <span id="askai-model-label"></span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </button>
+            <button type="button" class="askai-pill" id="askai-scope-btn">
+              <span id="askai-scope-label"></span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </button>
+            <div class="askai-menu" id="askai-model-menu" hidden>
+              <div class="askai-menu-title">Level of intelligence</div>
+              <div id="askai-model-options"></div>
+            </div>
+            <div class="askai-menu" id="askai-scope-menu" hidden>
+              <div class="askai-menu-title">What it reads</div>
+              <div id="askai-scope-options"></div>
+            </div>
+          </div>
+          <button type="button" class="askai-send-btn" id="askai-send" title="Send">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const MODELS = [
+    { key: 'quick', name: 'Quick', blurb: 'Answers straight from the evidence, no cross-referencing.', forWhat: 'Lookups · "what was Q3 revenue?"' },
+    { key: 'standard', name: 'Standard', blurb: 'Reads across this company’s filings and uploaded documents and cites what it used.', forWhat: 'Most questions · commentary, trends, comparisons' },
+    { key: 'deep', name: 'Deep research', blurb: 'Builds a hypothesis chain across periods and checks it against every source on file.', forWhat: 'Investigations · red flags, guidance vs delivery' },
+  ];
+  const SCOPES = [
+    { key: 'archive', name: 'Company archive', blurb: 'Every filing and document held for this company.' },
+    { key: 'annuals', name: 'Annual reports only', blurb: 'The audited year-end documents, nothing quarterly.' },
+    { key: 'concalls', name: 'Concalls only', blurb: 'Transcripts and presentations.' },
+    { key: 'notes', name: 'My notes', blurb: 'What you and your team have written here.' },
+  ];
+
+  const overlay = document.getElementById('askai-overlay');
+  const body = document.getElementById('askai-body');
+  const nameEl = document.getElementById('askai-company-name');
+  const input = document.getElementById('askai-input');
+  const sendBtn = document.getElementById('askai-send');
+  const modelBtn = document.getElementById('askai-model-btn');
+  const modelLabel = document.getElementById('askai-model-label');
+  const modelMenu = document.getElementById('askai-model-menu');
+  const modelOptions = document.getElementById('askai-model-options');
+  const scopeBtn = document.getElementById('askai-scope-btn');
+  const scopeLabel = document.getElementById('askai-scope-label');
+  const scopeMenu = document.getElementById('askai-scope-menu');
+  const scopeOptions = document.getElementById('askai-scope-options');
+
+  let ctx = null; // { companyId, companyName, statementType, askUrl, notesUrl }
+  let model = 'standard';
+  let scope = 'archive';
+  let phase = 'idle'; // idle | thinking | answered
+  let current = null; // { question, data, error }
+
+  function escapeHtml(s) {
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  function suggestedQuestions(name) {
+    return [
+      `What are the key profitability trends for ${name} over the last several years?`,
+      `How has ${name}'s net profit grown year over year?`,
+      `What do ${name}'s ROA and ROE look like?`,
+      `How has ${name}'s total assets trended over time?`,
+      `Summarize ${name}'s most recently reported performance.`,
+      `What has management said about margins recently?`,
+      `What are the red flags in ${name}, if any?`,
+      `Explain ${name}'s business model.`,
+    ];
+  }
+
+  function renderModelLabel() {
+    modelLabel.textContent = MODELS.find(m => m.key === model).name;
+    scopeLabel.textContent = SCOPES.find(s => s.key === scope).name;
+  }
+
+  function renderMenus() {
+    modelOptions.innerHTML = MODELS.map(m => `
+      <button type="button" class="askai-menu-item ${m.key === model ? 'is-selected' : ''}" data-model="${m.key}">
+        <div class="askai-menu-item-top"><span class="askai-menu-item-name">${escapeHtml(m.name)}</span></div>
+        <div class="askai-menu-item-blurb">${escapeHtml(m.blurb)}</div>
+        <div class="askai-menu-item-for">${escapeHtml(m.forWhat)}</div>
+      </button>`).join('');
+    scopeOptions.innerHTML = SCOPES.map(s => `
+      <button type="button" class="askai-menu-item ${s.key === scope ? 'is-selected' : ''}" data-scope="${s.key}">
+        <div class="askai-menu-item-name">${escapeHtml(s.name)}</div>
+        <div class="askai-menu-item-blurb">${escapeHtml(s.blurb)}</div>
+      </button>`).join('');
+  }
+
+  function closeMenus() { modelMenu.hidden = true; scopeMenu.hidden = true; }
+
+  function renderIdle() {
+    const suggestions = suggestedQuestions(ctx.companyName);
+    body.innerHTML = `
+      <div class="askai-idle">
+        <div class="askai-idle-hello">Hello,</div>
+        <h2 class="askai-idle-title">how can I help you with this company?</h2>
+      </div>
+      <div class="askai-suggestions">
+        ${suggestions.map((q, i) => `
+          <button type="button" class="askai-suggestion" data-suggestion="${i}">
+            <span class="askai-suggestion-label">${escapeHtml(q)}</span>
+            <span class="askai-suggestion-arrow">&rarr;</span>
+          </button>`).join('')}
+      </div>`;
+    body.querySelectorAll('[data-suggestion]').forEach(btn => {
+      btn.addEventListener('click', () => runAsk(suggestions[Number(btn.dataset.suggestion)]));
+    });
+  }
+
+  function renderThinking(question) {
+    body.innerHTML = `
+      <div class="askai-thinking">
+        <div class="askai-thinking-q">${escapeHtml(question)}</div>
+        <p class="askai-thinking-status">${escapeHtml(MODELS.find(m => m.key === model).name)} is reading the archive&hellip;</p>
+      </div>`;
+  }
+
+  function chartsMarkup(data) {
+    const charts = (data.charts && data.charts[ctx.companyId]) || {};
+    const keys = Object.keys(charts);
+    if (keys.length === 0) return '';
+    return `<div class="askai-answer-charts">${keys.map(k => `
+      <figure>
+        <figcaption>${escapeHtml(k.replace(/_/g, ' '))}</figcaption>
+        <img src="data:image/png;base64,${charts[k]}" alt="${escapeHtml(k)}">
+      </figure>`).join('')}</div>`;
+  }
+
+  function renderAnswered(question, data) {
+    const savedNote = data.thread_url
+      ? `<p class="askai-answer-saved">Saved to <a href="${data.thread_url}">Threads</a>.</p>`
+      : '';
+    body.innerHTML = `
+      <div class="askai-answer">
+        <h3 class="askai-answer-q">${escapeHtml(question)}</h3>
+        <div class="askai-answer-body">${data.answer_html}</div>
+        ${chartsMarkup(data)}
+        ${savedNote}
+        <div class="askai-answer-actions">
+          <button type="button" class="btn btn-primary" id="askai-save-note">Save as note</button>
+          <button type="button" class="btn btn-secondary" id="askai-ask-another">Ask another</button>
+        </div>
+      </div>`;
+    document.getElementById('askai-ask-another').addEventListener('click', openIdle);
+    const saveBtn = document.getElementById('askai-save-note');
+    saveBtn.addEventListener('click', async () => {
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+      try {
+        const html = `<p><b>${escapeHtml(question)}</b></p>${data.answer_html}`;
+        const res = await fetch(ctx.notesUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ html }),
+        });
+        saveBtn.textContent = res.ok ? 'Saved to notes' : 'Couldn’t save';
+      } catch (err) {
+        saveBtn.textContent = 'Couldn’t save';
+      }
+    });
+  }
+
+  function renderError(question, message) {
+    body.innerHTML = `
+      <div class="askai-answer">
+        <h3 class="askai-answer-q">${escapeHtml(question)}</h3>
+        <p class="askai-answer-error">${escapeHtml(message)}</p>
+        <div class="askai-answer-actions">
+          <button type="button" class="btn btn-secondary" id="askai-ask-another">Ask another</button>
+        </div>
+      </div>`;
+    document.getElementById('askai-ask-another').addEventListener('click', openIdle);
+  }
+
+  async function runAsk(question) {
+    question = (question || '').trim();
+    if (!question || !ctx) return;
+    phase = 'thinking';
+    closeMenus();
+    input.value = '';
+    renderThinking(question);
+    try {
+      // model/scope aren't sent — the backend has one model and no
+      // per-document-type filter yet, see the header comment above.
+      const res = await fetch(ctx.askUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, statement_type: ctx.statementType }),
+      });
+      const data = await res.json();
+      if (phase !== 'thinking') return; // panel was reset/closed while in flight
+      if (!res.ok) {
+        phase = 'answered';
+        renderError(question, data.error || 'Something went wrong.');
+      } else {
+        phase = 'answered';
+        renderAnswered(question, data);
+      }
+    } catch (err) {
+      if (phase !== 'thinking') return;
+      phase = 'answered';
+      renderError(question, 'Network error: ' + err.message);
+    }
+  }
+
+  function openIdle() {
+    phase = 'idle';
+    closeMenus();
+    input.value = '';
+    renderIdle();
+  }
+
+  function open(opts) {
+    ctx = opts;
+    nameEl.textContent = opts.companyName;
+    renderModelLabel();
+    renderMenus();
+    overlay.hidden = false;
+    openIdle();
+    input.focus();
+  }
+
+  function close() {
+    overlay.hidden = true;
+    ctx = null;
+    phase = 'idle';
+    closeMenus();
+  }
+
+  // Delegated so a trigger button anywhere in the page (company tab bar
+  // today; company-list rows or other pages can add their own later)
+  // works without this script needing to know it exists ahead of time.
+  document.addEventListener('click', (e) => {
+    const trigger = e.target.closest('.askai-trigger');
+    if (!trigger || trigger.disabled) return;
+    open(JSON.parse(trigger.dataset.askai));
+  });
+
+  document.getElementById('askai-close').addEventListener('click', close);
+  document.getElementById('askai-reset').addEventListener('click', openIdle);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  sendBtn.addEventListener('click', () => runAsk(input.value));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') runAsk(input.value); });
+
+  modelBtn.addEventListener('click', () => { const willOpen = modelMenu.hidden; closeMenus(); modelMenu.hidden = !willOpen; });
+  scopeBtn.addEventListener('click', () => { const willOpen = scopeMenu.hidden; closeMenus(); scopeMenu.hidden = !willOpen; });
+  modelOptions.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-model]');
+    if (!btn) return;
+    model = btn.dataset.model;
+    closeMenus();
+    renderModelLabel();
+    renderMenus();
+  });
+  scopeOptions.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-scope]');
+    if (!btn) return;
+    scope = btn.dataset.scope;
+    closeMenus();
+    renderModelLabel();
+    renderMenus();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!modelMenu.hidden || !scopeMenu.hidden) { closeMenus(); return; }
+    if (!overlay.hidden) close();
+  });
+
+  window.AskAI = { open };
+})();
+</script>

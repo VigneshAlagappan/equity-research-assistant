@@ -1,0 +1,445 @@
+{% extends "base.html" %}
+
+{% block title %}Research — Signals{% endblock %}
+
+{% block extra_style %}
+  /* Sized and spaced like the landing page's own hero (web/templates/landing.html)
+     — light-weight display headline, wide vertical rhythm, one clean column
+     — rather than the interface system's default (smaller, semibold) h1. */
+  .research-hero {
+    text-align: center;
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 3.25rem 0 2.75rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.75rem;
+  }
+  .research-hero h1 {
+    margin: 0;
+    font-weight: 400;
+    font-size: 2.75rem;
+    line-height: 1.15;
+  }
+  .research-hero .lede {
+    max-width: 46ch;
+    text-align: center;
+    opacity: 0.7;
+    margin: -0.75rem 0 0;
+    font-size: 1.05rem;
+    line-height: 1.6;
+  }
+
+  .research-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-4);
+    width: 100%;
+  }
+  .research-field { width: 100%; max-width: 560px; }
+  .research-field textarea.input {
+    min-height: 2.9rem;
+    max-height: 240px;
+    resize: none;
+    overflow-y: auto;
+    line-height: 1.4;
+    padding: 0.7rem 0.9rem;
+  }
+  #investigate-button { padding-inline: 1.6rem; }
+
+  .no-key-banner {
+    max-width: 560px;
+    width: 100%;
+    border: 1px solid var(--color-divider);
+    background: transparent;
+    color: var(--ink-muted);
+    border-radius: var(--radius-md);
+    padding: 0.6rem var(--space-3);
+    font-size: 12.5px;
+    text-align: left;
+  }
+  .no-key-banner strong { color: var(--ink); }
+  .no-key-banner code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  .research-status {
+    max-width: 46ch;
+    text-align: center;
+    font-size: 13px;
+    color: var(--ink-muted);
+    min-height: 1.2em;
+  }
+
+  /* Real answers get an honest, simpler treatment than the mocked example
+     threads below — no confidence badge, no hypothesis chain, no evidence
+     table, because none of that is actually derived for a live answer yet
+     (README: Web UI Implementation Sequence, step 11). Labeled as a live
+     answer specifically so it doesn't read as one of the fuller mocked
+     walkthroughs. */
+  .research-result { display: none; width: 100%; max-width: 720px; margin: var(--space-6) auto 0; text-align: left; }
+  .research-result.is-visible { display: block; }
+  .research-result-eyebrow {
+    font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55;
+    margin-bottom: var(--space-2);
+  }
+  .research-result-question { font-size: 13px; color: var(--ink-muted); margin-bottom: var(--space-3); }
+  .research-result .card-body { font-size: 14px; line-height: 1.65; opacity: 1; }
+  .research-result .card-body :is(p, ul, ol, table) { margin: 0.6rem 0; }
+
+  /* The full [FACT]/[CALCULATION]/[INFERENCE] working is dense — most
+     readers want the charts, not every step of the reasoning, so it's
+     collapsible (open by default so nothing's hidden on first view; easy
+     to close for anyone who doesn't want to read it). Charts render
+     outside/after this element in the DOM, never inside it, so collapsing
+     the reasoning never hides them. */
+  .research-answer-summary {
+    cursor: pointer;
+    list-style: none;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+    margin-bottom: var(--space-2);
+  }
+  .research-answer-summary::-webkit-details-marker { display: none; }
+  .research-answer-summary::before { content: "▾"; font-size: 10px; transition: transform 0.15s ease; }
+  details.research-answer-details:not([open]) .research-answer-summary::before { transform: rotate(-90deg); }
+
+  .research-result-charts {
+    margin-top: var(--space-3);
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: var(--space-3);
+  }
+  .research-result-charts figure { margin: 0; border: 1px solid var(--color-divider); border-radius: var(--radius-md); padding: var(--space-1); }
+  .research-result-charts figcaption {
+    font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--ink-muted);
+    padding: 0.2rem 0.3rem 0.4rem;
+  }
+  .research-result-charts img { display: block; width: 100%; height: auto; border-radius: 2px; }
+
+  .research-result-note { font-size: 12px; color: var(--ink-muted); margin-top: var(--space-4); }
+
+  .examples-section { max-width: 1040px; margin: 0 auto; padding: 0 var(--space-2); }
+  /* Same divided-column strip as the landing page's four feature columns —
+     no per-item card border, just a hairline between items — quieter than
+     three separately-boxed cards competing for attention. */
+  .examples-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0;
+  }
+  .example-card {
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+    padding: 0 1.5rem;
+    border-right: 1px solid var(--border);
+  }
+  .example-card:last-child { border-right: none; }
+  .example-card .card-kicker { font-size: 10px; letter-spacing: 0.1em; }
+  .example-card .card-title {
+    font-family: var(--font-heading, Iowan Old Style, Palatino Linotype, Georgia, serif);
+    font-size: 19px;
+    font-weight: 600;
+    margin-top: 0.35rem;
+    line-height: 1.3;
+  }
+  .example-card:hover .card-title { color: var(--accent); }
+  @media (max-width: 640px) {
+    .example-card { border-right: none; border-bottom: 1px solid var(--border); padding: 0 0 1.25rem; }
+    .example-card:last-child { border-bottom: none; padding-bottom: 0; }
+    .examples-grid { gap: 1.25rem; }
+  }
+{% endblock %}
+
+{% block content %}
+  <div class="research-hero">
+    <h1>Ask your own investment question.</h1>
+    <p class="lede">Investigate the evidence behind it — company data, filings, macro trends and management commentary, in one place.</p>
+
+    {% if not api_key_set %}
+    <div class="no-key-banner">
+      <strong>ANTHROPIC_API_KEY is not set.</strong> Add it to <code>.env</code> at the project root and restart
+      <code>python main.py serve</code> before asking a real question — the example investigations below still work.
+    </div>
+    {% endif %}
+
+    <form class="research-form" id="research-form">
+      <div class="field research-field">
+        <textarea class="input" id="research-query" name="question" rows="1" autocomplete="off"
+                  placeholder="Ask anything about a company, sector, or economic relationship…"
+                  {{ 'disabled' if not api_key_set }}></textarea>
+      </div>
+
+      <button type="submit" class="btn btn-primary" id="investigate-button" {{ 'disabled' if not api_key_set }}>Investigate</button>
+    </form>
+    <p class="research-status" id="research-status"></p>
+
+    <div class="research-result" id="research-result"></div>
+  </div>
+
+  <div class="hr" style="max-width:1040px;margin:2.5rem auto"></div>
+
+  <div class="examples-section">
+    <div class="examples-grid">
+      {% for ex in examples %}
+      <a class="example-card" href="{{ url_for('research_thread', thread_id=ex.thread_id) }}">
+        <div class="card-kicker">{{ ex.kicker }}</div>
+        <div class="card-title">{{ ex.title }}</div>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('research-form');
+    const status = document.getElementById('research-status');
+    const query = document.getElementById('research-query');
+    const investigateButton = document.getElementById('investigate-button');
+    const resultEl = document.getElementById('research-result');
+    const COMPANIES = {{ companies|tojson }};
+
+    // No manual company picker — every question is scanned for company
+    // names automatically. Plain deterministic substring matching against
+    // the real company registry (no LLM, no guessing), a multi-company
+    // extension of the same lookup chat.html's own findCompany() already
+    // does for a single company field.
+    const CORPORATE_SUFFIX_STOPWORDS = new Set([
+      'bank', 'ltd', 'limited', 'fincorp', 'finance', 'financial', 'services', 'corp', 'corporation',
+    ]);
+
+    function shortDisplayName(displayName) {
+      const words = displayName.split(/\s+/);
+      while (words.length > 1 && CORPORATE_SUFFIX_STOPWORDS.has(words[words.length - 1].toLowerCase())) {
+        words.pop();
+      }
+      return words.join(' ');
+    }
+
+    function escapeRegExp(text) {
+      return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function detectCompaniesInText(text) {
+      const lower = text.toLowerCase();
+      const matches = [];
+      for (const company of COMPANIES) {
+        const candidates = [
+          company.company_id, company.nse_symbol, company.display_name, shortDisplayName(company.display_name),
+        ].filter(Boolean).map((s) => s.toLowerCase());
+        const isMatch = candidates.some((candidate) => new RegExp(`\\b${escapeRegExp(candidate)}\\b`).test(lower));
+        if (isMatch) matches.push(company.company_id);
+      }
+      return matches;
+    }
+
+    // Auto-grow the textarea as the user types, like Claude's own composer —
+    // starts at one line, expands with content, caps out and scrolls
+    // internally past max-height rather than growing forever.
+    function autoGrow() {
+      query.style.height = 'auto';
+      query.style.height = query.scrollHeight + 'px';
+    }
+    query.addEventListener('input', autoGrow);
+
+    // Enter submits, Shift+Enter inserts a newline — matches chat.html's
+    // composer and Claude's own convention, needed because a <textarea>
+    // doesn't submit its form on Enter by default the way <input> does.
+    query.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    function renderResult(data) {
+      resultEl.innerHTML = '';
+
+      const eyebrow = document.createElement('div');
+      eyebrow.className = 'research-result-eyebrow';
+      eyebrow.textContent = 'Answered live — saved to Investigations';
+      resultEl.appendChild(eyebrow);
+
+      const questionEl = document.createElement('div');
+      questionEl.className = 'research-result-question';
+      questionEl.textContent = data.question;
+      resultEl.appendChild(questionEl);
+
+      const card = document.createElement('div');
+      card.className = 'card elev-sm';
+      const details = document.createElement('details');
+      details.className = 'research-answer-details';
+      details.open = true;
+      const summary = document.createElement('summary');
+      summary.className = 'research-answer-summary';
+      summary.textContent = 'Answer';
+      const body = document.createElement('div');
+      body.className = 'card-body';
+      body.innerHTML = data.answer_html; // server pre-escapes everything except [FACT]/[CALCULATION]/[INFERENCE] spans
+      details.appendChild(summary);
+      details.appendChild(body);
+      card.appendChild(details);
+
+      // Comparing multiple companies: one combined, indexed-to-100 chart per
+      // metric (both companies on the same axis, same overlapping period) —
+      // not a separate small chart per company on each one's own scale.
+      const comparisonCharts = data.comparison_charts || {};
+      const comparisonKeys = Object.keys(comparisonCharts);
+      if (comparisonKeys.length > 0) {
+        const grid = document.createElement('div');
+        grid.className = 'research-result-charts';
+        for (const chartKey of comparisonKeys) {
+          const figure = document.createElement('figure');
+          const caption = document.createElement('figcaption');
+          caption.textContent = chartKey.replace(/_/g, ' ') + ' — comparison';
+          const img = document.createElement('img');
+          img.src = 'data:image/png;base64,' + comparisonCharts[chartKey];
+          img.alt = chartKey + ' comparison chart';
+          figure.appendChild(caption);
+          figure.appendChild(img);
+          grid.appendChild(figure);
+        }
+        card.appendChild(grid);
+      } else {
+        for (const [companyId, charts] of Object.entries(data.charts || {})) {
+          const chartKeys = Object.keys(charts);
+          if (chartKeys.length === 0) continue;
+          const grid = document.createElement('div');
+          grid.className = 'research-result-charts';
+          for (const chartKey of chartKeys) {
+            const figure = document.createElement('figure');
+            const caption = document.createElement('figcaption');
+            caption.textContent = companyId + ' — ' + chartKey.replace(/_/g, ' ');
+            const img = document.createElement('img');
+            img.src = 'data:image/png;base64,' + charts[chartKey];
+            img.alt = companyId + ' ' + chartKey;
+            figure.appendChild(caption);
+            figure.appendChild(img);
+            grid.appendChild(figure);
+          }
+          card.appendChild(grid);
+        }
+      }
+      resultEl.appendChild(card);
+
+      const note = document.createElement('p');
+      note.className = 'research-result-note';
+      note.innerHTML = ''; // built with textContent/anchor below, not raw server text — nothing here is untrusted HTML
+      if (data.thread_url) {
+        const link = document.createElement('a');
+        link.href = data.thread_url;
+        link.textContent = 'View in Investigations';
+        note.appendChild(link);
+        note.appendChild(document.createTextNode(
+          '. Asking the same question again reuses this answer instead of a fresh model call. ' +
+          "Confidence scoring and a structured evidence table aren't available for live questions yet."
+        ));
+      } else {
+        note.textContent = "Confidence scoring and a structured evidence table aren't available for live questions yet.";
+      }
+      resultEl.appendChild(note);
+
+      const reportButton = document.createElement('button');
+      reportButton.type = 'button';
+      reportButton.className = 'btn btn-ghost';
+      reportButton.textContent = 'Generate full report →';
+      reportButton.addEventListener('click', () => generateFullReport(data.question, data.company_ids, reportButton));
+      resultEl.appendChild(reportButton);
+
+      resultEl.classList.add('is-visible');
+      resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // Turns the same evidence-grounded question into a full Signals-format
+    // investigation (research/signals_report.py) with its own shareable
+    // /research/thread/<id> URL, instead of the short tagged answer above.
+    async function generateFullReport(question, companyIds, triggerButton) {
+      triggerButton.disabled = true;
+      status.textContent = 'Generating full report…';
+      try {
+        const response = await fetch('/research/thread/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: question,
+            company_ids: companyIds,
+            statement_type: 'consolidated',
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          status.textContent = data.error || 'Something went wrong.';
+          triggerButton.disabled = false;
+          return;
+        }
+        window.location.href = data.url;
+      } catch (err) {
+        status.textContent = 'Network error: ' + err.message;
+        triggerButton.disabled = false;
+      }
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const question = query.value.trim();
+      if (!question) {
+        status.textContent = 'Ask a question first.';
+        return;
+      }
+
+      status.textContent = '';
+      resultEl.classList.remove('is-visible');
+      resultEl.innerHTML = '';
+
+      const companyIds = detectCompaniesInText(question);
+      let detectionNote = '';
+      if (companyIds.length > 0) {
+        const names = companyIds
+          .map((id) => COMPANIES.find((c) => c.company_id === id))
+          .filter(Boolean)
+          .map((c) => c.display_name);
+        detectionNote = `Detected ${names.join(', ')} in your question — scoping to ${names.length === 1 ? 'it' : 'them'}. `;
+      } else {
+        // No company named — could still be a macro/regulatory question
+        // (rainfall, repo rate, ...), grounded in research/macro_evidence.py
+        // instead of any one company's Financials/Docs. Submit either way and
+        // let the server's evidence retrieval decide; if nothing matches at
+        // all, answer_question()'s own "no matching evidence" message comes
+        // back as a normal answer, not an error.
+        detectionNote = 'No company detected — checking macro/regulatory data. ';
+      }
+
+      investigateButton.disabled = true;
+      status.textContent = detectionNote + 'Thinking…';
+
+      try {
+        const response = await fetch('/research/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: question,
+            company_ids: companyIds,
+            statement_type: 'consolidated',
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          status.textContent = data.error || 'Something went wrong.';
+        } else {
+          status.textContent = '';
+          renderResult(data);
+        }
+      } catch (err) {
+        status.textContent = 'Network error: ' + err.message;
+      } finally {
+        investigateButton.disabled = false;
+      }
+    });
+  </script>
+{% endblock %}
