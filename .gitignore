@@ -216,3 +216,40 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# macOS
+.DS_Store
+
+# Project data & logs (runtime-generated; raw source files are manually
+# obtained per README and never committed). Folder structure is kept via
+# .gitkeep.
+#
+# data/documents/ is the one exception: real documents added via the Docs
+# tab (annual reports, transcripts, presentations, recordings — see
+# web/app.py's company_add_document / DOCUMENTS_DIR) are meaningful
+# reference material the user asked to keep in the repo, not disposable
+# ingestion input like data/raw/. Stored one subfolder per company
+# (data/documents/<COMPANY_ID>/<timestamp>__<filename>, same
+# never-overwrite convention data/raw/ uses) — every file under it is
+# tracked normally, not gitignored.
+data/raw/*
+data/normalized/*
+data/charts/*
+!data/raw/.gitkeep
+!data/normalized/.gitkeep
+!data/charts/.gitkeep
+# _macro/<source>/ holds non-company raw files (RBI, IMD, ...) — same
+# folder-structure-only-via-.gitkeep treatment, one level deeper. Un-ignoring
+# the _macro/ directory alone left its subfolders' real contents trackable
+# too (a negated directory doesn't re-ignore what's inside it) — real macro
+# source files (RBI/IMD exports) would have been swept into a commit,
+# exactly what data/raw/* exists to prevent. Re-ignore everything one level
+# inside each source folder, then re-allow only .gitkeep.
+!data/raw/_macro/
+data/raw/_macro/*/*
+!data/raw/_macro/*/.gitkeep
+logs/*
+!logs/.gitkeep
+*.db
+*.db-journal
+data/.flask_secret_key
