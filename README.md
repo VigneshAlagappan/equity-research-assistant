@@ -133,7 +133,7 @@ others exist that this proposal didn't anticipate — `context/`, `llm/`,
 [architecture.md's Module map](architecture.md#module-map).
 
 ```
-indian-equity-research-assistant/
+equity-research-assistant/
   main.py                        # CLI entrypoint
   config/settings.py             # paths, source trust order, LLM config
   sources/
