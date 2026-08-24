@@ -1,0 +1,270 @@
+"""Ingestion pipeline: detect -> parse -> validate -> normalize -> store -> index.
+
+(README: Ingestion Approach by Source — the generic flow every source follows,
+regardless of which adapter runs. "Normalize" happens inside the adapter via
+normalization/financials.py; this module owns validate -> store -> reconcile.)
+"""
+
+from __future__ import annotations
+
+import logging
+import sqlite3
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from companies.lifecycle import assert_active
+from ingestion.detector import ADAPTER_CLASSES, detect_from_path, detect_macro_source_from_path
+from ingestion.validation import validate_macro_observation, validate_observation
+from normalization.companies import normalize_company_id
+from sources.base import NormalizedObservation
+from sources.macro import MacroDataAdapter, MacroNormalizedObservation
+from sources.rbi_bank_infrastructure import parse_bank_infrastructure_file
+from sources.rbi_dbie_tables import (
+    looks_like_row_oriented_dbie_table,
+    parse_rbi_daily_rate_table,
+    parse_rbi_dbie_table,
+)
+from sources.iitm_rainfall import parse_iitm_file
+from sources.rbi_indicators import looks_like_rbi_indicator_workbook, parse_rbi_indicator_workbook
+from sources.yfinance_financials import YFinanceAdapter
+from storage.repositories import (
+    insert_bank_infrastructure_observations,
+    insert_financial_observations,
+    insert_macro_observations,
+    reconcile_batch,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class IngestionResult:
+    company_id: str
+    source_id: str
+    file_path: str
+    parsed_count: int = 0
+    inserted_count: int = 0
+    skipped_count: int = 0
+    reconciled_count: int = 0
+    skip_reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MacroIngestionResult:
+    series_key: str
+    source_id: str
+    file_path: str
+    parsed_count: int = 0
+    inserted_count: int = 0
+    skipped_count: int = 0
+    skip_reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BankInfrastructureIngestionResult:
+    source_id: str
+    file_path: str
+    parsed_count: int = 0
+    inserted_count: int = 0
+
+
+def ingest_file(
+    conn: sqlite3.Connection,
+    file_path: Path,
+    *,
+    company_id: str | None = None,
+    source_id: str | None = None,
+    statement_type: str = "consolidated",
+) -> IngestionResult:
+    """Run one raw file through the full pipeline.
+
+    company_id/source_id are inferred from the file's path
+    (data/raw/<COMPANY>/<source>/<file>) unless given explicitly. company_id
+    is always normalized (uppercased) before use — a raw.raw/<company> folder
+    isn't necessarily typed in canonical case, but companies.company_id is
+    always the normalized form (companies/registry.py), so path-detected and
+    explicitly-passed company_ids must both go through the same normalization
+    or ingested observations silently key under a different company_id than
+    the one they were registered under.
+    """
+    if company_id is None or source_id is None:
+        detected_company, detected_source = detect_from_path(file_path)
+        company_id = company_id or detected_company
+        source_id = source_id or detected_source
+    company_id = normalize_company_id(company_id)
+
+    assert_active(conn, company_id)  # ingestion gate (README: Company Lifecycle)
+
+    adapter_cls = ADAPTER_CLASSES.get(source_id)
+    if adapter_cls is None:
+        raise ValueError(f"No adapter registered for source_id={source_id!r}")
+    adapter = adapter_cls(conn)
+
+    parsed = adapter.parse(file_path, company_id, statement_type=statement_type)
+
+    result = IngestionResult(company_id=company_id, source_id=source_id, file_path=str(file_path))
+    result.parsed_count = len(parsed)
+
+    valid: list[NormalizedObservation] = []
+    for obs in parsed:
+        problems = validate_observation(obs)
+        if problems:
+            result.skipped_count += 1
+            label = f"{obs.metric_key} {obs.fiscal_year}{obs.quarter or ''}"
+            reason = f"{label}: {'; '.join(problems)}"
+            result.skip_reasons.append(reason)
+            logger.warning("Skipping invalid observation: %s", reason)
+            continue
+        valid.append(obs)
+
+    insert_financial_observations(conn, valid)
+    result.inserted_count = len(valid)
+    result.reconciled_count = reconcile_batch(conn, valid)
+
+    logger.info(
+        "Ingested %s (%s): parsed=%d inserted=%d skipped=%d reconciled=%d",
+        file_path, source_id, result.parsed_count, result.inserted_count,
+        result.skipped_count, result.reconciled_count,
+    )
+    return result
+
+
+def ingest_yfinance_company(
+    conn: sqlite3.Connection,
+    company_id: str,
+    ticker: str,
+    *,
+    currency: str = "USD",
+    statement_type: str = "consolidated",
+) -> IngestionResult:
+    """Fetch a company's financials live from Yahoo Finance and run them
+    through the same validate -> store -> reconcile steps ingest_file() uses
+    for an uploaded file. Deliberately a separate function, not a branch of
+    ingest_file(): there's no file_path/adapter-detection-by-path step here,
+    the ticker is the input, same reasoning ingest_macro_file() is its own
+    function rather than a parameter added to ingest_file().
+    """
+    company_id = normalize_company_id(company_id)
+    assert_active(conn, company_id)  # same ingestion gate as ingest_file()
+
+    adapter = YFinanceAdapter(conn)
+    parsed = adapter.fetch(company_id, ticker, currency=currency, statement_type=statement_type)
+
+    result = IngestionResult(company_id=company_id, source_id=adapter.source_id, file_path=f"yfinance:{ticker}")
+    result.parsed_count = len(parsed)
+
+    valid: list[NormalizedObservation] = []
+    for obs in parsed:
+        problems = validate_observation(obs)
+        if problems:
+            result.skipped_count += 1
+            label = f"{obs.metric_key} {obs.fiscal_year}{obs.quarter or ''}"
+            reason = f"{label}: {'; '.join(problems)}"
+            result.skip_reasons.append(reason)
+            logger.warning("Skipping invalid observation: %s", reason)
+            continue
+        valid.append(obs)
+
+    insert_financial_observations(conn, valid)
+    result.inserted_count = len(valid)
+    result.reconciled_count = reconcile_batch(conn, valid)
+
+    logger.info(
+        "Ingested %s (yfinance): parsed=%d inserted=%d skipped=%d reconciled=%d",
+        ticker, result.parsed_count, result.inserted_count, result.skipped_count, result.reconciled_count,
+    )
+    return result
+
+
+def ingest_macro_file(
+    conn: sqlite3.Connection,
+    file_path: Path,
+    *,
+    source_id: str | None = None,
+    series_key: str | None = None,
+) -> MacroIngestionResult:
+    """Run one raw macro file through detect -> parse -> validate -> store.
+
+    Deliberately a separate function from ingest_file(), not a branch inside
+    it: there's no company_id here at all, so no assert_active() lifecycle
+    gate and no reconciliation against canonical_financials — a genuinely
+    different pipeline, not the same one with a nullable field threaded
+    through it (README: Data Layers -> Non-company sources).
+
+    Dispatches on file shape, not just extension: sources/macro.py's
+    MacroDataAdapter handles the CSV convention (period,value,unit — one
+    file, one series); an .xlsx/.xls file instead goes through
+    sources/rbi_indicators.py if it matches the "50 Macroeconomic
+    Indicators" workbook's sheet names, or sources/rbi_dbie_tables.py's
+    single-table parser otherwise; source_id "iitm" goes through
+    sources/iitm_rainfall.py's fixed-width parser. series_key is ignored
+    for the XLSX and IITM paths — they derive series_key per row/column
+    themselves, unlike the CSV convention's one-series-per-file.
+    """
+    source_id = source_id or detect_macro_source_from_path(file_path)
+    if source_id == "iitm":
+        parsed = parse_iitm_file(file_path)
+    elif file_path.suffix.lower() in (".xlsx", ".xls"):
+        if looks_like_rbi_indicator_workbook(file_path):
+            parsed = parse_rbi_indicator_workbook(file_path)
+        elif looks_like_row_oriented_dbie_table(file_path):
+            parsed = parse_rbi_daily_rate_table(file_path)
+        else:
+            parsed = parse_rbi_dbie_table(file_path)
+    else:
+        adapter = MacroDataAdapter(source_id)
+        parsed = adapter.parse(file_path, series_key=series_key)
+
+    result = MacroIngestionResult(
+        series_key=series_key or file_path.stem, source_id=source_id, file_path=str(file_path)
+    )
+    result.parsed_count = len(parsed)
+
+    valid: list[MacroNormalizedObservation] = []
+    for obs in parsed:
+        problems = validate_macro_observation(obs)
+        if problems:
+            result.skipped_count += 1
+            label = f"{obs.series_key} {obs.period}"
+            reason = f"{label}: {'; '.join(problems)}"
+            result.skip_reasons.append(reason)
+            logger.warning("Skipping invalid macro observation: %s", reason)
+            continue
+        valid.append(obs)
+
+    insert_macro_observations(conn, valid)
+    result.inserted_count = len(valid)
+
+    logger.info(
+        "Ingested %s (macro/%s): parsed=%d inserted=%d skipped=%d",
+        file_path, source_id, result.parsed_count, result.inserted_count, result.skipped_count,
+    )
+    return result
+
+
+def ingest_bank_infrastructure_file(
+    conn: sqlite3.Connection, file_path: Path, *, source_id: str | None = None
+) -> BankInfrastructureIngestionResult:
+    """Run one RBI monthly bank-infrastructure bulletin (ATM/NEFT/RTGS,
+    sources/rbi_bank_infrastructure.py) through parse -> store.
+
+    A separate pipeline from ingest_macro_file(), not a branch inside it:
+    this data is bank x metric x period, not a flat series x period like
+    every macro_observations source, so it has its own table
+    (bank_infrastructure_observations) and no shared validation step —
+    the parser itself already only emits well-formed, numeric-valued rows.
+    """
+    source_id = source_id or detect_macro_source_from_path(file_path)
+    parsed = parse_bank_infrastructure_file(file_path)
+
+    result = BankInfrastructureIngestionResult(source_id=source_id, file_path=str(file_path))
+    result.parsed_count = len(parsed)
+
+    insert_bank_infrastructure_observations(conn, parsed)
+    result.inserted_count = len(parsed)
+
+    logger.info(
+        "Ingested %s (bank_infrastructure/%s): parsed=%d inserted=%d",
+        file_path, source_id, result.parsed_count, result.inserted_count,
+    )
+    return result

@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Settings — Signals{% endblock %}
+
+{% block extra_style %}
+  .settings-wrap { max-width: 560px; }
+  .settings-account { font-size: 0.85rem; color: var(--ink-muted); margin: -0.3rem 0 2rem; }
+
+  .theme-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.75rem;
+    margin: 0.75rem 0 1.5rem;
+  }
+  .theme-option {
+    position: relative;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .theme-option:hover { border-color: var(--accent); }
+  .theme-option input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .theme-option:has(input:checked) {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .theme-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .theme-swatch {
+    height: 44px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .theme-swatch::after {
+    content: "Aa";
+    font-family: var(--font-heading, Georgia, serif);
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .theme-swatch-light { background: #f3f2f2; }
+  .theme-swatch-light::after { color: #201f1d; }
+  .theme-swatch-white { background: #ffffff; }
+  .theme-swatch-white::after { color: #1a1918; }
+  .theme-swatch-green { background: #eef3ec; }
+  .theme-swatch-green::after { color: #16261a; }
+  .theme-swatch-dark { background: #1c1b1a; }
+  .theme-swatch-dark::after { color: #ece9e6; }
+  .theme-swatch-schwab { background: #f7f7f8; border-color: #0072ce; }
+  .theme-swatch-schwab::after { content: "Aa"; font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; color: #0072ce; }
+  .theme-option-label { font-size: 0.85rem; font-weight: 600; }
+{% endblock %}
+
+{% block content %}
+<div class="settings-wrap">
+  <h1>Settings</h1>
+  {% if g.user %}
+  <p class="settings-account">Signed in as {{ g.user['email'] or g.user['username'] }}</p>
+  {% else %}
+  <p class="settings-account">Not signed in — this choice is saved for this browser session only. <a href="{{ url_for('login') }}">Log in</a> to keep it across devices.</p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('settings') }}">
+    <div class="field">
+      <label>Theme</label>
+      <div class="theme-options">
+        {% for value, label in themes %}
+        <label class="theme-option">
+          <input type="radio" name="theme" value="{{ value }}" {{ 'checked' if value == g.theme else '' }}
+                 onchange="this.form.requestSubmit()">
+          <span class="theme-swatch theme-swatch-{{ value }}"></span>
+          <span class="theme-option-label">{{ label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}

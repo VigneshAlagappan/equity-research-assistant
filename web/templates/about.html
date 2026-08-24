@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en" data-theme="{{ g.theme }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About — Signals</title>
+<link rel="stylesheet" href="{{ static_url('classical/styles.css') }}">
+<style>
+body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body)}
+a{color:var(--color-link)}
+a:hover{color:color-mix(in srgb, var(--color-link) 75%, black)}
+.about-wrap{max-width:720px;margin:0 auto;padding:56px 24px 80px}
+.about-wrap h1{font-family:var(--font-heading);font-weight:400;font-size:38px;line-height:1.2;margin:0 0 8px}
+.about-kicker{font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--color-accent);margin-bottom:10px}
+.about-lede{font-size:17px;line-height:1.65;opacity:.8;margin:0 0 40px}
+.about-wrap h2{font-family:var(--font-heading);font-weight:600;font-size:22px;margin:0 0 14px}
+.about-wrap p{font-size:15px;line-height:1.75;opacity:.85;margin:0 0 16px}
+.about-section + .about-section{margin-top:44px;padding-top:44px;border-top:1px solid var(--color-divider)}
+.about-pillars{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:20px}
+.about-pillar{padding:20px;border:1px solid var(--color-divider);border-radius:var(--radius-md)}
+.about-pillar .card-kicker{margin-bottom:8px}
+.about-pillar p{font-size:14px;margin-bottom:0}
+.about-tags{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+@media (max-width: 640px) {
+  .about-pillars{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+{% include "_header.html" %}
+
+<div class="about-wrap">
+  <div class="about-kicker">About Signals</div>
+  <h1>A personal research desk, not a data terminal.</h1>
+  <p class="about-lede">
+    Signals consolidates a company's financials, filings, and commentary into one place, and answers
+    questions against that evidence instead of a headline. It's built to behave like a research analyst
+    working for you — reading the primary sources, showing its work, and telling you plainly when it's
+    guessing.
+  </p>
+
+  <div class="about-section">
+    <h2>What it does</h2>
+    <p>
+      Every number on this site traces back to a source document and a reconciliation decision — annual
+      reports, exchange filings, and licensed data exports, cross-checked against each other rather than
+      taken on faith from a single vendor. On top of that layer sits a research assistant you can ask
+      real questions: analyze a company over ten years, compare two companies, explain why a margin
+      moved, or trace how a macro shift might show up in a specific balance sheet.
+    </p>
+    <p>
+      Answers are labeled, not just written. Every claim the assistant makes is tagged
+      <span class="tag tag-accent" style="margin:0 2px">FACT</span>,
+      <span class="tag tag-accent-2" style="margin:0 2px">CALCULATION</span>, or
+      <span class="tag tag-neutral" style="margin:0 2px">INFERENCE</span> —
+      so it's always clear what came straight from a filing, what was derived from it, and where the
+      model is reasoning beyond the data. That distinction is the point of the product, not a footnote.
+    </p>
+  </div>
+
+  <div class="about-section">
+    <h2>An investment philosophy</h2>
+    <p>
+      Signals exists because of a simple belief: good investing decisions come from clarity, not
+      conviction borrowed from someone else's headline. Two kinds of clarity, specifically.
+    </p>
+    <div class="about-pillars">
+      <div class="about-pillar">
+        <div class="card-kicker">Thinking clarity</div>
+        <p>
+          Form the view yourself, from primary sources, before letting anyone else's opinion into the
+          room. Noise is cheap and constant — a filing, a ratio trend, a management transcript is not.
+          The discipline is going back to what a company actually reported and reasoning forward from
+          there, rather than backward from a price move or a narrative that's already popular.
+        </p>
+      </div>
+      <div class="about-pillar">
+        <div class="card-kicker">Writing clarity</div>
+        <p>
+          If a thesis can't be written down plainly — what's known, what's calculated, and what's being
+          assumed — it isn't ready to be acted on. Writing is where a fuzzy hunch either survives contact
+          with the evidence or falls apart. That's why every answer here separates fact from inference
+          instead of blending them into one confident-sounding paragraph.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer style="border-top:1px solid var(--color-divider);padding:24px 48px;text-align:center;font-size:12px;opacity:.6">
+  Signals — consolidated equity research, from your own model.
+</footer>
+
+</body>
+</html>

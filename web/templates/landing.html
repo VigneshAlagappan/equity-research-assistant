@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en" data-theme="{{ g.theme }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signals — Find clarity in a market built on noise.</title>
+<link rel="stylesheet" href="{{ static_url('classical/styles.css') }}">
+<style>
+body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body)}
+a{color:var(--color-link)}
+a:hover{color:color-mix(in srgb, var(--color-link) 75%, black)}
+@media (max-width: 640px) {
+  .signals-hero{padding:44px 20px 32px !important}
+  .signals-hero h1{font-size:34px !important}
+  .signals-features{grid-template-columns:1fr 1fr !important;row-gap:24px !important}
+  .signals-features > div:nth-child(2){border-right:none !important}
+}
+</style>
+</head>
+<body>
+
+{% include "_header.html" %}
+
+<header class="signals-hero" style="text-align:center;padding:48px 24px 40px;max-width:820px;margin:0 auto">
+  <div style="display:flex;flex-direction:column;align-items:center;margin:0 auto 12px">
+    <!-- The source PNG has a lot of transparent space below the mark itself
+         (only its top ~27% is the actual glyph) -- crop that off with a
+         fixed-height, overflow:hidden wrapper instead of rendering the full
+         asset and pushing "SIGNALS" (and the rest of the page) further down. -->
+    <div style="width:460px;max-width:92%;height:80px;overflow:hidden">
+      <img src="{{ static_url('brand/signals-logo-icon.png') }}" alt="" style="width:100%;height:auto;display:block;mix-blend-mode:multiply">
+    </div>
+    <div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-weight:800;font-size:52px;letter-spacing:0.34em;color:#131a3a;margin:4px -0.34em 0 0;line-height:1">SIGNALS</div>
+  </div>
+  <h1 style="font-family:var(--font-heading);font-weight:400;font-size:52px;line-height:1.15;margin:0 0 20px">
+    Find clarity in a market built on noise.
+  </h1>
+  <p style="font-size:18px;line-height:1.6;opacity:.75;margin:0 0 32px">
+    Think independently, research deeply, and invest with confidence — backed by consolidated financials, ratios and valuation, not headlines.
+  </p>
+  <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap">
+    <a class="btn btn-primary" href="{{ url_for('research') }}" style="text-decoration:none">Start Research</a>
+  </div>
+</header>
+
+<div class="hr" style="max-width:1040px;margin:0 auto"></div>
+
+<section class="signals-features" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;max-width:1040px;margin:40px auto 60px;padding:0 24px">
+  <div style="padding:0 20px;border-right:1px solid var(--color-divider)">
+    <div class="card-kicker">Find Clarity</div>
+    <div style="font-size:14px;opacity:.7;margin-top:4px">In a noisy market</div>
+  </div>
+  <div style="padding:0 20px;border-right:1px solid var(--color-divider)">
+    <div class="card-kicker">Think Independently</div>
+    <div style="font-size:14px;opacity:.7;margin-top:4px">Form your own view</div>
+  </div>
+  <div style="padding:0 20px;border-right:1px solid var(--color-divider)">
+    <div class="card-kicker">Research Deeply</div>
+    <div style="font-size:14px;opacity:.7;margin-top:4px">Uncover what matters</div>
+  </div>
+  <div style="padding:0 20px">
+    <div class="card-kicker">Invest Confidently</div>
+    <div style="font-size:14px;opacity:.7;margin-top:4px">Backed by credible insights</div>
+  </div>
+</section>
+
+<footer style="border-top:1px solid var(--color-divider);padding:24px 48px;text-align:center;font-size:12px;opacity:.6">
+  Signals — consolidated equity research, from your own model.
+</footer>
+
+</body>
+</html>

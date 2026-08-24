@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block title %}{{ (thread.title if thread else generated.question) }} — Signals{% endblock %}
+
+{% block page_class %}page-wide{% endblock %}
+
+{% block extra_style %}
+  .thread-eyebrow {
+    font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55;
+  }
+  .thread-question-block { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-5); max-width: 68ch; }
+  .thread-question-block h2 { margin: 0; }
+
+  .thread-finding { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-6); max-width: 68ch; }
+  .thread-finding p { text-align: justify; margin: 0; }
+  .thread-confidence-row { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-1); }
+  .thread-confidence-note { font-size: 13px; opacity: 0.6; }
+
+  .thread-section { margin-bottom: var(--space-6); }
+
+  .chain-steps, .chain-branch { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .chain-steps { margin: var(--space-3) 0; }
+  .chain-arrow { opacity: 0.5; }
+  .chain-branches {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--space-4); margin-top: var(--space-2);
+  }
+
+  .thread-chart-units { font-size: 12px; opacity: 0.6; margin-bottom: var(--space-2); }
+  .thread-chart-legend { display: flex; gap: var(--space-4); margin-top: var(--space-2); font-size: 13px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 10px; height: 2px; display: inline-block; }
+  .legend-swatch-a { background: var(--color-neutral-700); }
+  .legend-swatch-b { background: var(--color-accent-700); }
+
+  .thread-methodology summary { cursor: pointer; font-family: var(--font-heading); font-size: 16px; }
+  .thread-methodology p { text-align: justify; margin-top: var(--space-2); opacity: 0.85; max-width: 68ch; }
+
+  /* Main narrative (finding, hypothesis chain, chart, methodology) beside a
+     persistent rail — reference material worth keeping visible while
+     reading (Evidence) plus what to do next (Follow-ups), stacked in that
+     order since evidence is what you check *while* reading and follow-ups
+     are what you reach for *after*. Below 900px there's no room for a
+     second column, so it collapses to one: finding -> chain -> chart ->
+     methodology -> evidence -> follow-ups — the same reading order the
+     page had before it had a rail at all. */
+  .thread-layout { display: grid; grid-template-columns: 1fr; gap: var(--space-6); align-items: start; }
+  @media (min-width: 900px) {
+    .thread-layout { grid-template-columns: minmax(0, 1fr) 300px; }
+    .thread-rail { position: sticky; top: var(--space-4); max-height: calc(100vh - var(--space-8)); overflow-y: auto; }
+  }
+
+  .thread-rail-section { margin-top: var(--space-6); }
+  .thread-rail-section:first-child { margin-top: 0; }
+
+  .evidence-cards { display: flex; flex-direction: column; }
+  .evidence-card { padding: var(--space-2) 0; border-top: 1px solid var(--color-divider); font-size: 13px; }
+  .evidence-card:first-child { border-top: none; padding-top: 0; }
+  .evidence-source { font-weight: 600; }
+  .evidence-doc { opacity: 0.85; margin-top: 2px; }
+  .evidence-meta { opacity: 0.55; font-size: 11px; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.03em; }
+
+  /* A narrow rail doesn't suit horizontally-wrapping chips (chat.html's
+     .chips pattern) — these stack as a compact vertical list instead. */
+  .thread-followups-list { display: flex; flex-direction: column; gap: 2px; }
+  .thread-followup { width: 100%; justify-content: flex-start; text-align: left; font-size: 13px; }
+  .thread-followup-status { margin-top: var(--space-2); font-size: 13px; color: var(--ink-muted); min-height: 1.2em; }
+
+  .thread-top-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+  .thread-actions-group { display: inline-flex; gap: var(--space-2); }
+  .watchlist-toggle-form { display: inline-flex; }
+  .watchlist-toggle-btn {
+    font-size: 12px; padding: 0.15rem 0.6rem; border-radius: 999px;
+    border: 1px solid var(--color-divider); background: transparent; color: var(--ink-muted);
+    cursor: pointer; font-family: inherit;
+  }
+  .watchlist-toggle-btn:hover { border-color: var(--color-accent); color: var(--ink); }
+  .watchlist-toggle-btn.is-pinned { border-color: var(--color-accent); color: var(--color-accent); }
+
+  .signals-report { max-width: 68ch; }
+  .signals-report h2 { margin-top: var(--space-6); }
+  .signals-report h2:first-child { margin-top: 0; }
+  .signals-report h3 { margin-top: var(--space-5); }
+  .signals-report h4 { margin-top: var(--space-3); }
+  .signals-report p { margin: var(--space-2) 0; }
+  .signals-report ul { margin: var(--space-2) 0; padding-left: 1.2em; }
+  .signals-report li { margin: 4px 0; }
+  .signals-report-meta { font-size: 12px; opacity: 0.6; margin-bottom: var(--space-4); }
+{% endblock %}
+
+{% block content %}
+  <div class="thread-top-row">
+    <a class="btn btn-ghost" href="{{ url_for('research') }}">&larr; New question</a>
+    <div class="thread-actions-group">
+      <form class="watchlist-toggle-form" method="post"
+            action="{{ url_for('watchlist_remove' if is_watchlisted else 'watchlist_add') }}">
+        <input type="hidden" name="item_type" value="thread">
+        <input type="hidden" name="item_ref" value="{{ thread_id }}">
+        <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+        <button type="submit" class="watchlist-toggle-btn {{ 'is-pinned' if is_watchlisted else '' }}">
+          {{ '&#9733; Watchlisted' | safe if is_watchlisted else '&#9734; Add to watchlist' | safe }}
+        </button>
+      </form>
+      {% if generated %}
+      <form method="post" action="{{ url_for('research_thread_delete', thread_id=thread_id) }}"
+            onsubmit='return confirm("Delete this thread? This can\'t be undone.");'>
+        <button type="submit" class="watchlist-toggle-btn">Delete thread</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if generated %}
+  <div class="signals-report-meta">Generated {{ generated.generated_at }} · {{ generated.company_ids|join(', ') }} · {{ generated.statement_type }}</div>
+
+  <div class="thread-layout">
+    <div class="thread-main">
+      <div class="signals-report">{{ report_html }}</div>
+    </div>
+
+    {% if report_evidence or report_followups %}
+    <aside class="thread-rail">
+      {% if report_evidence %}
+      <div class="thread-rail-section">
+        <div class="card-kicker" style="margin-bottom: var(--space-2);">Evidence ({{ report_evidence|length }})</div>
+        <div class="evidence-cards">
+          {% for ev in report_evidence[:20] %}
+          <div class="evidence-card">
+            <div class="evidence-source">{{ ev.label }}</div>
+            <div class="evidence-doc">{{ ev.value }}</div>
+            <div class="evidence-meta">{{ ev.company_id }} &middot; {{ ev.kind }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% if report_evidence|length > 20 %}
+        <p class="thread-followup-status">+{{ report_evidence|length - 20 }} more evidence lines grounded this report.</p>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% if report_followups %}
+      <div class="thread-rail-section">
+        <div class="card-kicker" style="margin-bottom: var(--space-2);">Follow-up research</div>
+        <div class="thread-followups-list" id="generated-followups">
+          {% for fu in report_followups %}
+          <button type="button" class="btn btn-ghost thread-followup" data-question="{{ fu }}">{{ fu }}</button>
+          {% endfor %}
+        </div>
+        <p class="thread-followup-status" id="generated-followup-status"></p>
+      </div>
+      {% endif %}
+    </aside>
+    {% endif %}
+  </div>
+
+  {% if report_followups %}
+  <script>
+    // Unlike the fixture threads' follow-up buttons below (which have no
+    // backing question-answering to re-run), a generated report's follow-ups
+    // are real suggested questions from the same evidence scheme — clicking
+    // one kicks off a new Signals report exactly like Research home's own
+    // "Generate full report" button (research.html's generateFullReport).
+    (function () {
+      const status = document.getElementById('generated-followup-status');
+      const buttons = document.querySelectorAll('#generated-followups .thread-followup');
+      buttons.forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          buttons.forEach((b) => (b.disabled = true));
+          status.textContent = 'Generating full report…';
+          try {
+            const response = await fetch('/research/thread/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                question: btn.dataset.question,
+                company_ids: {{ generated.company_ids | tojson }},
+                statement_type: {{ generated.statement_type | tojson }},
+              }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+              status.textContent = data.error || 'Something went wrong.';
+              buttons.forEach((b) => (b.disabled = false));
+              return;
+            }
+            window.location.href = data.url;
+          } catch (err) {
+            status.textContent = 'Network error: ' + err.message;
+            buttons.forEach((b) => (b.disabled = false));
+          }
+        });
+      });
+    })();
+  </script>
+  {% endif %}
+  {% else %}
+
+  <div class="thread-question-block">
+    <div class="thread-eyebrow">Research question</div>
+    <h2>{{ thread.question }}</h2>
+  </div>
+
+  <div class="thread-finding">
+    <span class="tag tag-accent" style="align-self: flex-start;">Key finding</span>
+    <p>{{ thread.answer }}</p>
+    <div class="thread-confidence-row">
+      <span class="tag tag-outline">{{ confidence_label }}</span>
+      <span class="thread-confidence-note">{{ thread.confidence_note }}</span>
+    </div>
+  </div>
+
+  <div class="thread-layout">
+    <div class="thread-main">
+      <div class="card elev-sm thread-section">
+        <div class="card-kicker">Hypothesis chain</div>
+        <div class="chain-steps">
+          {% for step in thread.shared_steps %}
+          <span class="tag tag-neutral">{{ step }}</span>
+          {% if not loop.last or thread.has_branches %}<span class="chain-arrow">&rarr;</span>{% endif %}
+          {% endfor %}
+        </div>
+        {% if thread.has_branches %}
+        <div class="chain-branches">
+          <div class="chain-branch">
+            {% for step in thread.branch_a %}
+            <span class="tag tag-outline">{{ step }}</span>
+            {% if not loop.last %}<span class="chain-arrow">&rarr;</span>{% endif %}
+            {% endfor %}
+          </div>
+          <div class="chain-branch">
+            {% for step in thread.branch_b %}
+            <span class="tag tag-outline">{{ step }}</span>
+            {% if not loop.last %}<span class="chain-arrow">&rarr;</span>{% endif %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="card elev-sm thread-section">
+        <div class="card-kicker">{{ thread.chart_title }}</div>
+        <div class="thread-chart-units">{{ thread.chart_units }}</div>
+        <svg viewBox="0 0 460 150" width="100%" style="max-width: 460px; display: block;">
+          <polyline points="{{ chart.a }}" fill="none" stroke="var(--color-neutral-700)" stroke-width="2"></polyline>
+          <polyline points="{{ chart.b }}" fill="none" stroke="var(--color-accent-700)" stroke-width="2"></polyline>
+        </svg>
+        <div class="thread-chart-legend">
+          <span class="legend-item"><span class="legend-swatch legend-swatch-a"></span>{{ thread.series_a_name }}</span>
+          <span class="legend-item"><span class="legend-swatch legend-swatch-b"></span>{{ thread.series_b_name }}</span>
+        </div>
+      </div>
+
+      <details class="thread-methodology thread-section">
+        <summary>Methodology &amp; assumptions</summary>
+        <p>{{ thread.methodology }}</p>
+      </details>
+    </div>
+
+    <aside class="thread-rail">
+      <div class="thread-rail-section">
+        <div class="card-kicker" style="margin-bottom: var(--space-2);">Evidence</div>
+        <div class="evidence-cards">
+          {% for ev in thread.evidence %}
+          <div class="evidence-card">
+            <div class="evidence-source">{{ ev.source }}</div>
+            <div class="evidence-doc">{{ ev.doc }}</div>
+            <div class="evidence-meta">{{ ev.period }} &middot; {{ ev.type }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="thread-rail-section">
+        <div class="card-kicker" style="margin-bottom: var(--space-2);">Follow-up research</div>
+        <div class="thread-followups-list">
+          {% for fu in thread.follow_ups %}
+          <button type="button" class="btn btn-ghost thread-followup">{{ fu }}</button>
+          {% endfor %}
+        </div>
+        <p class="thread-followup-status" id="followup-status"></p>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    // Re-running a hypothesis with different parameters (lag, sub-period,
+    // control company) isn't wired up yet (README: Resumable build
+    // checklist, step 3 note / MVP Delivery Plan's falsifiability point) —
+    // say so instead of a dead button with no feedback.
+    const status = document.getElementById('followup-status');
+    document.querySelectorAll('.thread-followup').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        status.textContent = `“${btn.textContent}” isn’t wired up yet — follow-ups will re-run this investigation with new parameters once real question-answering lands.`;
+      });
+    });
+  </script>
+  {% endif %}
+{% endblock %}

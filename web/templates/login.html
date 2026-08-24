@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Log in — Signals{% endblock %}
+
+{% block extra_style %}
+  .auth-wrap { max-width: 380px; margin: 3rem auto 0; }
+  .auth-wrap h1 { font-size: 1.5rem; text-align: center; }
+  .auth-sub { text-align: center; color: var(--ink-muted); font-size: 0.9rem; margin: 0 0 1.5rem; }
+  .auth-error {
+    background: var(--fact-bg); color: #7a2a2a; border: 1px solid #d99;
+    border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.85rem; margin-bottom: 1rem;
+  }
+  .auth-form .field { margin-bottom: 1rem; }
+  .auth-foot { text-align: center; font-size: 0.85rem; margin-top: 1.25rem; color: var(--ink-muted); }
+{% endblock %}
+
+{% block content %}
+<div class="auth-wrap">
+  <h1>Log in</h1>
+  <p class="auth-sub">Welcome back to Signals.</p>
+
+  {% if error %}
+  <div class="auth-error">{{ error }}</div>
+  {% endif %}
+
+  <form class="auth-form" method="post" action="{{ url_for('login') }}">
+    <input type="hidden" name="next" value="{{ next or '' }}">
+    <div class="field">
+      <label for="identifier">Email</label>
+      <input class="input" type="text" id="identifier" name="identifier" value="{{ identifier }}" autocomplete="username" required autofocus>
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input class="input" type="password" id="password" name="password" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="btn btn-primary btn-block">Log in</button>
+  </form>
+
+  <p class="auth-foot">No account yet? <a href="{{ url_for('signup') }}">Sign up</a></p>
+</div>
+{% endblock %}

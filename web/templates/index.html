@@ -1,0 +1,385 @@
+{% extends "base.html" %}
+
+{% block title %}Companies — Signals{% endblock %}
+
+{% block page_class %}page-wide{% endblock %}
+
+{% block extra_style %}
+  .companies-wrap {
+    position: relative;
+    border: 1px solid var(--color-divider);
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+    margin-top: var(--space-4);
+  }
+  /* Below ~560px the table needs more room than the columns have — a right-edge
+     fade hints there's more to scroll to, instead of the table just cutting off
+     mid-column with no indication anything's hidden. */
+  @media (max-width: 560px) {
+    .companies-wrap::after {
+      content: "";
+      position: absolute; top: 0; right: 0; bottom: 0; width: 20px;
+      background: linear-gradient(to right, transparent, var(--bg));
+      pointer-events: none;
+    }
+  }
+
+  .companies-filters {
+    display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;
+    margin-top: var(--space-4);
+  }
+  .companies-filters .field { width: auto; flex: 1 1 200px; max-width: 320px; }
+  .companies-filters .field label {
+    display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--ink-muted); margin-bottom: 4px;
+  }
+  .companies-filters select.input { min-height: 36px; }
+
+  /* Column picker: a small icon button + popover, positioned to line up
+     with the other filter controls' baseline. */
+  .companies-column-picker { position: relative; flex: none; }
+  .companies-columns-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    min-height: 36px; padding: 0 12px; font-size: 13px;
+  }
+  .companies-columns-btn svg { width: 15px; height: 15px; flex: none; }
+  .companies-columns-menu {
+    position: absolute; top: 100%; right: 0; z-index: 5; margin-top: 4px;
+    min-width: 200px; padding: var(--space-2);
+    background: var(--bg); border: 1px solid var(--color-divider); border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  /* Same specificity as the class rule above, so cascade order alone would
+     let `display: flex` win over the browser's default `[hidden] { display:
+     none }` — this rule combines both selectors to force the higher
+     specificity needed for the `hidden` attribute to actually take effect. */
+  .companies-columns-menu[hidden] { display: none; }
+  .companies-columns-menu-title {
+    font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-muted);
+    padding: 4px 6px 6px;
+  }
+  .companies-columns-item {
+    display: flex; align-items: center; gap: 8px; font-size: 13px;
+    padding: 5px 6px; border-radius: var(--radius-sm); cursor: pointer;
+  }
+  .companies-columns-item:hover { background: var(--surface); }
+
+  table.companies { width: 100%; min-width: 480px; font-size: 13px; }
+  table.companies th, table.companies td { padding: 6px 9px; }
+  table.companies td.company a { font-weight: 600; text-decoration: none; }
+  table.companies td.company a:hover { text-decoration: underline; }
+  table.companies td.price, table.companies th.price { font-variant-numeric: tabular-nums; text-align: right; }
+  table.companies .companies-ids {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--ink-muted);
+    display: block;
+  }
+  table.companies .companies-index-tags { display: block; color: var(--ink-muted); font-size: 12px; }
+  table.companies th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  table.companies th.sortable:hover { color: var(--color-accent); }
+  table.companies th.sortable.sorted { color: var(--color-accent); }
+  table.companies th .sort-indicator { font-size: 10px; display: inline-block; width: 1.1em; }
+
+  .empty-state {
+    padding: var(--space-6);
+    text-align: center;
+    color: var(--ink-muted);
+    background: var(--surface);
+    border: 1px dashed var(--color-divider);
+    border-radius: var(--radius-md);
+  }
+  .empty-state code {
+    background: var(--bg);
+    padding: 0.1rem 0.35rem;
+    border-radius: var(--radius-sm);
+  }
+{% endblock %}
+
+{% block content %}
+  {% if companies %}
+  <div class="companies-filters">
+    <div class="field">
+      <label for="companies-search">Search</label>
+      <input class="input" type="text" id="companies-search" placeholder="Name, ID, sector, index, status&hellip;" autocomplete="off">
+    </div>
+    {% if countries|length > 1 %}
+    <div class="field">
+      <label for="companies-country">Country</label>
+      <select class="input" id="companies-country">
+        <option value="">All countries</option>
+        {% for co in countries %}<option value="{{ co }}">{{ co }}</option>{% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    <div class="field">
+      <label for="companies-sector">Sector</label>
+      <select class="input" id="companies-sector">
+        <option value="">All sectors</option>
+        {% for s in sectors %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="companies-industry">Industry</label>
+      <select class="input" id="companies-industry">
+        <option value="">All industries</option>
+        {% for i in industries %}<option value="{{ i }}">{{ i }}</option>{% endfor %}
+      </select>
+    </div>
+    {% set tags_column_enabled = columns|selectattr('key', 'equalto', 'tags')|list|length > 0 %}
+    {% if tags_column_enabled and index_tag_options %}
+    <div class="field">
+      <label for="companies-tag">Index tag</label>
+      <select class="input" id="companies-tag">
+        <option value="">All indices</option>
+        {% for t in index_tag_options %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    {% if columns %}
+    <div class="companies-column-picker">
+      <button type="button" class="btn btn-ghost companies-columns-btn" id="companies-columns-btn"
+              aria-haspopup="true" aria-expanded="false">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+          <rect x="1.5" y="2.5" width="4" height="11" rx="1"></rect>
+          <rect x="6.5" y="2.5" width="4" height="11" rx="1"></rect>
+          <rect x="11.5" y="2.5" width="3" height="11" rx="1"></rect>
+        </svg>
+        Columns
+      </button>
+      <div class="companies-columns-menu" id="companies-columns-menu" hidden>
+        <div class="companies-columns-menu-title">Show columns</div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="companies-wrap">
+    <table class="table companies">
+      <thead>
+        <tr>
+          <th class="sortable" data-sort-key="name">Company<span class="sort-indicator"></span></th>
+          {% for col in columns %}
+          <th class="sortable {{ 'price' if col['key'] == 'price' else '' }}" data-sort-key="{{ col['key'] }}">{{ col['label'] }}<span class="sort-indicator"></span></th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody id="companies-tbody">
+        {% for c in companies %}
+        {% set search_blob = [
+             c['display_name'], c['company_id'], c['legal_name'], c['nse_symbol'], c['bse_code'],
+             c['isin'], c['country'], c['sector'], c['industry'], c['status'], c['website']
+           ] + c['index_tags'] %}
+        <tr data-search="{{ (search_blob|select|join(' '))|lower }}"
+            data-name="{{ c['display_name']|lower }}"
+            data-sector="{{ c['sector'] or '' }}" data-industry="{{ c['industry'] or '' }}"
+            data-country="{{ c['country'] }}"
+            data-price="{{ c['latest_price'] if c['latest_price'] is not none else '' }}"
+            data-status="{{ c['status'] }}"
+            data-tags="|{{ c['index_tags']|join('|') }}|"
+            data-tags-sort="{{ c['index_tags']|join(', ')|lower }}">
+          <td class="company">
+            <a href="{{ url_for('company_report', company_id=c['company_id']) }}">{{ c['display_name'] }}</a>
+          </td>
+          {% for col in columns %}
+            {% if col['key'] == 'sector' %}
+          <td data-col="sector">{{ c['sector'] or '—' }}</td>
+            {% elif col['key'] == 'industry' %}
+          <td data-col="industry">{{ c['industry'] or '—' }}</td>
+            {% elif col['key'] == 'price' %}
+          <td data-col="price" class="price">{% if c['latest_price'] is not none %}{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '%.2f'|format(c['latest_price']) }}{% else %}—{% endif %}</td>
+            {% elif col['key'] == 'status' %}
+          <td data-col="status">
+            {% if c['status'] == 'active' %}
+              <span class="tag tag-accent">active</span>
+            {% else %}
+              <span class="tag tag-neutral">{{ c['status'] }}</span>
+            {% endif %}
+          </td>
+            {% elif col['key'] == 'tags' %}
+          <td data-col="tags">
+            {% if c['nse_symbol'] or c['bse_code'] %}
+            <span class="companies-ids">{% if c['nse_symbol'] %}NSE {{ c['nse_symbol'] }}{% endif %}{% if c['nse_symbol'] and c['bse_code'] %} &middot; {% endif %}{% if c['bse_code'] %}BSE {{ c['bse_code'] }}{% endif %}</span>
+            {% endif %}
+            {% if c['index_tags'] %}
+            <span class="companies-index-tags">{{ c['index_tags']|join(', ') }}</span>
+            {% endif %}
+            {% if not c['nse_symbol'] and not c['bse_code'] and not c['index_tags'] %}&mdash;{% endif %}
+          </td>
+            {% endif %}
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="empty-state" id="companies-no-matches" style="display:none;">
+    No companies match these filters.
+  </div>
+
+  <script>
+    (function () {
+      const search = document.getElementById('companies-search');
+      const countrySelect = document.getElementById('companies-country');
+      const sectorSelect = document.getElementById('companies-sector');
+      const industrySelect = document.getElementById('companies-industry');
+      const tagSelect = document.getElementById('companies-tag');
+      const rows = Array.from(document.querySelectorAll('#companies-tbody tr'));
+      const noMatchesEl = document.getElementById('companies-no-matches');
+      const wrapEl = document.querySelector('.companies-wrap');
+
+      function applyFilters() {
+        // Multi-token AND match against the row's full metadata blob (name,
+        // ID, legal name, NSE/BSE/ISIN codes, country, sector, industry,
+        // status, website, index tags) — "hdfc bank nifty50" narrows down
+        // by every word, not just one field at a time.
+        const tokens = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+        const country = countrySelect ? countrySelect.value : '';
+        const sector = sectorSelect.value;
+        const industry = industrySelect.value;
+        const tag = tagSelect ? tagSelect.value : '';
+        let visible = 0;
+        for (const row of rows) {
+          const haystack = row.dataset.search;
+          const matches =
+            tokens.every((t) => haystack.includes(t)) &&
+            (!country || row.dataset.country === country) &&
+            (!sector || row.dataset.sector === sector) &&
+            (!industry || row.dataset.industry === industry) &&
+            (!tag || row.dataset.tags.includes('|' + tag + '|'));
+          row.style.display = matches ? '' : 'none';
+          if (matches) visible++;
+        }
+        wrapEl.style.display = visible === 0 ? 'none' : '';
+        noMatchesEl.style.display = visible === 0 ? '' : 'none';
+      }
+
+      search.addEventListener('input', applyFilters);
+      if (tagSelect) tagSelect.addEventListener('change', applyFilters);
+      if (countrySelect) countrySelect.addEventListener('change', applyFilters);
+      sectorSelect.addEventListener('change', applyFilters);
+      industrySelect.addEventListener('change', applyFilters);
+      applyFilters();
+
+      // Click-to-sort on every column header — reorders the same <tr>
+      // elements applyFilters() above toggles visibility on, so a sort
+      // persists through subsequent filtering and vice versa. Price sorts
+      // numerically (data-price is a raw number, not the formatted "$x.xx"
+      // text); a company with no cached price always sorts to the end
+      // regardless of direction rather than landing at the top on descending.
+      const tbody = document.getElementById('companies-tbody');
+      const headerCells = Array.from(document.querySelectorAll('table.companies thead th[data-sort-key]'));
+      const SORT_ATTR = { name: 'name', sector: 'sector', industry: 'industry', price: 'price', status: 'status', tags: 'tagsSort' };
+      let sortState = { key: null, dir: 1 };
+
+      function sortRows(key) {
+        const attr = SORT_ATTR[key];
+        if (!attr) return;
+        sortState = sortState.key === key ? { key, dir: -sortState.dir } : { key, dir: 1 };
+        const numeric = key === 'price';
+        rows
+          .slice()
+          .sort((a, b) => {
+            const av = a.dataset[attr] || '';
+            const bv = b.dataset[attr] || '';
+            if (numeric) {
+              if (av === '' && bv === '') return 0;
+              if (av === '') return 1;
+              if (bv === '') return -1;
+              return (parseFloat(av) - parseFloat(bv)) * sortState.dir;
+            }
+            return av.localeCompare(bv) * sortState.dir;
+          })
+          .forEach((row) => tbody.appendChild(row));
+        headerCells.forEach((th) => {
+          const indicator = th.querySelector('.sort-indicator');
+          const active = th.dataset.sortKey === key;
+          indicator.textContent = active ? (sortState.dir === 1 ? ' ▲' : ' ▼') : '';
+          th.classList.toggle('sorted', active);
+        });
+      }
+
+      headerCells.forEach((th) => th.addEventListener('click', () => sortRows(th.dataset.sortKey)));
+    })();
+  </script>
+
+  <script>
+    // Column picker: which of the Admin-enabled optional columns to show
+    // right now. Per-browser only (localStorage) — doesn't touch the
+    // server-side Admin setting, which controls what's even eligible here.
+    (function () {
+      const STORAGE_KEY = 'companies-list-hidden-columns-v1';
+      const btn = document.getElementById('companies-columns-btn');
+      const menu = document.getElementById('companies-columns-menu');
+      const table = document.querySelector('table.companies');
+      if (!btn || !menu || !table) return;
+
+      const headerCells = Array.from(table.querySelectorAll('thead th[data-col]'));
+      if (headerCells.length === 0) return;
+
+      let hidden;
+      try {
+        hidden = new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'));
+      } catch (e) {
+        hidden = new Set();
+      }
+      // Drop keys the server no longer offers (e.g. Admin disabled a
+      // column since this was last saved) so they don't linger unused.
+      const availableKeys = new Set(headerCells.map((th) => th.dataset.col));
+      hidden = new Set(Array.from(hidden).filter((k) => availableKeys.has(k)));
+
+      function applyVisibility() {
+        headerCells.forEach(function (th) {
+          const key = th.dataset.col;
+          const isHidden = hidden.has(key);
+          document.querySelectorAll('[data-col="' + key + '"]').forEach(function (el) {
+            el.style.display = isHidden ? 'none' : '';
+          });
+        });
+      }
+
+      headerCells.forEach(function (th) {
+        const key = th.dataset.col;
+        const label = th.textContent.trim();
+        const item = document.createElement('label');
+        item.className = 'companies-columns-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = !hidden.has(key);
+        checkbox.addEventListener('change', function () {
+          if (checkbox.checked) hidden.delete(key); else hidden.add(key);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(hidden)));
+          applyVisibility();
+          // Close right after a pick, same as a single-choice menu — this is
+          // a small, fixed set of columns, so a reopen for the next toggle
+          // costs little and "select, then it's gone" is the expected shape.
+          menu.hidden = true;
+          btn.setAttribute('aria-expanded', 'false');
+        });
+        item.appendChild(checkbox);
+        item.appendChild(document.createTextNode(' ' + label));
+        menu.appendChild(item);
+      });
+
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const willOpen = menu.hidden;
+        menu.hidden = !willOpen;
+        btn.setAttribute('aria-expanded', String(willOpen));
+      });
+      document.addEventListener('click', function (e) {
+        if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) {
+          menu.hidden = true;
+          btn.setAttribute('aria-expanded', 'false');
+        }
+      });
+
+      applyVisibility();
+    })();
+  </script>
+  {% else %}
+  <div class="empty-state">
+    No companies registered yet. Run <code>python main.py seed-companies</code> or
+    <code>python main.py add-company &lt;ID&gt; ...</code> from the CLI.
+  </div>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,420 @@
+{% extends "base.html" %}
+
+{% block title %}Ask about a company — Signals{% endblock %}
+
+{% block extra_style %}
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+    margin-bottom: var(--space-2);
+  }
+  .lede { max-width: 60ch; }
+
+  .lookup-row {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+  .lookup-row .field { flex: 1; min-width: 220px; }
+  .lookup-msg {
+    margin-top: var(--space-2);
+    font-size: 13px;
+    color: var(--ink-muted);
+  }
+  .lookup-msg.is-error { color: var(--calc); }
+
+  .company-card {
+    display: none;
+    margin-top: var(--space-4);
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .company-card.is-visible { display: flex; }
+  .company-card .name { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 22px; }
+  .company-card .tags { display: flex; gap: var(--space-1); margin-top: var(--space-1); flex-wrap: wrap; }
+
+  .ask-panel { display: none; margin-top: var(--space-6); }
+  .ask-panel.is-visible { display: block; }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: var(--space-3) 0;
+  }
+  .chips .btn-secondary { font-size: 13px; }
+
+  .composer {
+    display: flex;
+    gap: var(--space-2);
+    align-items: flex-end;
+  }
+  .composer .field { flex: 1; margin-bottom: 0; }
+  .composer textarea.input { min-height: 2.6rem; }
+
+  .conversation {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+  }
+
+  .turn-user .card-kicker { color: var(--ink-muted); }
+  .turn-assistant .card-body { font-size: 14px; opacity: 1; line-height: 1.65; }
+  .turn-assistant .card-body :is(p, ul, ol, table) { margin: 0.6rem 0; }
+
+  /* Collapsible answer text (open by default) — charts render outside this
+     <details>, in .turn-charts below, so they're never hidden by it. */
+  .answer-summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+    margin-bottom: var(--space-2);
+  }
+  .answer-summary::-webkit-details-marker { display: none; }
+  .answer-summary::before { content: "▾"; font-size: 10px; transition: transform 0.15s ease; }
+  details.answer-details:not([open]) .answer-summary::before { transform: rotate(-90deg); }
+  .turn-assistant table { border-collapse: collapse; font-size: 0.85rem; }
+  .turn-assistant th, .turn-assistant td {
+    border: 1px solid var(--border);
+    padding: 0.3rem 0.6rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .turn-error .card-body { color: var(--calc); }
+  .turn-loading .card-body { color: var(--ink-muted); font-style: italic; }
+
+  .turn-charts {
+    margin-top: var(--space-3);
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: var(--space-3);
+  }
+  .turn-charts figure {
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-1);
+  }
+  .turn-charts figcaption {
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    padding: 0.2rem 0.3rem 0.4rem;
+  }
+  .turn-charts img { display: block; width: 100%; height: auto; border-radius: 2px; }
+
+  .no-key-banner {
+    border: 1px solid var(--calc);
+    background: var(--calc-bg);
+    color: var(--calc);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    font-size: 13px;
+    margin-bottom: var(--space-4);
+  }
+  .no-key-banner code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+{% endblock %}
+
+{% block content %}
+  <div class="eyebrow">Research</div>
+  <h1>Ask about a company</h1>
+  <p class="lede text-muted">Look up one of your registered companies, then ask a question. Every answer is
+    grounded in the same retrieved [FACT]/[CALCULATION] evidence as the CLI — nothing here is invented.</p>
+
+  {% if not api_key_set %}
+  <div class="no-key-banner">
+    <strong>ANTHROPIC_API_KEY is not set.</strong> Add it to <code>.env</code> at the project root and restart
+    <code>python main.py serve</code> before asking a question.
+  </div>
+  {% endif %}
+
+  <div class="hr"></div>
+
+  <div class="lookup-row">
+    <div class="field">
+      <label for="cn-company">Company</label>
+      <input class="input" id="cn-company" list="company-list" autocomplete="off"
+             placeholder="e.g. HDFCBANK or HDFC Bank" {{ 'disabled' if not companies }}>
+      <datalist id="company-list">
+        {% for c in companies %}
+        <option value="{{ c['company_id'] }}" label="{{ c['display_name'] }}">{{ c['display_name'] }}</option>
+        {% endfor %}
+      </datalist>
+    </div>
+    <button class="btn btn-primary" id="lookup-button" {{ 'disabled' if not companies }}>Look up</button>
+  </div>
+  {% if not companies %}
+    <p class="lookup-msg">No companies registered yet. Run <code>python main.py add-company ...</code> or
+      <code>python main.py seed-companies</code> from the CLI first.</p>
+  {% else %}
+    <p class="lookup-msg" id="lookup-msg"></p>
+  {% endif %}
+
+  <div class="card elev-sm company-card" id="company-card">
+    <div>
+      <div class="name" id="cc-name"></div>
+      <div class="tags">
+        <span class="tag tag-accent" id="cc-ticker"></span>
+        <span class="tag tag-neutral" id="cc-sector"></span>
+      </div>
+    </div>
+    <div class="seg">
+      <label class="seg-opt"><input type="radio" name="statement-type" value="consolidated" checked><span class="dot"></span>Consolidated</label>
+      <label class="seg-opt"><input type="radio" name="statement-type" value="standalone"><span class="dot"></span>Standalone</label>
+    </div>
+  </div>
+
+  <div class="ask-panel" id="ask-panel">
+    <div class="hr"></div>
+    <h5>Suggested questions</h5>
+    <div class="chips" id="suggested-chips"></div>
+
+    <div class="composer">
+      <div class="field">
+        <label for="question">Your question</label>
+        <textarea class="input" id="question" rows="2"
+          placeholder="e.g. What are the key profitability trends over the last few years?"
+          {{ '' if api_key_set else 'disabled' }}></textarea>
+      </div>
+      <button class="btn btn-primary" id="ask-button" {{ '' if api_key_set else 'disabled' }}>Ask</button>
+    </div>
+
+    <div id="conversation" class="conversation"></div>
+  </div>
+
+  <script>
+    const COMPANIES = {{ companies|tojson }};
+
+    function normalize(s) { return (s || '').trim().toLowerCase(); }
+
+    function findCompany(query) {
+      const q = normalize(query);
+      if (!q) return null;
+      return COMPANIES.find(c =>
+        normalize(c.company_id) === q ||
+        normalize(c.nse_symbol) === q ||
+        normalize(c.display_name) === q
+      ) || null;
+    }
+
+    function suggestedQuestions(name) {
+      return [
+        `What are the key profitability trends for ${name} over the last several years?`,
+        `How has ${name}'s net profit grown year over year?`,
+        `What do ${name}'s ROA and ROE look like?`,
+        `How has ${name}'s total assets trended over time?`,
+        `Summarize ${name}'s most recently reported performance.`,
+      ];
+    }
+
+    const companyInput = document.getElementById('cn-company');
+    const lookupButton = document.getElementById('lookup-button');
+    const lookupMsg = document.getElementById('lookup-msg');
+    const companyCard = document.getElementById('company-card');
+    const ccName = document.getElementById('cc-name');
+    const ccTicker = document.getElementById('cc-ticker');
+    const ccSector = document.getElementById('cc-sector');
+    const askPanel = document.getElementById('ask-panel');
+    const chipsEl = document.getElementById('suggested-chips');
+    const conversation = document.getElementById('conversation');
+    const questionEl = document.getElementById('question');
+    const askButton = document.getElementById('ask-button');
+
+    let selectedCompany = null;
+
+    function statementType() {
+      return document.querySelector('input[name="statement-type"]:checked').value;
+    }
+
+    function doLookup() {
+      const company = findCompany(companyInput.value);
+      if (!company) {
+        selectedCompany = null;
+        companyCard.classList.remove('is-visible');
+        askPanel.classList.remove('is-visible');
+        if (lookupMsg) {
+          lookupMsg.textContent = `No registered company matches "${companyInput.value.trim()}".`;
+          lookupMsg.classList.add('is-error');
+        }
+        return;
+      }
+      selectedCompany = company;
+      if (lookupMsg) { lookupMsg.textContent = ''; lookupMsg.classList.remove('is-error'); }
+
+      ccName.textContent = company.display_name;
+      ccTicker.textContent = company.nse_symbol || company.company_id;
+      ccSector.textContent = company.sector || company.industry || 'Sector unknown';
+      companyCard.classList.add('is-visible');
+
+      chipsEl.innerHTML = '';
+      for (const q of suggestedQuestions(company.display_name)) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'btn btn-secondary';
+        chip.textContent = q;
+        chip.addEventListener('click', () => { questionEl.value = q; questionEl.focus(); });
+        chipsEl.appendChild(chip);
+      }
+      askPanel.classList.add('is-visible');
+    }
+
+    if (lookupButton) {
+      lookupButton.addEventListener('click', doLookup);
+      companyInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') { event.preventDefault(); doLookup(); }
+      });
+    }
+
+    function appendCard(kicker, className) {
+      const card = document.createElement('div');
+      card.className = `card elev-sm ${className}`;
+      const kickerEl = document.createElement('div');
+      kickerEl.className = 'card-kicker';
+      kickerEl.textContent = kicker;
+      const bodyEl = document.createElement('div');
+      bodyEl.className = 'card-body';
+      card.appendChild(kickerEl);
+      card.appendChild(bodyEl);
+      conversation.appendChild(card);
+      card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      return { card, bodyEl };
+    }
+
+    function appendUserTurn(question) {
+      const { bodyEl } = appendCard('Question', 'turn-user');
+      bodyEl.textContent = question; // never innerHTML — this is raw user input
+    }
+
+    function appendLoading() {
+      const { card, bodyEl } = appendCard('Answer', 'turn-loading');
+      bodyEl.textContent = 'Thinking…';
+      return card;
+    }
+
+    function appendError(message) {
+      const { bodyEl } = appendCard('Answer', 'turn-error');
+      bodyEl.textContent = message; // plain text, no HTML from server on the error path
+    }
+
+    function appendAssistantTurn(data) {
+      // Not appendCard() here — the [FACT]/[CALCULATION]/[INFERENCE] working is
+      // dense and most readers just want the charts, so the answer text is
+      // collapsible (open by default, easy to close). Charts get appended to
+      // `card` directly, outside this <details>, so they never collapse with it.
+      const card = document.createElement('div');
+      card.className = 'card elev-sm turn-assistant';
+      const details = document.createElement('details');
+      details.className = 'answer-details';
+      details.open = true;
+      const summary = document.createElement('summary');
+      summary.className = 'card-kicker answer-summary';
+      summary.textContent = 'Answer';
+      const bodyEl = document.createElement('div');
+      bodyEl.className = 'card-body';
+      details.appendChild(summary);
+      details.appendChild(bodyEl);
+      card.appendChild(details);
+      conversation.appendChild(card);
+      card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+
+      bodyEl.innerHTML = data.answer_html; // server pre-escapes everything except [FACT]/[CALCULATION]/[INFERENCE] spans
+
+      // Comparing multiple companies (peer-comparison questions): one combined,
+      // indexed-to-100 chart per metric instead of a separate chart per
+      // company on each one's own scale. This page only ever sends one
+      // company_id today, so comparison_charts is normally empty here — kept
+      // for parity with /research/ask, which shares this same response shape.
+      const comparisonCharts = data.comparison_charts || {};
+      const comparisonKeys = Object.keys(comparisonCharts);
+      if (comparisonKeys.length > 0) {
+        const grid = document.createElement('div');
+        grid.className = 'turn-charts';
+        for (const chartKey of comparisonKeys) {
+          const figure = document.createElement('figure');
+          const caption = document.createElement('figcaption');
+          caption.textContent = chartKey.replace(/_/g, ' ') + ' — comparison';
+          const img = document.createElement('img');
+          img.src = 'data:image/png;base64,' + comparisonCharts[chartKey];
+          img.alt = chartKey + ' comparison chart';
+          figure.appendChild(caption);
+          figure.appendChild(img);
+          grid.appendChild(figure);
+        }
+        card.appendChild(grid);
+        return;
+      }
+
+      for (const [companyId, charts] of Object.entries(data.charts || {})) {
+        const chartKeys = Object.keys(charts);
+        if (chartKeys.length === 0) continue;
+        const grid = document.createElement('div');
+        grid.className = 'turn-charts';
+        for (const chartKey of chartKeys) {
+          const figure = document.createElement('figure');
+          const caption = document.createElement('figcaption');
+          caption.textContent = companyId + ' — ' + chartKey.replace(/_/g, ' ');
+          const img = document.createElement('img');
+          img.src = 'data:image/png;base64,' + charts[chartKey];
+          img.alt = companyId + ' ' + chartKey;
+          figure.appendChild(caption);
+          figure.appendChild(img);
+          grid.appendChild(figure);
+        }
+        card.appendChild(grid);
+      }
+    }
+
+    async function askQuestion() {
+      if (!selectedCompany) return;
+      const question = questionEl.value.trim();
+      if (!question) return;
+
+      appendUserTurn(question);
+      questionEl.value = '';
+      askButton.disabled = true;
+      const loadingCard = appendLoading();
+
+      try {
+        const response = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: question,
+            company_ids: [selectedCompany.company_id],
+            statement_type: statementType(),
+          }),
+        });
+        const data = await response.json();
+        loadingCard.remove();
+        if (!response.ok) {
+          appendError(data.error || 'Something went wrong.');
+        } else {
+          appendAssistantTurn(data);
+        }
+      } catch (err) {
+        loadingCard.remove();
+        appendError('Network error: ' + err.message);
+      } finally {
+        askButton.disabled = false;
+      }
+    }
+
+    askButton.addEventListener('click', askQuestion);
+    questionEl.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        askQuestion();
+      }
+    });
+  </script>
+{% endblock %}

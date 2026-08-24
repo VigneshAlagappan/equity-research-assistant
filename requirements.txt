@@ -1,0 +1,11 @@
+pytest>=8.0
+openpyxl>=3.1
+flask>=3.0
+matplotlib>=3.8
+anthropic>=0.40
+python-dotenv>=1.0
+yfinance>=0.2
+pypdf>=5.0
+requests>=2.31
+bleach>=6.4
+neo4j>=5.0

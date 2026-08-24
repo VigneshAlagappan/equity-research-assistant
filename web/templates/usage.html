@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Usage — Signals{% endblock %}
+
+{% block page_class %}page-wide{% endblock %}
+
+{% block extra_style %}
+  .usage-summary {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: var(--space-3); margin: var(--space-4) 0 var(--space-6);
+  }
+  .usage-summary-number { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .usage-breakdowns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--space-5); margin-bottom: var(--space-6); }
+  .usage-question-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .usage-num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .empty-state {
+    padding: var(--space-6);
+    text-align: center;
+    color: var(--ink-muted);
+    background: var(--surface);
+    border: 1px dashed var(--color-divider);
+    border-radius: var(--radius-md);
+  }
+{% endblock %}
+
+{% block content %}
+<h1>Usage</h1>
+<p class="muted">
+  Every LLM call this app makes — the research assistant's Q&amp;A, Key Insights, Signals reports, and
+  the macro-evidence retrieval planner — logs one row here (llm/observability.py). A reused answer
+  (asking the same/near-same question again) costs $0 and isn't shown in the model breakdown below.
+</p>
+
+<div class="usage-summary">
+  <div class="card elev-sm">
+    <div class="card-kicker">Total spend</div>
+    <div class="usage-summary-number">${{ "%.2f"|format(summary.cost_usd) }}</div>
+  </div>
+  <div class="card elev-sm">
+    <div class="card-kicker">Total calls</div>
+    <div class="usage-summary-number">{{ summary.calls }}</div>
+  </div>
+  <div class="card elev-sm">
+    <div class="card-kicker">Total tokens</div>
+    <div class="usage-summary-number">{{ "{:,}".format(summary.input_tokens + summary.output_tokens) }}</div>
+  </div>
+  <div class="card elev-sm">
+    <div class="card-kicker">Reused (free)</div>
+    <div class="usage-summary-number">{{ summary.reused_calls }}</div>
+  </div>
+</div>
+
+{% if summary.by_task or summary.by_model %}
+<div class="usage-breakdowns">
+  <div>
+    <div class="card-kicker">By task</div>
+    <table class="table">
+      <thead><tr><th>Task</th><th class="usage-num">Calls</th><th class="usage-num">Tokens</th><th class="usage-num">Cost</th></tr></thead>
+      <tbody>
+        {% for row in summary.by_task %}
+        <tr>
+          <td>{{ row.task_name }}</td>
+          <td class="usage-num">{{ row.calls }}</td>
+          <td class="usage-num">{{ "{:,}".format(row.input_tokens + row.output_tokens) }}</td>
+          <td class="usage-num">${{ "%.2f"|format(row.cost_usd) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div>
+    <div class="card-kicker">By model</div>
+    <table class="table">
+      <thead><tr><th>Model</th><th class="usage-num">Calls</th><th class="usage-num">Tokens</th><th class="usage-num">Cost</th></tr></thead>
+      <tbody>
+        {% for row in summary.by_model %}
+        <tr>
+          <td>{{ row.model_used }}</td>
+          <td class="usage-num">{{ row.calls }}</td>
+          <td class="usage-num">{{ "{:,}".format(row.input_tokens + row.output_tokens) }}</td>
+          <td class="usage-num">${{ "%.2f"|format(row.cost_usd) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="card-kicker">Recent calls</div>
+{% if recent_calls %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>When</th><th>Task</th><th>Model</th><th>Question</th>
+      <th class="usage-num">Tokens</th><th class="usage-num">Cost</th><th>Outcome</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for call in recent_calls %}
+    <tr>
+      <td>{{ call.created_at[:19].replace("T", " ") }}</td>
+      <td>{{ call.task_name }}</td>
+      <td>{{ call.model_used }}</td>
+      <td class="usage-question-cell" title="{{ call.question or '' }}">{{ call.question or '—' }}</td>
+      <td class="usage-num">{{ "{:,}".format(call.input_tokens + call.output_tokens) }}</td>
+      <td class="usage-num">${{ "%.4f"|format(call.estimated_cost_usd) }}</td>
+      <td>
+        {% if call.reuse_hit %}<span class="tag tag-outline">reused</span>
+        {% elif call.fallback_used %}<span class="tag tag-outline">fallback</span>
+        {% else %}{{ call.stop_reason or '—' }}{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state">No LLM calls logged yet.</div>
+{% endif %}
+{% endblock %}
