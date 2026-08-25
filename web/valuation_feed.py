@@ -38,7 +38,16 @@ from financials.ratios import MissingDataError, SectorMismatchError, roa_for_com
 from normalization.periods import fiscal_year_number
 from storage.repositories import get_canonical_series
 
-_CRORE_PER_LAKH = 0.01
+# Rescales any unit that isn't already each currency's "big" display unit
+# (crore for INR, million for USD) into that unit — e.g. an INR_LAKH series
+# alongside INR_CRORE ones, or a USD_THOUSAND/USD_BILLION series alongside
+# USD_MILLION ones. A unit not in this table (already the big display unit,
+# or a non-scaled unit like PERCENT/RATIO/NUMBER) passes through unchanged.
+_UNIT_RESCALE_TO_DISPLAY: dict[str, float] = {
+    "INR_LAKH": 0.01,
+    "USD_THOUSAND": 0.001,
+    "USD_BILLION": 1000,
+}
 
 # The subset of the ingested metric vocabulary this feed reads.
 _RAW_METRIC_KEYS = (
@@ -51,13 +60,12 @@ _RAW_METRIC_KEYS = (
 
 
 def _series_by_year(conn: sqlite3.Connection, company_id: str, metric_key: str, statement_type: str) -> dict[int, float]:
-    """fiscal_year (int) -> value in INR crore, for one metric/company/statement_type."""
+    """fiscal_year (int) -> value in the company's currency's "big" display
+    unit (crore for INR, million for USD), for one metric/company/statement_type."""
     out: dict[int, float] = {}
     for row in get_canonical_series(conn, company_id, metric_key, "annual", statement_type):
         year = fiscal_year_number(row["fiscal_year"])
-        value = row["canonical_value"]
-        if row["unit"] == "INR_LAKH":
-            value *= _CRORE_PER_LAKH
+        value = row["canonical_value"] * _UNIT_RESCALE_TO_DISPLAY.get(row["unit"], 1.0)
         out[year] = value
     return out
 

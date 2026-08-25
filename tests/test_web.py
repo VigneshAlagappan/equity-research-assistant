@@ -1465,3 +1465,74 @@ def test_admin_company_row_custom_sector_lands_in_lookup_table(client) -> None:
     conn = init_db(db_path=settings.DB_PATH)
     assert "Brand New Sector" in list_sectors(conn)
     assert "Brand New Industry" in list_industries(conn)
+
+
+def test_admin_company_save_preserves_fiscal_year_end_month(client) -> None:
+    """Regression test: the save handler must pass the company's existing
+    fiscal_year_end_month through to register_company() unchanged, or a US
+    company (fiscal_year_end_month=12) would get silently reset to 3 (the
+    register_company() default) on every Admin save, same class of bug the
+    handler's own comment already warns about for country/currency."""
+    import config.settings as settings
+    from companies.registry import get_company, register_company
+
+    conn = init_db(db_path=settings.DB_PATH)
+    register_company(
+        conn, "AAPL", "Apple Inc.", "Apple", country="US", currency="USD", fiscal_year_end_month=12
+    )
+
+    _admin_session(client)
+    response = client.post(
+        "/admin/AAPL",
+        data={"action": "save", "display_name": "Apple", "legal_name": "Apple Inc."},
+    )
+    assert response.status_code == 302
+
+    row = get_company(conn, "AAPL")
+    assert row["fiscal_year_end_month"] == 12
+
+
+def test_admin_add_and_delete_stock_action(client) -> None:
+    import config.settings as settings
+    from companies.stock_actions import list_stock_actions
+
+    _admin_session(client)
+    add_response = client.post(
+        "/admin/HDFCBANK/stock-actions",
+        data={"action_type": "split", "action_date": "2024-06-15", "ratio_from": "1", "ratio_to": "2"},
+    )
+    assert add_response.status_code == 302
+
+    conn = init_db(db_path=settings.DB_PATH)
+    actions = list_stock_actions(conn, "HDFCBANK")
+    assert len(actions) == 1
+    assert actions[0]["action_type"] == "split"
+
+    delete_response = client.post(f"/admin/HDFCBANK/stock-actions/{actions[0]['action_id']}/delete")
+    assert delete_response.status_code == 302
+    assert list_stock_actions(conn, "HDFCBANK") == []
+
+
+def test_admin_add_stock_action_invalid_type_flashes_error_not_500(client) -> None:
+    import config.settings as settings
+    from companies.stock_actions import list_stock_actions
+
+    _admin_session(client)
+    response = client.post(
+        "/admin/HDFCBANK/stock-actions",
+        data={"action_type": "merger", "action_date": "2024-06-15", "ratio_from": "1", "ratio_to": "2"},
+    )
+    assert response.status_code == 302  # redirected back with a flashed error, not a 500
+
+    conn = init_db(db_path=settings.DB_PATH)
+    assert list_stock_actions(conn, "HDFCBANK") == []
+
+
+def test_admin_stock_actions_panel_requires_login(client) -> None:
+    response = client.post(
+        "/admin/HDFCBANK/stock-actions",
+        data={"action_type": "split", "action_date": "2024-06-15", "ratio_from": "1", "ratio_to": "2"},
+    )
+    assert response.status_code in (302, 401, 403)
+    if response.status_code == 302:
+        assert "/login" in response.headers["Location"]

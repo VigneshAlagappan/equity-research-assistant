@@ -39,6 +39,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     conn.executescript(schema_sql)
     _migrate_companies_website_column(conn)
     _migrate_companies_country_currency_columns(conn)
+    _migrate_companies_fiscal_year_end_column(conn)
     _migrate_company_insights_history(conn)
     _migrate_users_theme_column(conn)
     _migrate_documents_table(conn)
@@ -77,6 +78,16 @@ def _migrate_companies_country_currency_columns(conn: sqlite3.Connection) -> Non
         conn.execute("ALTER TABLE companies ADD COLUMN country TEXT NOT NULL DEFAULT 'IN'")
     if "currency" not in columns:
         conn.execute("ALTER TABLE companies ADD COLUMN currency TEXT NOT NULL DEFAULT 'INR'")
+
+
+def _migrate_companies_fiscal_year_end_column(conn: sqlite3.Connection) -> None:
+    """Same reasoning as _migrate_companies_country_currency_columns — ALTER
+    TABLE with a DEFAULT backfills every existing row to 3 (March close),
+    which is correct for every company registered before per-company fiscal
+    years existed (all India, all Apr-Mar)."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(companies)")}
+    if "fiscal_year_end_month" not in columns:
+        conn.execute("ALTER TABLE companies ADD COLUMN fiscal_year_end_month INTEGER NOT NULL DEFAULT 3")
 
 
 def _migrate_company_insights_history(conn: sqlite3.Connection) -> None:

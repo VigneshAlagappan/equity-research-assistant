@@ -26,7 +26,14 @@ from companies.registry import get_company
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
 from storage.repositories import get_canonical_series
 
-_CRORE_PER_LAKH = 0.01
+# See web/valuation_feed.py's identical table for the rationale — rescales
+# any unit that isn't already each currency's "big" display unit (crore for
+# INR, million for USD) into that unit.
+_UNIT_RESCALE_TO_DISPLAY: dict[str, float] = {
+    "INR_LAKH": 0.01,
+    "USD_THOUSAND": 0.001,
+    "USD_BILLION": 1000,
+}
 _QUARTER_ORDER = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}
 
 _RAW_METRIC_KEYS = (
@@ -51,9 +58,7 @@ def _series_by_period(
 ) -> dict[tuple[int, int], float]:
     out: dict[tuple[int, int], float] = {}
     for row in get_canonical_series(conn, company_id, metric_key, period_type, statement_type):
-        value = row["canonical_value"]
-        if row["unit"] == "INR_LAKH":
-            value *= _CRORE_PER_LAKH
+        value = row["canonical_value"] * _UNIT_RESCALE_TO_DISPLAY.get(row["unit"], 1.0)
         out[_period_key(row["fiscal_year"], row["quarter"])] = value
     return out
 

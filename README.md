@@ -1,9 +1,10 @@
-# Indian Equity AI Research Assistant (POC)
+# Global Equity Research Assistant (POC)
 
-An AI-assisted research system for Indian listed companies that combines structured
-financial data, company filings, management commentary, historical data, macro data,
-deterministic calculations, charts, and LLM reasoning to answer investment-research
-questions — with every material claim traceable back to its source.
+An AI-assisted research system for listed companies — with a primary focus on the US
+and India markets — that combines structured financial data, company filings,
+management commentary, historical data, macro data, deterministic calculations,
+charts, and LLM reasoning to answer investment-research questions — with every
+material claim traceable back to its source.
 
 **This is not a trading system.** It does not produce buy/sell recommendations.
 
@@ -27,6 +28,17 @@ file is what actually governs.
 > [Web UI Implementation Sequence](#web-ui-implementation-sequence)) are kept as a
 > stable roadmap other docs cross-reference by number — their *status* lives in
 > FeatureList.md, not here.
+>
+> This proposal was originally scoped India-only (every worked example below names an
+> Indian company, and its source adapters were designed around NSE/BSE/Screener.in) —
+> the system has since grown a real second market, the US (`yfinance`/`fred` source
+> adapters, per-company `country`/`currency`/`fiscal_year_end_month`), described
+> accurately in [architecture.md](architecture.md). The India-specific examples and
+> adapter names below are kept as-is (they're still accurate for India, and rewriting
+> historical scoping rationale to be market-neutral would just obscure why NSE/BSE/
+> Screener-shaped adapters exist at all) — read "Indian company" in what follows as
+> "the original, still-primary market this proposal was scoped against," not as a
+> claim that the system is India-only today.
 
 ---
 

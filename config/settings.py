@@ -127,6 +127,16 @@ DEFAULT_SOURCES: list[dict[str, object]] = [
             "doesn't apply to this source, so it produces no macro_observations rows."
         ),
     },
+    {
+        "source_id": "fred",
+        "name": "Federal Reserve Economic Data (FRED)",
+        "trust_rank": None,
+        "description": (
+            "US macro/regulatory data — the Fed funds rate, Treasury yields, CPI, unemployment, "
+            "GDP, and other economy-wide indicators. The US counterpart to rbi/imd/iitm/mospi "
+            "above; live-fetched per series (sources/fred.py), not an uploaded file."
+        ),
+    },
 ]
 
 # ------------------------------------------------------------------

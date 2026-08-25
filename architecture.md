@@ -1,9 +1,9 @@
 # Architecture
 
-This document describes the current architecture of the Indian Equity Research
+This document describes the current architecture of the Global Equity Research
 Assistant — a self-use, local-first Flask + SQLite application for researching
-Indian (and a few non-Indian) listed companies, with an LLM research assistant
-grounded in deterministically retrieved evidence.
+listed companies, with a primary focus on the US and India markets, with an
+LLM research assistant grounded in deterministically retrieved evidence.
 
 For product/feature scope, see [README.md](README.md) and
 [FeatureList.md](FeatureList.md). For running the app, see
@@ -16,6 +16,7 @@ For product/feature scope, see [README.md](README.md) and
 | Language | Python 3.11+ |
 | Web framework | Flask (server-rendered Jinja2, no SPA framework) |
 | Database | SQLite (single file, `data/equity_research.db`) |
+| Knowledge graph | SQLite by default (`context/graph.py`, pure Python traversal over existing tables) — optionally a real Neo4j graph instead (`context/graph_neo4j.py`, `GRAPH_BACKEND=neo4j`), with automatic fallback to SQLite if Neo4j isn't reachable. Not managed by this app (no Docker lifecycle code) — start/stop it yourself, same as the Ollama fallback. |
 | LLM provider | Anthropic Claude (sonnet/haiku — Opus is registered but policy-disabled, `config/settings.py`'s `DISABLED_MODELS`), with a local Ollama fallback |
 | Frontend | Server-rendered HTML + vanilla JS "islands" (no build step, no bundler, no npm) |
 | Charts | matplotlib (server-rendered PNG) for legacy charts; client-side JS + JSON feeds for the interactive dashboards |
@@ -54,6 +55,12 @@ tags fetching JSON from Flask routes.
   └────────────────────────────────────────────────────────────────────────┘
 
   main.py — CLI entry point, calls the same modules as web/app.py
+
+  context/graph.py / graph_neo4j.py — knowledge-graph traversal, called from
+  the Research / AI layer (Signals reports only, see the pipeline diagram
+  below). Backed by SQLite (the same data/equity_research.db above) by
+  default; optionally a separate real Neo4j graph instead when
+  GRAPH_BACKEND=neo4j, with automatic fallback to SQLite if unreachable.
 ```
 
 The guiding split (see `research/assistant.py`'s module docstring): **retrieval
@@ -70,13 +77,13 @@ to reason over it, never to fetch or calculate numbers itself.
 |---|---|
 | `main.py` | CLI entry point (argparse) — ingest, analyze, ask, serve, admin commands. Thin wrapper over the same modules the web app uses. |
 | `web/` | Flask app: routes, templates, auth, session, JSON feed endpoints for the JS-driven tabs. |
-| `companies/` | Company registry (`registry.py`), lifecycle/archive rules (`lifecycle.py`), NSE bulk-import (`nse_import.py`). |
+| `companies/` | Company registry (`registry.py` — country/currency/fiscal-year-end are per-company, not global), lifecycle/archive rules (`lifecycle.py`), NSE bulk-import (`nse_import.py`, India-only — no US equivalent yet, see Known gaps). |
 | `ingestion/` | File-format detection (`detector.py`), the ingest pipeline (`pipeline.py`) that runs a raw file through a source adapter → normalization → reconciliation, and validation (`validation.py`). |
-| `sources/` | Source adapters — one per data provider: company financials (`screener.py`, `yfinance_financials.py`, `proprietary.py`), and non-company macro data (`macro.py`'s generic CSV convention, plus source-specific parsers for shapes that don't fit it — `rbi_indicators.py`/`rbi_dbie_tables.py`/`rbi_bank_infrastructure.py`, `iitm_rainfall.py`) — each turns a raw file/API response into `NormalizedObservation`/`MacroNormalizedObservation` rows. |
-| `normalization/` | Canonicalizes raw labels into the shared metric vocabulary (`financials.py`), company identifiers (`companies.py`), fiscal periods (`periods.py`), and units/currency (`units.py`). |
+| `sources/` | Source adapters — one per data provider. Company financials: `screener.py` (India, Screener.in exports), `yfinance_financials.py` (US and other non-Indian tickers, live-fetched via Yahoo Finance), `proprietary.py` (hand-prepared workbooks). Non-company macro data: `macro.py`'s generic CSV convention (India: `rbi`/`imd`/`iitm`/`mospi`/`irda`), source-specific parsers for shapes that don't fit it (`rbi_indicators.py`/`rbi_dbie_tables.py`/`rbi_bank_infrastructure.py`, `iitm_rainfall.py`), and `fred.py` (US — FRED, live-fetched, the US counterpart to the RBI/IMD/IITM adapters). Each turns a raw file/API response into `NormalizedObservation`/`MacroNormalizedObservation` rows. |
+| `normalization/` | Canonicalizes raw labels into the shared metric vocabulary (`financials.py` — also localizes each metric's default unit to the company's `currency`, e.g. `INR_CRORE`→`USD_MILLION`), company identifiers (`companies.py`), fiscal periods (`periods.py` — parametrized by each company's `fiscal_year_end_month`, not a single global calendar), and units/currency (`units.py`). |
 | `financials/` | Deterministic math over `canonical_financials`: YoY/CAGR (`calculations.py`), ROA/ROE/vendor-reported ratios (`ratios.py`), and the human-readable text report (`report.py`) both the CLI's `analyze` command and the LLM evidence retrieval are built from. |
 | `retrieval/` | `structured_search.py` — turns `financials/`'s calculations into typed `Evidence` for the LLM. Retrieval only, no LLM calls. |
-| `research/` | The three LLM call sites: `assistant.py` (Q&A), `insights.py` (Key Insights summaries), `signals_report.py` (full Signals investigation reports) — plus `evidence.py` (the `Evidence`/citation model), `documents.py` (extracts `MANAGEMENT_STATEMENT` evidence from uploaded/linked Docs-tab PDFs), and `macro_evidence.py` (the third evidence source — India-wide macro/regulatory data; a narrow, deliberate exception to "retrieval never calls the LLM," since an LLM call picks which macro series/date-range apply before the deterministic fetch runs). |
+| `research/` | The three LLM call sites: `assistant.py` (Q&A), `insights.py` (Key Insights summaries), `signals_report.py` (full Signals investigation reports) — plus `evidence.py` (the `Evidence`/citation model), `documents.py` (extracts `MANAGEMENT_STATEMENT` evidence from uploaded/linked Docs-tab PDFs), and `macro_evidence.py` (the third evidence source — macro/regulatory data spanning both India and US sources, attributed per-series to `"INDIA"` or `"USA"`; a narrow, deliberate exception to "retrieval never calls the LLM," since an LLM call picks which macro series/date-range apply before the deterministic fetch runs). |
 | `context/` | The **Context Optimizer** — `optimizer.py` (dedup, value-scoring, token-budget compression of an `Evidence` list), `reuse.py` (reuse-before-recompute: returns a fresh, near-duplicate prior investigation instead of a new LLM call — now used by both `research/assistant.py`'s Q&A path and `research/signals_report.py`'s full reports), and `graph.py`/`graph_neo4j.py` (knowledge-graph traversal: surfaces a sector-peer *different* company's relevant prior investigation, via `config/knowledge_graph_seed.py`'s curated domain relationships — pure Python/SQLite by default, or a real Neo4j graph when `GRAPH_BACKEND=neo4j`, with automatic fallback to SQLite if Neo4j isn't reachable). |
 | `llm/` | The **Model Router + Fallback layer** — `hardness.py` (task-complexity classifier), `router.py` (fallback chain across models/providers), `capability_registry.py` (static model metadata; which models are policy-disabled is read from `config/settings.py`'s `DISABLED_MODELS`), `providers/` (Anthropic + local Ollama), `observability.py` (per-call logging/cost tracking). The tier→model policy itself (`TIER_PREFERRED_MODEL`, `TIER_MIN_REASONING_STRENGTH`, `DISABLED_MODELS`) lives in `config/settings.py`, not scattered across these modules — edit that one file to change routing. |
 | `charts/` | matplotlib chart generation for legacy server-rendered PNGs (`financial_charts.py`). |
@@ -280,8 +287,8 @@ file's header comment.
 22 tables, grouped by concern:
 
 - **Reference data**: `sources` (trust-ranked data providers), `metrics_dictionary`, `metric_aliases`.
-- **Companies**: `companies`, `company_identifier_history`, `company_index_membership`, `company_list_column_settings`.
-- **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (RBI + IITM rainfall series real and ingested — ~53K rows; MOSPI/IMD/IRDA registered, no files ingested yet).
+- **Companies**: `companies` (per-company `country`/`currency`/`fiscal_year_end_month`, not global), `company_identifier_history`, `company_index_membership`, `company_list_column_settings`.
+- **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — ~53K rows; MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet).
 - **Documents**: `documents` (Docs-tab uploads/links), `document_chunks` (FTS5-ready, not yet populated — no chunking pipeline exists yet).
 - **Research/investigations**: `generated_reports` (persisted Signals reports), `research_thread_evidence`, `research_thread_followups`, `company_insights` (Key Insights history).
 - **LLM observability**: `llm_call_log` — one row per `llm/router.py` call or `context/reuse.py` reuse hit (model/provider, fallback, tokens, cost, context-optimization accounting).
@@ -315,6 +322,31 @@ pre-existing test failure.
   there's no cross-checking logic for it, unlike company financials.
 - **MFIN source is reference PDFs only** — produces no `macro_observations`
   rows, unlike the other macro sources.
+- **No US company sector/industry classification** — `companies.sector`/
+  `industry`/`macro_economic_sector`/`basic_industry` are NSE's own 4-level
+  taxonomy; there's no GICS-equivalent importer for US companies, so those
+  columns stay `NULL` for them (`register_company()` already tolerates this).
+  `financials/ratios.py`'s bank/NBFC sector-tagging heuristic and its
+  GNPA/CASA terminology likewise stay India-vocabulary-biased — a US bank's
+  ratios compute fine, but under India's regulatory naming, not a US
+  equivalent like "NPL ratio".
+- **No bulk US company-master importer** — `companies/nse_import.py` bulk-
+  registers from an NSE export; there's no parallel importer for a US index
+  constituent list. Registering a US company is one-at-a-time today
+  (`add-company --country US` / `ingest-yfinance`).
+- **`sources/yfinance_financials.py` doesn't consult a company's
+  `fiscal_year_end_month`** — it labels US fiscal years by calendar close
+  year (`FY{period_end.year}`) regardless of the row on `companies`. The
+  underlying data is correct either way; only the `FY` label can be
+  cosmetically off for a company with a non-calendar fiscal year (e.g.
+  Apple's September close).
+- **`sources/fred.py` is per-series, on-demand** — same model as
+  `ingest-yfinance`, not a scheduled/bulk pull (see "No automated/recurring
+  ingestion" above, which applies here too).
+- **Ticker-suffix and index-tag logic (`web/live_quote.py`, `web/app.py`) is
+  a 2-way IN/US hardcoded branch**, not a general N-country lookup table —
+  intentional given the app's stated US+India focus, but a third market
+  would need real generalization, not another `if`.
 
 ### Documents / Docs tab
 

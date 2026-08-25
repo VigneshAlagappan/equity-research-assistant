@@ -21,7 +21,7 @@ from email.utils import parsedate_to_datetime
 CACHE_TTL_SECONDS = 900
 FETCH_TIMEOUT_SECONDS = 4.0
 MAX_ITEMS = 5
-_USER_AGENT = "Mozilla/5.0 (compatible; IndianEquityResearchAssistant/1.0)"
+_USER_AGENT = "Mozilla/5.0 (compatible; GlobalEquityResearchAssistant/1.0)"
 
 _cache: dict[tuple[str, int], tuple[float, list[dict]]] = {}
 

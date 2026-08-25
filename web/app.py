@@ -35,6 +35,14 @@ from companies.lifecycle import (
     restore_company,
 )
 from companies.registry import get_company, list_companies, register_company, search_companies
+from companies.stock_actions import (
+    ACTION_TYPES,
+    InvalidStockActionError,
+    StockActionNotFoundError,
+    add_stock_action,
+    delete_stock_action,
+    list_stock_actions,
+)
 from config.settings import ANTHROPIC_API_KEY_SET, DOCUMENTS_DIR, RAW_DIR, SECRET_KEY
 from ingestion.detector import ADAPTER_CLASSES
 from ingestion.pipeline import ingest_file
@@ -520,6 +528,12 @@ def create_app() -> Flask:
             import_sources=sorted(ADAPTER_CLASSES),
             active_panel=request.args.get("panel", "companies"),
             import_selected_company=request.args.get("company_id", ""),
+            stock_action_types=sorted(ACTION_TYPES),
+            stock_action_selected_company=request.args.get("sa_company_id", ""),
+            stock_actions=(
+                list_stock_actions(db, request.args["sa_company_id"])
+                if request.args.get("sa_company_id") else []
+            ),
         )
 
     @app.route("/admin/usage")
@@ -661,6 +675,41 @@ def create_app() -> Flask:
         flash(f"Reconciled {count} metric/period combinations for {company_id}.", "success")
         return redirect(url_for("company_report", company_id=company_id))
 
+    @app.route("/admin/<company_id>/stock-actions", methods=["POST"])
+    def admin_add_stock_action(company_id: str):
+        db = get_db()
+        if get_company(db, company_id) is None:
+            abort(404, f"No company registered with company_id={company_id!r}")
+
+        subscription_price = request.form.get("subscription_price", "").strip()
+        try:
+            add_stock_action(
+                db,
+                company_id,
+                request.form.get("action_type", ""),
+                request.form.get("action_date", ""),
+                float(request.form.get("ratio_from", "")),
+                float(request.form.get("ratio_to", "")),
+                subscription_price=float(subscription_price) if subscription_price else None,
+                source=request.form.get("source") or None,
+                source_url=request.form.get("source_url") or None,
+                notes=request.form.get("notes") or None,
+            )
+        except (InvalidStockActionError, ValueError) as exc:
+            flash(str(exc), "error")
+        else:
+            flash(f"Recorded {request.form.get('action_type')} for {company_id}.", "success")
+        return redirect(url_for("admin", panel="stock_actions", sa_company_id=company_id))
+
+    @app.route("/admin/<company_id>/stock-actions/<int:action_id>/delete", methods=["POST"])
+    def admin_delete_stock_action(company_id: str, action_id: int):
+        db = get_db()
+        try:
+            delete_stock_action(db, company_id, action_id)
+        except StockActionNotFoundError as exc:
+            abort(404, str(exc))
+        return redirect(url_for("admin", panel="stock_actions", sa_company_id=company_id))
+
     @app.route("/admin/<company_id>", methods=["POST"])
     def admin_update_company(company_id: str):
         db = get_db()
@@ -702,12 +751,12 @@ def create_app() -> Flask:
                 add_industry(db, industry)
             # register_company() overwrites every mutable field it's given —
             # pass through the identifiers this form doesn't edit (NSE/BSE/
-            # ISIN/country/currency/website/listed_date, and
-            # macro_economic_sector/basic_industry — the outer two levels of
-            # NSE's 4-level classification, curated via `add-company`/
+            # ISIN/country/currency/fiscal_year_end_month/website/listed_date,
+            # and macro_economic_sector/basic_industry — the outer two levels
+            # of NSE's 4-level classification, curated via `add-company`/
             # `import-nse-companies` rather than this grid, which doesn't
             # scale to a 2,500+ row dropdown) unchanged, or they'd be wiped
-            # to NULL/reset to India/INR.
+            # to NULL/reset to India/INR/March-close.
             register_company(
                 db,
                 company_id,
@@ -718,6 +767,7 @@ def create_app() -> Flask:
                 isin=company["isin"],
                 country=company["country"],
                 currency=company["currency"],
+                fiscal_year_end_month=company["fiscal_year_end_month"],
                 website=company["website"],
                 macro_economic_sector=company["macro_economic_sector"],
                 sector=sector,

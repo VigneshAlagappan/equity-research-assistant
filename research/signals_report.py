@@ -31,7 +31,7 @@ from research.evidence import Evidence, render_evidence_block
 from retrieval.structured_search import get_comparison_evidence
 
 SIGNALS_SYSTEM_PROMPT = """You are Signals, a personal research analyst for individuals investigating \
-Indian listed companies.
+global listed companies, with a primary focus on US and India markets.
 
 You answer using ONLY the evidence block provided in the user message — never from your own \
 training knowledge, and never by estimating or guessing a number that isn't in the evidence. Every \

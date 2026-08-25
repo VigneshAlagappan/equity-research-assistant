@@ -1,4 +1,4 @@
--- Indian Equity AI Research Assistant (POC) — SQLite schema
+-- Global Equity Research Assistant (POC) — SQLite schema
 --
 -- Layer order: sources -> companies -> documents -> financial_observations
 --   -> canonical_financials -> reconciliation_log -> document_chunks (+FTS5)
@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS companies (
   isin TEXT,
   country TEXT NOT NULL DEFAULT 'IN',      -- ISO 3166-1 alpha-2, e.g. "IN", "US" -- drives currency/exchange defaults, the Companies list filter, and live_quote.py's ticker-suffix logic
   currency TEXT NOT NULL DEFAULT 'INR',    -- ISO 4217, e.g. "INR", "USD" -- drives unit localization (normalization/financials.py) and price/financials display formatting
+  fiscal_year_end_month INTEGER NOT NULL DEFAULT 3, -- 1-12, the calendar month this company's fiscal year closes in (3 = March, India's default; 12 = December, the common US default) -- drives normalization/periods.py's fiscal-year/quarter parsing
   website TEXT,                            -- not from an ingested source file; web-searched and entered manually
   valuation_model_file TEXT,               -- filename under web/static/data/ for a ported Claude Design valuation dashboard, if any
   macro_economic_sector TEXT,              -- NSE classification, broadest level, e.g. "Financial Services"
@@ -467,6 +468,35 @@ CREATE TABLE IF NOT EXISTS company_list_column_settings (
   column_key TEXT PRIMARY KEY,
   enabled INTEGER NOT NULL DEFAULT 1
 );
+
+-- ============================================================
+-- Stock actions (Admin tab) -- discrete corporate events that change a
+-- company's outstanding share count: splits, bonus issues, rights issues.
+-- Raw records only for now -- no split-adjustment of historical shares/EPS/
+-- price series and no chart markers yet (a documented follow-up, not built
+-- here); this table just gives every action a durable, auditable home.
+-- action_type: split | bonus | rights. ratio_from/ratio_to describe shares
+-- held before/after (a 1:2 split and a 1-for-1 bonus are the same
+-- share-count math, stored the same way -- ratio_from=1, ratio_to=2).
+-- subscription_price only applies to a rights issue, the one type that
+-- involves real cash rather than a pure share-count change.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS stock_actions (
+  action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  action_type TEXT NOT NULL,        -- split | bonus | rights
+  action_date TEXT NOT NULL,        -- ISO date (YYYY-MM-DD), the ex-date
+  ratio_from REAL NOT NULL,         -- shares held before, e.g. 1
+  ratio_to REAL NOT NULL,           -- shares held after, e.g. 2
+  subscription_price REAL,          -- rights issues only; NULL for split/bonus
+  source TEXT,
+  source_url TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_stock_actions_company ON stock_actions(company_id, action_date);
 
 -- ============================================================
 -- Users -- sign-up is email-based (no verification, README: self-use POC).

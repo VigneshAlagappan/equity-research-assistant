@@ -21,7 +21,7 @@ from ingestion.detector import (
     detect_macro_source_from_path,
     is_macro_path,
 )
-from ingestion.pipeline import ingest_file, ingest_macro_file
+from ingestion.pipeline import ingest_file, ingest_fred_series, ingest_macro_file
 from storage.repositories import get_macro_series
 from tests.test_screener_adapter import _make_screener_workbook
 
@@ -281,6 +281,38 @@ def test_ingest_macro_file_end_to_end(tmp_path: Path, db_conn: sqlite3.Connectio
     assert [row["value"] for row in series] == [1108.9, 1142.3]
     assert all(row["source"] == "imd" for row in series)
     assert all(row["region"] is None for row in series)
+
+
+def test_ingest_fred_series_end_to_end(monkeypatch, db_conn: sqlite3.Connection) -> None:
+    """No companies fixture needed, same as macro ingestion above — FRED
+    series aren't scoped to a company either. HTTP is mocked, same as
+    tests/test_fred_adapter.py."""
+    from contextlib import contextmanager
+
+    class _FakeResponse:
+        def __init__(self, body: bytes) -> None:
+            self._body = body
+
+        def read(self) -> bytes:
+            return self._body
+
+    @contextmanager
+    def fake_urlopen(req, timeout=None):
+        yield _FakeResponse(b"observation_date,FEDFUNDS\n2020-01-01,1.55\n2020-02-01,1.58\n")
+
+    monkeypatch.setattr("sources.fred.urllib.request.urlopen", fake_urlopen)
+
+    result = ingest_fred_series(db_conn, "FEDFUNDS", unit="PERCENT")
+
+    assert result.source_id == "fred"
+    assert result.series_key == "fedfunds"
+    assert result.parsed_count == 2
+    assert result.inserted_count == 2
+    assert result.skipped_count == 0
+
+    series = get_macro_series(db_conn, "fedfunds")
+    assert [row["value"] for row in series] == [1.55, 1.58]
+    assert all(row["source"] == "fred" for row in series)
 
 
 def test_ingest_macro_file_skips_invalid_rows_with_reasons(tmp_path: Path, db_conn: sqlite3.Connection) -> None:

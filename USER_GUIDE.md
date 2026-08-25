@@ -1,8 +1,8 @@
 # User Guide
 
-This is a guide for **using** the Indian Equity Research Assistant as an analyst —
-what each feature does and the exact commands to run it. For how the system is
-built internally, see [README.md](README.md).
+This is a guide for **using** the Global Equity Research Assistant (US + India
+focus) as an analyst — what each feature does and the exact commands to run it.
+For how the system is built internally, see [README.md](README.md).
 
 All commands are run from the project root, with the virtual environment active:
 
@@ -50,6 +50,8 @@ you don't need to `export` or `source` anything yourself.
 | 7 | [Browse in your browser](#7-browse-in-your-browser) | `serve` |
 | 8 | [Ask the AI research assistant (CLI)](#8-ask-the-ai-research-assistant-cli) | `ask` |
 | 9 | [Ask in your browser (chat)](#9-ask-in-your-browser-chat) | `serve` → `/chat` |
+| 10 | [Register and ingest a US company](#10-register-and-ingest-a-us-company) | `add-company --country US`, `ingest-yfinance` |
+| 11 | [Ingest US macro data (FRED)](#11-ingest-us-macro-data-fred) | `ingest-fred` |
 
 ---
 
@@ -70,11 +72,16 @@ python main.py add-company HDFCBANK \
 ```
 
 - `company_id` (the first argument, `HDFCBANK` above) is the stable internal ID you'll
-  use everywhere else — pick something short and recognizable, usually the NSE symbol.
+  use everywhere else — pick something short and recognizable, usually the NSE symbol
+  (or, for a US company, the ticker itself — see [feature 10](#10-register-and-ingest-a-us-company)).
 - `--legal-name` and `--display-name` are required. Everything else is optional but
   worth filling in — `--industry` in particular affects which ratios the system will
   compute for this company (e.g. only companies with "Bank" or "NBFC" in their industry
   get bank-specific ratios like GNPA %).
+- `--country` (default `IN`) and `--currency` (default `INR`) control which market a
+  company belongs to and how its figures are localized/displayed. `--fiscal-year-end-month`
+  defaults to 3 (March close) for `--country IN` and 12 (calendar year) for `--country US`
+  — pass it explicitly for a company with a different fiscal year end.
 - Running this again for the same `company_id` updates the record — it doesn't create
   a duplicate.
 
@@ -116,6 +123,8 @@ An archived company can't have new data ingested into it until restored.
 ### 4. Ingest financial data
 
 This loads a company's financials from a Screener.in Excel export into the database.
+Screener.in only covers Indian listings — for a US company, use `ingest-yfinance`
+instead (see [feature 10](#10-register-and-ingest-a-us-company)).
 
 **Step 1 — get the file.** On [screener.in](https://www.screener.in), open the
 company page and use **Export to Excel**.
@@ -277,6 +286,59 @@ CLI commands. Start the web viewer (feature 7) and open **http://127.0.0.1:5000/
   in a row, not a multi-turn conversation with memory.
 
 Uses the same `.env` API key as the CLI — no separate setup.
+
+---
+
+### 10. Register and ingest a US company
+
+Screener.in (feature 4) only covers Indian listings — for a US company, register it
+with `--country US` and pull its financials live from Yahoo Finance instead of an
+uploaded file:
+
+```bash
+python main.py add-company AAPL \
+  --legal-name "Apple Inc." \
+  --display-name "Apple" \
+  --country US \
+  --currency USD
+
+python main.py ingest-yfinance AAPL AAPL
+```
+
+- The first `AAPL` is the `company_id`; the second is the Yahoo Finance ticker — they're
+  often the same for a US company, but don't have to be.
+- `--fiscal-year-end-month` wasn't passed above, so it defaulted to 12 (calendar year)
+  because `--country US` was set (see [feature 1](#1-register-a-company)).
+- `ingest-yfinance` fetches annual income statement, balance sheet, and cash flow data
+  live — no file to download or place under `data/raw/`. Re-running it refreshes the
+  figures the same "nothing overwritten, reconciliation decides what's canonical" way
+  `ingest` does for a Screener file.
+- Once ingested, `analyze AAPL`, `ask ... --company AAPL`, and the web viewer all work
+  exactly the same as for an Indian company — figures display in USD millions
+  automatically (driven by `--currency`).
+
+---
+
+### 11. Ingest US macro data (FRED)
+
+The US counterpart to India's RBI/IMD/IITM macro data (rainfall, repo rate, ...) — the
+Fed funds rate, Treasury yields, CPI, unemployment, GDP, and other economy-wide
+indicators from FRED (Federal Reserve Economic Data), live-fetched, no file to download:
+
+```bash
+python main.py ingest-fred FEDFUNDS --unit PERCENT
+python main.py ingest-fred CPIAUCSL --unit INDEX
+python main.py ingest-fred UNRATE --unit PERCENT
+```
+
+- The first argument is the FRED series ID (visible in the series' URL on
+  [fred.stlouisfed.org](https://fred.stlouisfed.org)).
+- `--unit` is required — FRED's own export has no unit column, so you supply it (e.g.
+  `PERCENT` for a rate, `INDEX` for CPI).
+- Once ingested, a macro/regulatory question through `ask`, `/research/ask`, or `/chat`
+  can draw on this series alongside India's RBI/IITM data — each is attributed to
+  `"USA"` or `"INDIA"` in the evidence the assistant cites, so nothing gets conflated
+  across countries.
 
 ---
 

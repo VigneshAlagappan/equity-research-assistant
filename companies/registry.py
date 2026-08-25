@@ -51,6 +51,7 @@ def register_company(
     isin: str | None = None,
     country: str = "IN",
     currency: str = "INR",
+    fiscal_year_end_month: int = 3,
     website: str | None = None,
     macro_economic_sector: str | None = None,
     sector: str | None = None,
@@ -66,13 +67,13 @@ def register_company(
     HDFC Bank), not a looser in-house taxonomy — meaningless for a non-Indian
     company, left None there.
 
-    country/currency default to India/INR (every company here was, until
-    multi-country support existed) — same "overwrite with exactly what's
-    passed" contract as every other field: a caller re-registering an
-    existing company without knowledge of country/currency (e.g.
-    companies/nse_import.py's periodic refresh) must pass the existing row's
-    values through itself, or risk stomping a manually-registered non-Indian
-    company back to India/INR.
+    country/currency/fiscal_year_end_month default to India/INR/March-close
+    (every company here was, until multi-country support existed) — same
+    "overwrite with exactly what's passed" contract as every other field: a
+    caller re-registering an existing company without knowledge of these
+    (e.g. companies/nse_import.py's periodic refresh) must pass the existing
+    row's values through itself, or risk stomping a manually-registered
+    non-Indian company back to India/INR/March-close.
 
     Returns the normalized company_id. company_id itself is immutable once
     created — re-registering the same id updates everything except status
@@ -90,12 +91,14 @@ def register_company(
         conn.execute(
             """
             INSERT INTO companies (
-                company_id, legal_name, display_name, nse_symbol, bse_code, isin, country, currency, website,
+                company_id, legal_name, display_name, nse_symbol, bse_code, isin, country, currency,
+                fiscal_year_end_month, website,
                 macro_economic_sector, sector, industry, basic_industry,
                 status, listed_date, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
             """,
-            (company_id, legal_name, display_name, nse_symbol, bse_code, isin, country, currency, website,
+            (company_id, legal_name, display_name, nse_symbol, bse_code, isin, country, currency,
+             fiscal_year_end_month, website,
              macro_economic_sector, sector, industry, basic_industry, listed_date, now, now),
         )
     else:
@@ -103,13 +106,13 @@ def register_company(
             """
             UPDATE companies SET
                 legal_name = ?, display_name = ?, nse_symbol = ?, bse_code = ?, isin = ?,
-                country = ?, currency = ?, website = ?,
+                country = ?, currency = ?, fiscal_year_end_month = ?, website = ?,
                 macro_economic_sector = ?, sector = ?, industry = ?, basic_industry = ?,
                 listed_date = ?, updated_at = ?
             WHERE company_id = ?
             """,
-            (legal_name, display_name, nse_symbol, bse_code, isin, country, currency, website,
-             macro_economic_sector, sector, industry, basic_industry, listed_date, now, company_id),
+            (legal_name, display_name, nse_symbol, bse_code, isin, country, currency, fiscal_year_end_month,
+             website, macro_economic_sector, sector, industry, basic_industry, listed_date, now, company_id),
         )
     conn.commit()
     return company_id

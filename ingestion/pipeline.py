@@ -24,6 +24,7 @@ from sources.rbi_dbie_tables import (
     parse_rbi_daily_rate_table,
     parse_rbi_dbie_table,
 )
+from sources.fred import fetch_fred_series
 from sources.iitm_rainfall import parse_iitm_file
 from sources.rbi_indicators import looks_like_rbi_indicator_workbook, parse_rbi_indicator_workbook
 from sources.yfinance_financials import YFinanceAdapter
@@ -238,6 +239,50 @@ def ingest_macro_file(
     logger.info(
         "Ingested %s (macro/%s): parsed=%d inserted=%d skipped=%d",
         file_path, source_id, result.parsed_count, result.inserted_count, result.skipped_count,
+    )
+    return result
+
+
+def ingest_fred_series(
+    conn: sqlite3.Connection,
+    series_id: str,
+    *,
+    unit: str,
+    series_key: str | None = None,
+    region: str | None = None,
+) -> MacroIngestionResult:
+    """Fetch one FRED series live and run it through the same validate ->
+    store steps ingest_macro_file() uses for an uploaded RBI/IMD/... CSV.
+    Deliberately a separate function, not a branch of ingest_macro_file():
+    there's no file_path/source-detection-by-path step here (the series_id
+    is the input), same reasoning ingest_yfinance_company() is its own
+    function rather than a branch of ingest_file().
+    """
+    parsed = fetch_fred_series(series_id, unit=unit, series_key=series_key, region=region)
+
+    result = MacroIngestionResult(
+        series_key=series_key or series_id.lower(), source_id="fred", file_path=f"fred:{series_id}"
+    )
+    result.parsed_count = len(parsed)
+
+    valid: list[MacroNormalizedObservation] = []
+    for obs in parsed:
+        problems = validate_macro_observation(obs)
+        if problems:
+            result.skipped_count += 1
+            label = f"{obs.series_key} {obs.period}"
+            reason = f"{label}: {'; '.join(problems)}"
+            result.skip_reasons.append(reason)
+            logger.warning("Skipping invalid macro observation: %s", reason)
+            continue
+        valid.append(obs)
+
+    insert_macro_observations(conn, valid)
+    result.inserted_count = len(valid)
+
+    logger.info(
+        "Ingested %s (macro/fred): parsed=%d inserted=%d skipped=%d",
+        series_id, result.parsed_count, result.inserted_count, result.skipped_count,
     )
     return result
 

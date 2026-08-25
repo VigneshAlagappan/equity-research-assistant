@@ -1,11 +1,14 @@
 """Macro/regulatory evidence retrieval — the third evidence source (alongside
 Financials and Docs) research/assistant.py's SYSTEM_PROMPT grounds answers in,
-for questions about India-wide macro/regulatory data (rainfall, repo rate,
-credit growth, ...) rather than one company's own reported numbers.
+for questions about macro/regulatory data (rainfall, repo rate, credit
+growth, the Fed funds rate, CPI, ...) rather than one company's own reported
+numbers. Spans both India (rbi/imd/iitm/mospi/irda) and US (fred) sources —
+see _SOURCE_COUNTRY_LABEL below for how a matched series is attributed to a
+country in the rendered evidence.
 
 Deliberately generic, not a per-series hardcoded lookup: macro_observations
-already has 490+ distinct series_key values across just two sources (rbi,
-iitm) and more will land as mospi/irda get ingested.
+already has 490+ distinct series_key values across several sources (rbi,
+iitm, fred, ...) and more will land as mospi/irda get ingested.
 
 Series/date-range *selection* is an LLM call (_plan_retrieval below) — a
 deliberate, narrow exception to README's "Retrieval never calls the LLM"
@@ -48,8 +51,15 @@ logger = logging.getLogger(__name__)
 
 # Evidence.company_id is a required field, but this evidence isn't about any
 # one company — this stand-in makes that legible in the rendered prompt line
-# ("[FACT] INDIA — Repo Rate 2015: ...") without changing Evidence's shape.
-NATIONAL_LABEL = "INDIA"
+# ("[FACT] INDIA — Repo Rate 2015: ..." / "[FACT] USA — Fed Funds Rate 2015: ...")
+# without changing Evidence's shape. Keyed by macro_observations.source, not
+# a single global constant, since series now come from both India and US
+# sources (config.settings.DEFAULT_SOURCES) — falls back to the source_id
+# itself, uppercased, for any source not listed here rather than mislabeling it.
+_SOURCE_COUNTRY_LABEL = {
+    "rbi": "INDIA", "imd": "INDIA", "iitm": "INDIA", "mospi": "INDIA", "irda": "INDIA", "mfin": "INDIA",
+    "fred": "USA",
+}
 
 MAX_SERIES = 3  # cap how many distinct series one question can pull in
 DEFAULT_YEAR_WINDOW = 50  # how far back to look when the question doesn't say
@@ -58,7 +68,7 @@ _WORD_RE = re.compile(r"[a-z0-9]+")
 _STOPWORDS = {
     "the", "a", "an", "is", "was", "are", "were", "of", "in", "on", "for", "and", "to",
     "what", "how", "does", "did", "do", "has", "have", "had", "over", "last", "past", "years", "year",
-    "india", "indian",  # every series in this app is India-specific — no signal either way
+    "india", "indian", "usa",  # country names carry no series-matching signal on their own
 }
 _MIN_WORD_LEN = 3  # drops noise like the stray "s" apostrophe-splitting leaves from "bank's"
 _LAST_N_YEARS_RE = re.compile(r"(?:last|past)\s+(\d+)\s+years?", re.IGNORECASE)
@@ -91,8 +101,8 @@ _IITM_NON_ANNUAL_SUFFIX_RE = re.compile(
 _DEFAULT_PLANNER_MODEL = "claude-haiku-4-5"
 _PLANNER_MAX_TOKENS = 300
 
-_PLANNER_SYSTEM_PROMPT = """You select which India-wide macro/regulatory data series, if any, are \
-relevant to a research question, and what year range to retrieve.
+_PLANNER_SYSTEM_PROMPT = """You select which macro/regulatory data series (India and US sources), if \
+any, are relevant to a research question, and what year range to retrieve.
 
 You are given a catalog of every available series, one per line, formatted as \
 "<series_key> (<source>, <earliest period>-<latest period>)". Most questions are about a specific \
@@ -263,10 +273,11 @@ def get_macro_evidence(conn: sqlite3.Connection, question: str) -> list[Evidence
             by_year[year] = row
 
         for year, row in sorted(by_year.items()):
+            country_label = _SOURCE_COUNTRY_LABEL.get(row["source"], row["source"].upper())
             evidence.append(
                 Evidence(
                     kind="FACT",
-                    company_id=NATIONAL_LABEL,
+                    company_id=country_label,
                     label=f"{label} {row['period']}",
                     value=f"{row['value']:,.1f} {row['unit']}",
                     citation=f"{row['source'].upper()} ({Path(row['source_file']).name})",

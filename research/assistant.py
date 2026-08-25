@@ -28,14 +28,15 @@ from research.evidence import render_evidence_block
 from research.macro_evidence import get_macro_evidence
 from retrieval.structured_search import get_comparison_evidence
 
-SYSTEM_PROMPT = """You are an equity research assistant for Indian listed companies.
+SYSTEM_PROMPT = """You are an equity research assistant for global listed companies, with a primary \
+focus on US and India markets.
 
 HARD RULE — evidence sources: the evidence block below is built ONLY from three \
 sources: the company's ingested Financials (reported metrics, ratios, YoY/CAGR \
 growth), its uploaded Docs (annual reports, transcripts, investor \
-presentations), and India-wide Macro/regulatory data (RBI, IITM rainfall — \
-labeled with company_id "INDIA" rather than a company ticker, since it isn't \
-about any one company). You must answer using ONLY that evidence block — never from \
+presentations), and Macro/regulatory data for India and the US (RBI, IITM \
+rainfall, FRED — labeled with company_id "INDIA" or "USA" rather than a \
+company ticker, since it isn't about any one company). You must answer using ONLY that evidence block — never from \
 your own training knowledge, never by estimating or guessing a number that \
 isn't in the evidence, and never by inventing a source, document, or figure \
 that isn't present. Do not hallucinate. If the evidence doesn't cover what the \
@@ -78,11 +79,12 @@ def answer_question(
     model: str | None = None,
 ) -> str:
     """Answer a research question about one or more companies, and/or about
-    India-wide macro/regulatory data, grounded in retrieved evidence.
+    macro/regulatory data (India or US), grounded in retrieved evidence.
 
     company_ids may be empty — a question with no company evidence can still
     be answered from Macro evidence alone (e.g. "what was rainfall in India
-    over the last 50 years?"), which is why this isn't rejected upfront.
+    over the last 50 years?" or "what's the Fed funds rate been since 2020?"),
+    which is why this isn't rejected upfront.
 
     Returns a plain-text answer with [FACT]/[CALCULATION]/[MANAGEMENT_STATEMENT]/
     [INFERENCE] tags. Never calls the API if there's no evidence to ground an
@@ -127,7 +129,7 @@ def answer_question(
         # Uploaded-document evidence (Docs tab) only has single-company
         # attribution today — see research/documents.py.
         evidence = evidence + get_document_evidence(conn, company_ids[0], question)  # Docs
-    evidence = evidence + get_macro_evidence(conn, question)  # Macro (RBI, IITM, ...)
+    evidence = evidence + get_macro_evidence(conn, question)  # Macro (RBI, IITM, FRED, ...)
     if not evidence:
         if company_ids:
             return (

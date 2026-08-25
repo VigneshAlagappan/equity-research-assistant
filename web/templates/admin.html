@@ -134,6 +134,7 @@
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'taxonomy' }}" data-panel="taxonomy">Sectors, Industries &amp; Tags</button>
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'columns' }}" data-panel="columns">Company List Columns</button>
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'import' }}" data-panel="import">Import Data</button>
+        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'stock_actions' }}" data-panel="stock_actions">Stock Actions</button>
       </nav>
     </aside>
 
@@ -405,6 +406,107 @@
       <div class="empty-state">No source adapters are registered yet (see <code>ingestion/detector.py</code>'s <code>ADAPTER_CLASSES</code>).</div>
       {% else %}
       <div class="empty-state">No active companies to import into. Register or restore a company first.</div>
+      {% endif %}
+    </div>
+
+    <div class="admin-panel" id="admin-panel-stock_actions" {{ 'hidden' if active_panel != 'stock_actions' }}>
+      <p class="muted">
+        Record discrete stock actions (splits, bonus issues, rights issues) for a company — raw events only for
+        now, kept as an auditable log. Nothing else in the app adjusts historical shares/EPS/price series from
+        these yet.
+      </p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="flash-list">
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
+        <input type="hidden" name="panel" value="stock_actions">
+        <div class="field">
+          <label for="sa-company">Company</label>
+          <select class="input" id="sa-company" name="sa_company_id" onchange="this.form.requestSubmit()">
+            <option value="">Select a company&hellip;</option>
+            {% for c in active_companies %}
+            <option value="{{ c['company_id'] }}" {{ 'selected' if c['company_id'] == stock_action_selected_company }}>{{ c['display_name'] }} ({{ c['company_id'] }})</option>
+            {% endfor %}
+          </select>
+        </div>
+      </form>
+
+      {% if stock_action_selected_company %}
+      {% if stock_actions %}
+      <table class="table" style="margin-top: var(--space-4);">
+        <thead>
+          <tr><th>Date</th><th>Type</th><th>Ratio</th><th>Subscription price</th><th>Source</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for a in stock_actions %}
+          <tr>
+            <td>{{ a['action_date'] }}</td>
+            <td>{{ a['action_type'] }}</td>
+            <td>{{ a['ratio_from']|int if a['ratio_from'] == a['ratio_from']|int else a['ratio_from'] }}
+                : {{ a['ratio_to']|int if a['ratio_to'] == a['ratio_to']|int else a['ratio_to'] }}</td>
+            <td>{{ a['subscription_price'] if a['subscription_price'] is not none else '—' }}</td>
+            <td>{{ a['source'] or '—' }}</td>
+            <td>
+              <form method="post" action="{{ url_for('admin_delete_stock_action', company_id=stock_action_selected_company, action_id=a['action_id']) }}">
+                <button type="submit" class="btn btn-ghost" onclick='return confirm("Delete this stock action?");'>Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">No stock actions recorded yet for {{ stock_action_selected_company }}.</div>
+      {% endif %}
+
+      <form class="import-form" method="post" style="margin-top: var(--space-4);"
+            action="{{ url_for('admin_add_stock_action', company_id=stock_action_selected_company) }}">
+        <div class="field">
+          <label for="sa-action-type">Type</label>
+          <select class="input" id="sa-action-type" name="action_type" required>
+            {% for t in stock_action_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="sa-action-date">Date (ex-date)</label>
+          <input class="input" type="date" id="sa-action-date" name="action_date" required>
+        </div>
+        <div class="field">
+          <label for="sa-ratio-from">Ratio from</label>
+          <input class="input" type="number" step="any" min="0" id="sa-ratio-from" name="ratio_from" value="1" required>
+        </div>
+        <div class="field">
+          <label for="sa-ratio-to">Ratio to</label>
+          <input class="input" type="number" step="any" min="0" id="sa-ratio-to" name="ratio_to" required>
+        </div>
+        <div class="field">
+          <label for="sa-subscription-price">Subscription price (rights only)</label>
+          <input class="input" type="number" step="any" min="0" id="sa-subscription-price" name="subscription_price">
+        </div>
+        <div class="field">
+          <label for="sa-source">Source</label>
+          <input class="input" type="text" id="sa-source" name="source" placeholder="e.g. NSE announcement">
+        </div>
+        <div class="field">
+          <label for="sa-source-url">Source URL</label>
+          <input class="input" type="text" id="sa-source-url" name="source_url">
+        </div>
+        <div class="field">
+          <label for="sa-notes">Notes</label>
+          <input class="input" type="text" id="sa-notes" name="notes">
+        </div>
+        <button type="submit" class="btn btn-primary">Record action</button>
+      </form>
+      {% else %}
+      <div class="empty-state">Select a company above to see or record its stock actions.</div>
       {% endif %}
     </div>
   </div>

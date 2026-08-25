@@ -56,7 +56,14 @@ PARSER_VERSION = "macro-v1-csv"
 #: set only so data/raw/_macro/mfin/ is a recognized path (detect_macro_
 #: source_from_path doesn't reject it) for archiving those PDFs alongside
 #: the other macro sources; nothing calls ingest_macro_file() on them.
-MACRO_SOURCE_IDS = frozenset({"rbi", "imd", "iitm", "mospi", "irda", "mfin"})
+#:
+#: "fred" (sources/fred.py) is the US macro-data source — unlike the others
+#: here it's live-fetched (like sources/yfinance_financials.py), not staged
+#: as a CSV file under data/raw/_macro/fred/, but it still emits the same
+#: MacroNormalizedObservation shape and is included in this set so it
+#: validates the same way (ingestion/validation.py's validate_macro_observation
+#: doesn't branch on source_id at all).
+MACRO_SOURCE_IDS = frozenset({"rbi", "imd", "iitm", "mospi", "irda", "mfin", "fred"})
 
 _ANNUAL_RE = re.compile(r"^\d{4}$")
 _MONTHLY_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
