@@ -43,6 +43,7 @@ import sqlite3
 from neo4j import Driver, GraphDatabase
 
 from config.knowledge_graph_seed import KNOWLEDGE_GRAPH_SEED_EDGES
+from config.knowledge_ontology import RELATIONSHIP_TYPES
 from config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 from context.graph import (
     SECTOR_PEER_STRENGTH,
@@ -208,3 +209,225 @@ def find_related_investigations(driver: Driver, question: str, company_ids: list
         )
 
     return sorted(best.values(), key=lambda c: c.score, reverse=True)[:_MAX_CANDIDATES]
+
+
+# ============================================================
+# Research Knowledge Graph (Step 2B) — projects the Knowledge Builder's
+# (Step 2A) knowledge_entities/knowledge_claims/knowledge_relationships/
+# knowledge_evidence into this same Neo4j graph. A separate concern from
+# find_related_investigations() above (sector-peer generated_reports), but
+# the same graph/driver/database — Company nodes are deliberately SHARED
+# between the two: a knowledge_entities row of type "Company" merges into
+# the exact same (:Company {id: ...}) node _sync_companies() already
+# creates, via the common :KGNode{kg_key} tag every node gets here, rather
+# than creating a second, duplicate Company node. Every non-Company entity
+# gets its own (:Entity {id: entity_id}) node instead, keyed by the SQL
+# primary key (not by name) so two different companies' same-named "Growth"
+# strategy entities never collide.
+# ============================================================
+
+
+def _sync_knowledge_entities(tx, entities: list[sqlite3.Row]) -> None:
+    companies = [
+        {"company_id": e["company_id"]} for e in entities if e["entity_type"] == "Company" and e["company_id"]
+    ]
+    others = [
+        {"id": e["entity_id"], "type": e["entity_type"], "name": e["name"]}
+        for e in entities if e["entity_type"] != "Company"
+    ]
+    if companies:
+        tx.run(
+            "UNWIND $rows AS row "
+            "MERGE (c:Company {id: row.company_id}) "
+            "SET c:KGNode, c.kg_key = 'company:' + row.company_id",
+            rows=companies,
+        )
+    if others:
+        tx.run(
+            "UNWIND $rows AS row "
+            "MERGE (e:Entity {id: row.id}) "
+            "SET e.type = row.type, e.name = row.name, e:KGNode, e.kg_key = 'entity:' + toString(row.id)",
+            rows=others,
+        )
+
+
+def _sync_knowledge_claims(tx, claims: list[sqlite3.Row]) -> None:
+    tx.run(
+        "UNWIND $rows AS row "
+        "MERGE (cl:Claim {id: row.claim_id}) "
+        "SET cl.company_id = row.company_id, cl.document_id = row.document_id, "
+        "    cl.claim_type = row.claim_type, cl.category = row.category, cl.text = row.claim_text, "
+        "    cl.speaker = row.speaker, cl.fiscal_year = row.fiscal_year, cl.quarter = row.quarter, "
+        "    cl.confidence = row.confidence",
+        rows=[
+            {
+                "claim_id": c["claim_id"], "company_id": c["company_id"], "document_id": c["document_id"],
+                "claim_type": c["claim_type"], "category": c["category"], "claim_text": c["claim_text"],
+                "speaker": c["speaker"], "fiscal_year": c["fiscal_year"], "quarter": c["quarter"],
+                "confidence": c["extraction_confidence"],
+            }
+            for c in claims
+        ],
+    )
+    # STATES: the claim's own company asserted it (a coarser but always-
+    # available link than trying to resolve `speaker` to a specific
+    # ManagementPerson entity, which isn't attempted here).
+    tx.run(
+        "UNWIND $rows AS row "
+        "MATCH (co:Company {id: row.company_id}), (cl:Claim {id: row.claim_id}) "
+        "MERGE (co)-[:STATES]->(cl)",
+        rows=[{"company_id": c["company_id"], "claim_id": c["claim_id"]} for c in claims if c["company_id"]],
+    )
+    # VALID_DURING: one TimePeriod node per distinct fiscal_year(+quarter).
+    periods = [
+        {"claim_id": c["claim_id"], "period_key": f"{c['fiscal_year']}-{c['quarter']}" if c["quarter"] else c["fiscal_year"]}
+        for c in claims if c["fiscal_year"]
+    ]
+    if periods:
+        tx.run(
+            "UNWIND $rows AS row "
+            "MERGE (tp:TimePeriod {key: row.period_key}) "
+            "WITH tp, row "
+            "MATCH (cl:Claim {id: row.claim_id}) "
+            "MERGE (cl)-[:VALID_DURING]->(tp)",
+            rows=periods,
+        )
+
+
+def _sync_knowledge_evidence(tx, evidence: list[sqlite3.Row]) -> None:
+    if not evidence:
+        return
+    tx.run(
+        "UNWIND $rows AS row "
+        "MERGE (ev:Evidence {id: row.evidence_id}) "
+        "SET ev.quote = row.quote "
+        "WITH ev, row "
+        "MATCH (cl:Claim {id: row.claim_id}) "
+        "MERGE (cl)-[:SUPPORTED_BY]->(ev)",
+        rows=[{"evidence_id": e["evidence_id"], "claim_id": e["claim_id"], "quote": e["quote"]} for e in evidence],
+    )
+
+
+def _entity_kg_key(entity_by_id: dict[int, sqlite3.Row], entity_id: int) -> str | None:
+    entity = entity_by_id.get(entity_id)
+    if entity is None:
+        return None
+    if entity["entity_type"] == "Company":
+        return f"company:{entity['company_id']}"
+    return f"entity:{entity_id}"
+
+
+def _sync_knowledge_relationships(tx, relationships: list[sqlite3.Row], entity_by_id: dict[int, sqlite3.Row]) -> None:
+    # ABOUT: every entity a claim's relationships touch, so a claim is
+    # findable from any entity it's connected to, not just via the
+    # relationship's own (source, type, target) triple.
+    about_rows = []
+    by_type: dict[str, list[dict]] = {}
+    for r in relationships:
+        source_key = _entity_kg_key(entity_by_id, r["source_entity_id"])
+        target_key = _entity_kg_key(entity_by_id, r["target_entity_id"])
+        if source_key is None or target_key is None or r["relationship_type"] not in RELATIONSHIP_TYPES:
+            continue  # a hallucinated/unresolvable relationship was already dropped at 2A persistence time — defensive only
+        by_type.setdefault(r["relationship_type"], []).append({"source_key": source_key, "target_key": target_key})
+        if r["claim_id"] is not None:
+            about_rows.append({"claim_id": r["claim_id"], "entity_key": source_key})
+            about_rows.append({"claim_id": r["claim_id"], "entity_key": target_key})
+
+    for relationship_type, rows in by_type.items():
+        # relationship_type is validated against RELATIONSHIP_TYPES (a fixed
+        # ~13-value vocabulary, config/knowledge_ontology.py) just above —
+        # safe to interpolate into the Cypher string; Cypher has no
+        # parameter syntax for a relationship TYPE itself.
+        tx.run(
+            f"UNWIND $rows AS row "
+            f"MATCH (s:KGNode {{kg_key: row.source_key}}), (t:KGNode {{kg_key: row.target_key}}) "
+            f"MERGE (s)-[:{relationship_type}]->(t)",
+            rows=rows,
+        )
+    if about_rows:
+        tx.run(
+            "UNWIND $rows AS row "
+            "MATCH (cl:Claim {id: row.claim_id}), (n:KGNode {kg_key: row.entity_key}) "
+            "MERGE (cl)-[:ABOUT]->(n)",
+            rows=about_rows,
+        )
+
+
+def sync_knowledge_graph(conn: sqlite3.Connection, driver: Driver) -> None:
+    """Full, idempotent rebuild of the knowledge-claim graph from SQLite —
+    same "SQLite stays the source of truth, resync before every query"
+    philosophy sync_graph() above already uses, not incremental sync/
+    invalidation logic. Safe to call independently of sync_graph() — Company
+    nodes are MERGEd either way, so whichever sync runs first creates them
+    and the other just adds properties/relationships onto the same node.
+    """
+    entities = conn.execute("SELECT entity_id, entity_type, name, company_id FROM knowledge_entities").fetchall()
+    claims = conn.execute(
+        "SELECT claim_id, document_id, company_id, claim_type, category, claim_text, speaker, "
+        "fiscal_year, quarter, extraction_confidence FROM knowledge_claims"
+    ).fetchall()
+    relationships = conn.execute(
+        "SELECT relationship_id, claim_id, source_entity_id, relationship_type, target_entity_id "
+        "FROM knowledge_relationships"
+    ).fetchall()
+    evidence = conn.execute("SELECT evidence_id, claim_id, document_id, quote FROM knowledge_evidence").fetchall()
+    entity_by_id = {e["entity_id"]: e for e in entities}
+
+    with driver.session() as session:
+        session.execute_write(_sync_knowledge_entities, entities)
+        session.execute_write(_sync_knowledge_claims, claims)
+        session.execute_write(_sync_knowledge_evidence, evidence)
+        session.execute_write(_sync_knowledge_relationships, relationships, entity_by_id)
+
+
+def _query_claims_about_entity(tx, entity_key: str):
+    return list(tx.run(
+        "MATCH (n:KGNode {kg_key: $entity_key})<-[:ABOUT]-(cl:Claim) "
+        "OPTIONAL MATCH (cl)-[:SUPPORTED_BY]->(ev:Evidence) "
+        "OPTIONAL MATCH (cl)-[:ABOUT]->(other:KGNode) WHERE other.kg_key <> $entity_key "
+        "RETURN cl.id AS claim_id, cl.company_id AS company_id, cl.text AS claim_text, "
+        "       cl.claim_type AS claim_type, cl.category AS category, cl.speaker AS speaker, "
+        "       cl.fiscal_year AS fiscal_year, cl.quarter AS quarter, cl.confidence AS confidence, "
+        "       cl.document_id AS document_id, "
+        "       collect(DISTINCT ev.quote) AS evidence_quotes, "
+        "       collect(DISTINCT [coalesce(other.type, 'Company'), coalesce(other.name, other.id)]) AS related_entities",
+        entity_key=entity_key,
+    ))
+
+
+def _query_entity_id_by_name(tx, entity_type: str, entity_name: str):
+    return tx.run(
+        "MATCH (e:Entity {type: $type, name: $name}) RETURN e.id AS id", type=entity_type, name=entity_name
+    ).single()
+
+
+def find_claims_about_entity(driver: Driver, entity_type: str, entity_name: str):
+    """Neo4j-backed implementation of context/knowledge_graph.py's
+    find_claims_about_entity() — same contract and KnowledgeClaimView shape
+    as its SQLite counterpart, Cypher does the "who else is connected to
+    this entity" traversal in one query instead of the SQL path's per-claim
+    follow-up lookups."""
+    from context.knowledge_graph import KnowledgeClaimView
+
+    entity_key = f"company:{entity_name}" if entity_type == "Company" else None
+    if entity_key is None:
+        with driver.session() as session:
+            row = session.execute_read(_query_entity_id_by_name, entity_type, entity_name)
+        if row is None:
+            return []
+        entity_key = f"entity:{row['id']}"
+
+    with driver.session() as session:
+        rows = session.execute_read(_query_claims_about_entity, entity_key)
+
+    return [
+        KnowledgeClaimView(
+            claim_id=row["claim_id"], company_id=row["company_id"], claim_text=row["claim_text"],
+            claim_type=row["claim_type"], category=row["category"], speaker=row["speaker"],
+            fiscal_year=row["fiscal_year"], quarter=row["quarter"], confidence=row["confidence"],
+            document_id=row["document_id"], evidence_quotes=[q for q in row["evidence_quotes"] if q],
+            related_entities=sorted({tuple(pair) for pair in row["related_entities"] if pair[1] is not None}),
+            backend="neo4j",
+        )
+        for row in rows
+    ]

@@ -44,6 +44,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_users_theme_column(conn)
     _migrate_documents_table(conn)
     _migrate_documents_old_fk_references(conn)
+    _migrate_document_chunks_fk_reference(conn)
     _migrate_documents_processing_status_columns(conn)
     _migrate_raw_file_paths_to_repo_relative(conn)
     _migrate_company_notes_updated_at(conn)
@@ -231,13 +232,10 @@ def _migrate_documents_old_fk_references(conn: sqlite3.Connection) -> None:
     can't see a stale FK target); a no-op on any database that never had the
     rename happen at all (fresh installs).
 
-    document_chunks has the exact same stale reference but is left alone
-    here — it's wired to an FTS5 virtual table (document_chunks_fts) with
-    its own internal sync triggers, and nothing writes to document_chunks
-    yet (README: no document pipeline), so there's no live bug to fix there
-    and rebuilding it risks that FTS5 wiring for zero present benefit.
-    Whoever builds the document pipeline will need to touch this table
-    anyway and can fix it then."""
+    document_chunks has the exact same stale reference — fixed separately in
+    _migrate_document_chunks_fk_reference() below, once
+    research/document_chunker.py (Step 2D) became the first thing to ever
+    write to that table and actually hit the bug."""
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='financial_observations'"
     ).fetchone()
@@ -297,6 +295,54 @@ def _migrate_documents_old_fk_references(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE financial_observations_fixed RENAME TO financial_observations")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_obs_lookup ON financial_observations(company_id, metric_key, fiscal_year)")
+
+
+def _migrate_document_chunks_fk_reference(conn: sqlite3.Connection) -> None:
+    """document_chunks has the same stale `REFERENCES documents_old(...)`
+    _migrate_documents_old_fk_references() already fixes for
+    financial_observations (see that function's docstring for the root
+    cause) — left unfixed until now because nothing ever wrote to
+    document_chunks before research/document_chunker.py (Step 2D).
+    Simpler than the financial_observations fix: nothing else holds a live
+    FK reference to document_chunks the way canonical_financials/
+    reconciliation_log do to financial_observations, so no cascading
+    rewrite to guard against — just rebuild under a temp name and rename
+    into place. document_chunks_fts (the FTS5 virtual table) references
+    document_chunks by name, not a real FK — its own stored definition is
+    untouched by this, and resolves correctly against the rebuilt table
+    once it's renamed back to "document_chunks"."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='document_chunks'"
+    ).fetchone()
+    if row is None or "documents_old" not in row["sql"]:
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        """
+        CREATE TABLE document_chunks_fixed (
+          chunk_id INTEGER PRIMARY KEY,
+          document_id INTEGER REFERENCES documents(document_id),
+          company_id TEXT,
+          section_heading TEXT,
+          page_number INTEGER,
+          chunk_index INTEGER,
+          text TEXT NOT NULL,
+          embedding BLOB,
+          created_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO document_chunks_fixed
+        SELECT chunk_id, document_id, company_id, section_heading, page_number, chunk_index, text, embedding, created_at
+        FROM document_chunks
+        """
+    )
+    conn.execute("DROP TABLE document_chunks")
+    conn.execute("ALTER TABLE document_chunks_fixed RENAME TO document_chunks")
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _migrate_documents_processing_status_columns(conn: sqlite3.Connection) -> None:

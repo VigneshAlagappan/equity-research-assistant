@@ -200,3 +200,30 @@ def test_process_all_pending_documents_marks_them_processed(db_conn_with_compani
     assert row["processing_status"] == "processed"
     assert row["processed_at"] is not None
     assert discover_pending_documents(db_conn_with_companies) == 0
+
+
+def test_processing_a_document_also_chunks_and_indexes_it(
+    db_conn_with_companies: sqlite3.Connection, tmp_path: Path, monkeypatch
+) -> None:
+    """Step 2D wiring: processing a document (Step 1's action, now also
+    running Step 2A's extraction) also runs the chunker — "processed"
+    means registered + hashed + knowledge-extracted + indexed."""
+    from tests.test_documents import _make_minimal_pdf
+    from tests.test_knowledge_builder import _VALID_RESPONSE, _install_fake_client
+
+    pdf_path = tmp_path / "report.pdf"
+    _make_minimal_pdf(pdf_path, "Revenue grew twelve percent this quarter")
+    doc = save_company_document(
+        db_conn_with_companies, "HDFCBANK", document_type="annual_report",
+        fiscal_year="FY2024", quarter=None, added_by_user="tester", raw_file_path=str(pdf_path),
+    )
+    _install_fake_client(monkeypatch, _VALID_RESPONSE)
+
+    summary = process_all_pending_documents(db_conn_with_companies)
+
+    assert summary.succeeded == 1
+    assert "chunk(s) indexed" in summary.outcomes[0].detail
+    chunk_count = db_conn_with_companies.execute(
+        "SELECT COUNT(*) AS n FROM document_chunks WHERE document_id = ?", (doc["document_id"],)
+    ).fetchone()["n"]
+    assert chunk_count >= 1

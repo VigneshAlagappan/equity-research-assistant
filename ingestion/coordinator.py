@@ -51,6 +51,7 @@ from ingestion.detector import (
     is_macro_path,
 )
 from ingestion.pipeline import ingest_bank_infrastructure_file, ingest_file, ingest_macro_file
+from research.document_chunker import chunk_and_index_document
 from research.knowledge_builder import KnowledgeExtractionError, extract_document_knowledge
 from storage.database import utcnow_iso
 from storage.repositories import (
@@ -280,12 +281,26 @@ def process_documents(conn, document_ids: list[int]) -> ProcessSummary:
             summary.outcomes.append(ProcessOutcome(document_id, ok=False, detail=str(exc)))
             continue
 
+        # Chunking/indexing (Step 2D) is best-effort on top of an already-
+        # successful extraction — deterministic and low-risk (no LLM call),
+        # but a failure here shouldn't undo a real, already-persisted
+        # knowledge-extraction success. Same graceful-degradation spirit as
+        # the Neo4j/Ollama fallbacks elsewhere in this app.
+        chunk_count = 0
+        try:
+            chunk_count = chunk_and_index_document(conn, row)
+        except Exception:
+            logger.warning("Chunk indexing failed for document %s (extraction still succeeded)", document_id, exc_info=True)
+
         mark_document_processing_status(
             conn, document_id, status="processed", file_hash=file_hash, processed_at=utcnow_iso(), error_message=None
         )
         summary.succeeded += 1
         summary.outcomes.append(
-            ProcessOutcome(document_id, ok=True, detail=f"registered, {extraction.claims_created} claim(s) extracted")
+            ProcessOutcome(
+                document_id, ok=True,
+                detail=f"registered, {extraction.claims_created} claim(s) extracted, {chunk_count} chunk(s) indexed",
+            )
         )
     return summary
 

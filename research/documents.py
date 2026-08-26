@@ -89,8 +89,12 @@ def _select_documents(docs: list[sqlite3.Row], question: str) -> list[sqlite3.Ro
     return matching or docs
 
 
+def _pages_from_reader(reader: PdfReader) -> list[str]:
+    return [page.extract_text() or "" for page in reader.pages]
+
+
 def _text_from_reader(reader: PdfReader) -> str | None:
-    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    text = "\n".join(_pages_from_reader(reader))
     text = text.strip()
     return text or None
 
@@ -137,6 +141,32 @@ def document_text(row: sqlite3.Row) -> str | None:
         return _extract_pdf_text(str(from_repo_relative(row["raw_file_path"])))
     if row["source_url"] and _looks_like_pdf_url(row["source_url"]):
         return _extract_pdf_text_from_url(row["source_url"])
+    return None
+
+
+def document_pages(row: sqlite3.Row) -> list[str] | None:
+    """Same source resolution as document_text() (uploaded file vs. a
+    fetched PDF-looking link), but preserving page boundaries —
+    research/document_chunker.py (Step 2D) uses this to attach a real
+    page_number to each chunk, which the single flattened string
+    document_text() returns can't do. Returns None under the exact same
+    conditions document_text() would (non-PDF, unfetchable link) rather
+    than a list of one flattened page."""
+    if row["raw_file_path"]:
+        if Path(row["raw_file_path"]).suffix.lower() != ".pdf":
+            return None
+        try:
+            return _pages_from_reader(PdfReader(str(from_repo_relative(row["raw_file_path"]))))
+        except (PdfReadError, OSError):
+            return None
+    if row["source_url"] and _looks_like_pdf_url(row["source_url"]):
+        data = _fetch_url_bytes(row["source_url"])
+        if data is None:
+            return None
+        try:
+            return _pages_from_reader(PdfReader(BytesIO(data)))
+        except PdfReadError:
+            return None
     return None
 
 

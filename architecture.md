@@ -9,6 +9,33 @@ For product/feature scope, see [README.md](README.md) and
 [FeatureList.md](FeatureList.md). For running the app, see
 [USER_GUIDE.md](USER_GUIDE.md).
 
+### The four-layer split
+
+The guiding division of responsibility across the whole system, each layer
+answering a different question and never doing another layer's job:
+
+- **SQLite knows the facts** — `canonical_financials`, `macro_observations`,
+  `knowledge_claims`, and everything else under [Data model](#data-model-sqlite-schemassqlite_schemasql)
+  is the one source of truth. Nothing downstream invents a fact SQLite
+  doesn't already have.
+- **The Knowledge Graph knows the relationships** — `context/knowledge_graph.py`
+  / `context/graph_neo4j.py` answer "what is connected to what, when was it
+  true, and what evidence supports that relationship," projected from
+  SQLite, never a second source of truth for the facts themselves (see
+  [Ingestion Coordinator & Knowledge Builder](#ingestion-coordinator--knowledge-builder-admin--ingest)).
+- **The LLM reasons about what they mean** — every call site
+  (`research/assistant.py`, `insights.py`, `signals_report.py`,
+  `knowledge_builder.py`) is handed a compact, pre-computed evidence block
+  and asked to interpret/narrate it, never to fetch or calculate a number
+  itself (see [Key design principles](#key-design-principles) #1 and #3).
+- **The Planner decides what to investigate next** — *not yet built.* The
+  spec's Step 2F (Investigation Planner) and 2E (Hypothesis Generator) would
+  own this — routing an open question to SQLite/the graph/document
+  retrieval and deciding what evidence is still missing. Today that
+  decision is made implicitly, by whichever `research/` call site a route
+  handler invokes; there's no standalone planner yet (see
+  [Known gaps → Ingestion Coordinator, Knowledge Builder & Research Knowledge Graph](#ingestion-coordinator-knowledge-builder--research-knowledge-graph)).
+
 ## Tech stack
 
 | Layer | Choice |
@@ -83,10 +110,11 @@ to reason over it, never to fetch or calculate numbers itself.
 | `normalization/` | Canonicalizes raw labels into the shared metric vocabulary (`financials.py` — also localizes each metric's default unit to the company's `currency`, e.g. `INR_CRORE`→`USD_MILLION`), company identifiers (`companies.py`), fiscal periods (`periods.py` — parametrized by each company's `fiscal_year_end_month`, not a single global calendar), and units/currency (`units.py`). |
 | `financials/` | Deterministic math over `canonical_financials`: YoY/CAGR (`calculations.py`), ROA/ROE/vendor-reported ratios (`ratios.py`), and the human-readable text report (`report.py`) both the CLI's `analyze` command and the LLM evidence retrieval are built from. |
 | `retrieval/` | `structured_search.py` — turns `financials/`'s calculations into typed `Evidence` for the LLM. Retrieval only, no LLM calls. |
-| `research/` | The three LLM call sites: `assistant.py` (Q&A), `insights.py` (Key Insights summaries), `signals_report.py` (full Signals investigation reports) — plus `evidence.py` (the `Evidence`/citation model), `documents.py` (extracts `MANAGEMENT_STATEMENT` evidence from uploaded/linked Docs-tab PDFs), and `macro_evidence.py` (the third evidence source — macro/regulatory data spanning both India and US sources, attributed per-series to `"INDIA"` or `"USA"`; a narrow, deliberate exception to "retrieval never calls the LLM," since an LLM call picks which macro series/date-range apply before the deterministic fetch runs). |
-| `context/` | The **Context Optimizer** — `optimizer.py` (dedup, value-scoring, token-budget compression of an `Evidence` list), `reuse.py` (reuse-before-recompute: returns a fresh, near-duplicate prior investigation instead of a new LLM call — now used by both `research/assistant.py`'s Q&A path and `research/signals_report.py`'s full reports), and `graph.py`/`graph_neo4j.py` (knowledge-graph traversal: surfaces a sector-peer *different* company's relevant prior investigation, via `config/knowledge_graph_seed.py`'s curated domain relationships — pure Python/SQLite by default, or a real Neo4j graph when `GRAPH_BACKEND=neo4j`, with automatic fallback to SQLite if Neo4j isn't reachable). |
+| `research/` | Four LLM call sites: `assistant.py` (Q&A), `insights.py` (Key Insights summaries), `signals_report.py` (full Signals investigation reports), and `knowledge_builder.py` (structured knowledge extraction from a document — its own section below) — plus `evidence.py` (the `Evidence`/citation model), `documents.py` (extracts `MANAGEMENT_STATEMENT` evidence from uploaded/linked Docs-tab PDFs, and exposes `document_text()`, shared with `knowledge_builder.py`), and `macro_evidence.py` (the third evidence source — macro/regulatory data spanning both India and US sources, attributed per-series to `"INDIA"` or `"USA"`; a narrow, deliberate exception to "retrieval never calls the LLM," since an LLM call picks which macro series/date-range apply before the deterministic fetch runs). |
+| `context/` | The **Context Optimizer** — `optimizer.py` (dedup, value-scoring, token-budget compression of an `Evidence` list), `reuse.py` (reuse-before-recompute: returns a fresh, near-duplicate prior investigation instead of a new LLM call — now used by both `research/assistant.py`'s Q&A path and `research/signals_report.py`'s full reports), `graph.py`/`graph_neo4j.py` (sector-peer knowledge-graph traversal: surfaces a *different* company's relevant prior investigation, via `config/knowledge_graph_seed.py`'s curated domain relationships), and `knowledge_graph.py` (Step 2B's Research Knowledge Graph — a distinct, cross-*entity* traversal over the Knowledge Builder's `knowledge_claims`/`knowledge_relationships`, its own section below). Both graphs are pure Python/SQLite by default, or the same real Neo4j instance when `GRAPH_BACKEND=neo4j` (sharing `Company` nodes between the two), with automatic fallback to SQLite if Neo4j isn't reachable. |
 | `llm/` | The **Model Router + Fallback layer** — `hardness.py` (task-complexity classifier), `router.py` (fallback chain across models/providers), `capability_registry.py` (static model metadata; which models are policy-disabled is read from `config/settings.py`'s `DISABLED_MODELS`), `providers/` (Anthropic + local Ollama), `observability.py` (per-call logging/cost tracking). The tier→model policy itself (`TIER_PREFERRED_MODEL`, `TIER_MIN_REASONING_STRENGTH`, `DISABLED_MODELS`) lives in `config/settings.py`, not scattered across these modules — edit that one file to change routing. |
 | `charts/` | matplotlib chart generation for legacy server-rendered PNGs (`financial_charts.py`). |
+| `config/` | `settings.py` (paths, source trust order, LLM/model-tiering policy, repo-relative path helpers), `knowledge_graph_seed.py` (curated sector-peer causal edges — `context/graph.py`'s vocabulary), `knowledge_ontology.py` (the fixed entity/relationship/claim-type vocabulary `research/knowledge_builder.py`'s extraction validates against — a distinct, smaller vocabulary from the graph seed's). |
 | `storage/` | `database.py` (connection + schema init/migrations), `repositories.py` (all SQL — every other module goes through this, nothing else touches sqlite directly). |
 | `schemas/` | `sqlite_schema.sql` — the full DDL. |
 | `scripts/` | One-off bulk-import scripts for the various data workbooks (`scripts/import_*.py`). |
@@ -122,11 +150,122 @@ Every insert is additive — conflicting/duplicate observations are never
 overwritten; `reconciliation_log` records which source won and why, so the
 full provenance trail survives.
 
+### Ingestion Coordinator & Knowledge Builder (Admin → Ingest)
+
+A second entry point into ingestion, alongside the CLI's `ingest` command
+and Admin's Import Data panel — `ingestion/coordinator.py`, surfaced as the
+Admin tab's **Ingest** panel. Where the flow above assumes you already know
+which file to ingest, the coordinator answers "what's sitting unprocessed
+right now?" for both financial/macro files under `data/raw/` and documents
+already added via the Docs tab, tracks their status, and dispatches each to
+the right *existing* pipeline — it introduces no parallel ingestion logic
+of its own.
+
+```
+Admin → Ingest UI
+      │
+      ▼
+ingestion/coordinator.py  — discover (filesystem scan + ingestion/detector.py
+      │                      for files; the documents table itself for docs)
+      │                      → track status (PENDING/NEEDS_REVIEW/PROCESSING/
+      │                      PROCESSED/FAILED, content-hash keyed) → dispatch
+      │
+      ├───────────────────────────┬───────────────────────────────┐
+      ▼                           ▼                                ▼
+ingestion/pipeline.py       documents table                research/knowledge_builder.py
+(ingest_file() /            (processing_status /            — one LLM call per document,
+ ingest_macro_file() /       processed_at /                  extracting structured
+ ingest_bank_infra...())     error_message columns —         knowledge (entities, claims,
+ — the same pipeline the     the row's own identity,         relationships), grounded and
+ CLI/Import Data panel       nothing duplicated)              provenanced, validated against
+ already use, unchanged                                       config/knowledge_ontology.py
+```
+
+- **Idempotent, content-hash tracked** (`ingestion_queue_items`): a sha256
+  of each discovered file is stored alongside its status. An unchanged,
+  already-`PROCESSED` file is never reprocessed on rescan; a changed one is
+  re-flagged `PENDING`; a `FAILED` row keeps its error message until
+  explicitly retried rather than being silently reset by the next scan.
+- **Paths are stored repo-relative**, not absolute (`config/settings.py`'s
+  `to_repo_relative()`/`from_repo_relative()`, used by `ingestion_queue_items`,
+  `documents.raw_file_path`, and `company_note_attachments.raw_file_path`
+  alike) — an absolute path bakes in the repo folder's current name/location
+  and silently breaks every stored reference if the repo is ever renamed or
+  moved (as this one already has been once).
+- **Knowledge Builder** (`research/knowledge_builder.py`) extracts entities,
+  claims, and relationships from one document's text
+  (`research/documents.py::document_text()`, shared with the Q&A evidence
+  path), asking the model for structured JSON — every claim carries its own
+  `claim_type` (FACT/CALCULATION/MANAGEMENT_OPINION/PREDICTION/INFERENCE/
+  CORRELATION/CAUSATION), `category`, `speaker`, fiscal period, an
+  `extraction_confidence`, and a supporting quote. Reuses the same Model
+  Router + Fallback and `llm/observability.py` logging
+  (`task_name="knowledge_extraction"`) every other LLM call site uses — this
+  is a fourth call site alongside Q&A/Insights/Signals, not a separate stack.
+- **Additive, never overwritten**: a new document's claims are always fresh
+  `INSERT`s into `knowledge_claims`, never an `UPDATE` to a prior document's
+  rows — the same discipline `financial_observations` already follows.
+  Entities ARE deduped/shared across documents
+  (`get_or_create_knowledge_entity`, keyed by `(entity_type, name,
+  company_id)`) — the same "Product: iPhone" entity isn't re-created every
+  time a new document mentions it.
+- **A document with no extractable text succeeds with zero claims, not an
+  error** — a non-PDF upload, or a link that doesn't look like a PDF
+  (`document_text()` returning `None`); no LLM call is even attempted, same
+  "absence isn't an error" rule `research/documents.py`'s own evidence path
+  already follows. An extraction that *does* have text but fails (LLM
+  unavailable, response truncated at the token limit, unparseable JSON)
+  marks the document `failed` with the reason recorded — retryable the same
+  way a failed financial file is.
+- **Persisted in plain SQL first** (`knowledge_entities`/`knowledge_claims`/
+  `knowledge_relationships`/`knowledge_evidence`) — projected into the graph
+  by the next section, never the other way around.
+
+### Research Knowledge Graph (`context/knowledge_graph.py`, Step 2B)
+
+Answers a cross-entity, cross-*company* question plain per-company SQL
+doesn't do well: "which claims, from ANY company, are connected to this
+entity?" — e.g. every company's claims touching the `Risk` entity "Interest
+Rate Volatility," not just one company's own. Same backend-choice and
+graceful-degradation shape as `context/graph.py`'s sector-peer traversal:
+SQLite by default (`storage/repositories.py::find_knowledge_claims_about_entity()`,
+a real join, not a stub), a real Neo4j graph when `GRAPH_BACKEND=neo4j`
+(`context/graph_neo4j.py::sync_knowledge_graph()`/`find_claims_about_entity()`),
+with automatic fallback to SQLite if unreachable.
+
+- **Company nodes are shared with the sector-peer graph, not duplicated** —
+  a `knowledge_entities` row of type `Company` merges into the *exact same*
+  `(:Company {id: ...})` node `context/graph_neo4j.py::sync_graph()` already
+  creates for sector-peer relationships, via a common `:KGNode{kg_key}` tag
+  every node gets. Every non-Company entity gets its own `(:Entity {id:
+  entity_id})` node, keyed by the SQL primary key (not by name), so two
+  different companies' same-named "Growth" strategy entities never collide.
+- **Full idempotent resync before every query**, not incremental sync —
+  same philosophy `sync_graph()` already uses for sector-peer data: SQLite
+  stays the source of truth, cheap to fully rebuild at today's scale.
+- **`Claim --VALID_DURING--> TimePeriod`, `Claim --SUPPORTED_BY--> Evidence`,
+  `Claim --ABOUT--> (every entity its relationships touch)`, and `Company
+  --STATES--> Claim`** are added on top of the claim's own extracted
+  relationship (e.g. `MacroFactor --MAY_AFFECT--> Metric`,
+  `Company --EXPOSED_TO--> Risk`) — every graph edge traces back to the
+  claim and evidence quote that asserted it, never invented by the
+  traversal itself.
+- **`STATES` links from the claim's company, not a resolved `ManagementPerson`
+  node** — the spec's own example shows `Management --STATES--> Claim`;
+  today's edge is the coarser but always-available `Company --STATES-->
+  Claim` (a `speaker` string like "CEO" is stored on the `Claim` node
+  itself, not resolved to a specific `ManagementPerson` entity node).
+
 ### Research / AI layer (Context Optimization + Model Routing + Fallback)
 
-This is the layer added to control LLM cost and add resilience. All three LLM
-call sites (`research/assistant.py`, `research/insights.py`,
-`research/signals_report.py`) follow the same pipeline:
+This is the layer added to control LLM cost and add resilience. The three
+Q&A/Insights/Signals call sites (`research/assistant.py`, `research/insights.py`,
+`research/signals_report.py`) follow the same pipeline below — the fourth call
+site, `research/knowledge_builder.py`, deliberately does not: it has no
+Evidence retrieval, no Reuse check, no Context Optimizer pass, and no
+knowledge-graph lookup to make (a document's own text is already everything
+it needs), just a direct call through `llm/router.py`/`llm/observability.py`
+like every other site, described in its own section above.
 
 ```
 Evidence retrieval (retrieval/structured_search.py + research/documents.py)
@@ -219,9 +358,10 @@ Single-file Flask app (`create_app()` factory), organized by feature area:
   `/research/thread/<id>`): the Ask-AI and Signals-investigation entry
   points, calling `research/assistant.py` / `research/signals_report.py`.
 - **Investigations** (`/investigations`): list view over `generated_reports`.
-- **Watchlist**, **Admin** (company metadata edits + raw-file import,
-  the only web-UI path besides Docs uploads that writes ingested data),
-  **Chat** (`/chat`), **Settings** (theme).
+- **Watchlist**, **Admin** (company metadata edits, raw-file import, stock
+  actions, and the Ingest queue — the discovery/processing entry points that
+  write ingested data, alongside Docs-tab uploads), **Chat** (`/chat`),
+  **Settings** (theme).
 - **DB per-request**: `g.db` opened in `before_request`/closed in
   `teardown_appcontext`, via `storage.database.get_connection()`.
 
@@ -254,7 +394,7 @@ endpoints and render/update the DOM directly.
 | `research_thread.html` | A single generated Signals report/thread view. |
 | `investigations.html` | List of all generated reports. |
 | `watchlist.html` | Pinned companies/threads. |
-| `admin.html` | Company metadata editing + raw-file import. |
+| `admin.html` | Company metadata editing, raw-file import, sectors/industries/tags, list-column config, stock actions, and the Ingest queue (pending/needs-review/failed financial files and documents, processing history). |
 | `chat.html` | Freeform chat entry point (`/chat`). |
 | `settings.html` | Theme preference. |
 
@@ -284,14 +424,16 @@ file's header comment.
 
 ## Data model (SQLite, `schemas/sqlite_schema.sql`)
 
-22 tables, grouped by concern:
+32 tables, grouped by concern:
 
 - **Reference data**: `sources` (trust-ranked data providers), `metrics_dictionary`, `metric_aliases`.
-- **Companies**: `companies` (per-company `country`/`currency`/`fiscal_year_end_month`, not global), `company_identifier_history`, `company_index_membership`, `company_list_column_settings`.
-- **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — ~53K rows; MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet).
-- **Documents**: `documents` (Docs-tab uploads/links), `document_chunks` (FTS5-ready, not yet populated — no chunking pipeline exists yet).
+- **Companies**: `companies` (per-company `country`/`currency`/`fiscal_year_end_month`, not global), `company_identifier_history`, `company_index_membership`, `company_list_column_settings`, `stock_actions` (discrete corporate events — splits/bonus/rights issues — recorded as raw events only; no split-adjustment of historical shares/EPS/price series yet), `sectors`/`industries`/`index_definitions` (Admin-editable lookup vocabularies backing the sector/industry/index-tag dropdowns, seeded from whatever's already in use).
+- **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — ~53K rows; MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet), `bank_infrastructure_observations` (RBI's monthly bank×metric ATM/NEFT/RTGS bulletins — a separate shape from `macro_observations`' flat series).
+- **Ingestion tracking**: `ingestion_queue_items` — the Admin → Ingest panel's discovery/status tracking for financial/macro files under `data/raw/` (content-hash keyed); orchestration metadata only, never the source of truth for parsed data itself.
+- **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` (FTS5-ready, not yet populated — no chunking pipeline exists yet, distinct from the Knowledge Builder's structured extraction below).
+- **Knowledge Builder**: `knowledge_entities` (deduped named things — Company/Product/Risk/ManagementPerson/...), `knowledge_claims` (one extracted statement per row, with its own provenance — document, fiscal period, speaker, `claim_type`, confidence — additive, never overwritten), `knowledge_relationships` (typed edges between two entities, optionally traced to the claim that asserted them), `knowledge_evidence` (the supporting quote for one claim). SQLite is the source of truth for all four; `context/knowledge_graph.py`/`context/graph_neo4j.py` (Step 2B) project them into the same Neo4j graph the sector-peer traversal uses, sharing `Company` nodes rather than duplicating them — see [Research Knowledge Graph](#research-knowledge-graph-contextknowledge_graphpy-step-2b).
 - **Research/investigations**: `generated_reports` (persisted Signals reports), `research_thread_evidence`, `research_thread_followups`, `company_insights` (Key Insights history).
-- **LLM observability**: `llm_call_log` — one row per `llm/router.py` call or `context/reuse.py` reuse hit (model/provider, fallback, tokens, cost, context-optimization accounting).
+- **LLM observability**: `llm_call_log` — one row per `llm/router.py` call or `context/reuse.py` reuse hit (model/provider, fallback, tokens, cost, context-optimization accounting) — covers all four LLM call sites, including `research/knowledge_builder.py` (`task_name="knowledge_extraction"`).
 - **User content**: `company_notes`, `company_note_attachments`, `watchlist_items`.
 - **Auth**: `users`.
 
@@ -310,8 +452,12 @@ pre-existing test failure.
 
 ### Data ingestion & sources
 
-- **No automated/recurring ingestion** — every ingest is a manual CLI/Admin-tab
-  run against a single file. No scheduled job, no NSE/BSE filing scraper.
+- **No automated/recurring ingestion** — the Admin → Ingest panel
+  (`ingestion/coordinator.py`) makes *discovering and triggering* ingestion a
+  one-click action instead of hand-typing a CLI command per file, but
+  discovery only runs when that panel is loaded or "Refresh Pending Files"
+  is clicked — there's still no scheduled job, no filesystem watcher, no
+  NSE/BSE filing scraper pushing new files in on its own.
 - **Multi-source reconciliation is unexercised** — `storage/repositories.py`'s
   `reconcile()` generalizes to picking the best of several sources by
   `trust_rank`, but in practice every company today has exactly one active
@@ -353,7 +499,11 @@ pre-existing test failure.
 - **No chunking, no full-text search** — `document_chunks` /
   `document_chunks_fts` exist in the schema (FTS5-ready) but nothing ever
   writes to them; document evidence is extracted straight into the prompt on
-  every call instead.
+  every Q&A call instead. Distinct from the Knowledge Builder
+  (`research/knowledge_builder.py`) added since — that extracts *structured
+  claims* from a document once, persisted to `knowledge_claims`, not a
+  general-purpose chunked/searchable index of the raw text; the two gaps
+  aren't the same thing and neither one closes the other.
 - **No caching of downloaded PDF bytes** — a linked (non-uploaded) document is
   re-fetched over HTTP and re-parsed on every single question that touches it.
 - **No automated document ingestion** — everything in the Docs tab is
@@ -361,6 +511,51 @@ pre-existing test failure.
   pipeline.
 - **No multi-company document attribution** — document evidence only backs
   single-company questions/reports today.
+
+### Ingestion Coordinator, Knowledge Builder & Research Knowledge Graph
+
+- **No chunking for long documents** — a document's text is capped at
+  `MAX_CHARS_FOR_EXTRACTION` (40,000 characters) before being sent to the
+  model; a longer annual report gets its first ~40K characters extracted,
+  not the whole thing. A real multi-pass/chunked extraction is future work,
+  not built.
+- **Entity resolution is name-string matching, not identity resolution** — a
+  real company can end up with two separate `Company`-type entity rows: one
+  from the model naming it in the extracted text (e.g. "SBFC Finance
+  Limited"), one from the `COMPANY` placeholder resolving to the internal
+  `company_id` (e.g. "SBFCFINANCE"). Both rows are individually correct and
+  correctly scoped; they're just not unified into one canonical entity.
+  Worth resolving before anything downstream assumes exactly one `Company`
+  entity per company.
+- **The Research Knowledge Graph (`context/knowledge_graph.py`) only answers
+  single-hop "what's connected to this entity" queries** — real multi-hop
+  reasoning (e.g. "which companies have a claim `ABOUT` a `Risk` that
+  `MAY_AFFECT` a `Metric` another company also has a claim about") isn't
+  built; `find_claims_about_entity()` returns one entity's directly-connected
+  claims and their immediate neighbors, not a chain across several hops.
+  Genuinely graph-shaped multi-hop traversal is future work (2E/2F territory
+  — Hypothesis Generator / Investigation Planner), not attempted here.
+- **Not wired into Q&A or Signals reports yet** — `research/assistant.py`/
+  `signals_report.py` don't query the Research Knowledge Graph at all; a
+  question can't yet be answered from a cross-company claim connection the
+  way it can from `canonical_financials` or a sector-peer investigation.
+  Building that integration point is a later step, not attempted in 2B.
+- **No hypothesis generation, investigation planning, or evidence-backed
+  evaluation** — the Knowledge Builder only extracts and persists what a
+  document already states; it doesn't generate competing hypotheses for an
+  observation, plan what evidence would support/refute one, evaluate a
+  hypothesis's evidence independently, or synthesize/rank hypotheses across
+  sources. None of that reasoning exists yet.
+- **No UI to browse extracted claims** — `knowledge_claims`/
+  `knowledge_entities`/`knowledge_relationships` are real, queryable data
+  (`storage/repositories.py::list_knowledge_claims_for_company()` etc.), but
+  reaching them today means a direct SQL query or that repository function —
+  no company-page tab or Admin view renders them yet.
+- **Knowledge extraction cost isn't broken out from other LLM calls in the
+  UI** — it *is* logged to `llm_call_log` (`task_name="knowledge_extraction"`),
+  so `/admin/usage`'s task breakdown already includes it, but there's no
+  Ingest-queue-specific cost view (e.g. "$X spent processing these N pending
+  documents").
 
 ### Research / AI layer (Context Optimizer + Model Router)
 
@@ -455,7 +650,12 @@ pre-existing test failure.
    entirely between retrieval and the single LLM call.
 4. **Source provenance & reconciliation** — raw observations are never
    overwritten; a trust-ranked reconciliation step decides what's canonical,
-   and that decision is auditable.
+   and that decision is auditable. The same discipline now spans three
+   systems: `financial_observations` (trust-ranked reconciliation),
+   `ingestion_queue_items` (content-hash tracked — an unchanged processed
+   file is never silently reprocessed, a failed one never silently reset),
+   and `knowledge_claims` (every extraction is a fresh, additive row, never
+   an update to a prior document's claims).
 5. **Local-first, self-use** — single SQLite file, no external services
    required beyond the Anthropic API (optional local Ollama fallback), no
    deployment target, admin account seeded automatically.

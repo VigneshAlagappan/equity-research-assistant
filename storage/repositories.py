@@ -9,6 +9,7 @@ and records that decision (and every candidate it considered) separately.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterable
 
@@ -689,6 +690,98 @@ def list_knowledge_claims_for_company(conn: sqlite3.Connection, company_id: str)
     return conn.execute(
         "SELECT * FROM knowledge_claims WHERE company_id = ? ORDER BY fiscal_year, quarter, claim_id",
         (company_id,),
+    ).fetchall()
+
+
+_FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _sanitize_fts_query(query: str) -> str:
+    """FTS5's MATCH syntax treats hyphens/colons/quotes as query operators —
+    an arbitrary user question passed straight through can raise a syntax
+    error instead of just finding nothing. Tokenizing to plain alphanumeric
+    words and double-quoting each one individually keeps every token literal
+    (safe from operator interpretation) while still ANDing across tokens,
+    FTS5's default multi-term behavior — a real multi-word search, not a
+    single rigid phrase match."""
+    tokens = _FTS_TOKEN_RE.findall(query)
+    return " ".join(f'"{t}"' for t in tokens)
+
+
+def replace_document_chunks(conn: sqlite3.Connection, document_id: int, chunks: list[dict]) -> None:
+    """Deletes this document's existing chunks (if it's being reprocessed)
+    and inserts the fresh set. Unlike knowledge_claims, a chunk has no
+    standalone provenance value once superseded — it's a mechanical index
+    over the document's CURRENT text for search, not a historical claim —
+    so replacing it on reprocess is correct here, not a violation of the
+    "never overwrite" rule that governs genuinely historical facts/claims."""
+    now = utcnow_iso()
+    existing_ids = [
+        row["chunk_id"] for row in
+        conn.execute("SELECT chunk_id FROM document_chunks WHERE document_id = ?", (document_id,)).fetchall()
+    ]
+    if existing_ids:
+        conn.executemany("DELETE FROM document_chunks_fts WHERE rowid = ?", [(i,) for i in existing_ids])
+        conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (document_id,))
+    for chunk in chunks:
+        cursor = conn.execute(
+            "INSERT INTO document_chunks (document_id, company_id, page_number, chunk_index, text, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (chunk["document_id"], chunk["company_id"], chunk["page_number"], chunk["chunk_index"], chunk["text"], now),
+        )
+        conn.execute(
+            "INSERT INTO document_chunks_fts (rowid, text) VALUES (?, ?)", (cursor.lastrowid, chunk["text"])
+        )
+    conn.commit()
+
+
+def search_document_chunks(
+    conn: sqlite3.Connection, query: str, *, company_id: str | None = None, limit: int = 10
+) -> list[sqlite3.Row]:
+    """FTS5 keyword search over indexed chunks, joined back to `documents`
+    for full provenance — Step 2D's "every returned passage must retain
+    document, company, date, quarter, page/section, source." Returns []
+    (not an error) for a query with no usable search tokens."""
+    fts_query = _sanitize_fts_query(query)
+    if not fts_query:
+        return []
+    sql = (
+        "SELECT dc.chunk_id, dc.document_id, dc.company_id, dc.page_number, dc.chunk_index, dc.text, "
+        "       d.document_type, d.fiscal_year, d.quarter, d.source, d.published_at, d.retrieved_at "
+        "FROM document_chunks_fts fts "
+        "JOIN document_chunks dc ON dc.chunk_id = fts.rowid "
+        "JOIN documents d ON d.document_id = dc.document_id "
+        "WHERE document_chunks_fts MATCH ?"
+    )
+    params: list[object] = [fts_query]
+    if company_id is not None:
+        sql += " AND dc.company_id = ?"
+        params.append(company_id)
+    sql += " ORDER BY fts.rank LIMIT ?"
+    params.append(limit)
+    return conn.execute(sql, params).fetchall()
+
+
+def list_knowledge_evidence_for_claim(conn: sqlite3.Connection, claim_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM knowledge_evidence WHERE claim_id = ? ORDER BY evidence_id", (claim_id,)
+    ).fetchall()
+
+
+def find_knowledge_claims_about_entity(conn: sqlite3.Connection, entity_type: str, entity_name: str) -> list[sqlite3.Row]:
+    """Every claim (any company) whose extracted relationships touch this
+    entity — the SQLite path for context/knowledge_graph.py's cross-entity
+    query, a real join-based traversal, not a stub."""
+    return conn.execute(
+        """
+        SELECT DISTINCT c.*
+        FROM knowledge_entities e
+        JOIN knowledge_relationships r ON r.source_entity_id = e.entity_id OR r.target_entity_id = e.entity_id
+        JOIN knowledge_claims c ON c.claim_id = r.claim_id
+        WHERE e.entity_type = ? AND e.name = ?
+        ORDER BY c.fiscal_year, c.quarter, c.claim_id
+        """,
+        (entity_type, entity_name),
     ).fetchall()
 
 
