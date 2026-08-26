@@ -31,7 +31,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from config.knowledge_ontology import CLAIM_TYPES, ENTITY_TYPES, RELATIONSHIP_TYPES
-from config.settings import ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL
+from config.settings import ANTHROPIC_MODEL
 from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
@@ -214,7 +214,14 @@ def extract_document_knowledge(
         return KnowledgeExtractionResult()
 
     hardness = fixed(Tier.STANDARD, "document knowledge extraction")
-    pinned_model = model or ANTHROPIC_MODEL or DEFAULT_ANTHROPIC_MODEL
+    # No DEFAULT_ANTHROPIC_MODEL fallback here (unlike research/insights.py/
+    # signals_report.py's deliberate pin, kept for those two specific
+    # pre-existing features to preserve their existing quality bar) —
+    # leaving pinned_model unset when ANTHROPIC_MODEL isn't overridden lets
+    # llm/router.py fall through to TIER_PREFERRED_MODEL[hardness.tier],
+    # respecting the operator's actual configured tiering policy instead of
+    # silently overriding it to sonnet on every one of this module's calls.
+    pinned_model = model or ANTHROPIC_MODEL
     user_message = f"Document text:\n{text[:MAX_CHARS_FOR_EXTRACTION]}"
 
     try:

@@ -610,6 +610,90 @@ def update_ingestion_queue_item_result(
     return get_ingestion_queue_item(conn, item_id)
 
 
+def save_investigation(
+    conn: sqlite3.Connection,
+    *,
+    investigation_id: str,
+    question: str,
+    company_ids: list[str],
+    statement_type: str,
+    strongest_explanation: str | None,
+    unanswered_questions: list[str],
+    additional_evidence_needed: list[str],
+) -> None:
+    conn.execute(
+        "INSERT INTO investigations (investigation_id, question, company_ids, statement_type, "
+        "strongest_explanation, unanswered_questions, additional_evidence_needed, generated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (investigation_id, question, json.dumps(company_ids), statement_type, strongest_explanation,
+         json.dumps(unanswered_questions), json.dumps(additional_evidence_needed), utcnow_iso()),
+    )
+    conn.commit()
+
+
+def save_investigation_hypothesis(
+    conn: sqlite3.Connection,
+    *,
+    hypothesis_id: str,
+    investigation_id: str,
+    statement: str,
+    mechanism: str | None,
+    category: str,
+    rationale: str | None,
+    unknowns: list[str],
+    generation_order: int,
+    verdict: str | None = None,
+    confidence_basis: str | None = None,
+    synthesis_rank: int | None = None,
+) -> None:
+    conn.execute(
+        "INSERT INTO investigation_hypotheses (hypothesis_id, investigation_id, statement, mechanism, "
+        "category, rationale, unknowns, generation_order, verdict, confidence_basis, synthesis_rank, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (hypothesis_id, investigation_id, statement, mechanism, category, rationale, json.dumps(unknowns),
+         generation_order, verdict, confidence_basis, synthesis_rank, utcnow_iso()),
+    )
+    conn.commit()
+
+
+def save_investigation_hypothesis_evidence(
+    conn: sqlite3.Connection, hypothesis_id: str, evidence: list[dict]
+) -> None:
+    """evidence: list of {stance, kind, label, value, citation} dicts —
+    plain dicts, not a dataclass, same reasoning save_report_evidence()
+    already gives for research_thread_evidence."""
+    conn.executemany(
+        "INSERT INTO investigation_hypothesis_evidence (hypothesis_id, stance, kind, label, value, citation) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [(hypothesis_id, e["stance"], e["kind"], e["label"], e.get("value"), e.get("citation")) for e in evidence],
+    )
+    conn.commit()
+
+
+def get_investigation(conn: sqlite3.Connection, investigation_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM investigations WHERE investigation_id = ?", (investigation_id,)
+    ).fetchone()
+
+
+def list_investigations(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM investigations ORDER BY generated_at DESC").fetchall()
+
+
+def list_investigation_hypotheses(conn: sqlite3.Connection, investigation_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM investigation_hypotheses WHERE investigation_id = ? ORDER BY "
+        "CASE WHEN synthesis_rank IS NULL THEN 1 ELSE 0 END, synthesis_rank, generation_order",
+        (investigation_id,),
+    ).fetchall()
+
+
+def list_investigation_hypothesis_evidence(conn: sqlite3.Connection, hypothesis_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM investigation_hypothesis_evidence WHERE hypothesis_id = ? ORDER BY id", (hypothesis_id,)
+    ).fetchall()
+
+
 def get_or_create_knowledge_entity(
     conn: sqlite3.Connection, entity_type: str, name: str, company_id: str | None = None
 ) -> sqlite3.Row:
@@ -698,14 +782,22 @@ _FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 
 def _sanitize_fts_query(query: str) -> str:
     """FTS5's MATCH syntax treats hyphens/colons/quotes as query operators —
-    an arbitrary user question passed straight through can raise a syntax
-    error instead of just finding nothing. Tokenizing to plain alphanumeric
-    words and double-quoting each one individually keeps every token literal
-    (safe from operator interpretation) while still ANDing across tokens,
-    FTS5's default multi-term behavior — a real multi-word search, not a
-    single rigid phrase match."""
+    an arbitrary query passed straight through can raise a syntax error
+    instead of just finding nothing. Tokenizing to plain alphanumeric words
+    and double-quoting each one individually keeps every token literal
+    (safe from operator interpretation).
+
+    OR-joined, not FTS5's default AND — deliberately: a short 2-3 word
+    search phrase is fine either way, but research/investigation_planner.py
+    (Step 2F) composes a much longer blob (a question plus a hypothesis's
+    own statement and mechanism) to search with, and requiring literally
+    every one of those words to co-occur in one small chunk means almost
+    nothing ever matches. OR plus bm25 ranking (search_document_chunks()'s
+    `ORDER BY rank`) already rewards a chunk sharing MORE query terms over
+    one sharing just one, without demanding all of them — a better fit for
+    "where was something *similar* discussed" than a rigid AND would be."""
     tokens = _FTS_TOKEN_RE.findall(query)
-    return " ".join(f'"{t}"' for t in tokens)
+    return " OR ".join(f'"{t}"' for t in tokens)
 
 
 def replace_document_chunks(conn: sqlite3.Connection, document_id: int, chunks: list[dict]) -> None:

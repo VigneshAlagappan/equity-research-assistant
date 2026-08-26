@@ -580,6 +580,55 @@ CREATE TABLE IF NOT EXISTS knowledge_evidence (
 CREATE INDEX IF NOT EXISTS idx_knowledge_evidence_claim ON knowledge_evidence(claim_id);
 
 -- ============================================================
+-- Hypothesis-driven investigations (Steps 2E-2H, research/investigation.py)
+-- -- the full "generate competing hypotheses -> gather evidence -> evaluate
+-- each independently -> rank/synthesize" loop. Distinct from
+-- generated_reports (research/signals_report.py's single narrative report,
+-- Q&A-shaped) -- an investigation is structured around multiple named,
+-- independently-evaluated hypotheses, not one answer. Every table here is
+-- write-once/append-only per investigation, same "never overwrite, the
+-- decision is auditable" discipline as reconciliation_log.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS investigations (
+  investigation_id TEXT PRIMARY KEY,
+  question TEXT NOT NULL,
+  company_ids TEXT NOT NULL,        -- JSON array of company_id
+  statement_type TEXT NOT NULL,
+  strongest_explanation TEXT,       -- Step 2H's synthesis narrative
+  unanswered_questions TEXT,        -- JSON array
+  additional_evidence_needed TEXT,  -- JSON array
+  generated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS investigation_hypotheses (
+  hypothesis_id TEXT PRIMARY KEY,
+  investigation_id TEXT NOT NULL REFERENCES investigations(investigation_id),
+  statement TEXT NOT NULL,
+  mechanism TEXT,
+  category TEXT NOT NULL,     -- financial|operational|competitive|strategic|management|regulatory|macro|industry
+  rationale TEXT,
+  unknowns TEXT,               -- JSON array
+  generation_order INTEGER NOT NULL,  -- the order Step 2E produced them in
+  verdict TEXT,                -- SUPPORTED|PARTIALLY_SUPPORTED|REFUTED|INSUFFICIENT_EVIDENCE (Step 2G)
+  confidence_basis TEXT,       -- Step 2G's own explanation of the verdict
+  synthesis_rank INTEGER,      -- Step 2H's final ranking (1 = strongest); NULL until synthesized
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_investigation_hypotheses_investigation ON investigation_hypotheses(investigation_id);
+
+CREATE TABLE IF NOT EXISTS investigation_hypothesis_evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hypothesis_id TEXT NOT NULL REFERENCES investigation_hypotheses(hypothesis_id),
+  stance TEXT NOT NULL,   -- supporting | contradicting | missing (Step 2G)
+  kind TEXT NOT NULL,     -- FACT|CALCULATION|MANAGEMENT_OPINION|PREDICTION|INFERENCE|CORRELATION|CAUSATION
+  label TEXT NOT NULL,
+  value TEXT,
+  citation TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_investigation_hypothesis_evidence_hypothesis ON investigation_hypothesis_evidence(hypothesis_id);
+
+-- ============================================================
 -- Stock actions (Admin tab) -- discrete corporate events that change a
 -- company's outstanding share count: splits, bonus issues, rights issues.
 -- Raw records only for now -- no split-adjustment of historical shares/EPS/
