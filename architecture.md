@@ -28,13 +28,20 @@ answering a different question and never doing another layer's job:
   `knowledge_builder.py`) is handed a compact, pre-computed evidence block
   and asked to interpret/narrate it, never to fetch or calculate a number
   itself (see [Key design principles](#key-design-principles) #1 and #3).
-- **The Planner decides what to investigate next** — *not yet built.* The
-  spec's Step 2F (Investigation Planner) and 2E (Hypothesis Generator) would
-  own this — routing an open question to SQLite/the graph/document
-  retrieval and deciding what evidence is still missing. Today that
-  decision is made implicitly, by whichever `research/` call site a route
-  handler invokes; there's no standalone planner yet (see
-  [Known gaps → Ingestion Coordinator, Knowledge Builder, Research Knowledge Graph & Document Retrieval](#ingestion-coordinator-knowledge-builder-research-knowledge-graph--document-retrieval)).
+- **The Planner decides what to investigate next** — `research/investigation.py`
+  (Steps 2E-2H: `research/hypothesis_generator.py`, `research/investigation_planner.py`,
+  `research/hypothesis_evaluator.py`, `research/research_synthesis.py`),
+  reachable from the Research tab's "Run structured investigation" button
+  (`/investigate/generate`, `/investigate/<id>`). For a question, it generates
+  several competing hypotheses, routes each to SQL/macro/documents/the graph
+  for evidence, evaluates each hypothesis independently, then ranks and
+  synthesizes — a fixed linear 2E→2F→2G→2H run per investigation, not yet the
+  iterative Planner-controlled evidence-sufficiency loop described in
+  [Known gaps → Ingestion Coordinator, Knowledge Builder, Research Knowledge Graph & Document Retrieval](#ingestion-coordinator-knowledge-builder-research-knowledge-graph--document-retrieval).
+  Every hypothesis, its evidence, verdict, and rank persists to
+  `investigations`/`investigation_hypotheses`/`investigation_hypothesis_evidence`
+  and stays individually queryable — distinct from `research/signals_report.py`'s
+  one-narrative Signals reports.
 
 ## Tech stack
 
@@ -602,19 +609,24 @@ pre-existing test failure.
   `MAY_AFFECT` a `Metric` another company also has a claim about") isn't
   built; `find_claims_about_entity()` returns one entity's directly-connected
   claims and their immediate neighbors, not a chain across several hops.
-  Genuinely graph-shaped multi-hop traversal is future work (2E/2F territory
-  — Hypothesis Generator / Investigation Planner), not attempted here.
+  Genuinely graph-shaped multi-hop traversal is future work, not attempted
+  here — `research/investigation_planner.py` (Step 2F) queries the graph the
+  same single-hop way everything else does.
 - **Not wired into Q&A or Signals reports yet** — `research/assistant.py`/
   `signals_report.py` don't query the Research Knowledge Graph at all; a
   question can't yet be answered from a cross-company claim connection the
   way it can from `canonical_financials` or a sector-peer investigation.
   Building that integration point is a later step, not attempted in 2B.
-- **No hypothesis generation, investigation planning, or evidence-backed
-  evaluation** — the Knowledge Builder only extracts and persists what a
-  document already states; it doesn't generate competing hypotheses for an
-  observation, plan what evidence would support/refute one, evaluate a
-  hypothesis's evidence independently, or synthesize/rank hypotheses across
-  sources. None of that reasoning exists yet.
+- **Investigation Orchestrator (`research/investigation.py`, Steps 2E-2H) is a
+  fixed linear pipeline, not the iterative Planner-controlled loop the
+  guardrails call for** — hypothesis generation (2E) → evidence gathering
+  (2F) → evaluation (2G) → synthesis (2H) runs once per investigation, with
+  no evidence-sufficiency check that loops back for more evidence before
+  synthesizing, and no termination controls (max iterations, cost/token
+  budget, timeout) beyond the single pass. The Knowledge Builder itself still
+  only extracts and persists what a document already states — it's
+  `research/investigation.py` that now does the hypothesis generation/
+  planning/evaluation/synthesis reasoning, not the Knowledge Builder.
 - **No UI to browse extracted claims** — `knowledge_claims`/
   `knowledge_entities`/`knowledge_relationships` are real, queryable data
   (`storage/repositories.py::list_knowledge_claims_for_company()` etc.), but

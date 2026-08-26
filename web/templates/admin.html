@@ -534,7 +534,19 @@
         <button type="submit" class="btn btn-ghost">Refresh Pending Files</button>
       </form>
 
-      <h3>Pending Financial Data ({{ ingest_pending_financial|length }})</h3>
+      <h3>Pending Financial Data ({{ ingest_pending_financial_total }})</h3>
+      <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
+        <input type="hidden" name="panel" value="ingest">
+        <div class="field">
+          <label for="ingest-pf-search">Search</label>
+          <input class="input" type="text" id="ingest-pf-search" name="pf_q" value="{{ ingest_pending_financial_query }}"
+                 placeholder="File, company, source, kind&hellip;" autocomplete="off">
+        </div>
+        <button type="submit" class="btn btn-primary">Search</button>
+        {% if ingest_pending_financial_query %}
+        <a class="btn btn-ghost" href="{{ url_for('admin', panel='ingest') }}">Clear</a>
+        {% endif %}
+      </form>
       {% if ingest_pending_financial %}
       <form method="post" action="{{ url_for('admin_ingest_process') }}">
         <table class="table">
@@ -559,6 +571,26 @@
       <form method="post" action="{{ url_for('admin_ingest_process_all') }}" style="margin-top: var(--space-2);">
         <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
       </form>
+      {% if ingest_pending_financial_total_pages > 1 %}
+      <div class="admin-pagination">
+        <span class="muted">
+          Showing {{ (ingest_pending_financial_page - 1) * ingest_pending_financial_page_size + 1 }}&ndash;{{ (ingest_pending_financial_page - 1) * ingest_pending_financial_page_size + ingest_pending_financial|length }}
+          of {{ ingest_pending_financial_total }}
+        </span>
+        <div class="admin-pagination-links">
+          {% set pf_pagination_args = {'panel': 'ingest', 'pf_q': ingest_pending_financial_query} %}
+          {% if ingest_pending_financial_page > 1 %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', pf_page=ingest_pending_financial_page - 1, **pf_pagination_args) }}">&larr; Previous</a>
+          {% endif %}
+          <span class="muted">Page {{ ingest_pending_financial_page }} of {{ ingest_pending_financial_total_pages }}</span>
+          {% if ingest_pending_financial_page < ingest_pending_financial_total_pages %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', pf_page=ingest_pending_financial_page + 1, **pf_pagination_args) }}">Next &rarr;</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      {% elif ingest_pending_financial_query %}
+      <div class="empty-state">No pending items match &ldquo;{{ ingest_pending_financial_query }}&rdquo;.</div>
       {% else %}
       <div class="empty-state">Nothing pending.</div>
       {% endif %}
@@ -602,7 +634,19 @@
       <div class="empty-state">No failed items.</div>
       {% endif %}
 
-      <h3 style="margin-top: var(--space-6);">Pending Documents ({{ ingest_pending_documents|length }})</h3>
+      <h3 style="margin-top: var(--space-6);">Pending Documents ({{ ingest_pending_documents_total }})</h3>
+      <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
+        <input type="hidden" name="panel" value="ingest">
+        <div class="field">
+          <label for="ingest-doc-search">Search</label>
+          <input class="input" type="text" id="ingest-doc-search" name="doc_q" value="{{ ingest_pending_documents_query }}"
+                 placeholder="Company, type, fiscal year, quarter&hellip;" autocomplete="off">
+        </div>
+        <button type="submit" class="btn btn-primary">Search</button>
+        {% if ingest_pending_documents_query %}
+        <a class="btn btn-ghost" href="{{ url_for('admin', panel='ingest') }}">Clear</a>
+        {% endif %}
+      </form>
       {% if ingest_pending_documents %}
       <form method="post" action="{{ url_for('admin_ingest_process_documents') }}">
         <table class="table">
@@ -626,6 +670,26 @@
       <form method="post" action="{{ url_for('admin_ingest_process_all_documents') }}" style="margin-top: var(--space-2);">
         <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
       </form>
+      {% if ingest_pending_documents_total_pages > 1 %}
+      <div class="admin-pagination">
+        <span class="muted">
+          Showing {{ (ingest_pending_documents_page - 1) * ingest_pending_documents_page_size + 1 }}&ndash;{{ (ingest_pending_documents_page - 1) * ingest_pending_documents_page_size + ingest_pending_documents|length }}
+          of {{ ingest_pending_documents_total }}
+        </span>
+        <div class="admin-pagination-links">
+          {% set doc_pagination_args = {'panel': 'ingest', 'doc_q': ingest_pending_documents_query} %}
+          {% if ingest_pending_documents_page > 1 %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', doc_page=ingest_pending_documents_page - 1, **doc_pagination_args) }}">&larr; Previous</a>
+          {% endif %}
+          <span class="muted">Page {{ ingest_pending_documents_page }} of {{ ingest_pending_documents_total_pages }}</span>
+          {% if ingest_pending_documents_page < ingest_pending_documents_total_pages %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', doc_page=ingest_pending_documents_page + 1, **doc_pagination_args) }}">Next &rarr;</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      {% elif ingest_pending_documents_query %}
+      <div class="empty-state">No pending documents match &ldquo;{{ ingest_pending_documents_query }}&rdquo;.</div>
       {% else %}
       <div class="empty-state">No pending documents.</div>
       {% endif %}

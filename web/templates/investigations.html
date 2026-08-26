@@ -44,4 +44,21 @@
   {% else %}
   <div class="empty-state">No investigations yet. Start one from the Research tab.</div>
   {% endif %}
+
+  {% if structured_investigations %}
+  <h3 style="margin-top: var(--space-6);">Structured investigations</h3>
+  <p class="muted">Competing hypotheses, each independently evaluated against its own evidence and ranked —
+    "Run structured investigation" from the Research tab.</p>
+  <div class="investigations-list">
+    {% for inv in structured_investigations %}
+    <a class="card elev-sm investigation-row" href="{{ url_for('investigate_view', investigation_id=inv.investigation_id) }}">
+      <div class="investigation-top-row">
+        <div class="card-kicker">{{ inv.company_ids|join(', ') if inv.company_ids else 'Macro/regulatory' }}</div>
+        <span class="tag tag-outline">{{ inv.generated_at }}</span>
+      </div>
+      <div class="card-title">{{ inv.question }}</div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
 {% endblock %}

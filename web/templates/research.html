@@ -352,6 +352,13 @@
       reportButton.addEventListener('click', () => generateFullReport(data.question, data.company_ids, reportButton));
       resultEl.appendChild(reportButton);
 
+      const investigationButton = document.createElement('button');
+      investigationButton.type = 'button';
+      investigationButton.className = 'btn btn-ghost';
+      investigationButton.textContent = 'Run structured investigation →';
+      investigationButton.addEventListener('click', () => generateInvestigation(data.question, data.company_ids, investigationButton));
+      resultEl.appendChild(investigationButton);
+
       resultEl.classList.add('is-visible');
       resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
@@ -364,6 +371,36 @@
       status.textContent = 'Generating full report…';
       try {
         const response = await fetch('/research/thread/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: question,
+            company_ids: companyIds,
+            statement_type: 'consolidated',
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          status.textContent = data.error || 'Something went wrong.';
+          triggerButton.disabled = false;
+          return;
+        }
+        window.location.href = data.url;
+      } catch (err) {
+        status.textContent = 'Network error: ' + err.message;
+        triggerButton.disabled = false;
+      }
+    }
+
+    // Runs the Steps 2E-2H hypothesis-driven investigation
+    // (research/investigation.py) instead of one narrative report — several
+    // competing hypotheses, each independently evaluated against its own
+    // evidence, ranked and synthesized, with its own /investigate/<id> page.
+    async function generateInvestigation(question, companyIds, triggerButton) {
+      triggerButton.disabled = true;
+      status.textContent = 'Running investigation — generating hypotheses, gathering evidence, evaluating each one…';
+      try {
+        const response = await fetch('/investigate/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

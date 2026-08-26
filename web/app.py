@@ -58,6 +58,7 @@ from ingestion.detector import ADAPTER_CLASSES
 from ingestion.pipeline import ingest_file
 from research.assistant import answer_question
 from research.insights import NoDataToSummarizeError, generate_key_insights
+from research.investigation import InvestigationError, run_investigation
 from research.signals_report import extract_report_meta, generate_signals_report
 from storage.database import init_db
 from storage.repositories import (
@@ -85,6 +86,7 @@ from storage.repositories import (
     get_company_list_column_settings,
     get_all_company_index_tags,
     get_generated_report,
+    get_investigation,
     get_llm_usage_summary,
     get_user_by_email,
     get_user_by_id,
@@ -97,6 +99,9 @@ from storage.repositories import (
     list_index_definitions,
     list_industries,
     list_ingestion_queue_items,
+    list_investigation_hypotheses,
+    list_investigation_hypothesis_evidence,
+    list_investigations,
     list_llm_call_log,
     list_note_attachments_for_company,
     list_report_evidence,
@@ -445,20 +450,82 @@ def create_app() -> Flask:
         return value or None
 
     ADMIN_COMPANIES_PAGE_SIZE = 50
+    ADMIN_INGEST_PAGE_SIZE = 50
+
+    def _paginate(rows: list, *, query: str, haystack_fn, page_arg: str, page_size: int) -> dict:
+        """Shared search+pagination for one Ingest sub-table — same
+        filter-then-slice approach the Companies panel above already uses
+        (rows here are at most a few hundred, so Python-side filtering is
+        fine; no need for SQL-side search)."""
+        filtered = rows
+        if query:
+            tokens = query.lower().split()
+            filtered = [r for r in filtered if all(t in haystack_fn(r) for t in tokens)]
+        total = len(filtered)
+        total_pages = max(1, -(-total // page_size))
+        page = max(1, min(request.args.get(page_arg, 1, type=int) or 1, total_pages))
+        start = (page - 1) * page_size
+        return {
+            "rows": filtered[start:start + page_size],
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+            "page_size": page_size,
+        }
 
     def _ingest_panel_context(db) -> dict:
         """Only computed when the Ingest panel is actually being viewed —
         discover_pending_financial_items() walks the whole data/raw/ tree,
         which is wasted work on every /admin load otherwise (same reasoning
         the Companies panel's own pagination comment already gives for not
-        materializing everything unconditionally)."""
+        materializing everything unconditionally).
+
+        Pending Financial Data and Pending Documents are the two sub-tables
+        that actually grow large in practice (hundreds of rows from a
+        data/raw/ rescan or a bulk document drop) — search+pagination is
+        added only to those two, mirroring the Companies panel's own
+        query-param convention (distinct param names so both can be paged
+        independently on the same page load)."""
         discover_pending_financial_items(db)
+
+        pf_query = (request.args.get("pf_q") or "").strip()
+        pf = _paginate(
+            list_ingestion_queue_items(db, status="PENDING"),
+            query=pf_query,
+            haystack_fn=lambda r: " ".join(
+                filter(None, [r["file_path"], r["company_id"], r["source_id"], r["item_kind"]])
+            ).lower(),
+            page_arg="pf_page",
+            page_size=ADMIN_INGEST_PAGE_SIZE,
+        )
+
+        doc_query = (request.args.get("doc_q") or "").strip()
+        doc = _paginate(
+            list_documents_by_status(db, "pending"),
+            query=doc_query,
+            haystack_fn=lambda r: " ".join(
+                filter(None, [r["company_id"], r["document_type"], r["fiscal_year"], r["quarter"]])
+            ).lower(),
+            page_arg="doc_page",
+            page_size=ADMIN_INGEST_PAGE_SIZE,
+        )
+
         return {
-            "ingest_pending_financial": list_ingestion_queue_items(db, status="PENDING"),
+            "ingest_pending_financial": pf["rows"],
+            "ingest_pending_financial_total": pf["total"],
+            "ingest_pending_financial_page": pf["page"],
+            "ingest_pending_financial_total_pages": pf["total_pages"],
+            "ingest_pending_financial_page_size": pf["page_size"],
+            "ingest_pending_financial_query": pf_query,
             "ingest_needs_review": list_ingestion_queue_items(db, status="NEEDS_REVIEW"),
             "ingest_failed": list_ingestion_queue_items(db, status="FAILED"),
             "ingest_processed": list_ingestion_queue_items(db, status="PROCESSED")[:50],
-            "ingest_pending_documents": list_documents_by_status(db, "pending"),
+            "ingest_pending_documents": doc["rows"],
+            "ingest_pending_documents_total": doc["total"],
+            "ingest_pending_documents_page": doc["page"],
+            "ingest_pending_documents_total_pages": doc["total_pages"],
+            "ingest_pending_documents_page_size": doc["page_size"],
+            "ingest_pending_documents_query": doc_query,
             "ingest_failed_documents": list_documents_by_status(db, "failed"),
         }
 
@@ -1530,6 +1597,76 @@ def create_app() -> Flask:
         remove_watchlist_item(db, "thread", thread_id)
         return jsonify(ok=True)
 
+    @app.route("/investigate/generate", methods=["POST"])
+    def investigate_generate():
+        """Run the Steps 2E-2H hypothesis-driven investigation
+        (research/investigation.py::run_investigation) for a question:
+        generate competing hypotheses, gather evidence for each, evaluate
+        each independently, then rank/synthesize. Distinct from
+        /research/thread/generate's single-narrative Signals report — this
+        persists several individually-evaluated hypotheses
+        (investigations/investigation_hypotheses/investigation_hypothesis_evidence),
+        not one markdown blob, with its own /investigate/<id> view."""
+        payload = request.get_json(silent=True) or {}
+        question = (payload.get("question") or "").strip()
+        company_ids = payload.get("company_ids") or []
+        statement_type = payload.get("statement_type", "consolidated")
+
+        if not ANTHROPIC_API_KEY_SET:
+            return jsonify(error="ANTHROPIC_API_KEY is not set on the server — the assistant can't run."), 503
+        if not question:
+            return jsonify(error="Ask a question first."), 400
+        if statement_type not in ("consolidated", "standalone"):
+            return jsonify(error="statement_type must be 'consolidated' or 'standalone'"), 400
+
+        db = get_db()
+        for company_id in company_ids:
+            if get_company(db, company_id) is None:
+                return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
+
+        try:
+            investigation = run_investigation(db, question, company_ids, statement_type=statement_type)
+        except InvestigationError as exc:
+            return jsonify(error=f"The investigation couldn't complete: {exc}"), 502
+        except anthropic.APIError as exc:
+            return jsonify(error=f"The assistant request failed: {exc}"), 502
+
+        return jsonify(
+            investigation_id=investigation.investigation_id,
+            url=url_for("investigate_view", investigation_id=investigation.investigation_id),
+        )
+
+    @app.route("/investigate/<investigation_id>")
+    def investigate_view(investigation_id: str):
+        db = get_db()
+        investigation = get_investigation(db, investigation_id)
+        if investigation is None:
+            abort(404, f"No investigation with id={investigation_id!r}")
+
+        hypotheses = []
+        for h in list_investigation_hypotheses(db, investigation_id):
+            evidence = [dict(e) for e in list_investigation_hypothesis_evidence(db, h["hypothesis_id"])]
+            hypotheses.append(
+                {
+                    **dict(h),
+                    "unknowns": json.loads(h["unknowns"] or "[]"),
+                    "supporting_evidence": [e for e in evidence if e["stance"] == "supporting"],
+                    "contradicting_evidence": [e for e in evidence if e["stance"] == "contradicting"],
+                    "missing_evidence": [e for e in evidence if e["stance"] == "missing"],
+                }
+            )
+
+        return render_template(
+            "investigation.html",
+            investigation={
+                **dict(investigation),
+                "company_ids": json.loads(investigation["company_ids"] or "[]"),
+                "unanswered_questions": json.loads(investigation["unanswered_questions"] or "[]"),
+                "additional_evidence_needed": json.loads(investigation["additional_evidence_needed"] or "[]"),
+            },
+            hypotheses=hypotheses,
+        )
+
     @app.route("/investigations")
     def investigations():
         example_threads = [
@@ -1562,7 +1699,20 @@ def create_app() -> Flask:
                 }
             )
 
-        return render_template("investigations.html", threads=generated_threads + example_threads)
+        structured_investigations = [
+            {
+                "investigation_id": inv["investigation_id"],
+                "question": inv["question"],
+                "company_ids": json.loads(inv["company_ids"] or "[]"),
+                "generated_at": inv["generated_at"],
+            }
+            for inv in list_investigations(get_db())
+        ]
+
+        return render_template(
+            "investigations.html", threads=generated_threads + example_threads,
+            structured_investigations=structured_investigations,
+        )
 
     @app.route("/watchlist")
     def watchlist():
