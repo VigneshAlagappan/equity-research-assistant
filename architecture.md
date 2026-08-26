@@ -34,7 +34,7 @@ answering a different question and never doing another layer's job:
   retrieval and deciding what evidence is still missing. Today that
   decision is made implicitly, by whichever `research/` call site a route
   handler invokes; there's no standalone planner yet (see
-  [Known gaps → Ingestion Coordinator, Knowledge Builder & Research Knowledge Graph](#ingestion-coordinator-knowledge-builder--research-knowledge-graph)).
+  [Known gaps → Ingestion Coordinator, Knowledge Builder, Research Knowledge Graph & Document Retrieval](#ingestion-coordinator-knowledge-builder-research-knowledge-graph--document-retrieval)).
 
 ## Tech stack
 
@@ -109,12 +109,12 @@ to reason over it, never to fetch or calculate numbers itself.
 | `sources/` | Source adapters — one per data provider. Company financials: `screener.py` (India, Screener.in exports), `yfinance_financials.py` (US and other non-Indian tickers, live-fetched via Yahoo Finance), `proprietary.py` (hand-prepared workbooks). Non-company macro data: `macro.py`'s generic CSV convention (India: `rbi`/`imd`/`iitm`/`mospi`/`irda`), source-specific parsers for shapes that don't fit it (`rbi_indicators.py`/`rbi_dbie_tables.py`/`rbi_bank_infrastructure.py`, `iitm_rainfall.py`), and `fred.py` (US — FRED, live-fetched, the US counterpart to the RBI/IMD/IITM adapters). Each turns a raw file/API response into `NormalizedObservation`/`MacroNormalizedObservation` rows. |
 | `normalization/` | Canonicalizes raw labels into the shared metric vocabulary (`financials.py` — also localizes each metric's default unit to the company's `currency`, e.g. `INR_CRORE`→`USD_MILLION`), company identifiers (`companies.py`), fiscal periods (`periods.py` — parametrized by each company's `fiscal_year_end_month`, not a single global calendar), and units/currency (`units.py`). |
 | `financials/` | Deterministic math over `canonical_financials`: YoY/CAGR (`calculations.py`), ROA/ROE/vendor-reported ratios (`ratios.py`), and the human-readable text report (`report.py`) both the CLI's `analyze` command and the LLM evidence retrieval are built from. |
-| `retrieval/` | `structured_search.py` — turns `financials/`'s calculations into typed `Evidence` for the LLM. Retrieval only, no LLM calls. |
-| `research/` | Four LLM call sites: `assistant.py` (Q&A), `insights.py` (Key Insights summaries), `signals_report.py` (full Signals investigation reports), and `knowledge_builder.py` (structured knowledge extraction from a document — its own section below) — plus `evidence.py` (the `Evidence`/citation model), `documents.py` (extracts `MANAGEMENT_STATEMENT` evidence from uploaded/linked Docs-tab PDFs, and exposes `document_text()`, shared with `knowledge_builder.py`), and `macro_evidence.py` (the third evidence source — macro/regulatory data spanning both India and US sources, attributed per-series to `"INDIA"` or `"USA"`; a narrow, deliberate exception to "retrieval never calls the LLM," since an LLM call picks which macro series/date-range apply before the deterministic fetch runs). |
+| `retrieval/` | `structured_search.py` — turns `financials/`'s calculations into typed `Evidence` for the LLM. `document_search.py` (Step 2D) — FTS5 keyword search over `research/document_chunker.py`'s indexed chunks, returning typed `DocumentPassage` results. Retrieval only, no LLM calls, in both. |
+| `research/` | Four LLM call sites: `assistant.py` (Q&A), `insights.py` (Key Insights summaries), `signals_report.py` (full Signals investigation reports), and `knowledge_builder.py` (structured knowledge extraction from a document — its own section below) — plus `evidence.py` (the `Evidence`/citation model), `documents.py` (extracts `MANAGEMENT_STATEMENT` evidence from uploaded/linked Docs-tab PDFs, and exposes `document_text()`/`document_pages()`, shared with `knowledge_builder.py`/`document_chunker.py`), `document_chunker.py` (Step 2D — no LLM call, purely mechanical page-scoped chunking + FTS5 indexing), and `macro_evidence.py` (the third evidence source — macro/regulatory data spanning both India and US sources, attributed per-series to `"INDIA"` or `"USA"`; a narrow, deliberate exception to "retrieval never calls the LLM," since an LLM call picks which macro series/date-range apply before the deterministic fetch runs). |
 | `context/` | The **Context Optimizer** — `optimizer.py` (dedup, value-scoring, token-budget compression of an `Evidence` list), `reuse.py` (reuse-before-recompute: returns a fresh, near-duplicate prior investigation instead of a new LLM call — now used by both `research/assistant.py`'s Q&A path and `research/signals_report.py`'s full reports), `graph.py`/`graph_neo4j.py` (sector-peer knowledge-graph traversal: surfaces a *different* company's relevant prior investigation, via `config/knowledge_graph_seed.py`'s curated domain relationships), and `knowledge_graph.py` (Step 2B's Research Knowledge Graph — a distinct, cross-*entity* traversal over the Knowledge Builder's `knowledge_claims`/`knowledge_relationships`, its own section below). Both graphs are pure Python/SQLite by default, or the same real Neo4j instance when `GRAPH_BACKEND=neo4j` (sharing `Company` nodes between the two), with automatic fallback to SQLite if Neo4j isn't reachable. |
 | `llm/` | The **Model Router + Fallback layer** — `hardness.py` (task-complexity classifier), `router.py` (fallback chain across models/providers), `capability_registry.py` (static model metadata; which models are policy-disabled is read from `config/settings.py`'s `DISABLED_MODELS`), `providers/` (Anthropic + local Ollama), `observability.py` (per-call logging/cost tracking). The tier→model policy itself (`TIER_PREFERRED_MODEL`, `TIER_MIN_REASONING_STRENGTH`, `DISABLED_MODELS`) lives in `config/settings.py`, not scattered across these modules — edit that one file to change routing. |
 | `charts/` | matplotlib chart generation for legacy server-rendered PNGs (`financial_charts.py`). |
-| `config/` | `settings.py` (paths, source trust order, LLM/model-tiering policy, repo-relative path helpers), `knowledge_graph_seed.py` (curated sector-peer causal edges — `context/graph.py`'s vocabulary), `knowledge_ontology.py` (the fixed entity/relationship/claim-type vocabulary `research/knowledge_builder.py`'s extraction validates against — a distinct, smaller vocabulary from the graph seed's). |
+| `config/` | `settings.py` (paths, source trust order, LLM/model-tiering policy, repo-relative path helpers), `knowledge_graph_seed.py` (curated sector-peer causal edges — `context/graph.py`'s vocabulary), `knowledge_ontology.py` (Step 2C — the fixed `ENTITY_TYPES`/`RELATIONSHIP_TYPES`/`CLAIM_TYPES` vocabulary `research/knowledge_builder.py`'s extraction validates against, kept distinct from `STRUCTURAL_NODE_TYPES` — Claim/Evidence/Document/TimePeriod, never something the model extracts by name — plus `CANONICAL_HOME`, an explicit map of which subsystem owns each concept's real value). |
 | `storage/` | `database.py` (connection + schema init/migrations), `repositories.py` (all SQL — every other module goes through this, nothing else touches sqlite directly). |
 | `schemas/` | `sqlite_schema.sql` — the full DDL. |
 | `scripts/` | One-off bulk-import scripts for the various data workbooks (`scripts/import_*.py`). |
@@ -255,6 +255,66 @@ with automatic fallback to SQLite if unreachable.
   today's edge is the coarser but always-available `Company --STATES-->
   Claim` (a `speaker` string like "CEO" is stored on the `Claim` node
   itself, not resolved to a specific `ManagementPerson` entity node).
+
+### Document Retrieval (`retrieval/document_search.py`, Step 2D)
+
+Answers a different question from the Knowledge Builder/Research Knowledge
+Graph above: not "what structured claim did this document make" but "where
+was something *similar* discussed?" — a keyword-relevance search over the
+document's own raw text, for when what's needed is the passage itself, not
+an LLM's summary of it.
+
+```
+documents table (raw_file_path / source_url)
+      │
+      ▼
+research/documents.py::document_pages()      — same PDF/link resolution as
+      │                                         document_text(), but keeping
+      │                                         page boundaries intact
+      ▼
+research/document_chunker.py                 — fixed-size, page-scoped
+      │  chunk_and_index_document()             chunks (1500 chars, 150
+      │                                         overlap) — no LLM call,
+      │                                         purely mechanical
+      ▼
+document_chunks (+ document_chunks_fts, FTS5) — SQLite is the search index
+      │                                          itself here, not just the
+      │                                          source of truth for it
+      ▼
+retrieval/document_search.py::search_documents()  — FTS5 MATCH, ranked by
+                                                     bm25 (`ORDER BY rank`),
+                                                     optionally scoped to
+                                                     one company
+```
+
+- **FTS5 keyword search, not embeddings/vector search** — the spec allows
+  either "FTS/vector representation"; `document_chunks_fts` had sat in the
+  schema unpopulated since it was first written (`document_chunks.embedding`
+  stays `NULL` on every row), and FTS5 needs no new dependency or paid
+  embeddings API, matching [Key design principles](#key-design-principles)
+  #5 (local-first, no external services beyond the LLM API). A real semantic
+  layer, if ever added, would be additive on top of this, not a rewrite.
+- **Query sanitization**: raw user input is tokenized to plain alphanumeric
+  words and each one individually double-quoted before hitting FTS5's
+  `MATCH` (`storage/repositories.py::_sanitize_fts_query()`) — FTS5 treats
+  hyphens/colons/quotes as query operators, so an arbitrary question passed
+  straight through can raise a syntax error instead of just finding
+  nothing; sanitizing keeps every token literal while still ANDing across
+  them (FTS5's default multi-term behavior).
+- **Chunking runs as part of "processing" a document** (Ingest queue →
+  `ingestion/coordinator.py::process_documents()`, alongside Step 2A's
+  extraction) — best-effort: a chunking failure is logged but never undoes
+  an already-successful knowledge extraction, same graceful-degradation
+  spirit as the Neo4j/Ollama fallbacks elsewhere. Re-processing a document
+  *replaces* its chunks rather than accumulating duplicates — unlike
+  `knowledge_claims`, a chunk is a mechanical index over the document's
+  *current* text, not a historical claim, so there's no provenance reason
+  to keep a stale chunk set around.
+- **Deliberately not wired into Q&A or Signals reports** — same
+  "don't replace structured SQL retrieval, and don't attempt later phases
+  prematurely" restraint as Step 2B's graph: a standalone retrieval
+  capability today, not (yet) a fourth evidence source alongside
+  Financials/Docs/Macro in `research/assistant.py`'s `SYSTEM_PROMPT`.
 
 ### Research / AI layer (Context Optimization + Model Routing + Fallback)
 
@@ -430,7 +490,7 @@ file's header comment.
 - **Companies**: `companies` (per-company `country`/`currency`/`fiscal_year_end_month`, not global), `company_identifier_history`, `company_index_membership`, `company_list_column_settings`, `stock_actions` (discrete corporate events — splits/bonus/rights issues — recorded as raw events only; no split-adjustment of historical shares/EPS/price series yet), `sectors`/`industries`/`index_definitions` (Admin-editable lookup vocabularies backing the sector/industry/index-tag dropdowns, seeded from whatever's already in use).
 - **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — ~53K rows; MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet), `bank_infrastructure_observations` (RBI's monthly bank×metric ATM/NEFT/RTGS bulletins — a separate shape from `macro_observations`' flat series).
 - **Ingestion tracking**: `ingestion_queue_items` — the Admin → Ingest panel's discovery/status tracking for financial/macro files under `data/raw/` (content-hash keyed); orchestration metadata only, never the source of truth for parsed data itself.
-- **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` (FTS5-ready, not yet populated — no chunking pipeline exists yet, distinct from the Knowledge Builder's structured extraction below).
+- **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` + `document_chunks_fts` (Step 2D — page-scoped chunks, FTS5-indexed by `research/document_chunker.py`; `embedding` stays `NULL` on every row, keyword search only, no vector layer — see [Document Retrieval](#document-retrieval-retrievaldocument_searchpy-step-2d)).
 - **Knowledge Builder**: `knowledge_entities` (deduped named things — Company/Product/Risk/ManagementPerson/...), `knowledge_claims` (one extracted statement per row, with its own provenance — document, fiscal period, speaker, `claim_type`, confidence — additive, never overwritten), `knowledge_relationships` (typed edges between two entities, optionally traced to the claim that asserted them), `knowledge_evidence` (the supporting quote for one claim). SQLite is the source of truth for all four; `context/knowledge_graph.py`/`context/graph_neo4j.py` (Step 2B) project them into the same Neo4j graph the sector-peer traversal uses, sharing `Company` nodes rather than duplicating them — see [Research Knowledge Graph](#research-knowledge-graph-contextknowledge_graphpy-step-2b).
 - **Research/investigations**: `generated_reports` (persisted Signals reports), `research_thread_evidence`, `research_thread_followups`, `company_insights` (Key Insights history).
 - **LLM observability**: `llm_call_log` — one row per `llm/router.py` call or `context/reuse.py` reuse hit (model/provider, fallback, tokens, cost, context-optimization accounting) — covers all four LLM call sites, including `research/knowledge_builder.py` (`task_name="knowledge_extraction"`).
@@ -496,14 +556,16 @@ pre-existing test failure.
 
 ### Documents / Docs tab
 
-- **No chunking, no full-text search** — `document_chunks` /
-  `document_chunks_fts` exist in the schema (FTS5-ready) but nothing ever
-  writes to them; document evidence is extracted straight into the prompt on
-  every Q&A call instead. Distinct from the Knowledge Builder
-  (`research/knowledge_builder.py`) added since — that extracts *structured
-  claims* from a document once, persisted to `knowledge_claims`, not a
-  general-purpose chunked/searchable index of the raw text; the two gaps
-  aren't the same thing and neither one closes the other.
+- **Q&A still doesn't use chunking/full-text search** — `document_chunks`/
+  `document_chunks_fts` are populated now (`research/document_chunker.py`,
+  Step 2D), but `research/documents.py::get_document_evidence()` (the Q&A
+  evidence path) still extracts a document's full text straight into the
+  prompt on every call, not a retrieved/ranked subset of chunks. Distinct
+  from the Knowledge Builder (`research/knowledge_builder.py`, Step 2A),
+  too — that extracts *structured claims* once, persisted to
+  `knowledge_claims`, not a general-purpose searchable index of the raw
+  text; chunking, claim extraction, and the Q&A evidence path are three
+  separate things, and none of them closes the others' gaps.
 - **No caching of downloaded PDF bytes** — a linked (non-uploaded) document is
   re-fetched over HTTP and re-parsed on every single question that touches it.
 - **No automated document ingestion** — everything in the Docs tab is
@@ -512,9 +574,16 @@ pre-existing test failure.
 - **No multi-company document attribution** — document evidence only backs
   single-company questions/reports today.
 
-### Ingestion Coordinator, Knowledge Builder & Research Knowledge Graph
+### Ingestion Coordinator, Knowledge Builder, Research Knowledge Graph & Document Retrieval
 
-- **No chunking for long documents** — a document's text is capped at
+- **No chunking for long documents *sent to the extraction model*** — a
+  document's text is capped at `MAX_CHARS_FOR_EXTRACTION` (40,000
+  characters) before `research/knowledge_builder.py` sends it to the model;
+  a longer annual report gets its first ~40K characters extracted, not the
+  whole thing. `research/document_chunker.py` (Step 2D) *does* chunk the
+  full document for search — the two gaps are different: extraction is
+  still single-pass and length-capped, search indexes everything.
+- **Entity resolution is name-string matching, not identity resolution** — a
   `MAX_CHARS_FOR_EXTRACTION` (40,000 characters) before being sent to the
   model; a longer annual report gets its first ~40K characters extracted,
   not the whole thing. A real multi-pass/chunked extraction is future work,
@@ -556,6 +625,21 @@ pre-existing test failure.
   so `/admin/usage`'s task breakdown already includes it, but there's no
   Ingest-queue-specific cost view (e.g. "$X spent processing these N pending
   documents").
+- **Document search is keyword (FTS5/bm25), not semantic** — a query has to
+  share actual words with a chunk to match it; a synonym or a paraphrase
+  ("interest rate cuts" vs. "repo rate transmission") won't necessarily
+  connect. `document_chunks.embedding` exists in the schema specifically
+  for this — every row's value stays `NULL` until a real embedding layer is
+  added, which isn't attempted here (see the Document Retrieval section's
+  own rationale for choosing FTS5 first).
+- **Chunking is fixed-size, not paragraph/section-aware** — 1500 characters
+  with 150 overlap, page-scoped; a chunk boundary can land mid-paragraph or
+  mid-table. `document_chunks.section_heading` exists in the schema but is
+  never populated — no heading-detection logic exists.
+- **`retrieval/document_search.py` isn't wired into any evidence path** —
+  neither Q&A/Signals reports nor the Research Knowledge Graph query it;
+  it's reachable today only by calling `search_documents()` directly (CLI/
+  Python), not from any Flask route or research call site.
 
 ### Research / AI layer (Context Optimizer + Model Router)
 
