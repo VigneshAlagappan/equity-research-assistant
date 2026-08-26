@@ -28,6 +28,8 @@ from urllib.parse import urlparse
 
 import requests
 from pypdf import PdfReader
+
+from config.settings import from_repo_relative
 from pypdf.errors import PdfReadError
 
 from research.evidence import Evidence
@@ -128,11 +130,11 @@ def _extract_pdf_text_from_url(url: str) -> str | None:
         return None
 
 
-def _document_text(row: sqlite3.Row) -> str | None:
+def document_text(row: sqlite3.Row) -> str | None:
     if row["raw_file_path"]:
         if Path(row["raw_file_path"]).suffix.lower() != ".pdf":
             return None
-        return _extract_pdf_text(row["raw_file_path"])
+        return _extract_pdf_text(str(from_repo_relative(row["raw_file_path"])))
     if row["source_url"] and _looks_like_pdf_url(row["source_url"]):
         return _extract_pdf_text_from_url(row["source_url"])
     return None
@@ -148,7 +150,7 @@ def get_document_evidence(conn: sqlite3.Connection, company_id: str, question: s
 
     evidence = []
     for row in docs:
-        text = _document_text(row)
+        text = document_text(row)
         if text is None:
             continue
         label = _DOCUMENT_TYPE_LABELS.get(row["document_type"], row["document_type"] or "Document")

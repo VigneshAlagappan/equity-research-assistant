@@ -477,6 +477,235 @@ def save_company_document(
     return conn.execute("SELECT * FROM documents WHERE document_id = ?", (cursor.lastrowid,)).fetchone()
 
 
+def list_documents_by_status(conn: sqlite3.Connection, status: str) -> list[sqlite3.Row]:
+    """Every document across every company at this processing_status —
+    unlike list_company_documents, not scoped to one company, since the
+    Admin -> Ingest queue view spans the whole document archive."""
+    return conn.execute(
+        "SELECT * FROM documents WHERE processing_status = ? ORDER BY retrieved_at DESC",
+        (status,),
+    ).fetchall()
+
+
+def mark_document_processing_status(
+    conn: sqlite3.Connection,
+    document_id: int,
+    *,
+    status: str,
+    file_hash: str | None = None,
+    processed_at: str | None = None,
+    error_message: str | None = None,
+) -> sqlite3.Row | None:
+    """file_hash is only overwritten when explicitly given (e.g. computed
+    fresh during Ingest queue processing) — passing None leaves whatever's
+    already stored on the row untouched, not wiped. error_message is always
+    written (including None, to clear a stale one on a later success)."""
+    if file_hash is not None:
+        conn.execute(
+            "UPDATE documents SET processing_status = ?, processed_at = ?, file_hash = ?, error_message = ? WHERE document_id = ?",
+            (status, processed_at, file_hash, error_message, document_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE documents SET processing_status = ?, processed_at = ?, error_message = ? WHERE document_id = ?",
+            (status, processed_at, error_message, document_id),
+        )
+    conn.commit()
+    return conn.execute("SELECT * FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+
+
+def list_ingestion_queue_items(
+    conn: sqlite3.Connection, *, status: str | None = None, item_kind: str | None = None
+) -> list[sqlite3.Row]:
+    query = "SELECT * FROM ingestion_queue_items WHERE 1=1"
+    params: list[object] = []
+    if status is not None:
+        query += " AND status = ?"
+        params.append(status)
+    if item_kind is not None:
+        query += " AND item_kind = ?"
+        params.append(item_kind)
+    query += " ORDER BY discovered_at DESC"
+    return conn.execute(query, params).fetchall()
+
+
+def get_ingestion_queue_item(conn: sqlite3.Connection, item_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM ingestion_queue_items WHERE item_id = ?", (item_id,)).fetchone()
+
+
+def get_ingestion_queue_item_by_path(conn: sqlite3.Connection, file_path: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM ingestion_queue_items WHERE file_path = ?", (file_path,)).fetchone()
+
+
+def upsert_ingestion_queue_item(
+    conn: sqlite3.Connection,
+    *,
+    item_kind: str,
+    file_path: str,
+    content_hash: str | None,
+    company_id: str | None,
+    source_id: str | None,
+    status: str,
+    status_reason: str | None,
+) -> sqlite3.Row:
+    """Insert a newly-discovered file, or refresh an existing row's
+    detection/hash — discovery is a full rescan every time, not an
+    append-only log, so re-running it must update in place, not duplicate.
+    Deliberately does NOT touch status/last_processed_content_hash/
+    processed_at for a row that's already PROCESSED with an unchanged
+    content_hash — see ingestion/coordinator.py's discover_pending_
+    financial_items, which decides that before calling this."""
+    now = utcnow_iso()
+    existing = get_ingestion_queue_item_by_path(conn, file_path)
+    if existing is None:
+        cursor = conn.execute(
+            """
+            INSERT INTO ingestion_queue_items (
+                item_kind, file_path, content_hash, company_id, source_id,
+                status, status_reason, discovered_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (item_kind, file_path, content_hash, company_id, source_id, status, status_reason, now),
+        )
+        item_id = cursor.lastrowid
+    else:
+        conn.execute(
+            """
+            UPDATE ingestion_queue_items SET
+                item_kind = ?, content_hash = ?, company_id = ?, source_id = ?,
+                status = ?, status_reason = ?
+            WHERE item_id = ?
+            """,
+            (item_kind, content_hash, company_id, source_id, status, status_reason, existing["item_id"]),
+        )
+        item_id = existing["item_id"]
+    conn.commit()
+    return get_ingestion_queue_item(conn, item_id)
+
+
+def update_ingestion_queue_item_result(
+    conn: sqlite3.Connection,
+    item_id: int,
+    *,
+    status: str,
+    error_message: str | None = None,
+    processed_at: str | None = None,
+    last_processed_content_hash: str | None = None,
+) -> sqlite3.Row | None:
+    """Records the outcome of one processing attempt — always stamps
+    last_attempt_at; processed_at/last_processed_content_hash are only set
+    on success (callers pass them then), left untouched on failure."""
+    conn.execute(
+        """
+        UPDATE ingestion_queue_items SET
+            status = ?, error_message = ?, last_attempt_at = ?,
+            processed_at = COALESCE(?, processed_at),
+            last_processed_content_hash = COALESCE(?, last_processed_content_hash)
+        WHERE item_id = ?
+        """,
+        (status, error_message, utcnow_iso(), processed_at, last_processed_content_hash, item_id),
+    )
+    conn.commit()
+    return get_ingestion_queue_item(conn, item_id)
+
+
+def get_or_create_knowledge_entity(
+    conn: sqlite3.Connection, entity_type: str, name: str, company_id: str | None = None
+) -> sqlite3.Row:
+    """Entities are shared/deduped across every claim that mentions them
+    (UNIQUE(entity_type, name, company_id)) — unlike knowledge_claims,
+    which is always append-only, the same "Product: iPhone" entity
+    shouldn't get a new row every time a new document mentions it again."""
+    existing = conn.execute(
+        "SELECT * FROM knowledge_entities WHERE entity_type = ? AND name = ? AND company_id IS ?",
+        (entity_type, name, company_id),
+    ).fetchone()
+    if existing is not None:
+        return existing
+    cursor = conn.execute(
+        "INSERT INTO knowledge_entities (entity_type, name, company_id, created_at) VALUES (?, ?, ?, ?)",
+        (entity_type, name, company_id, utcnow_iso()),
+    )
+    conn.commit()
+    return conn.execute("SELECT * FROM knowledge_entities WHERE entity_id = ?", (cursor.lastrowid,)).fetchone()
+
+
+def insert_knowledge_claim(
+    conn: sqlite3.Connection,
+    *,
+    document_id: int,
+    company_id: str | None,
+    claim_type: str,
+    category: str | None,
+    claim_text: str,
+    speaker: str | None,
+    fiscal_year: str | None,
+    quarter: str | None,
+    extraction_confidence: float | None,
+) -> sqlite3.Row:
+    """Always a fresh INSERT, never an UPDATE — a new document's claims are
+    additive, same "never overwrite" discipline financial_observations
+    already follows (schemas/sqlite_schema.sql's Knowledge Builder section)."""
+    cursor = conn.execute(
+        """
+        INSERT INTO knowledge_claims (
+            document_id, company_id, claim_type, category, claim_text, speaker,
+            fiscal_year, quarter, extraction_confidence, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (document_id, company_id, claim_type, category, claim_text, speaker,
+         fiscal_year, quarter, extraction_confidence, utcnow_iso()),
+    )
+    conn.commit()
+    return conn.execute("SELECT * FROM knowledge_claims WHERE claim_id = ?", (cursor.lastrowid,)).fetchone()
+
+
+def insert_knowledge_relationship(
+    conn: sqlite3.Connection, *, claim_id: int | None, source_entity_id: int, relationship_type: str, target_entity_id: int
+) -> None:
+    conn.execute(
+        "INSERT INTO knowledge_relationships (claim_id, source_entity_id, relationship_type, target_entity_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (claim_id, source_entity_id, relationship_type, target_entity_id, utcnow_iso()),
+    )
+    conn.commit()
+
+
+def insert_knowledge_evidence(conn: sqlite3.Connection, *, claim_id: int, document_id: int, quote: str | None) -> None:
+    conn.execute(
+        "INSERT INTO knowledge_evidence (claim_id, document_id, quote, created_at) VALUES (?, ?, ?, ?)",
+        (claim_id, document_id, quote, utcnow_iso()),
+    )
+    conn.commit()
+
+
+def list_knowledge_claims_for_document(conn: sqlite3.Connection, document_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM knowledge_claims WHERE document_id = ? ORDER BY claim_id", (document_id,)
+    ).fetchall()
+
+
+def list_knowledge_claims_for_company(conn: sqlite3.Connection, company_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM knowledge_claims WHERE company_id = ? ORDER BY fiscal_year, quarter, claim_id",
+        (company_id,),
+    ).fetchall()
+
+
+def list_knowledge_relationships_for_claim(conn: sqlite3.Connection, claim_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT r.*, se.entity_type AS source_type, se.name AS source_name,
+               te.entity_type AS target_type, te.name AS target_name
+        FROM knowledge_relationships r
+        JOIN knowledge_entities se ON se.entity_id = r.source_entity_id
+        JOIN knowledge_entities te ON te.entity_id = r.target_entity_id
+        WHERE r.claim_id = ?
+        """,
+        (claim_id,),
+    ).fetchall()
+
+
 def _row_to_generated_report(row: sqlite3.Row) -> dict:
     return {
         "thread_id": row["thread_id"],

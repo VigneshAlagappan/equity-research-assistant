@@ -182,6 +182,26 @@ def test_docs_feed_shows_only_the_year_a_document_was_added_to(client) -> None:
     assert q2["docs"]["ppt"]["added_by_user"] == "you"
 
 
+def test_uploaded_document_stores_repo_relative_path_and_serves_correctly(client) -> None:
+    upload_response = client.post(
+        "/companies/HDFCBANK/docs/add",
+        data={"period": "year:FY2024", "type": "annual", "source": "upload", "file": (BytesIO(b"%PDF-fake"), "ar.pdf")},
+        content_type="multipart/form-data",
+    )
+    assert upload_response.status_code == 200
+    document_id = upload_response.get_json()["document_id"]
+
+    import config.settings as settings
+
+    conn = init_db(db_path=settings.DB_PATH)
+    row = conn.execute("SELECT raw_file_path FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+    assert not row["raw_file_path"].startswith("/")  # stored relative to BASE_DIR, not absolute
+
+    file_response = client.get(f"/companies/HDFCBANK/docs/{document_id}/file")
+    assert file_response.status_code == 200
+    assert file_response.data == b"%PDF-fake"
+
+
 def test_docs_feed_period_options_span_2005_onward(client) -> None:
     response = client.get("/companies/HDFCBANK/docs-feed.json")
     data = response.get_json()

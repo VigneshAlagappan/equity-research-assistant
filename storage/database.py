@@ -44,6 +44,8 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_users_theme_column(conn)
     _migrate_documents_table(conn)
     _migrate_documents_old_fk_references(conn)
+    _migrate_documents_processing_status_columns(conn)
+    _migrate_raw_file_paths_to_repo_relative(conn)
     _migrate_company_notes_updated_at(conn)
     _migrate_llm_call_log_columns(conn)
     _seed_sources(conn)
@@ -295,6 +297,64 @@ def _migrate_documents_old_fk_references(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE financial_observations_fixed RENAME TO financial_observations")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_obs_lookup ON financial_observations(company_id, metric_key, fiscal_year)")
+
+
+def _migrate_documents_processing_status_columns(conn: sqlite3.Connection) -> None:
+    """Same reasoning as _migrate_companies_website_column — ALTER TABLE
+    backfills every existing document row to 'pending', which is correct:
+    no document was ever processed by the (new) Ingest queue before this
+    column existed, so every one of them is genuinely still pending."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(documents)")}
+    if not columns:
+        return
+    if "processing_status" not in columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN processing_status TEXT NOT NULL DEFAULT 'pending'")
+    if "processed_at" not in columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN processed_at TEXT")
+    if "error_message" not in columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN error_message TEXT")
+
+
+def _migrate_raw_file_paths_to_repo_relative(conn: sqlite3.Connection) -> None:
+    """documents.raw_file_path and company_note_attachments.raw_file_path
+    used to be stored as absolute paths (config.settings.to_repo_relative/
+    from_repo_relative's docstring explains why that's wrong) — an absolute
+    path bakes in the repo folder's name/location at write time, and breaks
+    every stored reference the moment the repo is renamed or moved (as this
+    one already has been: "indian-equity-research-assistant" ->
+    "equity-research-assistant"). Rewrites any row already stored absolute
+    to the same repo-relative form new writes use.
+
+    Robust to ANY historical absolute prefix, not just the one rename this
+    app has actually been through: every path this app ever wrote under
+    DOCUMENTS_DIR necessarily contains "data/documents/" as a structural
+    fragment (that folder layout itself was never renamed, only the outer
+    repo directory), so slicing the stored string from the first occurrence
+    of "data/documents/" onward recovers the correct relative path
+    regardless of what came before it. A row not matching that shape is
+    left untouched — most likely already relative, or a genuinely unusual
+    value not worth guessing at.
+    """
+    marker = "data/documents/"
+    # SQLite labels an INTEGER PRIMARY KEY's rowid alias by its declared
+    # column name in query results, not literally "rowid" — select each
+    # table's real primary key column by name rather than relying on that.
+    pk_columns = {"documents": "document_id", "company_note_attachments": "attachment_id"}
+    for table, pk_column in pk_columns.items():
+        rows = conn.execute(
+            f"SELECT {pk_column}, raw_file_path FROM {table} "
+            f"WHERE raw_file_path IS NOT NULL AND raw_file_path LIKE '/%'"
+        ).fetchall()
+        for row in rows:
+            raw_path = row["raw_file_path"]
+            marker_at = raw_path.find(marker)
+            if marker_at == -1:
+                continue
+            conn.execute(
+                f"UPDATE {table} SET raw_file_path = ? WHERE {pk_column} = ?",
+                (raw_path[marker_at:], row[pk_column]),
+            )
+    conn.commit()
 
 
 def _seed_sources(conn: sqlite3.Connection) -> None:

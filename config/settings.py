@@ -360,3 +360,36 @@ def ensure_data_dirs() -> None:
     """Create the raw/normalized/documents/charts/logs directories if missing."""
     for path in (RAW_DIR, NORMALIZED_DIR, DOCUMENTS_DIR, CHARTS_DIR, LOG_DIR):
         path.mkdir(parents=True, exist_ok=True)
+
+
+# ------------------------------------------------------------------
+# Repo-relative path storage — any path persisted to the database (an
+# uploaded document, a note attachment, a discovered ingestion-queue file)
+# must be stored relative to BASE_DIR, not as an absolute path. An absolute
+# path bakes in the repo folder's current name/location; renaming or moving
+# the repo (as this one already has, "indian-equity-research-assistant" ->
+# "equity-research-assistant") silently breaks every previously-stored
+# absolute reference, since BASE_DIR itself is derived fresh from
+# Path(__file__) on every process start (see BASE_DIR above) and no longer
+# matches what was baked into the database.
+# ------------------------------------------------------------------
+
+
+def to_repo_relative(path: Path | str) -> str:
+    """Convert an absolute (or already-relative) path into one relative to
+    BASE_DIR, for storage. Falls back to the absolute string if the path
+    genuinely isn't under BASE_DIR (shouldn't normally happen for anything
+    this app itself writes, but never raises over it)."""
+    resolved = Path(path).resolve()
+    try:
+        return str(resolved.relative_to(BASE_DIR))
+    except ValueError:
+        return str(resolved)
+
+
+def from_repo_relative(path: str) -> Path:
+    """Inverse of to_repo_relative() — resolve a stored path against the
+    CURRENT BASE_DIR. A path that's already absolute (an old, pre-fix row,
+    or the to_repo_relative() fallback above) is returned as-is."""
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else BASE_DIR / candidate

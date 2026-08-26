@@ -135,6 +135,7 @@
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'columns' }}" data-panel="columns">Company List Columns</button>
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'import' }}" data-panel="import">Import Data</button>
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'stock_actions' }}" data-panel="stock_actions">Stock Actions</button>
+        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'ingest' }}" data-panel="ingest">Ingest</button>
       </nav>
     </aside>
 
@@ -507,6 +508,165 @@
       </form>
       {% else %}
       <div class="empty-state">Select a company above to see or record its stock actions.</div>
+      {% endif %}
+    </div>
+
+    <div class="admin-panel" id="admin-panel-ingest" {{ 'hidden' if active_panel != 'ingest' }}>
+      <p class="muted">
+        Discover and process financial/macro files sitting under <code>data/raw/</code> and documents added via
+        the Docs tab that haven't been processed yet. Financial/macro files run through the existing ingestion
+        pipeline (same <code>ingest_file()</code>/<code>ingest_macro_file()</code> flow as Import Data and the
+        CLI) — not a second one. Documents also run Knowledge Builder extraction (entities/claims/relationships,
+        with provenance) — an LLM call per document, so failures here are usually a model/API issue, not a bad file.
+      </p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="flash-list">
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
+
+      <form method="post" action="{{ url_for('admin_ingest_refresh') }}" style="margin-bottom: var(--space-4);">
+        <button type="submit" class="btn btn-ghost">Refresh Pending Files</button>
+      </form>
+
+      <h3>Pending Financial Data ({{ ingest_pending_financial|length }})</h3>
+      {% if ingest_pending_financial %}
+      <form method="post" action="{{ url_for('admin_ingest_process') }}">
+        <table class="table">
+          <thead>
+            <tr><th></th><th>File</th><th>Company</th><th>Source</th><th>Kind</th><th>Discovered</th></tr>
+          </thead>
+          <tbody>
+            {% for item in ingest_pending_financial %}
+            <tr>
+              <td><input type="checkbox" name="item_id" value="{{ item['item_id'] }}"></td>
+              <td>{{ item['file_path'].split('/')[-1] }}</td>
+              <td>{{ item['company_id'] or '—' }}</td>
+              <td>{{ item['source_id'] or '—' }}</td>
+              <td>{{ item['item_kind'] }}</td>
+              <td>{{ item['discovered_at'] }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <button type="submit" class="btn btn-primary">Ingest Selected</button>
+      </form>
+      <form method="post" action="{{ url_for('admin_ingest_process_all') }}" style="margin-top: var(--space-2);">
+        <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
+      </form>
+      {% else %}
+      <div class="empty-state">Nothing pending.</div>
+      {% endif %}
+
+      <h3 style="margin-top: var(--space-6);">Needs Review ({{ ingest_needs_review|length }})</h3>
+      {% if ingest_needs_review %}
+      <table class="table">
+        <thead><tr><th>File</th><th>Detected company</th><th>Reason</th></tr></thead>
+        <tbody>
+          {% for item in ingest_needs_review %}
+          <tr>
+            <td>{{ item['file_path'].split('/')[-1] }}</td>
+            <td>{{ item['company_id'] or '—' }}</td>
+            <td>{{ item['status_reason'] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">Nothing needs review.</div>
+      {% endif %}
+
+      <h3 style="margin-top: var(--space-6);">Failed Items ({{ ingest_failed|length }})</h3>
+      {% if ingest_failed %}
+      <table class="table">
+        <thead><tr><th>File</th><th>Error</th><th>Last attempt</th></tr></thead>
+        <tbody>
+          {% for item in ingest_failed %}
+          <tr>
+            <td>{{ item['file_path'].split('/')[-1] }}</td>
+            <td>{{ item['error_message'] }}</td>
+            <td>{{ item['last_attempt_at'] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <form method="post" action="{{ url_for('admin_ingest_retry_failed') }}">
+        <button type="submit" class="btn btn-ghost">Retry Failed</button>
+      </form>
+      {% else %}
+      <div class="empty-state">No failed items.</div>
+      {% endif %}
+
+      <h3 style="margin-top: var(--space-6);">Pending Documents ({{ ingest_pending_documents|length }})</h3>
+      {% if ingest_pending_documents %}
+      <form method="post" action="{{ url_for('admin_ingest_process_documents') }}">
+        <table class="table">
+          <thead>
+            <tr><th></th><th>Company</th><th>Type</th><th>Period</th><th>Added</th></tr>
+          </thead>
+          <tbody>
+            {% for doc in ingest_pending_documents %}
+            <tr>
+              <td><input type="checkbox" name="document_id" value="{{ doc['document_id'] }}"></td>
+              <td>{{ doc['company_id'] or '—' }}</td>
+              <td>{{ doc['document_type'] or '—' }}</td>
+              <td>{{ doc['fiscal_year'] or '—' }}{{ ' ' + doc['quarter'] if doc['quarter'] else '' }}</td>
+              <td>{{ doc['retrieved_at'] }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <button type="submit" class="btn btn-primary">Ingest Selected</button>
+      </form>
+      <form method="post" action="{{ url_for('admin_ingest_process_all_documents') }}" style="margin-top: var(--space-2);">
+        <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
+      </form>
+      {% else %}
+      <div class="empty-state">No pending documents.</div>
+      {% endif %}
+
+      <h3 style="margin-top: var(--space-6);">Failed Documents ({{ ingest_failed_documents|length }})</h3>
+      {% if ingest_failed_documents %}
+      <table class="table">
+        <thead><tr><th>Company</th><th>Type</th><th>Error</th></tr></thead>
+        <tbody>
+          {% for doc in ingest_failed_documents %}
+          <tr>
+            <td>{{ doc['company_id'] or '—' }}</td>
+            <td>{{ doc['document_type'] or '—' }}</td>
+            <td>{{ doc['error_message'] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <form method="post" action="{{ url_for('admin_ingest_retry_failed_documents') }}">
+        <button type="submit" class="btn btn-ghost">Retry Failed</button>
+      </form>
+      {% else %}
+      <div class="empty-state">No failed documents.</div>
+      {% endif %}
+
+      <h3 style="margin-top: var(--space-6);">Processing History (most recent 50 processed)</h3>
+      {% if ingest_processed %}
+      <table class="table">
+        <thead><tr><th>File</th><th>Company</th><th>Processed at</th></tr></thead>
+        <tbody>
+          {% for item in ingest_processed %}
+          <tr>
+            <td>{{ item['file_path'].split('/')[-1] }}</td>
+            <td>{{ item['company_id'] or '—' }}</td>
+            <td>{{ item['processed_at'] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">Nothing processed yet.</div>
       {% endif %}
     </div>
   </div>

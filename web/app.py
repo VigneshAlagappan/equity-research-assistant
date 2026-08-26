@@ -43,7 +43,17 @@ from companies.stock_actions import (
     delete_stock_action,
     list_stock_actions,
 )
-from config.settings import ANTHROPIC_API_KEY_SET, DOCUMENTS_DIR, RAW_DIR, SECRET_KEY
+from config.settings import ANTHROPIC_API_KEY_SET, DOCUMENTS_DIR, RAW_DIR, SECRET_KEY, from_repo_relative, to_repo_relative
+from ingestion.coordinator import (
+    discover_pending_documents,
+    discover_pending_financial_items,
+    process_all_pending_documents,
+    process_all_pending_financial_items,
+    process_documents,
+    process_financial_items,
+    retry_failed_documents,
+    retry_failed_financial_items,
+)
 from ingestion.detector import ADAPTER_CLASSES
 from ingestion.pipeline import ingest_file
 from research.assistant import answer_question
@@ -82,9 +92,11 @@ from storage.repositories import (
     is_watchlisted,
     list_company_insights,
     list_company_notes,
+    list_documents_by_status,
     list_generated_reports,
     list_index_definitions,
     list_industries,
+    list_ingestion_queue_items,
     list_llm_call_log,
     list_note_attachments_for_company,
     list_report_evidence,
@@ -434,6 +446,22 @@ def create_app() -> Flask:
 
     ADMIN_COMPANIES_PAGE_SIZE = 50
 
+    def _ingest_panel_context(db) -> dict:
+        """Only computed when the Ingest panel is actually being viewed —
+        discover_pending_financial_items() walks the whole data/raw/ tree,
+        which is wasted work on every /admin load otherwise (same reasoning
+        the Companies panel's own pagination comment already gives for not
+        materializing everything unconditionally)."""
+        discover_pending_financial_items(db)
+        return {
+            "ingest_pending_financial": list_ingestion_queue_items(db, status="PENDING"),
+            "ingest_needs_review": list_ingestion_queue_items(db, status="NEEDS_REVIEW"),
+            "ingest_failed": list_ingestion_queue_items(db, status="FAILED"),
+            "ingest_processed": list_ingestion_queue_items(db, status="PROCESSED")[:50],
+            "ingest_pending_documents": list_documents_by_status(db, "pending"),
+            "ingest_failed_documents": list_documents_by_status(db, "failed"),
+        }
+
     @app.route("/admin")
     def admin():
         db = get_db()
@@ -534,6 +562,7 @@ def create_app() -> Flask:
                 list_stock_actions(db, request.args["sa_company_id"])
                 if request.args.get("sa_company_id") else []
             ),
+            **(_ingest_panel_context(db) if request.args.get("panel") == "ingest" else {}),
         )
 
     @app.route("/admin/usage")
@@ -674,6 +703,68 @@ def create_app() -> Flask:
         count = reconcile_company(db, company_id)
         flash(f"Reconciled {count} metric/period combinations for {company_id}.", "success")
         return redirect(url_for("company_report", company_id=company_id))
+
+    @app.route("/admin/ingest/refresh", methods=["POST"])
+    def admin_ingest_refresh():
+        """Refresh Pending Files — re-scan data/raw/ now, rather than
+        waiting for the next /admin?panel=ingest load (which already
+        refreshes on its own, but an explicit action makes "did my newly
+        dropped file show up" not depend on remembering that)."""
+        db = get_db()
+        touched = discover_pending_financial_items(db)
+        flash(f"Rescanned data/raw/ — {touched} item(s) added or updated.", "success")
+        return redirect(url_for("admin", panel="ingest"))
+
+    @app.route("/admin/ingest/process", methods=["POST"])
+    def admin_ingest_process():
+        """Ingest Selected — the specific ingestion_queue_items rows checked
+        in the UI, through the existing financial/macro pipeline."""
+        db = get_db()
+        item_ids = [int(v) for v in request.form.getlist("item_id")]
+        summary = process_financial_items(db, item_ids)
+        flash(f"Processed {summary.attempted}: {summary.succeeded} succeeded, {summary.failed} failed.", "success")
+        return redirect(url_for("admin", panel="ingest"))
+
+    @app.route("/admin/ingest/process-all", methods=["POST"])
+    def admin_ingest_process_all():
+        """Ingest All Pending."""
+        db = get_db()
+        summary = process_all_pending_financial_items(db)
+        flash(f"Processed {summary.attempted}: {summary.succeeded} succeeded, {summary.failed} failed.", "success")
+        return redirect(url_for("admin", panel="ingest"))
+
+    @app.route("/admin/ingest/retry-failed", methods=["POST"])
+    def admin_ingest_retry_failed():
+        """Retry Failed — every FAILED row, as-is."""
+        db = get_db()
+        summary = retry_failed_financial_items(db)
+        flash(f"Retried {summary.attempted}: {summary.succeeded} succeeded, {summary.failed} still failed.", "success")
+        return redirect(url_for("admin", panel="ingest"))
+
+    @app.route("/admin/ingest/documents/process", methods=["POST"])
+    def admin_ingest_process_documents():
+        """Process the specific pending documents checked in the UI —
+        registers/hashes each one and runs Step 2A's Knowledge Builder
+        extraction against it (ingestion/coordinator.py::process_documents)."""
+        db = get_db()
+        document_ids = [int(v) for v in request.form.getlist("document_id")]
+        summary = process_documents(db, document_ids)
+        flash(f"Registered {summary.succeeded} document(s), {summary.failed} failed.", "success")
+        return redirect(url_for("admin", panel="ingest"))
+
+    @app.route("/admin/ingest/documents/process-all", methods=["POST"])
+    def admin_ingest_process_all_documents():
+        db = get_db()
+        summary = process_all_pending_documents(db)
+        flash(f"Registered {summary.succeeded} document(s), {summary.failed} failed.", "success")
+        return redirect(url_for("admin", panel="ingest"))
+
+    @app.route("/admin/ingest/documents/retry-failed", methods=["POST"])
+    def admin_ingest_retry_failed_documents():
+        db = get_db()
+        summary = retry_failed_documents(db)
+        flash(f"Retried {summary.attempted}: {summary.succeeded} succeeded, {summary.failed} still failed.", "success")
+        return redirect(url_for("admin", panel="ingest"))
 
     @app.route("/admin/<company_id>/stock-actions", methods=["POST"])
     def admin_add_stock_action(company_id: str):
@@ -1026,7 +1117,7 @@ def create_app() -> Flask:
         upload.save(dest_path)
         size_bytes = dest_path.stat().st_size
 
-        row = save_note_attachment(db, note_id, filename, str(dest_path), size_bytes)
+        row = save_note_attachment(db, note_id, filename, to_repo_relative(dest_path), size_bytes)
         return jsonify(
             attachment_id=row["attachment_id"],
             filename=row["filename"],
@@ -1043,7 +1134,7 @@ def create_app() -> Flask:
         row = get_note_attachment(db, note_id, attachment_id)
         if row is None:
             abort(404)
-        return send_file(row["raw_file_path"], download_name=row["filename"])
+        return send_file(from_repo_relative(row["raw_file_path"]), download_name=row["filename"])
 
     @app.route("/companies/<company_id>/notes/<int:note_id>/attachments/<int:attachment_id>/delete", methods=["POST"])
     def company_delete_note_attachment(company_id: str, note_id: int, attachment_id: int):
@@ -1051,7 +1142,7 @@ def create_app() -> Flask:
         row = delete_note_attachment(db, note_id, attachment_id)
         if row is None:
             abort(404)
-        Path(row["raw_file_path"]).unlink(missing_ok=True)
+        from_repo_relative(row["raw_file_path"]).unlink(missing_ok=True)
         return jsonify(ok=True)
 
     @app.route("/companies/<company_id>/valuation-feed.json")
@@ -1123,7 +1214,7 @@ def create_app() -> Flask:
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             dest_path = dest_dir / f"{stamp}__{filename}"
             upload.save(dest_path)
-            raw_file_path = str(dest_path)
+            raw_file_path = to_repo_relative(dest_path)
         elif source == "link":
             source_url = (data.get("ref") or "").strip()
             if not source_url:
@@ -1159,7 +1250,7 @@ def create_app() -> Flask:
         row = get_company_document(db, company_id, document_id)
         if row is None or not row["raw_file_path"]:
             abort(404)
-        return send_file(row["raw_file_path"])
+        return send_file(from_repo_relative(row["raw_file_path"]))
 
     def _safe_login_next() -> str:
         """Same defense-in-depth as watchlist's _safe_next() — `next` is our own

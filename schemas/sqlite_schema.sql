@@ -101,7 +101,14 @@ CREATE TABLE IF NOT EXISTS documents (
   file_hash TEXT,
   source_url TEXT,
   parser_version TEXT,
-  added_by_user TEXT                -- NULL = officially sourced; set = manually added via the Docs tab, by whom
+  added_by_user TEXT,               -- NULL = officially sourced; set = manually added via the Docs tab, by whom
+  -- Settings/Admin -> Ingest queue (ingestion/coordinator.py): whether this
+  -- document has been "registered" as ready for future knowledge extraction
+  -- (Step 2A, not built yet -- Step 1 processing just marks it processed).
+  -- pending | processing | processed | failed | skipped
+  processing_status TEXT NOT NULL DEFAULT 'pending',
+  processed_at TEXT,
+  error_message TEXT               -- why processing_status='failed', for retry to show/act on
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_company ON documents(company_id, document_type);
@@ -468,6 +475,109 @@ CREATE TABLE IF NOT EXISTS company_list_column_settings (
   column_key TEXT PRIMARY KEY,
   enabled INTEGER NOT NULL DEFAULT 1
 );
+
+-- ============================================================
+-- Ingestion queue (Admin -> Ingest tab, ingestion/coordinator.py) --
+-- discovered-but-not-yet-processed FINANCIAL/MACRO files under data/raw/.
+-- Documents don't get a row here -- they're already modeled in `documents`
+-- (added via the Docs tab), so their queue state lives directly on that
+-- table (processing_status/processed_at above) instead of being duplicated
+-- into a second identity here.
+--
+-- This is discovery/tracking metadata only, on top of the existing
+-- ingest_file()/ingest_macro_file() pipeline (ingestion/pipeline.py) --
+-- "processing" an item here just calls that existing pipeline; this table
+-- never stores parsed/normalized data itself.
+--
+-- content_hash is recomputed on every discovery pass; last_processed_
+-- content_hash is stamped only on a successful ingest -- if they differ,
+-- the file changed since it was last processed and is re-flagged PENDING
+-- rather than silently skipped or silently reprocessed.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS ingestion_queue_items (
+  item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_kind TEXT NOT NULL,          -- financial_file | macro_file | bank_infrastructure_file
+  file_path TEXT NOT NULL UNIQUE,   -- absolute path, as returned by Path.resolve()
+  content_hash TEXT,                -- sha256 of current file bytes, refreshed every discovery pass
+  company_id TEXT,                  -- NOT a real FK -- this is a staging table, and NEEDS_REVIEW's whole
+                                     -- point is showing a detected company_id that isn't registered yet
+  source_id TEXT,                   -- NULL if undetectable (see status_reason)
+  status TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING|NEEDS_REVIEW|PROCESSING|PROCESSED|FAILED|SKIPPED
+  status_reason TEXT,               -- why NEEDS_REVIEW/SKIPPED, e.g. "company not registered"
+  discovered_at TEXT NOT NULL,
+  last_attempt_at TEXT,
+  processed_at TEXT,
+  last_processed_content_hash TEXT,
+  error_message TEXT                -- why FAILED, for Retry Failed to show/act on
+);
+CREATE INDEX IF NOT EXISTS idx_ingestion_queue_status ON ingestion_queue_items(status, item_kind);
+
+-- ============================================================
+-- Knowledge Builder (Step 2A, research/knowledge_builder.py) -- structured
+-- research knowledge extracted from a processed document (Admin -> Ingest
+-- queue), grounded and provenanced. Plain SQL storage only -- no Neo4j at
+-- this stage (that's Step 2B, a separate later step). Every extraction is
+-- additive: a new quarter's management statement becomes a NEW claim row,
+-- never an UPDATE to a previous one -- same "never overwrite" discipline
+-- financial_observations already follows.
+--
+-- knowledge_entities  -- Company/Product/Segment/Risk/... named things
+-- knowledge_claims    -- one extracted statement, with its own provenance
+--                         (document, company, fiscal period, speaker,
+--                         claim_type, extraction_confidence)
+-- knowledge_relationships -- typed edges between two entities, optionally
+--                         traced back to the claim that asserted them
+-- knowledge_evidence  -- the supporting quote for one claim, traceable to
+--                         its source document
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS knowledge_entities (
+  entity_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL,        -- Company | ManagementPerson | Product | Segment | Industry |
+                                     -- Strategy | Risk | Opportunity | Metric | MacroFactor | Regulation
+  name TEXT NOT NULL,
+  company_id TEXT REFERENCES companies(company_id),  -- NULL for an entity not tied to one company
+  created_at TEXT NOT NULL,
+  UNIQUE(entity_type, name, company_id)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_claims (
+  claim_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id INTEGER NOT NULL REFERENCES documents(document_id),
+  company_id TEXT REFERENCES companies(company_id),
+  claim_type TEXT NOT NULL,         -- FACT | CALCULATION | MANAGEMENT_OPINION | PREDICTION |
+                                     -- INFERENCE | CORRELATION | CAUSATION
+  category TEXT,                    -- strategy | guidance | risk | opportunity | fact | competitive | regulatory | other
+  claim_text TEXT NOT NULL,
+  speaker TEXT,                     -- e.g. "CEO"; NULL if not attributable to a specific person
+  fiscal_year TEXT,
+  quarter TEXT,
+  extraction_confidence REAL,       -- 0-1, the model's own stated confidence
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_claims_company ON knowledge_claims(company_id, fiscal_year);
+CREATE INDEX IF NOT EXISTS idx_knowledge_claims_document ON knowledge_claims(document_id);
+
+CREATE TABLE IF NOT EXISTS knowledge_relationships (
+  relationship_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  claim_id INTEGER REFERENCES knowledge_claims(claim_id),  -- the claim this relationship was asserted in, if any
+  source_entity_id INTEGER NOT NULL REFERENCES knowledge_entities(entity_id),
+  relationship_type TEXT NOT NULL,  -- OFFERS | OPERATES_IN | COMPETES_WITH | SUPPLIES | DEPENDS_ON |
+                                     -- MAY_AFFECT | DRIVES | EXPOSED_TO (config/knowledge_ontology.py)
+  target_entity_id INTEGER NOT NULL REFERENCES knowledge_entities(entity_id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_relationships_source ON knowledge_relationships(source_entity_id);
+
+CREATE TABLE IF NOT EXISTS knowledge_evidence (
+  evidence_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  claim_id INTEGER NOT NULL REFERENCES knowledge_claims(claim_id),
+  document_id INTEGER NOT NULL REFERENCES documents(document_id),
+  quote TEXT,                       -- the supporting excerpt from the source document
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_evidence_claim ON knowledge_evidence(claim_id);
 
 -- ============================================================
 -- Stock actions (Admin tab) -- discrete corporate events that change a
