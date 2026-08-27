@@ -31,7 +31,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from config.knowledge_ontology import CLAIM_TYPES, ENTITY_TYPES, RELATIONSHIP_TYPES
-from config.settings import ANTHROPIC_MODEL
+from config.settings import ANTHROPIC_MODEL, KNOWLEDGE_EXTRACTION_MAX_CHARS
 from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
@@ -43,7 +43,7 @@ from storage.repositories import (
     insert_knowledge_relationship,
 )
 
-MAX_CHARS_FOR_EXTRACTION = 40_000
+MAX_CHARS_FOR_EXTRACTION = KNOWLEDGE_EXTRACTION_MAX_CHARS
 MAX_CLAIMS_PER_DOCUMENT = 20
 # Up to 20 claims, each with a quote and relationships, plus ~30+ entities
 # for a dense real document, comfortably exceeds 4096 output tokens and

@@ -308,6 +308,72 @@ def save_company_insights(conn: sqlite3.Connection, company_id: str, insight_tex
     conn.commit()
 
 
+def save_system_insight(
+    conn: sqlite3.Connection, *, insight_id: str, company_ids: list[str], insight_text: str,
+    source_claim_ids: list[int],
+) -> None:
+    """One row per system-generated insight (Tools tab), status='new' until
+    the user retains/archives it via update_system_insight_status()."""
+    conn.execute(
+        "INSERT INTO system_insights (insight_id, company_ids, insight_text, source_claim_ids, status, generated_at) "
+        "VALUES (?, ?, ?, ?, 'new', ?)",
+        (insight_id, json.dumps(company_ids), insight_text, json.dumps(source_claim_ids), utcnow_iso()),
+    )
+    conn.commit()
+
+
+def list_system_insights(conn: sqlite3.Connection, *, statuses: tuple[str, ...] = ("new", "retained")) -> list[dict]:
+    """Insights in any of `statuses`, newest first — defaults to everything
+    the Insights panel shows by default (archived hidden unless asked for)."""
+    placeholders = ",".join("?" for _ in statuses)
+    rows = conn.execute(
+        f"SELECT * FROM system_insights WHERE status IN ({placeholders}) ORDER BY generated_at DESC",
+        statuses,
+    ).fetchall()
+    return [
+        {
+            "insight_id": r["insight_id"], "company_ids": json.loads(r["company_ids"]),
+            "insight_text": r["insight_text"],
+            "source_claim_ids": json.loads(r["source_claim_ids"]) if r["source_claim_ids"] else [],
+            "status": r["status"], "generated_at": r["generated_at"], "status_changed_at": r["status_changed_at"],
+        }
+        for r in rows
+    ]
+
+
+def update_system_insight_status(conn: sqlite3.Connection, insight_id: str, status: str) -> None:
+    if status not in ("new", "retained", "archived"):
+        raise ValueError(f"status must be one of new|retained|archived, got {status!r}")
+    conn.execute(
+        "UPDATE system_insights SET status = ?, status_changed_at = ? WHERE insight_id = ?",
+        (status, utcnow_iso(), insight_id),
+    )
+    conn.commit()
+
+
+def list_recent_high_confidence_claims(
+    conn: sqlite3.Connection, *, claim_types: tuple[str, ...], limit: int = 10
+) -> list[sqlite3.Row]:
+    """Candidate claims for system-insight generation (research/system_insights.py)
+    — the "give me everything interesting across companies" read
+    find_claims_about_entity() can't do (it requires naming one entity
+    first). Highest-confidence, most-recent claims of the given types,
+    across every company."""
+    placeholders = ",".join("?" for _ in claim_types)
+    return conn.execute(
+        f"SELECT * FROM knowledge_claims WHERE claim_type IN ({placeholders}) "
+        "ORDER BY extraction_confidence DESC, created_at DESC LIMIT ?",
+        (*claim_types, limit),
+    ).fetchall()
+
+
+def list_company_ids_with_financial_data(conn: sqlite3.Connection) -> list[str]:
+    """Distinct companies with at least one canonical_financials row — the
+    cheap prefilter analytics/patterns.py uses instead of iterating every
+    registered company (most of which have nothing ingested yet)."""
+    return [r["company_id"] for r in conn.execute("SELECT DISTINCT company_id FROM canonical_financials").fetchall()]
+
+
 def list_company_notes(conn: sqlite3.Connection, company_id: str) -> list[sqlite3.Row]:
     """Every personal note logged against this company, most recent first."""
     return conn.execute(

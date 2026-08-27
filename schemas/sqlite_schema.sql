@@ -374,6 +374,25 @@ CREATE TABLE IF NOT EXISTS company_insights (
 CREATE INDEX IF NOT EXISTS idx_company_insights_company_id
   ON company_insights(company_id, generated_at);
 
+-- System Insights (Tools tab) -- distinct from company_insights above:
+-- company_insights is one free-text blob per company, generated on request,
+-- grounded only in canonical_financials. system_insights is cross-company,
+-- generated in a batch (research/system_insights.py), grounded in the
+-- Knowledge Graph's knowledge_claims (source_claim_ids is provenance), and
+-- carries a user-controlled status the company_insights table has no
+-- equivalent of -- same "status TEXT NOT NULL DEFAULT 'x' -- a | b | c"
+-- shape documents.processing_status already uses.
+CREATE TABLE IF NOT EXISTS system_insights (
+  insight_id TEXT PRIMARY KEY,
+  company_ids TEXT NOT NULL,          -- JSON array of company_id
+  insight_text TEXT NOT NULL,
+  source_claim_ids TEXT,              -- JSON array of knowledge_claims.claim_id (provenance)
+  status TEXT NOT NULL DEFAULT 'new', -- new | retained | archived
+  generated_at TEXT NOT NULL,
+  status_changed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_system_insights_status ON system_insights(status, generated_at);
+
 -- ============================================================
 -- Personal notes (Notes tab) -- user-authored, dated, editable; unlike
 -- company_insights this is never LLM-generated, just a running log the user

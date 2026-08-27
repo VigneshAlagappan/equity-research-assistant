@@ -283,6 +283,15 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 LOCAL_MODEL_ENABLED = os.environ.get("LOCAL_MODEL_ENABLED", "true").lower() != "false"
 LOCAL_MODEL_ID = os.environ.get("LOCAL_MODEL_ID", "llama3.1:8b")
 
+# research/knowledge_builder.py truncates a document's text to this many
+# characters before sending it to the model — env-configurable because
+# local-model inference speed is roughly linear in input length, and a slow
+# local model benefits from a smaller cap far more than a cloud model does
+# (Anthropic handles the full 40k comfortably). Lower this per-run (not the
+# default) when running a local-model bulk ingestion and speed matters more
+# than the extra document coverage the last ~20k characters would add.
+KNOWLEDGE_EXTRACTION_MAX_CHARS = int(os.environ.get("KNOWLEDGE_EXTRACTION_MAX_CHARS", "40000"))
+
 # ------------------------------------------------------------------
 # Knowledge graph backend (context/graph.py, context/graph_neo4j.py)
 #

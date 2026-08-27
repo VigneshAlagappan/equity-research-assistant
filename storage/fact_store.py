@@ -66,6 +66,13 @@ class FactStore:
     save_investigation_hypothesis: Callable[..., None]
     save_investigation_hypothesis_evidence: Callable[..., None]
 
+    # System Insights (Tools tab, research/system_insights.py)
+    list_recent_high_confidence_claims: Callable[..., list[sqlite3.Row]]
+    save_system_insight: Callable[..., None]
+
+    # Analytics (Tools tab, analytics/patterns.py)
+    list_company_ids_with_financial_data: Callable[..., list[str]]
+
 
 def default_fact_store() -> FactStore:
     """The only place that imports the real SQLite-backed implementations
@@ -81,16 +88,19 @@ def default_fact_store() -> FactStore:
         list_all_knowledge_evidence,
         list_all_knowledge_relationships,
         list_company_documents,
+        list_company_ids_with_financial_data,
         list_generated_reports,
         list_knowledge_entities_for_companies,
         list_knowledge_evidence_for_claim,
         list_knowledge_relationships_for_claim,
         list_macro_series_summary,
+        list_recent_high_confidence_claims,
         list_report_evidence,
         list_report_followups,
         save_investigation,
         save_investigation_hypothesis,
         save_investigation_hypothesis_evidence,
+        save_system_insight,
         search_document_chunks,
     )
 
@@ -118,4 +128,7 @@ def default_fact_store() -> FactStore:
         save_investigation=save_investigation,
         save_investigation_hypothesis=save_investigation_hypothesis,
         save_investigation_hypothesis_evidence=save_investigation_hypothesis_evidence,
+        list_recent_high_confidence_claims=list_recent_high_confidence_claims,
+        save_system_insight=save_system_insight,
+        list_company_ids_with_financial_data=list_company_ids_with_financial_data,
     )

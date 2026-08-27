@@ -15,6 +15,7 @@
     <div class="site-header-links">
       <a class="site-nav-link {{ 'current' if request.endpoint in ('research', 'research_thread') else '' }}" href="{{ url_for('research') }}">Research</a>
       <a class="site-nav-link {{ 'current' if request.endpoint in ('companies', 'company_report') else '' }}" href="{{ url_for('companies') }}">Companies</a>
+      <a class="site-nav-link {{ 'current' if request.endpoint == 'tools' else '' }}" href="{{ url_for('tools') }}">Tools</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'investigations' else '' }}" href="{{ url_for('investigations') }}">Investigations</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'watchlist' else '' }}" href="{{ url_for('watchlist') }}">Watchlist</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'about' else '' }}" href="{{ url_for('about') }}">About</a>

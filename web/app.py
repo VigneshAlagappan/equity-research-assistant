@@ -54,12 +54,14 @@ from ingestion.coordinator import (
     retry_failed_documents,
     retry_failed_financial_items,
 )
+from analytics.patterns import detect_yoy_spikes
 from ingestion.detector import ADAPTER_CLASSES
 from ingestion.pipeline import ingest_file
 from research.assistant import answer_question
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.investigation import InvestigationError, run_investigation
 from research.signals_report import extract_report_meta, generate_signals_report
+from research.system_insights import SystemInsightGenerationError, generate_system_insights
 from storage.database import init_db
 from storage.repositories import (
     COMPANY_LIST_COLUMNS,
@@ -88,6 +90,7 @@ from storage.repositories import (
     get_generated_report,
     get_investigation,
     get_llm_usage_summary,
+    get_macro_series,
     get_user_by_email,
     get_user_by_id,
     get_user_by_login,
@@ -103,10 +106,12 @@ from storage.repositories import (
     list_investigation_hypothesis_evidence,
     list_investigations,
     list_llm_call_log,
+    list_macro_series_summary,
     list_note_attachments_for_company,
     list_report_evidence,
     list_report_followups,
     list_sectors,
+    list_system_insights,
     list_watchlist_items,
     reconcile_company,
     remove_watchlist_item,
@@ -123,6 +128,7 @@ from storage.repositories import (
     save_report_followups,
     set_company_index_tags,
     set_company_list_column_settings,
+    update_system_insight_status,
     update_user_theme,
 )
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
@@ -1801,6 +1807,95 @@ def create_app() -> Flask:
             "investigations.html", threads=generated_threads + example_threads,
             structured_investigations=structured_investigations,
         )
+
+    def _tools_macro_context(db) -> dict:
+        """Only the catalog (cheap — one GROUP BY query) — the actual series
+        points are fetched client-side from /tools/macro/series.json once a
+        series is picked, same lazy-until-needed reasoning
+        _ingest_panel_context already documents for its own panel."""
+        catalog = [dict(row) for row in list_macro_series_summary(db)]
+        catalog.sort(key=lambda r: (r["source"], r["series_key"]))
+        return {"tools_macro_catalog": catalog}
+
+    def _tools_analytics_context(db) -> dict:
+        patterns = detect_yoy_spikes(db)
+        return {
+            "tools_analytics_patterns": [
+                {
+                    "company_id": p.company_id, "metric_label": p.metric_label,
+                    "fiscal_year": p.fiscal_year, "yoy_percent": p.yoy_percent,
+                }
+                for p in patterns
+            ]
+        }
+
+    def _tools_insights_context(db) -> dict:
+        insights = list_system_insights(db)
+        return {"tools_insights": insights}
+
+    @app.route("/tools")
+    def tools():
+        db = get_db()
+        active_panel = request.args.get("panel", "macro")
+        if active_panel not in ("macro", "analytics", "insights"):
+            active_panel = "macro"
+        context: dict = {}
+        # Only the active panel's (potentially real) work runs — same
+        # "don't materialize what isn't being viewed" reasoning
+        # _ingest_panel_context already follows for the Admin Ingest tab.
+        if active_panel == "macro":
+            context.update(_tools_macro_context(db))
+        elif active_panel == "analytics":
+            context.update(_tools_analytics_context(db))
+        elif active_panel == "insights":
+            context.update(_tools_insights_context(db))
+        return render_template(
+            "tools.html", active_panel=active_panel, api_key_set=ANTHROPIC_API_KEY_SET, **context
+        )
+
+    @app.route("/tools/macro/series.json")
+    def tools_macro_series():
+        db = get_db()
+        series_key = request.args.get("series_key")
+        if not series_key:
+            return jsonify(error="series_key is required"), 400
+        region = request.args.get("region") or None
+        rows = get_macro_series(db, series_key, region)
+        if not rows:
+            return jsonify(error=f"No data for series_key={series_key!r}"), 404
+        return jsonify(
+            series_key=series_key,
+            unit=rows[0]["unit"],
+            source=rows[0]["source"],
+            points=[{"period": r["period"], "value": r["value"]} for r in rows],
+        )
+
+    @app.route("/tools/insights/generate", methods=["POST"])
+    def tools_insights_generate():
+        db = get_db()
+        if not ANTHROPIC_API_KEY_SET:
+            flash("ANTHROPIC_API_KEY is not set on the server — insight generation can't run.", "error")
+            return redirect(url_for("tools", panel="insights"))
+        try:
+            insights = generate_system_insights(db)
+        except SystemInsightGenerationError as exc:
+            flash(f"Insight generation failed: {exc}", "error")
+            return redirect(url_for("tools", panel="insights"))
+        flash(
+            f"Generated {len(insights)} insight(s)." if insights else "No new insights — not enough grounded claims yet.",
+            "success",
+        )
+        return redirect(url_for("tools", panel="insights"))
+
+    @app.route("/tools/insights/<insight_id>/retain", methods=["POST"])
+    def tools_insights_retain(insight_id: str):
+        update_system_insight_status(get_db(), insight_id, "retained")
+        return redirect(url_for("tools", panel="insights"))
+
+    @app.route("/tools/insights/<insight_id>/archive", methods=["POST"])
+    def tools_insights_archive(insight_id: str):
+        update_system_insight_status(get_db(), insight_id, "archived")
+        return redirect(url_for("tools", panel="insights"))
 
     @app.route("/watchlist")
     def watchlist():
