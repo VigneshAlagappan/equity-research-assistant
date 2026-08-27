@@ -68,6 +68,13 @@ logger = logging.getLogger(__name__)
 
 _BANK_INFRASTRUCTURE_PREFIXES = ("ATM", "NEFTRTGS")
 
+#: data/raw/_macro/mfin/ — archive-only reference PDFs (config.settings.DEFAULT_SOURCES'
+#: "mfin" entry, sources/macro.py's MACRO_SOURCE_IDS comment): never has a
+#: period/value/unit shape, nothing calls ingest_macro_file() on it, so it's
+#: never queued for processing at all — discovering it as a "failed" macro
+#: file would just be noise in the Ingest queue.
+_MFIN_SENTINEL = "mfin"
+
 
 @dataclass
 class ProcessOutcome:
@@ -118,6 +125,8 @@ def discover_pending_financial_items(conn) -> int:
     for path in sorted(raw_dir.rglob("*")):
         if not path.is_file():
             continue
+        if path.name.startswith("."):
+            continue  # OS/editor artifacts (.DS_Store, .gitkeep, ...) are never ingestible data
         # Stored relative to BASE_DIR, not absolute — an absolute path bakes
         # in the repo folder's current name/location (config/settings.py's
         # to_repo_relative/from_repo_relative docstring explains why).
@@ -130,6 +139,9 @@ def discover_pending_financial_items(conn) -> int:
             continue  # nothing to re-derive — PENDING/PROCESSED/FAILED/PROCESSING/SKIPPED all stand as-is
 
         if is_macro_path(path):
+            if _MFIN_SENTINEL in path.parts:
+                continue  # config.settings.DEFAULT_SOURCES / sources/macro.py's MACRO_SOURCE_IDS
+                          # comment: mfin is archive-only reference PDFs, never queued for ingestion
             item_kind = (
                 "bank_infrastructure_file" if path.name.upper().startswith(_BANK_INFRASTRUCTURE_PREFIXES)
                 else "macro_file"

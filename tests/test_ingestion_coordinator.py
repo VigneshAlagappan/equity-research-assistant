@@ -80,6 +80,36 @@ def test_discover_flags_undetectable_path_as_needs_review(raw_dir: Path, db_conn
     assert item["status"] == "NEEDS_REVIEW"
 
 
+def test_discover_never_queues_dotfiles(raw_dir: Path, db_conn_with_companies: sqlite3.Connection) -> None:
+    """.DS_Store/.gitkeep are OS/editor artifacts, not ingestible data — they
+    used to get queued and then fail (openpyxl format errors, "missing
+    period/value columns"), polluting the Ingest -> Failed Items list with
+    noise no admin action could ever resolve."""
+    (raw_dir / "HDFCBANK" / "screener").mkdir(parents=True)
+    (raw_dir / "HDFCBANK" / "screener" / ".DS_Store").write_bytes(b"junk")
+    (raw_dir / ".gitkeep").touch()
+
+    touched = discover_pending_financial_items(db_conn_with_companies)
+
+    assert touched == 0
+    assert list_ingestion_queue_items(db_conn_with_companies) == []
+
+
+def test_discover_never_queues_mfin_reference_pdfs(raw_dir: Path, db_conn: sqlite3.Connection) -> None:
+    """data/raw/_macro/mfin/ is archive-only reference material (config.settings
+    .DEFAULT_SOURCES' "mfin" entry) — nothing calls ingest_macro_file() on it,
+    so it should never enter the queue at all, let alone fail as an
+    unparseable macro series file."""
+    mfin_dir = raw_dir / "_macro" / "mfin"
+    mfin_dir.mkdir(parents=True)
+    (mfin_dir / "some-guidance-note.pdf").write_bytes(b"%PDF-1.4 not a csv")
+
+    touched = discover_pending_financial_items(db_conn)
+
+    assert touched == 0
+    assert list_ingestion_queue_items(db_conn) == []
+
+
 def test_discover_is_idempotent_for_an_unchanged_processed_file(
     raw_dir: Path, db_conn_with_companies: sqlite3.Connection
 ) -> None:

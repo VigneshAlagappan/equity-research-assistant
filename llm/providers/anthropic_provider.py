@@ -26,6 +26,16 @@ def generate(*, system: str, user_message: str, model: str, max_tokens: int) -> 
         )
     except anthropic.APIError as exc:
         raise ProviderUnavailable(f"anthropic:{model}: {exc}") from exc
+    except TypeError as exc:
+        # No ANTHROPIC_API_KEY configured at all: the SDK doesn't raise
+        # anthropic.APIError for this (no request is ever attempted) — it
+        # raises a bare TypeError from header-building
+        # ("Could not resolve authentication method"). That's still just
+        # "this provider isn't usable right now", same as a rate limit or
+        # outage — must fall back like every other operational failure here,
+        # not crash the whole route() call before local_provider ever gets a
+        # chance to run.
+        raise ProviderUnavailable(f"anthropic:{model}: {exc}") from exc
 
     text = "".join(block.text for block in response.content if block.type == "text")
     usage = getattr(response, "usage", None)

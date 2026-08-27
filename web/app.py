@@ -473,6 +473,31 @@ def create_app() -> Flask:
             "page_size": page_size,
         }
 
+    def _filter_and_paginate(rows: list, *, filters: dict[str, str], page_arg: str, page_size: int) -> dict:
+        """Per-column equality filtering (each filters[col] value, if set,
+        must exactly match that row's column) + pagination — the
+        per-column-dropdown counterpart to _paginate()'s free-text search,
+        for the Ingest sub-tables that filter by a specific field (company,
+        kind, type) instead of searching across all of them at once."""
+        filtered = rows
+        for column, value in filters.items():
+            if value:
+                filtered = [r for r in filtered if (r[column] or "") == value]
+        total = len(filtered)
+        total_pages = max(1, -(-total // page_size))
+        page = max(1, min(request.args.get(page_arg, 1, type=int) or 1, total_pages))
+        start = (page - 1) * page_size
+        return {
+            "rows": filtered[start:start + page_size],
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+            "page_size": page_size,
+        }
+
+    def _distinct_values(rows: list, column: str) -> list[str]:
+        return sorted({r[column] for r in rows if r[column]})
+
     def _ingest_panel_context(db) -> dict:
         """Only computed when the Ingest panel is actually being viewed —
         discover_pending_financial_items() walks the whole data/raw/ tree,
@@ -480,12 +505,14 @@ def create_app() -> Flask:
         the Companies panel's own pagination comment already gives for not
         materializing everything unconditionally).
 
-        Pending Financial Data and Pending Documents are the two sub-tables
-        that actually grow large in practice (hundreds of rows from a
-        data/raw/ rescan or a bulk document drop) — search+pagination is
-        added only to those two, mirroring the Companies panel's own
-        query-param convention (distinct param names so both can be paged
-        independently on the same page load)."""
+        Pending Financial Data and Pending Documents get free-text
+        search+pagination (largest tables in practice — hundreds of rows
+        from a data/raw/ rescan or a bulk document drop). Needs Review,
+        Failed Items, Failed Documents, and Processing History get
+        per-column dropdown filters + pagination instead — same distinct
+        query-param-prefix convention (nr_/fi_/fd_/pr_) so every sub-table
+        can filter/page independently on one page load, mirroring the
+        Companies panel's own dropdown-filter pattern."""
         discover_pending_financial_items(db)
 
         pf_query = (request.args.get("pf_q") or "").strip()
@@ -510,6 +537,37 @@ def create_app() -> Flask:
             page_size=ADMIN_INGEST_PAGE_SIZE,
         )
 
+        needs_review_all = list_ingestion_queue_items(db, status="NEEDS_REVIEW")
+        nr_company_filter = request.args.get("nr_company") or ""
+        nr = _filter_and_paginate(
+            needs_review_all, filters={"company_id": nr_company_filter},
+            page_arg="nr_page", page_size=ADMIN_INGEST_PAGE_SIZE,
+        )
+
+        failed_all = list_ingestion_queue_items(db, status="FAILED")
+        fi_company_filter = request.args.get("fi_company") or ""
+        fi_kind_filter = request.args.get("fi_kind") or ""
+        fi = _filter_and_paginate(
+            failed_all, filters={"company_id": fi_company_filter, "item_kind": fi_kind_filter},
+            page_arg="fi_page", page_size=ADMIN_INGEST_PAGE_SIZE,
+        )
+
+        failed_documents_all = list_documents_by_status(db, "failed")
+        fd_company_filter = request.args.get("fd_company") or ""
+        fd_type_filter = request.args.get("fd_type") or ""
+        fd = _filter_and_paginate(
+            failed_documents_all, filters={"company_id": fd_company_filter, "document_type": fd_type_filter},
+            page_arg="fd_page", page_size=ADMIN_INGEST_PAGE_SIZE,
+        )
+
+        processed_all = list_ingestion_queue_items(db, status="PROCESSED")
+        pr_company_filter = request.args.get("pr_company") or ""
+        pr_kind_filter = request.args.get("pr_kind") or ""
+        pr = _filter_and_paginate(
+            processed_all, filters={"company_id": pr_company_filter, "item_kind": pr_kind_filter},
+            page_arg="pr_page", page_size=ADMIN_INGEST_PAGE_SIZE,
+        )
+
         return {
             "ingest_pending_financial": pf["rows"],
             "ingest_pending_financial_total": pf["total"],
@@ -517,16 +575,46 @@ def create_app() -> Flask:
             "ingest_pending_financial_total_pages": pf["total_pages"],
             "ingest_pending_financial_page_size": pf["page_size"],
             "ingest_pending_financial_query": pf_query,
-            "ingest_needs_review": list_ingestion_queue_items(db, status="NEEDS_REVIEW"),
-            "ingest_failed": list_ingestion_queue_items(db, status="FAILED"),
-            "ingest_processed": list_ingestion_queue_items(db, status="PROCESSED")[:50],
+            "ingest_needs_review": nr["rows"],
+            "ingest_needs_review_total": nr["total"],
+            "ingest_needs_review_page": nr["page"],
+            "ingest_needs_review_total_pages": nr["total_pages"],
+            "ingest_needs_review_page_size": nr["page_size"],
+            "ingest_needs_review_company_filter": nr_company_filter,
+            "ingest_needs_review_companies": _distinct_values(needs_review_all, "company_id"),
+            "ingest_failed": fi["rows"],
+            "ingest_failed_total": fi["total"],
+            "ingest_failed_page": fi["page"],
+            "ingest_failed_total_pages": fi["total_pages"],
+            "ingest_failed_page_size": fi["page_size"],
+            "ingest_failed_company_filter": fi_company_filter,
+            "ingest_failed_kind_filter": fi_kind_filter,
+            "ingest_failed_companies": _distinct_values(failed_all, "company_id"),
+            "ingest_failed_kinds": _distinct_values(failed_all, "item_kind"),
             "ingest_pending_documents": doc["rows"],
             "ingest_pending_documents_total": doc["total"],
             "ingest_pending_documents_page": doc["page"],
             "ingest_pending_documents_total_pages": doc["total_pages"],
             "ingest_pending_documents_page_size": doc["page_size"],
             "ingest_pending_documents_query": doc_query,
-            "ingest_failed_documents": list_documents_by_status(db, "failed"),
+            "ingest_failed_documents": fd["rows"],
+            "ingest_failed_documents_total": fd["total"],
+            "ingest_failed_documents_page": fd["page"],
+            "ingest_failed_documents_total_pages": fd["total_pages"],
+            "ingest_failed_documents_page_size": fd["page_size"],
+            "ingest_failed_documents_company_filter": fd_company_filter,
+            "ingest_failed_documents_type_filter": fd_type_filter,
+            "ingest_failed_documents_companies": _distinct_values(failed_documents_all, "company_id"),
+            "ingest_failed_documents_types": _distinct_values(failed_documents_all, "document_type"),
+            "ingest_processed": pr["rows"],
+            "ingest_processed_total": pr["total"],
+            "ingest_processed_page": pr["page"],
+            "ingest_processed_total_pages": pr["total_pages"],
+            "ingest_processed_page_size": pr["page_size"],
+            "ingest_processed_company_filter": pr_company_filter,
+            "ingest_processed_kind_filter": pr_kind_filter,
+            "ingest_processed_companies": _distinct_values(processed_all, "company_id"),
+            "ingest_processed_kinds": _distinct_values(processed_all, "item_kind"),
         }
 
     @app.route("/admin")
