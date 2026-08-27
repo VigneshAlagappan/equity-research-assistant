@@ -98,6 +98,33 @@ def test_answer_question_handles_empty_non_refusal_response(ingested_conn: sqlit
     assert "no answer" in result.lower()
 
 
+def test_injected_investigation_memory_capability_is_used(ingested_conn: sqlite3.Connection, monkeypatch) -> None:
+    """Proves the Investigation Memory capability seam
+    (research/capabilities.py's InvestigationMemoryCapabilities, architecture
+    guardrail #2) is actually wired into answer_question — an injected fake
+    `reusable_report` callable short-circuits the whole evidence/LLM path,
+    same as a real context/reuse.py hit would."""
+    from context.reuse import ReuseCandidate
+    from research.capabilities import InvestigationMemoryCapabilities
+
+    captured = _install_fake_client(monkeypatch, text="should never be returned")
+    fake_candidate = ReuseCandidate(
+        thread_id="fake-t1", report_markdown="# fake reused answer", evidence=[], followups=[],
+        similarity=1.0, generated_at="2099-01-01T00:00:00Z",
+    )
+    mem = InvestigationMemoryCapabilities(
+        reusable_report=lambda conn, question, company_ids, statement_type: fake_candidate,
+        related_investigations=lambda conn, question, company_ids: [],
+    )
+
+    result = answer_question(
+        ingested_conn, "How did net profit change?", ["HDFCBANK"], investigation_memory=mem
+    )
+
+    assert result == "# fake reused answer"
+    assert captured == []  # never called the API — served from the injected capability
+
+
 def test_answer_question_comparison_includes_both_companies(
     tmp_path: Path, ingested_conn: sqlite3.Connection, monkeypatch
 ) -> None:

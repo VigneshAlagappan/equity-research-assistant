@@ -15,6 +15,7 @@ import pytest
 from companies.registry import seed_companies
 from context import graph_neo4j
 from ingestion.pipeline import ingest_file
+from storage.fact_store import default_fact_store
 from storage.repositories import save_company_document, save_generated_report, save_report_evidence
 from tests.test_screener_adapter import _make_screener_workbook
 
@@ -46,7 +47,7 @@ def _fake_driver():
 def test_sync_graph_writes_companies_sector_edges_and_seed_edges(two_bank_conn: sqlite3.Connection) -> None:
     driver, session, tx = _fake_driver()
 
-    graph_neo4j.sync_graph(two_bank_conn, driver)
+    graph_neo4j.sync_graph(two_bank_conn, driver, fact_store=default_fact_store())
 
     queries_run = [call.args[0] for call in tx.run.call_args_list]
     assert any("MERGE (c:Company" in q for q in queries_run)
@@ -61,7 +62,7 @@ def test_sync_graph_syncs_each_generated_report_as_an_investigation(two_bank_con
     ])
     driver, session, tx = _fake_driver()
 
-    graph_neo4j.sync_graph(two_bank_conn, driver)
+    graph_neo4j.sync_graph(two_bank_conn, driver, fact_store=default_fact_store())
 
     investigation_calls = [c for c in tx.run.call_args_list if "MERGE (inv:Investigation" in c.args[0]]
     assert len(investigation_calls) == 1
@@ -129,7 +130,7 @@ def knowledge_conn(tmp_path: Path, db_conn: sqlite3.Connection, monkeypatch) -> 
 def test_sync_knowledge_graph_writes_entities_claims_and_relationships(knowledge_conn: sqlite3.Connection) -> None:
     driver, session, tx = _fake_driver()
 
-    graph_neo4j.sync_knowledge_graph(knowledge_conn, driver)
+    graph_neo4j.sync_knowledge_graph(knowledge_conn, driver, fact_store=default_fact_store())
 
     queries_run = [call.args[0] if call.args else call.kwargs.get("query", "") for call in tx.run.call_args_list]
     assert any("MERGE (c:Company" in q for q in queries_run)

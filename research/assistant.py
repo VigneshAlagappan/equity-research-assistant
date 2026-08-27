@@ -19,10 +19,10 @@ import sqlite3
 
 from config.settings import ANTHROPIC_MODEL
 from context.optimizer import optimize
-from context.reuse import find_reusable_report
 from llm import observability
 from llm.hardness import classify
 from llm.router import TIER_PREFERRED_MODEL, AllProvidersUnavailableError, route
+from research.capabilities import InvestigationMemoryCapabilities, default_investigation_memory
 from research.documents import get_document_evidence
 from research.evidence import render_evidence_block
 from research.macro_evidence import get_macro_evidence
@@ -77,6 +77,8 @@ def answer_question(
     company_ids: list[str],
     statement_type: str | None = "consolidated",
     model: str | None = None,
+    *,
+    investigation_memory: InvestigationMemoryCapabilities | None = None,
 ) -> str:
     """Answer a research question about one or more companies, and/or about
     macro/regulatory data (India or US), grounded in retrieved evidence.
@@ -116,7 +118,8 @@ def answer_question(
     second time, and is the mechanism that populates the Investigations list
     in the first place.
     """
-    reused = find_reusable_report(conn, question, company_ids, statement_type)
+    mem = investigation_memory or default_investigation_memory()
+    reused = mem.reusable_report(conn, question, company_ids, statement_type)
     if reused is not None:
         observability.record_reuse(
             conn, task_name="assistant_qa", company_ids=company_ids, question=question,

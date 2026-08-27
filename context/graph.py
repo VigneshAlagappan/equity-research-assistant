@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from config.knowledge_graph_seed import KNOWLEDGE_GRAPH_SEED_EDGES
 from config.settings import GRAPH_BACKEND
 from financials.report import TREND_METRICS, VENDOR_RATIO_METRICS
-from storage.repositories import list_generated_reports, list_report_evidence
+from storage.fact_store import FactStore, default_fact_store
 
 logger = logging.getLogger(__name__)
 
@@ -97,14 +97,12 @@ def _expand_via_seed_edges(metric_keys: set[str]) -> dict[str, float]:
     return expanded
 
 
-def _sector_peers(conn: sqlite3.Connection, company_id: str) -> tuple[list[str], str | None]:
+def _sector_peers(conn: sqlite3.Connection, company_id: str, fact_store: FactStore) -> tuple[list[str], str | None]:
     """Other companies sharing this company's sector — basic_industry
     preferred (more specific, e.g. "Private Sector Bank") over
     macro_economic_sector (broader, e.g. "Financial Services") when both are
     set. Returns ([], None) when the company has neither set."""
-    row = conn.execute(
-        "SELECT basic_industry, macro_economic_sector FROM companies WHERE company_id = ?", (company_id,)
-    ).fetchone()
+    row = fact_store.get_company(conn, company_id)
     if row is None:
         return [], None
     if row["basic_industry"]:
@@ -113,9 +111,7 @@ def _sector_peers(conn: sqlite3.Connection, company_id: str) -> tuple[list[str],
         field, value = "macro_economic_sector", row["macro_economic_sector"]
     else:
         return [], None
-    rows = conn.execute(
-        f"SELECT company_id FROM companies WHERE {field} = ? AND company_id != ?", (value, company_id)
-    ).fetchall()
+    rows = fact_store.list_companies_by_sector_field(conn, field, value, company_id)
     return [r["company_id"] for r in rows], value
 
 
@@ -129,7 +125,9 @@ class GraphCandidate:
     path: str  # human-readable traversal explanation — inspectability (README §7)
 
 
-def find_related_investigations(conn: sqlite3.Connection, question: str, company_ids: list[str]) -> list[GraphCandidate]:
+def find_related_investigations(
+    conn: sqlite3.Connection, question: str, company_ids: list[str], *, fact_store: FactStore | None = None
+) -> list[GraphCandidate]:
     """Prior investigations about a DIFFERENT (sector-peer) company, relevant
     to this question through a direct or seed-edge-bridged metric match.
 
@@ -138,18 +136,21 @@ def find_related_investigations(conn: sqlite3.Connection, question: str, company
     SQLite/Python traversal if Neo4j isn't reachable — same
     graceful-degradation pattern as llm/router.py's provider fallback: a
     graph backend being down never fails the investigation itself."""
+    fs = fact_store or default_fact_store()
     if GRAPH_BACKEND == "neo4j":
         try:
             from context import graph_neo4j
             driver = graph_neo4j.get_driver()
-            graph_neo4j.sync_graph(conn, driver)
+            graph_neo4j.sync_graph(conn, driver, fact_store=fs)
             return graph_neo4j.find_related_investigations(driver, question, company_ids)
         except Exception:
             logger.warning("Neo4j graph backend unavailable, falling back to SQLite traversal", exc_info=True)
-    return _find_related_investigations_sqlite(conn, question, company_ids)
+    return _find_related_investigations_sqlite(conn, question, company_ids, fs)
 
 
-def _find_related_investigations_sqlite(conn: sqlite3.Connection, question: str, company_ids: list[str]) -> list[GraphCandidate]:
+def _find_related_investigations_sqlite(
+    conn: sqlite3.Connection, question: str, company_ids: list[str], fact_store: FactStore
+) -> list[GraphCandidate]:
     """Pure-Python/SQLite traversal — the default backend, and the fallback
     when GRAPH_BACKEND="neo4j" but no server is reachable. Returns [] if
     there's no sector data, no metric mentioned, or no matching prior
@@ -158,7 +159,7 @@ def _find_related_investigations_sqlite(conn: sqlite3.Connection, question: str,
         return []
     company_id = company_ids[0]
 
-    peers, sector = _sector_peers(conn, company_id)
+    peers, sector = _sector_peers(conn, company_id, fact_store)
     if not peers:
         return []
 
@@ -168,14 +169,14 @@ def _find_related_investigations_sqlite(conn: sqlite3.Connection, question: str,
     relevant_metrics = _expand_via_seed_edges(direct_metrics)
 
     candidates: list[GraphCandidate] = []
-    for report in list_generated_reports(conn):
+    for report in fact_store.list_generated_reports(conn):
         if company_id in report["company_ids"]:
             continue  # about the target company itself — context/reuse.py's job, not this
         matched_peers = [c for c in report["company_ids"] if c in peers]
         if not matched_peers:
             continue
 
-        evidence_text = " ".join(e["label"] for e in list_report_evidence(conn, report["thread_id"])).lower()
+        evidence_text = " ".join(e["label"] for e in fact_store.list_report_evidence(conn, report["thread_id"])).lower()
         matched_metrics = [
             (mk, strength) for mk, strength in relevant_metrics.items()
             if any(kw in evidence_text for kw in _keywords_for(mk))

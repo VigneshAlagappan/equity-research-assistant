@@ -125,6 +125,37 @@ def get_company(conn: sqlite3.Connection, company_id: str) -> sqlite3.Row | None
     ).fetchone()
 
 
+_SECTOR_PEER_FIELDS = ("basic_industry", "macro_economic_sector")
+
+
+def list_companies_by_sector_field(
+    conn: sqlite3.Connection, field: str, value: str, exclude_company_id: str
+) -> list[sqlite3.Row]:
+    """Companies sharing one sector-classification column's value, used by
+    context/graph.py's sector-peer traversal. `field` is restricted to the
+    two known sector columns and branched on internally (never
+    string-formatted from a caller-supplied value) — no injection surface
+    even though today's only caller already only passes a fixed literal."""
+    if field not in _SECTOR_PEER_FIELDS:
+        raise ValueError(f"field must be one of {_SECTOR_PEER_FIELDS}, got {field!r}")
+    if field == "basic_industry":
+        sql = "SELECT company_id FROM companies WHERE basic_industry = ? AND company_id != ?"
+    else:
+        sql = "SELECT company_id FROM companies WHERE macro_economic_sector = ? AND company_id != ?"
+    return conn.execute(sql, (value, exclude_company_id)).fetchall()
+
+
+def list_companies_with_sector(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every company with one resolved sector value (basic_industry
+    preferred over macro_economic_sector, same preference _sector_peers()
+    above/context/graph.py's own logic uses) — used for a full graph
+    resync (context/graph_neo4j.py's sync_graph()), not a per-request path."""
+    return conn.execute(
+        "SELECT company_id, COALESCE(NULLIF(basic_industry, ''), NULLIF(macro_economic_sector, '')) AS sector "
+        "FROM companies"
+    ).fetchall()
+
+
 def search_companies(conn: sqlite3.Connection, query: str, *, limit: int = 8) -> list[sqlite3.Row]:
     """Active companies whose id/display name/legal name/NSE symbol contains
     `query` (case-insensitive substring, not a fuzzy match) — the header

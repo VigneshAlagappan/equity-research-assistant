@@ -58,6 +58,14 @@ _EVALUATION_RESPONSE = """{
   "missing_evidence": ["More granular cost data"]
 }"""
 
+_INSUFFICIENT_RESPONSE = """{
+  "verdict": "INSUFFICIENT_EVIDENCE",
+  "confidence_basis": "Not enough evidence yet.",
+  "supporting_evidence": [],
+  "contradicting_evidence": [],
+  "missing_evidence": ["quarterly cost breakdown"]
+}"""
+
 _SYNTHESIS_RESPONSE = f"""{{
   "strongest_explanation": "Input cost inflation is the most likely driver.",
   "ranked_hypothesis_ids": ["{_H1}", "{_H2}"],
@@ -196,3 +204,170 @@ def test_all_evaluations_failing_raises(company_conn: sqlite3.Connection, monkey
 
     with pytest.raises(InvestigationError, match="nothing to synthesize"):
         run_investigation(company_conn, "Why did margins decline?", ["HDFCBANK"])
+
+
+def test_insufficient_evidence_triggers_a_retry_that_then_succeeds(
+    company_conn: sqlite3.Connection, pinned_investigation_id: str, monkeypatch
+) -> None:
+    """Step 2G's INSUFFICIENT_EVIDENCE verdict must trigger exactly one more
+    Step 2F retrieval pass + re-evaluation (the Orchestrator's loop, guardrail
+    #7) — not zero (ignoring the signal) and not more than needed once a
+    later verdict resolves it. Injected capabilities always surface fresh
+    evidence on retry so the no-new-evidence control can't be what's
+    (accidentally) making this pass — company_conn has no ingested data, so
+    the default capabilities would return an empty plan every time."""
+    from research.capabilities import PlannerCapabilities
+    from research.evidence import Evidence
+
+    counters = {"financial": 0}
+
+    def ever_new_evidence(conn, company_id):
+        counters["financial"] += 1
+        return [Evidence(kind="FACT", company_id=company_id, label="metric", value=str(counters["financial"]), citation="t")]
+
+    caps = PlannerCapabilities(
+        financial_evidence=ever_new_evidence,
+        document_evidence=lambda conn, company_id, question: [],
+        macro_evidence=lambda conn, question: [],
+        document_search=lambda conn, query, *, company_id, limit: [],
+        knowledge_graph=lambda conn, entity_type, entity_name: [],
+    )
+
+    captured: list = []
+    client = _DispatchClient(captured)
+    call_count = {"evaluations": 0}
+    original_create = client.messages.create
+
+    def create(**kwargs):
+        system = kwargs.get("system", "")
+        if system.startswith(_EVALUATOR_PREFIX):
+            call_count["evaluations"] += 1
+            if call_count["evaluations"] == 1:
+                return SimpleNamespace(
+                    content=[SimpleNamespace(type="text", text=_INSUFFICIENT_RESPONSE)], stop_reason="end_turn"
+                )
+        return original_create(**kwargs)
+
+    client.messages.create = create
+    monkeypatch.setattr("llm.providers.anthropic_provider.anthropic.Anthropic", lambda *a, **kw: client)
+
+    investigation = run_investigation(company_conn, "Why did margins decline?", ["HDFCBANK"], capabilities=caps)
+
+    assert investigation.evaluations[_H1].verdict == "SUPPORTED"
+    # H1: INSUFFICIENT then SUPPORTED (2 calls) + H2: SUPPORTED first try (1 call) = 3
+    assert call_count["evaluations"] == 3
+
+
+def test_persistent_insufficient_evidence_stops_at_max_iterations(
+    company_conn: sqlite3.Connection, pinned_investigation_id: str, monkeypatch
+) -> None:
+    """Even if the evidence gap never closes, the loop must not run forever —
+    MAX_EVIDENCE_ITERATIONS bounds it. Uses injected capabilities that always
+    surface fresh (never-before-seen) evidence, so the no-new-evidence
+    control can't be what stops it — only the max-iterations control can."""
+    from research.investigation import MAX_EVIDENCE_ITERATIONS
+    from research.capabilities import PlannerCapabilities
+    from research.evidence import Evidence
+
+    counters = {"financial": 0}
+
+    def ever_new_evidence(conn, company_id):
+        counters["financial"] += 1
+        return [Evidence(kind="FACT", company_id=company_id, label="metric", value=str(counters["financial"]), citation="t")]
+
+    caps = PlannerCapabilities(
+        financial_evidence=ever_new_evidence,
+        document_evidence=lambda conn, company_id, question: [],
+        macro_evidence=lambda conn, question: [],
+        document_search=lambda conn, query, *, company_id, limit: [],
+        knowledge_graph=lambda conn, entity_type, entity_name: [],
+    )
+
+    captured: list = []
+    client = _DispatchClient(captured, evaluation_text=_INSUFFICIENT_RESPONSE)
+    monkeypatch.setattr("llm.providers.anthropic_provider.anthropic.Anthropic", lambda *a, **kw: client)
+
+    investigation = run_investigation(company_conn, "Why did margins decline?", ["HDFCBANK"], capabilities=caps)
+
+    eval_calls = [c for c in captured if c.get("system", "").startswith(_EVALUATOR_PREFIX)]
+    assert len(eval_calls) == MAX_EVIDENCE_ITERATIONS * 2  # 2 hypotheses, each hits the cap
+    assert investigation.evaluations[_H1].verdict == "INSUFFICIENT_EVIDENCE"
+    assert investigation.evaluations[_H2].verdict == "INSUFFICIENT_EVIDENCE"
+
+
+def test_no_new_evidence_stops_the_loop_early(
+    company_conn: sqlite3.Connection, pinned_investigation_id: str, monkeypatch
+) -> None:
+    """A retry that surfaces nothing beyond the prior pass must stop the loop
+    immediately, without paying for another (identical) evaluation call —
+    company_conn here has no ingested data, so every plan_and_gather() pass
+    is naturally empty every time."""
+    captured: list = []
+    client = _DispatchClient(captured, evaluation_text=_INSUFFICIENT_RESPONSE)
+    monkeypatch.setattr("llm.providers.anthropic_provider.anthropic.Anthropic", lambda *a, **kw: client)
+
+    investigation = run_investigation(company_conn, "Why did margins decline?", ["HDFCBANK"])
+
+    eval_calls = [c for c in captured if c.get("system", "").startswith(_EVALUATOR_PREFIX)]
+    assert len(eval_calls) == 2  # one per hypothesis, no retries
+    assert investigation.evaluations[_H1].verdict == "INSUFFICIENT_EVIDENCE"
+
+
+def test_injected_fact_store_is_used_for_persistence(
+    company_conn: sqlite3.Connection, pinned_investigation_id: str, monkeypatch
+) -> None:
+    """Proves the FactStore seam (storage/fact_store.py) is wired into
+    run_investigation's write path — an injected fake FactStore's
+    save_investigation* fields get called instead of the real ones, so
+    nothing lands in the real investigations table."""
+    from dataclasses import replace
+
+    from storage.fact_store import default_fact_store
+
+    calls = {"save_investigation": 0, "save_investigation_hypothesis": 0, "save_investigation_hypothesis_evidence": 0}
+
+    def fake_save_investigation(conn, **kwargs):
+        calls["save_investigation"] += 1
+
+    def fake_save_investigation_hypothesis(conn, **kwargs):
+        calls["save_investigation_hypothesis"] += 1
+
+    def fake_save_investigation_hypothesis_evidence(conn, hypothesis_id, evidence):
+        calls["save_investigation_hypothesis_evidence"] += 1
+
+    fs = replace(
+        default_fact_store(),
+        save_investigation=fake_save_investigation,
+        save_investigation_hypothesis=fake_save_investigation_hypothesis,
+        save_investigation_hypothesis_evidence=fake_save_investigation_hypothesis_evidence,
+    )
+
+    captured: list = []
+    client = _DispatchClient(captured)
+    monkeypatch.setattr("llm.providers.anthropic_provider.anthropic.Anthropic", lambda *a, **kw: client)
+
+    run_investigation(company_conn, "Why did margins decline?", ["HDFCBANK"], fact_store=fs)
+
+    assert calls["save_investigation"] == 1
+    assert calls["save_investigation_hypothesis"] == 2  # one per hypothesis
+    from storage.repositories import get_investigation as real_get_investigation
+
+    assert real_get_investigation(company_conn, pinned_investigation_id) is None  # nothing really persisted
+
+
+def test_timeout_stops_the_loop_without_a_retry(
+    company_conn: sqlite3.Connection, pinned_investigation_id: str, monkeypatch
+) -> None:
+    """A zero timeout budget means the deadline has already passed by the
+    time the first evaluation returns — no retry should be attempted even
+    though the verdict is INSUFFICIENT_EVIDENCE."""
+    monkeypatch.setattr("research.investigation.INVESTIGATION_TIMEOUT_SECONDS", 0)
+    captured: list = []
+    client = _DispatchClient(captured, evaluation_text=_INSUFFICIENT_RESPONSE)
+    monkeypatch.setattr("llm.providers.anthropic_provider.anthropic.Anthropic", lambda *a, **kw: client)
+
+    investigation = run_investigation(company_conn, "Why did margins decline?", ["HDFCBANK"])
+
+    eval_calls = [c for c in captured if c.get("system", "").startswith(_EVALUATOR_PREFIX)]
+    assert len(eval_calls) == 2  # one per hypothesis, no retries
+    assert investigation.evaluations[_H1].verdict == "INSUFFICIENT_EVIDENCE"

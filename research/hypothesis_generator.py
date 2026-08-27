@@ -22,11 +22,11 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 
-from companies.registry import get_company
 from config.settings import ANTHROPIC_MODEL
 from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
+from storage.fact_store import FactStore, default_fact_store
 
 HYPOTHESIS_CATEGORIES: frozenset[str] = frozenset({
     "financial", "operational", "competitive", "strategic",
@@ -89,20 +89,18 @@ def _build_system_prompt() -> str:
     )
 
 
-def _company_context(conn: sqlite3.Connection, company_ids: list[str]) -> str:
+def _company_context(conn: sqlite3.Connection, company_ids: list[str], fact_store: FactStore) -> str:
     lines = []
     for company_id in company_ids:
-        company = get_company(conn, company_id)
+        company = fact_store.get_company(conn, company_id)
         if company is None:
             continue
         descriptors = [d for d in (company["sector"], company["industry"]) if d]
         lines.append(f"{company_id} ({company['display_name']}" + (f", {', '.join(descriptors)}" if descriptors else "") + ")")
 
-        entities = conn.execute(
-            "SELECT DISTINCT entity_type, name FROM knowledge_entities "
-            "WHERE company_id = ? AND entity_type IN ('Risk', 'Opportunity', 'Strategy', 'Product') LIMIT 15",
-            (company_id,),
-        ).fetchall()
+        entities = fact_store.list_knowledge_entities_for_companies(
+            conn, [company_id], entity_types=("Risk", "Opportunity", "Strategy", "Product"), limit=15,
+        )
         if entities:
             lines.append("  Already-known entities: " + ", ".join(f"{e['entity_type']}: {e['name']}" for e in entities))
     return "\n".join(lines) if lines else "No prior context available for these companies."
@@ -122,14 +120,16 @@ def _parse_response(text: str) -> list[dict]:
 
 
 def generate_hypotheses(
-    conn: sqlite3.Connection, investigation_id: str, question: str, company_ids: list[str], *, model: str | None = None
+    conn: sqlite3.Connection, investigation_id: str, question: str, company_ids: list[str], *, model: str | None = None,
+    fact_store: FactStore | None = None,
 ) -> list[Hypothesis]:
     """Generate competing hypotheses for `question`. Raises
     HypothesisGenerationError if the LLM call fails or its response doesn't
     parse — the caller (research/investigation.py) decides what that means
     for the investigation as a whole; this function never returns a
     fabricated hypothesis to paper over a failure."""
-    context = _company_context(conn, company_ids)
+    fs = fact_store or default_fact_store()
+    context = _company_context(conn, company_ids, fs)
     hardness = fixed(Tier.DEEP, "hypothesis generation")
     # No DEFAULT_ANTHROPIC_MODEL fallback — see research/knowledge_builder.py's
     # identical comment; leaving this unset lets llm/router.py respect

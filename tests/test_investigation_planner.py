@@ -14,6 +14,8 @@ import pytest
 
 from companies.registry import seed_companies
 from ingestion.pipeline import ingest_file
+from research.capabilities import PlannerCapabilities
+from research.evidence import Evidence
 from research.hypothesis_generator import Hypothesis
 from research.investigation_planner import plan_and_gather
 from research.knowledge_builder import extract_document_knowledge
@@ -119,6 +121,45 @@ def test_mentioned_entity_in_hypothesis_text_is_also_queried(ingested_conn: sqli
     plan = plan_and_gather(ingested_conn, hypothesis, "question")
 
     assert any("knowledge_graph:Product:Widget Pro" in s for s in plan.sources_queried)
+
+
+def test_injected_capabilities_are_used_instead_of_defaults(db_conn: sqlite3.Connection) -> None:
+    """Proves the PlannerCapabilities seam (research/capabilities.py, the
+    architecture guardrail's "Planner -> Capability Interface -> ...") is
+    actually wired, not just present and unused — every one of the 5
+    capability slots gets called, and the plan reflects what the injected
+    fakes returned, not the real in-process implementations."""
+    calls = {"financial": 0, "document": 0, "macro": 0, "search": 0, "graph": 0}
+
+    def fake_financial(conn, company_id):
+        calls["financial"] += 1
+        return [Evidence(kind="FACT", company_id=company_id, label="fake evidence", value="1", citation="test")]
+
+    def fake_document(conn, company_id, question):
+        calls["document"] += 1
+        return []
+
+    def fake_macro(conn, question):
+        calls["macro"] += 1
+        return []
+
+    def fake_search(conn, query, *, company_id, limit):
+        calls["search"] += 1
+        return []
+
+    def fake_graph(conn, entity_type, entity_name):
+        calls["graph"] += 1
+        return []
+
+    caps = PlannerCapabilities(
+        financial_evidence=fake_financial, document_evidence=fake_document, macro_evidence=fake_macro,
+        document_search=fake_search, knowledge_graph=fake_graph,
+    )
+
+    plan = plan_and_gather(db_conn, _hypothesis(category="macro"), "question", capabilities=caps)
+
+    assert calls == {"financial": 1, "document": 1, "macro": 1, "search": 1, "graph": 1}
+    assert plan.evidence == [Evidence(kind="FACT", company_id="HDFCBANK", label="fake evidence", value="1", citation="test")]
 
 
 def test_gathers_document_passages(ingested_conn: sqlite3.Connection) -> None:

@@ -100,3 +100,33 @@ def test_unrelated_sector_peer_investigation_is_not_surfaced(two_bank_conn: sqli
     candidates = find_related_investigations(two_bank_conn, "What is the net interest margin outlook?", ["ICICIBANK"])
 
     assert candidates == []  # peer exists, but nothing in that investigation matches the metric
+
+
+def test_injected_fact_store_is_used_for_the_sqlite_path(two_bank_conn: sqlite3.Connection) -> None:
+    """Proves the FactStore seam is wired into find_related_investigations'
+    SQLite path — real sector-peer data (get_company/list_companies_by_sector_field,
+    left as the real default) plus a FAKE list_generated_reports/
+    list_report_evidence surfaces a candidate even though no real
+    generated_reports row was ever inserted into two_bank_conn."""
+    from dataclasses import replace
+
+    from storage.fact_store import default_fact_store
+
+    fake_report = {
+        "thread_id": "fake-t1", "question": "How is NIM trending?", "company_ids": ["HDFCBANK"],
+        "report_markdown": "# fake",
+    }
+    fs = replace(
+        default_fact_store(),
+        list_generated_reports=lambda conn: [fake_report],
+        list_report_evidence=lambda conn, thread_id: [
+            {"label": "net_interest_margin (FY2024)"},
+        ],
+    )
+
+    candidates = find_related_investigations(
+        two_bank_conn, "What is the net interest margin outlook?", ["ICICIBANK"], fact_store=fs
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].thread_id == "fake-t1"

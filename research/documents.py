@@ -33,7 +33,7 @@ from config.settings import from_repo_relative
 from pypdf.errors import PdfReadError
 
 from research.evidence import Evidence
-from storage.repositories import list_company_documents
+from storage.fact_store import FactStore, default_fact_store
 
 # Bounds a single link-only document fetch — avoids hanging on a slow host or
 # pulling down an unexpectedly huge file just because its URL ends in .pdf.
@@ -170,13 +170,16 @@ def document_pages(row: sqlite3.Row) -> list[str] | None:
     return None
 
 
-def get_document_evidence(conn: sqlite3.Connection, company_id: str, question: str) -> list[Evidence]:
+def get_document_evidence(
+    conn: sqlite3.Connection, company_id: str, question: str, *, fact_store: FactStore | None = None
+) -> list[Evidence]:
     """MANAGEMENT_STATEMENT evidence extracted from this company's Docs-tab
     documents — uploaded files and fetched links alike (README: Evidence &
     Citations). Company-specific only — there's
     no per-company attribution story yet for a multi-company comparison, so
     callers should only use this for single-company investigations."""
-    docs = _select_documents(list_company_documents(conn, company_id), question)
+    fs = fact_store or default_fact_store()
+    docs = _select_documents(fs.list_company_documents(conn, company_id), question)
 
     evidence = []
     for row in docs:

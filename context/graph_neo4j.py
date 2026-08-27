@@ -51,7 +51,7 @@ from context.graph import (
     _expand_via_seed_edges,
     _metrics_mentioned,
 )
-from storage.repositories import list_generated_reports, list_report_evidence
+from storage.fact_store import FactStore
 
 logger = logging.getLogger(__name__)
 
@@ -138,22 +138,21 @@ def _sync_investigation(
         )
 
 
-def sync_graph(conn: sqlite3.Connection, driver: Driver) -> None:
+def sync_graph(conn: sqlite3.Connection, driver: Driver, *, fact_store: FactStore) -> None:
     """Full, idempotent rebuild of the Neo4j graph from SQLite + the seed
     edge list. Safe to call before every traversal — MERGE never duplicates
-    a node/relationship that already exists."""
-    companies = conn.execute(
-        "SELECT company_id, COALESCE(NULLIF(basic_industry, ''), NULLIF(macro_economic_sector, '')) AS sector "
-        "FROM companies"
-    ).fetchall()
-    reports = list_generated_reports(conn)
+    a node/relationship that already exists. fact_store is always passed
+    explicitly by the two callers (context/graph.py, context/knowledge_graph.py)
+    — never called directly from outside this module, so no default here."""
+    companies = fact_store.list_companies_with_sector(conn)
+    reports = fact_store.list_generated_reports(conn)
 
     with driver.session() as session:
         session.execute_write(_sync_companies, companies)
         session.execute_write(_sync_sector_edges, companies)
         session.execute_write(_sync_seed_edges, KNOWLEDGE_GRAPH_SEED_EDGES)
         for report in reports:
-            evidence_text = " ".join(e["label"] for e in list_report_evidence(conn, report["thread_id"]))
+            evidence_text = " ".join(e["label"] for e in fact_store.list_report_evidence(conn, report["thread_id"]))
             concepts = _metrics_mentioned(evidence_text) | _metrics_mentioned(report["question"])
             session.execute_write(
                 _sync_investigation, report["thread_id"], report["question"], report["report_markdown"],
@@ -353,24 +352,19 @@ def _sync_knowledge_relationships(tx, relationships: list[sqlite3.Row], entity_b
         )
 
 
-def sync_knowledge_graph(conn: sqlite3.Connection, driver: Driver) -> None:
+def sync_knowledge_graph(conn: sqlite3.Connection, driver: Driver, *, fact_store: FactStore) -> None:
     """Full, idempotent rebuild of the knowledge-claim graph from SQLite —
     same "SQLite stays the source of truth, resync before every query"
     philosophy sync_graph() above already uses, not incremental sync/
     invalidation logic. Safe to call independently of sync_graph() — Company
     nodes are MERGEd either way, so whichever sync runs first creates them
     and the other just adds properties/relationships onto the same node.
-    """
-    entities = conn.execute("SELECT entity_id, entity_type, name, company_id FROM knowledge_entities").fetchall()
-    claims = conn.execute(
-        "SELECT claim_id, document_id, company_id, claim_type, category, claim_text, speaker, "
-        "fiscal_year, quarter, extraction_confidence FROM knowledge_claims"
-    ).fetchall()
-    relationships = conn.execute(
-        "SELECT relationship_id, claim_id, source_entity_id, relationship_type, target_entity_id "
-        "FROM knowledge_relationships"
-    ).fetchall()
-    evidence = conn.execute("SELECT evidence_id, claim_id, document_id, quote FROM knowledge_evidence").fetchall()
+    fact_store is always passed explicitly by find_claims_about_entity's
+    caller in context/knowledge_graph.py — no default here."""
+    entities = fact_store.list_all_knowledge_entities(conn)
+    claims = fact_store.list_all_knowledge_claims(conn)
+    relationships = fact_store.list_all_knowledge_relationships(conn)
+    evidence = fact_store.list_all_knowledge_evidence(conn)
     entity_by_id = {e["entity_id"]: e for e in entities}
 
     with driver.session() as session:

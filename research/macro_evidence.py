@@ -45,7 +45,7 @@ from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
 from research.evidence import Evidence
-from storage.repositories import get_macro_series
+from storage.fact_store import FactStore, default_fact_store
 
 logger = logging.getLogger(__name__)
 
@@ -160,28 +160,25 @@ def _year_range(question: str) -> tuple[int, int]:
     return current_year - DEFAULT_YEAR_WINDOW, current_year
 
 
-def _candidate_series(conn: sqlite3.Connection) -> list[tuple[str, str, str, str]]:
+def _candidate_series(conn: sqlite3.Connection, fact_store: FactStore) -> list[tuple[str, str, str, str]]:
     """Every distinct (series_key, source, earliest_period, latest_period) at
     the national level, minus the IITM per-month/season series (see
     _IITM_NON_ANNUAL_SUFFIX_RE above)."""
-    rows = conn.execute(
-        "SELECT series_key, source, MIN(period) AS earliest, MAX(period) AS latest "
-        "FROM macro_observations WHERE region IS NULL GROUP BY series_key, source"
-    ).fetchall()
+    rows = fact_store.list_macro_series_summary(conn)
     return [
         (r["series_key"], r["source"], r["earliest"], r["latest"])
         for r in rows if not _IITM_NON_ANNUAL_SUFFIX_RE.match(r["series_key"])
     ]
 
 
-def _matching_series(conn: sqlite3.Connection, question: str) -> list[str]:
+def _matching_series(conn: sqlite3.Connection, question: str, fact_store: FactStore) -> list[str]:
     """Keyword-overlap fallback — see _plan_retrieval, which is tried first."""
     question_words = _words(question)
     if not question_words:
         return []
     scored = [
         (len(question_words & _words(series_key)), series_key)
-        for series_key, _source, _earliest, _latest in _candidate_series(conn)
+        for series_key, _source, _earliest, _latest in _candidate_series(conn, fact_store)
     ]
     scored = [(score, key) for score, key in scored if score > 0]
     scored.sort(key=lambda pair: (-pair[0], pair[1]))
@@ -192,12 +189,12 @@ def _render_catalog(candidates: list[tuple[str, str, str, str]]) -> str:
     return "\n".join(f"{key} ({source}, {earliest}-{latest})" for key, source, earliest, latest in candidates)
 
 
-def _plan_retrieval(conn: sqlite3.Connection, question: str) -> tuple[list[str], int, int] | None:
+def _plan_retrieval(conn: sqlite3.Connection, question: str, fact_store: FactStore) -> tuple[list[str], int, int] | None:
     """Ask the LLM which catalog series (if any) and what year range apply to
     this question. Returns None — the caller falls back to _matching_series/
     _year_range — if there's no catalog to choose from, the call fails, or
     the response doesn't parse; never raises."""
-    candidates = _candidate_series(conn)
+    candidates = _candidate_series(conn, fact_store)
     if not candidates:
         return None
     valid_keys = {key for key, _source, _earliest, _latest in candidates}
@@ -238,7 +235,9 @@ def _plan_retrieval(conn: sqlite3.Connection, question: str) -> tuple[list[str],
     return series_keys, start_year, end_year
 
 
-def get_macro_evidence(conn: sqlite3.Connection, question: str) -> list[Evidence]:
+def get_macro_evidence(
+    conn: sqlite3.Connection, question: str, *, fact_store: FactStore | None = None
+) -> list[Evidence]:
     """Gather Evidence for the (at most MAX_SERIES) national macro series
     the LLM planner (_plan_retrieval) picks as relevant to this question,
     restricted to the year range it infers — falling back to the keyword/
@@ -246,18 +245,19 @@ def get_macro_evidence(conn: sqlite3.Connection, question: str) -> list[Evidence
     or doesn't parse. Returns [] if nothing applies — most company-financials
     questions won't match any macro series, and that's the expected common
     case, decided by the LLM itself (SERIES: NONE) rather than assumed."""
-    planned = _plan_retrieval(conn, question)
+    fs = fact_store or default_fact_store()
+    planned = _plan_retrieval(conn, question, fs)
     if planned is not None:
         series_keys, start_year, end_year = planned
     else:
-        series_keys = _matching_series(conn, question)
+        series_keys = _matching_series(conn, question, fs)
         start_year, end_year = _year_range(question)
     if not series_keys:
         return []
 
     evidence: list[Evidence] = []
     for series_key in series_keys:
-        rows = get_macro_series(conn, series_key, region=None)
+        rows = fs.get_macro_series(conn, series_key, region=None)
         label = _pretty_label(series_key)
 
         # Downsample to (at most) one point per calendar year: weekly/monthly/

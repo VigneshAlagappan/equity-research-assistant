@@ -75,3 +75,30 @@ def test_finds_a_company_as_the_entity(company_conn: sqlite3.Connection, tmp_pat
 
     assert len(results) == 1
     assert results[0].claim_type == "MANAGEMENT_OPINION"
+
+
+def test_injected_fact_store_is_used_for_the_sqlite_path(company_conn: sqlite3.Connection) -> None:
+    """Proves the FactStore seam (storage/fact_store.py) is wired into
+    find_claims_about_entity's SQLite path — an injected fake FactStore
+    surfaces a claim even though nothing was actually extracted into
+    company_conn's real knowledge_* tables."""
+    from dataclasses import replace
+
+    from storage.fact_store import default_fact_store
+
+    fake_claim = {
+        "claim_id": 999, "document_id": 1, "company_id": "HDFCBANK", "claim_type": "FACT", "category": "financial",
+        "claim_text": "fake claim", "speaker": None, "fiscal_year": "FY2024", "quarter": None, "extraction_confidence": 0.9,
+    }
+    fs = replace(
+        default_fact_store(),
+        find_knowledge_claims_about_entity=lambda conn, entity_type, entity_name: [fake_claim],
+        list_knowledge_evidence_for_claim=lambda conn, claim_id: [],
+        list_knowledge_relationships_for_claim=lambda conn, claim_id: [],
+    )
+
+    results = find_claims_about_entity(company_conn, "Risk", "Nonexistent Risk", fact_store=fs)
+
+    assert len(results) == 1
+    assert results[0].claim_id == 999
+    assert results[0].claim_text == "fake claim"

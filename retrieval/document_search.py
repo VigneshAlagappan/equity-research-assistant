@@ -19,7 +19,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from storage.repositories import search_document_chunks
+from storage.fact_store import FactStore, default_fact_store
 
 
 @dataclass
@@ -40,13 +40,15 @@ class DocumentPassage:
 
 
 def search_documents(
-    conn: sqlite3.Connection, query: str, *, company_id: str | None = None, limit: int = 10
+    conn: sqlite3.Connection, query: str, *, company_id: str | None = None, limit: int = 10,
+    fact_store: FactStore | None = None,
 ) -> list[DocumentPassage]:
     """Keyword search over every indexed document chunk (optionally scoped
     to one company), ranked by FTS5 relevance. Returns [] for a query with
     no usable search tokens or no match — never raises over "nothing found."
     """
-    rows = search_document_chunks(conn, query, company_id=company_id, limit=limit)
+    fs = fact_store or default_fact_store()
+    rows = fs.search_document_chunks(conn, query, company_id=company_id, limit=limit)
     return [
         DocumentPassage(
             chunk_id=row["chunk_id"], document_id=row["document_id"], company_id=row["company_id"],

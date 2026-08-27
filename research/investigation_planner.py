@@ -1,7 +1,8 @@
 """Investigation Planner (Step 2F) — for each hypothesis, determines what
 evidence is relevant and retrieves it by routing to the existing
 capabilities already built, rather than inventing a second retrieval
-mechanism:
+mechanism. Routed through research/capabilities.py's PlannerCapabilities
+seam (a Protocol per capability), not direct module imports:
 
   SQL / financial engine   -> retrieval/structured_search.py (quantitative facts)
   Macro engine              -> research/macro_evidence.py (economic/regulatory series)
@@ -19,7 +20,11 @@ its companies' own financials, documents, and the knowledge graph).
 
 Answers "what should be investigated next" — never decides whether the
 hypothesis is true. That's Step 2G's job entirely, working from exactly the
-evidence this module hands it.
+evidence this module hands it. Called iteratively, not just once per
+hypothesis, by research/investigation.py's evidence-sufficiency loop
+(Step 2G returning INSUFFICIENT_EVIDENCE triggers another pass here with the
+gap it named) — plan_and_gather() itself stays a single deterministic pass;
+the looping decision belongs to the Orchestrator, not this module.
 """
 
 from __future__ import annotations
@@ -27,13 +32,12 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 
-from context.knowledge_graph import KnowledgeClaimView, find_claims_about_entity
-from research.documents import get_document_evidence
+from context.knowledge_graph import KnowledgeClaimView
+from research.capabilities import PlannerCapabilities, default_capabilities
 from research.evidence import Evidence
 from research.hypothesis_generator import Hypothesis
-from research.macro_evidence import get_macro_evidence
-from retrieval.document_search import DocumentPassage, search_documents
-from retrieval.structured_search import get_company_evidence
+from retrieval.document_search import DocumentPassage
+from storage.fact_store import FactStore, default_fact_store
 
 #: Hypothesis categories where macro/regulatory series are worth pulling in
 #: unconditionally — every other category still gets it if the question
@@ -55,7 +59,9 @@ class InvestigationPlan:
     sources_queried: list[str] = field(default_factory=list)
 
 
-def _mentioned_entities(conn: sqlite3.Connection, company_ids: list[str], text: str) -> list[tuple[str, str]]:
+def _mentioned_entities(
+    conn: sqlite3.Connection, company_ids: list[str], text: str, fact_store: FactStore
+) -> list[tuple[str, str]]:
     """Which already-extracted entities (any type) this hypothesis's own
     text names — simple case-insensitive substring match against
     knowledge_entities.name, the same lightweight approach
@@ -63,33 +69,42 @@ def _mentioned_entities(conn: sqlite3.Connection, company_ids: list[str], text: 
     keyword matching. Not a fuzzy match — a real, if narrow, connection."""
     if not company_ids:
         return []
-    placeholders = ",".join("?" for _ in company_ids)
-    rows = conn.execute(
-        f"SELECT DISTINCT entity_type, name FROM knowledge_entities WHERE company_id IN ({placeholders})",
-        company_ids,
-    ).fetchall()
+    rows = fact_store.list_knowledge_entities_for_companies(conn, company_ids)
     text_lower = text.lower()
     return [(r["entity_type"], r["name"]) for r in rows if r["name"] and r["name"].lower() in text_lower]
 
 
-def plan_and_gather(conn: sqlite3.Connection, hypothesis: Hypothesis, question: str) -> InvestigationPlan:
+def plan_and_gather(
+    conn: sqlite3.Connection, hypothesis: Hypothesis, question: str, *, capabilities: PlannerCapabilities | None = None,
+    fact_store: FactStore | None = None,
+) -> InvestigationPlan:
+    """capabilities defaults to the real in-process implementations
+    (research/capabilities.py::default_capabilities) — pass a different
+    PlannerCapabilities to route one or more of the five capabilities
+    elsewhere (a remote service, a test double) without touching the routing
+    logic below. fact_store is a separate, lower-level seam
+    (storage/fact_store.py) — when capabilities isn't explicitly supplied, it
+    also gets threaded into the default capability bindings, so one injected
+    FactStore reaches every layer from this single call."""
+    fs = fact_store or default_fact_store()
+    caps = capabilities or default_capabilities(fact_store=fs)
     plan = InvestigationPlan(hypothesis_id=hypothesis.hypothesis_id)
 
     for company_id in hypothesis.companies:
-        plan.evidence.extend(get_company_evidence(conn, company_id))
+        plan.evidence.extend(caps.financial_evidence(conn, company_id))
         plan.sources_queried.append(f"financial_engine:{company_id}")
 
         if len(hypothesis.companies) == 1:
             # Single-company attribution only, same constraint
             # research/documents.py's own evidence path already has.
-            plan.evidence.extend(get_document_evidence(conn, company_id, question))
+            plan.evidence.extend(caps.document_evidence(conn, company_id, question))
             plan.sources_queried.append(f"documents:{company_id}")
 
-        plan.knowledge_claims.extend(find_claims_about_entity(conn, "Company", company_id))
+        plan.knowledge_claims.extend(caps.knowledge_graph(conn, "Company", company_id))
 
     search_text = f"{question} {hypothesis.statement} {hypothesis.mechanism}"
-    for entity_type, entity_name in _mentioned_entities(conn, hypothesis.companies, search_text)[:_MAX_KNOWLEDGE_GRAPH_ENTITIES]:
-        plan.knowledge_claims.extend(find_claims_about_entity(conn, entity_type, entity_name))
+    for entity_type, entity_name in _mentioned_entities(conn, hypothesis.companies, search_text, fs)[:_MAX_KNOWLEDGE_GRAPH_ENTITIES]:
+        plan.knowledge_claims.extend(caps.knowledge_graph(conn, entity_type, entity_name))
         plan.sources_queried.append(f"knowledge_graph:{entity_type}:{entity_name}")
     if plan.knowledge_claims:
         plan.sources_queried.append("knowledge_graph")
@@ -104,13 +119,13 @@ def plan_and_gather(conn: sqlite3.Connection, hypothesis: Hypothesis, question: 
         plan.knowledge_claims = deduped
 
     if hypothesis.category in _MACRO_RELEVANT_CATEGORIES:
-        macro = get_macro_evidence(conn, question)
+        macro = caps.macro_evidence(conn, question)
         if macro:
             plan.evidence.extend(macro)
             plan.sources_queried.append("macro_engine")
 
     for company_id in hypothesis.companies or [None]:
-        passages = search_documents(conn, search_text, company_id=company_id, limit=_MAX_DOCUMENT_PASSAGES)
+        passages = caps.document_search(conn, search_text, company_id=company_id, limit=_MAX_DOCUMENT_PASSAGES)
         plan.passages.extend(passages)
     if plan.passages:
         plan.sources_queried.append("document_search")

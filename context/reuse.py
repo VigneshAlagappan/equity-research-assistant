@@ -19,12 +19,7 @@ import re
 import sqlite3
 from dataclasses import dataclass
 
-from storage.repositories import (
-    get_latest_data_timestamp,
-    list_generated_reports,
-    list_report_evidence,
-    list_report_followups,
-)
+from storage.fact_store import FactStore, default_fact_store
 
 # Conservative on purpose (README §23: aggressive reuse that damages answer
 # quality is a failure) — only reuse when the new question overlaps at least
@@ -60,16 +55,19 @@ def find_reusable_report(
     question: str,
     company_ids: list[str],
     statement_type: str | None,
+    *,
+    fact_store: FactStore | None = None,
 ) -> ReuseCandidate | None:
     """The freshest prior Signals report on these exact companies/statement
     type, asked in near-enough the same words, whose underlying data hasn't
     changed since it was generated — or None if nothing qualifies. An
     unrelated question about the same companies correctly returns None."""
+    fs = fact_store or default_fact_store()
     target_companies = sorted(company_ids)
-    latest_data_at = get_latest_data_timestamp(conn, company_ids)
+    latest_data_at = fs.get_latest_data_timestamp(conn, company_ids)
 
     best: ReuseCandidate | None = None
-    for report in list_generated_reports(conn):
+    for report in fs.list_generated_reports(conn):
         if sorted(report["company_ids"]) != target_companies:
             continue
         if report["statement_type"] != statement_type:
@@ -83,8 +81,8 @@ def find_reusable_report(
             best = ReuseCandidate(
                 thread_id=report["thread_id"],
                 report_markdown=report["report_markdown"],
-                evidence=list_report_evidence(conn, report["thread_id"]),
-                followups=list_report_followups(conn, report["thread_id"]),
+                evidence=fs.list_report_evidence(conn, report["thread_id"]),
+                followups=fs.list_report_followups(conn, report["thread_id"]),
                 similarity=similarity,
                 generated_at=report["generated_at"],
             )

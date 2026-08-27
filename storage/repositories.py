@@ -777,6 +777,60 @@ def list_knowledge_claims_for_company(conn: sqlite3.Connection, company_id: str)
     ).fetchall()
 
 
+def list_knowledge_entities_for_companies(
+    conn: sqlite3.Connection, company_ids: list[str], *, entity_types: tuple[str, ...] | None = None,
+    limit: int | None = None,
+) -> list[sqlite3.Row]:
+    """Distinct entities already extracted for one or more companies —
+    the repository-layer replacement for what research/investigation_planner.py
+    and research/hypothesis_generator.py used to run as raw SQL against
+    knowledge_entities directly. `entity_types`/`limit` are optional filters
+    the single-company caller (hypothesis_generator.py's own context lookup)
+    needs; the multi-company caller (investigation_planner.py's mentioned-entity
+    match) leaves both unset."""
+    if not company_ids:
+        return []
+    placeholders = ",".join("?" for _ in company_ids)
+    sql = f"SELECT DISTINCT entity_type, name FROM knowledge_entities WHERE company_id IN ({placeholders})"
+    params: list[object] = list(company_ids)
+    if entity_types:
+        type_placeholders = ",".join("?" for _ in entity_types)
+        sql += f" AND entity_type IN ({type_placeholders})"
+        params.extend(entity_types)
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
+
+
+def list_all_knowledge_entities(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Unfiltered read of every entity — only for context/graph_neo4j.py's
+    full-graph resync, never for a per-request path (use
+    list_knowledge_entities_for_companies for that)."""
+    return conn.execute("SELECT entity_id, entity_type, name, company_id FROM knowledge_entities").fetchall()
+
+
+def list_all_knowledge_claims(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Unfiltered read of every claim — see list_all_knowledge_entities."""
+    return conn.execute(
+        "SELECT claim_id, document_id, company_id, claim_type, category, claim_text, speaker, "
+        "fiscal_year, quarter, extraction_confidence FROM knowledge_claims"
+    ).fetchall()
+
+
+def list_all_knowledge_relationships(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Unfiltered read of every relationship — see list_all_knowledge_entities."""
+    return conn.execute(
+        "SELECT relationship_id, claim_id, source_entity_id, relationship_type, target_entity_id "
+        "FROM knowledge_relationships"
+    ).fetchall()
+
+
+def list_all_knowledge_evidence(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Unfiltered read of every evidence row — see list_all_knowledge_entities."""
+    return conn.execute("SELECT evidence_id, claim_id, document_id, quote FROM knowledge_evidence").fetchall()
+
+
 _FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 
 
@@ -1356,6 +1410,16 @@ def get_macro_series(
     return conn.execute(
         "SELECT * FROM macro_observations WHERE series_key = ? AND region IS ? ORDER BY period ASC",
         (series_key, region),
+    ).fetchall()
+
+
+def list_macro_series_summary(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every distinct (series_key, source, earliest, latest) at the national
+    level (region IS NULL) — research/macro_evidence.py's own catalog
+    discovery used to run this as raw SQL directly."""
+    return conn.execute(
+        "SELECT series_key, source, MIN(period) AS earliest, MAX(period) AS latest "
+        "FROM macro_observations WHERE region IS NULL GROUP BY series_key, source"
     ).fetchall()
 
 

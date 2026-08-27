@@ -20,12 +20,12 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from config.settings import ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL
-from context.graph import find_related_investigations, render_related_investigations
+from context.graph import render_related_investigations
 from context.optimizer import optimize
-from context.reuse import find_reusable_report
 from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
+from research.capabilities import InvestigationMemoryCapabilities, default_investigation_memory
 from research.documents import get_document_evidence
 from research.evidence import Evidence, render_evidence_block
 from retrieval.structured_search import get_comparison_evidence
@@ -147,6 +147,8 @@ def generate_signals_report(
     company_ids: list[str],
     statement_type: str | None = "consolidated",
     model: str = ANTHROPIC_MODEL or DEFAULT_ANTHROPIC_MODEL,
+    *,
+    investigation_memory: InvestigationMemoryCapabilities | None = None,
 ) -> SignalsReport:
     """Generate a full Signals-format report, grounded in retrieved evidence.
 
@@ -163,7 +165,8 @@ def generate_signals_report(
     question's own companies — and appends it as its own labeled block
     when found.
     """
-    reused = find_reusable_report(conn, question, company_ids, statement_type)
+    mem = investigation_memory or default_investigation_memory()
+    reused = mem.reusable_report(conn, question, company_ids, statement_type)
     if reused is not None:
         observability.record_reuse(
             conn, task_name="signals_report", company_ids=company_ids, question=question,
@@ -192,7 +195,7 @@ def generate_signals_report(
     optimized = optimize(question, evidence, hardness.tier)
     user_message = f"Evidence:\n{render_evidence_block(optimized.evidence)}\n\nQuestion: {question}"
 
-    related = find_related_investigations(conn, question, company_ids)
+    related = mem.related_investigations(conn, question, company_ids)
     if related:
         user_message += "\n\n" + render_related_investigations(related)
 

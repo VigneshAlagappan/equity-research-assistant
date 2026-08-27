@@ -25,11 +25,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from config.settings import GRAPH_BACKEND
-from storage.repositories import (
-    find_knowledge_claims_about_entity,
-    list_knowledge_evidence_for_claim,
-    list_knowledge_relationships_for_claim,
-)
+from storage.fact_store import FactStore, default_fact_store
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +51,9 @@ class KnowledgeClaimView:
     backend: str = "sqlite"
 
 
-def find_claims_about_entity(conn: sqlite3.Connection, entity_type: str, entity_name: str) -> list[KnowledgeClaimView]:
+def find_claims_about_entity(
+    conn: sqlite3.Connection, entity_type: str, entity_name: str, *, fact_store: FactStore | None = None
+) -> list[KnowledgeClaimView]:
     """Every claim, from any company, whose extracted relationships touch
     this entity — e.g. entity_type="Risk", entity_name="Interest Rate
     Volatility" surfaces every company's claims connected to that risk, not
@@ -63,27 +61,30 @@ def find_claims_about_entity(conn: sqlite3.Connection, entity_type: str, entity_
     reachable, falling back to the SQLite join-based traversal otherwise —
     same graceful-degradation pattern as context/graph.py's
     find_related_investigations()."""
+    fs = fact_store or default_fact_store()
     if GRAPH_BACKEND == "neo4j":
         try:
             from context import graph_neo4j
 
             driver = graph_neo4j.get_driver()
-            graph_neo4j.sync_knowledge_graph(conn, driver)
+            graph_neo4j.sync_knowledge_graph(conn, driver, fact_store=fs)
             return graph_neo4j.find_claims_about_entity(driver, entity_type, entity_name)
         except Exception:
             logger.warning("Neo4j graph backend unavailable, falling back to SQLite traversal", exc_info=True)
-    return _find_claims_about_entity_sqlite(conn, entity_type, entity_name)
+    return _find_claims_about_entity_sqlite(conn, entity_type, entity_name, fs)
 
 
 def _find_claims_about_entity_sqlite(
-    conn: sqlite3.Connection, entity_type: str, entity_name: str
+    conn: sqlite3.Connection, entity_type: str, entity_name: str, fact_store: FactStore
 ) -> list[KnowledgeClaimView]:
-    claims = find_knowledge_claims_about_entity(conn, entity_type, entity_name)
+    claims = fact_store.find_knowledge_claims_about_entity(conn, entity_type, entity_name)
     views: list[KnowledgeClaimView] = []
     for claim in claims:
-        evidence = [row["quote"] for row in list_knowledge_evidence_for_claim(conn, claim["claim_id"]) if row["quote"]]
+        evidence = [
+            row["quote"] for row in fact_store.list_knowledge_evidence_for_claim(conn, claim["claim_id"]) if row["quote"]
+        ]
         related: set[tuple[str, str]] = set()
-        for rel in list_knowledge_relationships_for_claim(conn, claim["claim_id"]):
+        for rel in fact_store.list_knowledge_relationships_for_claim(conn, claim["claim_id"]):
             related.add((rel["source_type"], rel["source_name"]))
             related.add((rel["target_type"], rel["target_name"]))
         related.discard((entity_type, entity_name))

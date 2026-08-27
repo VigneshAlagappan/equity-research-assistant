@@ -143,3 +143,28 @@ def test_generate_signals_report_handles_empty_non_refusal_response(
 
     assert "no report" in result.report_markdown.lower()
     assert result.evidence == []
+
+
+def test_injected_investigation_memory_capability_is_used(ingested_conn: sqlite3.Connection, monkeypatch) -> None:
+    """Proves the Investigation Memory capability seam
+    (research/capabilities.py's InvestigationMemoryCapabilities) is wired
+    into generate_signals_report's related_investigations call — an injected
+    fake GraphCandidate's path shows up in the prompt sent to the LLM, even
+    though no real sector-peer investigation exists in ingested_conn."""
+    from context.graph import GraphCandidate
+    from research.capabilities import InvestigationMemoryCapabilities
+
+    captured = _install_fake_client(monkeypatch, text="## The Short Answer\nfine")
+    fake_candidate = GraphCandidate(
+        thread_id="fake-t1", company_ids=["ICICIBANK"], question="q", report_markdown="r",
+        score=0.9, path="fake injected path",
+    )
+    mem = InvestigationMemoryCapabilities(
+        reusable_report=lambda conn, question, company_ids, statement_type: None,
+        related_investigations=lambda conn, question, company_ids: [fake_candidate],
+    )
+
+    generate_signals_report(ingested_conn, "How did net profit change?", ["HDFCBANK"], investigation_memory=mem)
+
+    sent = captured[0]["messages"][0]["content"]
+    assert "fake injected path" in sent
