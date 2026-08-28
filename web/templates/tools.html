@@ -5,29 +5,23 @@
 {% block page_class %}page-wide{% endblock %}
 
 {% block extra_style %}
-  /* Sidebar + panel-switching shell — same shape web/templates/admin.html's
-     own .admin-layout/.admin-sidebar/.admin-panel already uses, kept as its
-     own page-local copy (not extracted to styles.css) since that's the
-     convention every other page-specific layout here already follows. */
-  .tools-layout { display: flex; gap: var(--space-6); align-items: flex-start; }
-  .tools-sidebar { width: 170px; flex: none; position: sticky; top: var(--space-4); }
-  .tools-nav { display: flex; flex-direction: column; gap: 2px; }
+  /* Horizontal sub-header tab row — the full page width goes to whichever
+     panel is active instead of losing a sidebar column to it, styled like
+     the site header's own .site-nav-link/.current bottom-border convention
+     (web/static/classical/styles.css) rather than the Admin-page pill-button
+     sidebar. Kept as its own page-local copy, same convention every other
+     page-specific layout here already follows. */
+  .tools-subheader {
+    display: flex; gap: 24px; border-bottom: 1px solid var(--color-divider);
+    margin-bottom: var(--space-5);
+  }
   .tools-nav-btn {
-    text-align: left; background: none; border: none; padding: 6px 10px;
-    border-radius: var(--radius-sm); font-size: 13px; color: var(--ink-muted);
-    cursor: pointer; opacity: 0.85;
+    font-size: 14px; color: var(--ink-muted); text-decoration: none;
+    padding: 0 2px var(--space-2); border-bottom: 2px solid transparent;
   }
-  .tools-nav-btn:hover { opacity: 1; }
-  .tools-nav-btn.active {
-    background: var(--color-accent-100); color: var(--color-accent-800); opacity: 1; font-weight: 600;
-  }
-  .tools-panel { flex: 1 1 auto; min-width: 0; }
+  .tools-nav-btn:hover { color: var(--color-accent); }
+  .tools-nav-btn.active { color: var(--color-accent); border-bottom-color: var(--color-accent); font-weight: 600; }
   .tools-panel[hidden] { display: none; }
-  @media (max-width: 900px) {
-    .tools-layout { flex-direction: column; }
-    .tools-sidebar { width: 100%; position: static; }
-    .tools-nav { flex-direction: row; flex-wrap: wrap; }
-  }
 
   .tools-field { display: flex; flex-direction: column; gap: 4px; max-width: 420px; margin-bottom: var(--space-4); }
   .tools-field label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-muted); }
@@ -81,16 +75,13 @@
   {% endif %}
   {% endwith %}
 
-  <div class="tools-layout">
-    <aside class="tools-sidebar">
-      <nav class="tools-nav">
-        <a class="tools-nav-btn {{ 'active' if active_panel == 'macro' }}" href="{{ url_for('tools', panel='macro') }}">Macro</a>
-        <a class="tools-nav-btn {{ 'active' if active_panel == 'analytics' }}" href="{{ url_for('tools', panel='analytics') }}">Analytics</a>
-        <a class="tools-nav-btn {{ 'active' if active_panel == 'insights' }}" href="{{ url_for('tools', panel='insights') }}">Insights</a>
-      </nav>
-    </aside>
+  <nav class="tools-subheader">
+    <a class="tools-nav-btn {{ 'active' if active_panel == 'macro' }}" href="{{ url_for('tools', panel='macro') }}">Macro</a>
+    <a class="tools-nav-btn {{ 'active' if active_panel == 'analytics' }}" href="{{ url_for('tools', panel='analytics') }}">Analytics</a>
+    <a class="tools-nav-btn {{ 'active' if active_panel == 'insights' }}" href="{{ url_for('tools', panel='insights') }}">Insights</a>
+  </nav>
 
-    {% if active_panel == 'macro' %}
+  {% if active_panel == 'macro' %}
     <div class="tools-panel" id="tools-panel-macro">
       <p class="muted">Browse the macro/regulatory series already ingested (RBI, IITM rainfall, ...) — the same
         data research answers draw on, here as its own chart.</p>
@@ -110,9 +101,9 @@
         <div class="macro-chart-empty">Pick a series above to plot it.</div>
       </div>
     </div>
-    {% endif %}
+  {% endif %}
 
-    {% if active_panel == 'analytics' %}
+  {% if active_panel == 'analytics' %}
     <div class="tools-panel" id="tools-panel-analytics">
       <p class="muted">Out-of-the-box pattern detection — significant year-over-year metric moves across every
         company with ingested financials, recomputed on every view (not user-generated, not persisted).</p>
@@ -132,9 +123,9 @@
       <div class="empty-state">No significant year-over-year moves found right now.</div>
       {% endif %}
     </div>
-    {% endif %}
+  {% endif %}
 
-    {% if active_panel == 'insights' %}
+  {% if active_panel == 'insights' %}
     <div class="tools-panel" id="tools-panel-insights">
       <p class="muted">System-generated insights grounded in the Knowledge Graph's extracted claims — not tied to
         any one question. Retain the ones worth keeping, archive the rest.</p>
@@ -171,8 +162,7 @@
       <div class="empty-state">No insights yet — click Generate, or check back once more documents have been ingested.</div>
       {% endif %}
     </div>
-    {% endif %}
-  </div>
+  {% endif %}
 
   <script>
     (function () {

@@ -57,6 +57,37 @@
     return { val: null, idx: -1 };
   }
 
+  function firstNonNull(values) {
+    for (let i = 0; i < values.length; i++) {
+      if (values[i] !== null && Number.isFinite(values[i])) return { val: values[i], idx: i };
+    }
+    return { val: null, idx: -1 };
+  }
+
+  function findRow(section, key) {
+    return (section && section.find((m) => m.key === key)) || null;
+  }
+
+  function lastVal(section, key) {
+    const row = findRow(section, key);
+    return row ? lastNonNull(row.values).val : null;
+  }
+
+  function growthCagr(section, key, YEARS) {
+    const row = findRow(section, key);
+    if (!row) return null;
+    const first = firstNonNull(row.values);
+    const last = lastNonNull(row.values);
+    if (first.idx < 0 || last.idx < 0 || first.idx === last.idx) return null;
+    return cagr(first.val, last.val, YEARS[last.idx] - YEARS[first.idx]);
+  }
+
+  function parseFloatOrNull(s) {
+    if (s === undefined || s === null || s === "") return null;
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : null;
+  }
+
   function sparkPath(values, w, h, pad) {
     w = w || 100; h = h || 28; pad = pad === undefined ? 2 : pad;
     const pts = values.map((v, i) => ({ v: v, i: i })).filter((p) => p.v !== null && Number.isFinite(p.v));
@@ -103,31 +134,122 @@
     };
   }
 
-  function renderOverview(YEARS, METRICS, latestYear, currency) {
-    const eps = METRICS.perShare.find((m) => m.key === "eps");
-    const bv = METRICS.perShare.find((m) => m.key === "bookValue");
-    const netProfit = METRICS.incomeStatement.find((m) => m.key === "netProfit");
-    const roe = METRICS.profitability.find((m) => m.key === "roe");
-    const price = METRICS.valuation.find((m) => m.key === "price");
+  // Every value the ratio catalog below might need, computed once per
+  // render. `price` and `sharesOutstanding` come from the page itself (a
+  // data attribute on the root element, see init() below) — not from
+  // METRICS.valuation, which the live-computed feed (web/valuation_feed.py)
+  // deliberately leaves empty (no market-data pipeline; a guessed price is
+  // worse than an honest blank there).
+  function buildRatioContext(YEARS, METRICS, latestYear, currency, price, sharesOutstanding) {
+    const lastEps = lastVal(METRICS.perShare, "eps");
+    const lastBv = lastVal(METRICS.perShare, "bookValue");
+    const lastDividend = lastVal(METRICS.perShare, "dividend");
+    const lastSalesPerShare = lastVal(METRICS.perShare, "salesPerShare");
+    const lastShares = lastVal(METRICS.perShare, "shares");
+    const lastNetProfit = lastVal(METRICS.incomeStatement, "netProfit");
+    const lastRevenue = lastVal(METRICS.incomeStatement, "earnings");
+    const lastRoe = lastVal(METRICS.profitability, "roe");
+    const lastPayout = lastVal(METRICS.profitability, "payout");
+    const lastNetMargin = lastVal(METRICS.profitability, "netMargin");
+    const lastTaxRate = lastVal(METRICS.profitability, "taxRate");
+    const lastRetention = lastVal(METRICS.profitability, "retention");
+    const lastRoa = lastVal(METRICS.bankRatios, "npAssets");
+    const lastCdRatio = lastVal(METRICS.bankRatios, "cdRatio");
+    const lastIntCoverage = lastVal(METRICS.bankRatios, "intCoverage");
+    const lastBorrowings = lastVal(METRICS.balanceSheet, "borrowings");
+    const lastShe = lastVal(METRICS.balanceSheet, "she");
+    const lastNetworth = lastVal(METRICS.balanceSheet, "networth");
+    const lastTotalAssets = lastVal(METRICS.balanceSheet, "totalAssets");
+    const salesCagr = growthCagr(METRICS.incomeStatement, "earnings", YEARS);
+    const profitCagr = growthCagr(METRICS.incomeStatement, "netProfit", YEARS);
 
-    const lastEps = lastNonNull(eps.values).val;
-    const lastBv = lastNonNull(bv.values).val;
-    const lastNetProfit = lastNonNull(netProfit.values).val;
-    const lastRoe = lastNonNull(roe.values).val;
-    const lastPrice = price ? lastNonNull(price.values).val : null;
+    // Prefer the page's own server-resolved shares-outstanding (always
+    // current) over the feed's own per-share series, which can lag a year
+    // or two behind the latest fiscal year the rest of the feed reports.
+    const shares = sharesOutstanding !== null ? sharesOutstanding : lastShares;
 
-    return (
-      '<h2>Overview</h2>' +
-      '<p class="muted vm-section-desc">Latest recorded actuals, FY' + latestYear + '.</p>' +
-      '<div class="vm-kpi-grid">' +
-        '<div class="card elev-sm"><div class="card-kicker">Net Profit, FY' + latestYear + '</div><div class="card-title vm-num">' + fmt(lastNetProfit, "big", currency) + '</div></div>' +
-        '<div class="card elev-sm"><div class="card-kicker">EPS, FY' + latestYear + '</div><div class="card-title vm-num">' + fmt(lastEps, "perShare", currency) + '</div></div>' +
-        '<div class="card elev-sm"><div class="card-kicker">Book Value / share</div><div class="card-title vm-num">' + fmt(lastBv, "perShare", currency) + '</div></div>' +
-        '<div class="card elev-sm"><div class="card-kicker">RONW / ROE</div><div class="card-title vm-num">' + fmt(lastRoe, "pct") + '</div></div>' +
-        '<div class="card elev-sm"><div class="card-kicker">Latest recorded price</div><div class="card-title vm-num">' + fmt(lastPrice, "perShare", currency) + '</div></div>' +
-        '<div class="card elev-sm"><div class="card-kicker">P/E at latest price</div><div class="card-title vm-num">' + fmt(lastPrice / lastEps, "x") + '</div></div>' +
-      '</div>'
-    );
+    return {
+      YEARS: YEARS, latestYear: latestYear, currency: currency, price: price, shares: shares,
+      lastEps: lastEps, lastBv: lastBv, lastDividend: lastDividend, lastSalesPerShare: lastSalesPerShare,
+      lastNetProfit: lastNetProfit, lastRevenue: lastRevenue, lastRoe: lastRoe, lastPayout: lastPayout,
+      lastNetMargin: lastNetMargin, lastTaxRate: lastTaxRate, lastRetention: lastRetention,
+      lastRoa: lastRoa, lastCdRatio: lastCdRatio, lastIntCoverage: lastIntCoverage,
+      lastNetworth: lastNetworth, lastTotalAssets: lastTotalAssets,
+      salesCagr: salesCagr, profitCagr: profitCagr,
+      marketCap: price !== null && shares !== null ? price * shares : null,
+      stockPE: price !== null && lastEps ? price / lastEps : null,
+      priceToBook: price !== null && lastBv ? price / lastBv : null,
+      dividendYield: price !== null && lastDividend !== null ? lastDividend / price : null,
+      debtToEquity: lastBorrowings !== null && lastShe ? lastBorrowings / lastShe : null,
+    };
+  }
+
+  // The Overview tab's full ratio catalog — one entry per key in
+  // storage/repositories.py's OVERVIEW_RATIO_CATALOG (which owns the
+  // admin-facing label and the on/off default; this side owns how to
+  // actually compute and format the value). Adding a genuinely new ratio
+  // is exactly two edits: one entry there, one entry here — never a schema
+  // or settings-table change. A key enabled in settings but missing here
+  // (or vice versa) is simply skipped, not an error, so the two can be
+  // edited independently without a deploy-ordering hazard.
+  const RATIO_CATALOG = {
+    marketCap: { label: "Market Cap", value: (c) => fmt(c.marketCap, "big", c.currency) },
+    price: { label: "Current Price", value: (c) => fmt(c.price, "perShare", c.currency) },
+    stockPE: { label: "Stock P/E", value: (c) => fmt(c.stockPE, "x") },
+    bookValue: { label: "Book Value", value: (c) => fmt(c.lastBv, "perShare", c.currency) },
+    dividendYield: { label: "Dividend Yield", value: (c) => fmt(c.dividendYield, "pct") },
+    roe: { label: "ROE", value: (c) => fmt(c.lastRoe, "pct") },
+    eps: { label: "EPS", value: (c) => fmt(c.lastEps, "perShare", c.currency) },
+    priceToBook: { label: "Price to Book Value", value: (c) => fmt(c.priceToBook, "x") },
+    debtToEquity: { label: "Debt to Equity", value: (c) => fmt(c.debtToEquity, "x") },
+    payout: { label: "Dividend Payout", value: (c) => fmt(c.lastPayout, "pct") },
+    shares: { label: "No. Equity Shares", value: (c) => fmt(c.shares, "sharesCount", c.currency) },
+    netProfit: { label: (c) => "Net Profit, FY" + c.latestYear, value: (c) => fmt(c.lastNetProfit, "big", c.currency) },
+    revenue: { label: (c) => "Revenue, FY" + c.latestYear, value: (c) => fmt(c.lastRevenue, "big", c.currency) },
+    salesCagr: { label: (c) => "Sales Growth, FY" + c.YEARS[0] + "–" + c.latestYear, value: (c) => fmt(c.salesCagr, "pct") },
+    profitCagr: { label: (c) => "Profit Growth, FY" + c.YEARS[0] + "–" + c.latestYear, value: (c) => fmt(c.profitCagr, "pct") },
+    netMargin: { label: "Net Profit Margin", value: (c) => fmt(c.lastNetMargin, "pct") },
+    taxRate: { label: "Tax Rate", value: (c) => fmt(c.lastTaxRate, "pctAbs") },
+    retention: { label: "Retention Ratio", value: (c) => fmt(c.lastRetention, "pct") },
+    roa: { label: "Return on Assets", value: (c) => fmt(c.lastRoa, "pct") },
+    cdRatio: { label: "Credit-Deposit Ratio", value: (c) => fmt(c.lastCdRatio, "pct") },
+    intCoverage: { label: "Interest Coverage", value: (c) => fmt(c.lastIntCoverage, "x") },
+    networth: { label: "Net Worth", value: (c) => fmt(c.lastNetworth, "big", c.currency) },
+    totalAssets: { label: "Total Assets", value: (c) => fmt(c.lastTotalAssets, "big", c.currency) },
+    salesPerShare: { label: "Sales per Share", value: (c) => fmt(c.lastSalesPerShare, "perShare", c.currency) },
+  };
+
+  // Screener.in-style ratio grid, built from whichever catalog keys the
+  // page says are enabled (ratioKeys — see init() below, sourced from
+  // Admin -> Overview Ratios). Every row is either a directly-ingested
+  // figure or a ratio derived from ones that are; a row genuinely
+  // unavailable for this company still appears, showing "—" (fmt()'s own
+  // null handling) rather than disappearing, same as every other numbers
+  // table in this app — but a ratio Screener itself shows that this data
+  // model has nowhere to source at all (Face Value, PEG, ROCE,
+  // promoter/FII/DII/public holding %, day's High/Low, Cash Conversion
+  // Cycle) isn't in the catalog to begin with, not faked.
+  function renderOverview(YEARS, METRICS, latestYear, currency, price, sharesOutstanding, ratioKeys) {
+    const ctx = buildRatioContext(YEARS, METRICS, latestYear, currency, price, sharesOutstanding);
+    const keys = ratioKeys && ratioKeys.length ? ratioKeys : Object.keys(RATIO_CATALOG);
+    const rows = keys
+      .map((key) => RATIO_CATALOG[key])
+      .filter(Boolean)
+      .map((def) => [typeof def.label === "function" ? def.label(ctx) : def.label, def.value(ctx)]);
+
+    if (!rows.length || rows.every((r) => r[1] === "—")) {
+      return '<h2>Overview</h2><div class="empty-state">Not enough ingested data yet for a ratio snapshot.</div>';
+    }
+
+    const cellsHtml = rows
+      .map(
+        (r) =>
+          '<div class="vm-ratio-cell"><span class="vm-ratio-label">' + escapeHtml(r[0]) +
+          '</span><span class="vm-ratio-value">' + r[1] + '</span></div>'
+      )
+      .join("");
+
+    return '<h2>Overview</h2><div class="card elev-sm vm-ratio-grid">' + cellsHtml + '</div>';
   }
 
   function renderTableSection(sectionId, YEARS, METRICS, currency) {
@@ -174,13 +296,21 @@
     );
   }
 
-  function renderSection(section, YEARS, METRICS, latestYear, currency) {
-    if (section === "overview") return renderOverview(YEARS, METRICS, latestYear, currency);
+  function renderSection(section, YEARS, METRICS, latestYear, currency, price, sharesOutstanding, ratioKeys) {
+    if (section === "overview") return renderOverview(YEARS, METRICS, latestYear, currency, price, sharesOutstanding, ratioKeys);
     return renderTableSection(section, YEARS, METRICS, currency);
   }
 
   function init(root) {
     const dataUrl = root.dataset.url;
+    const price = parseFloatOrNull(root.dataset.price);
+    const sharesOutstanding = parseFloatOrNull(root.dataset.sharesOutstanding);
+    let ratioKeys = [];
+    try {
+      ratioKeys = root.dataset.ratioKeys ? JSON.parse(root.dataset.ratioKeys) : [];
+    } catch (e) {
+      ratioKeys = [];
+    }
     const contentEl = root.querySelector(".vm-content");
     const navButtons = Array.prototype.slice.call(root.querySelectorAll(".vm-nav-btn"));
 
@@ -192,7 +322,7 @@
       const METRICS = state.data.METRICS;
       const currency = state.data.CURRENCY || "INR";
       const latestYear = YEARS[YEARS.length - 1];
-      contentEl.innerHTML = renderSection(state.activeSection, YEARS, METRICS, latestYear, currency);
+      contentEl.innerHTML = renderSection(state.activeSection, YEARS, METRICS, latestYear, currency, price, sharesOutstanding, ratioKeys);
     }
 
     navButtons.forEach((btn) => {

@@ -21,6 +21,11 @@
   }
   .admin-panel { flex: 1 1 auto; min-width: 0; }
   .admin-panel[hidden] { display: none; }
+  /* Plain <table class="table"> blocks (Needs Review, Failed Items, Pending/
+     Failed Documents, Processing History) otherwise sit at the global 14px
+     .table default — bring them to the same 13px as .admin-grid and the
+     Companies list (index.html's table.companies) for a consistent type scale. */
+  .admin-panel .table { font-size: 13px; }
   .admin-columns-form {
     display: flex; flex-direction: column; gap: var(--space-3); max-width: 420px;
   }
@@ -82,6 +87,8 @@
     color: var(--ink-muted); margin-bottom: 4px;
   }
   .admin-companies-filters select.input, .admin-companies-filters input.input { min-height: 36px; }
+  .admin-ingest-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) 0; }
+  .admin-ingest-actions form { display: contents; }
   .admin-grid select[multiple].input { min-height: auto; padding: 2px; font-size: 12px; }
   .admin-grid select[multiple].input option { padding: 2px 4px; }
   .admin-status { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; white-space: nowrap; }
@@ -155,6 +162,7 @@
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'companies' }}" data-panel="companies">Companies</button>
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'taxonomy' }}" data-panel="taxonomy">Sectors, Industries &amp; Tags</button>
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'columns' }}" data-panel="columns">Company List Columns</button>
+        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'overview_ratios' }}" data-panel="overview_ratios">Overview Ratios</button>
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'import' }}" data-panel="import">Import Data</button>
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'stock_actions' }}" data-panel="stock_actions">Stock Actions</button>
         <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'ingest' }}" data-panel="ingest">Ingest</button>
@@ -377,6 +385,29 @@
       </form>
     </div>
 
+    <div class="admin-panel" id="admin-panel-overview_ratios" {{ 'hidden' if active_panel != 'overview_ratios' }}>
+      <p class="muted">
+        Choose which ratios appear on a company's Overview tab (screener.in-style ratio grid). Every ratio here is
+        computed from data already ingested — nothing is fetched or guessed. Adding a genuinely new ratio (one not
+        listed below) is a code change, not a settings change — see <code>OVERVIEW_RATIO_CATALOG</code> in
+        <code>storage/repositories.py</code> and the matching entry in <code>RATIO_CATALOG</code> in
+        <code>web/static/js/valuation_dashboard.js</code>.
+      </p>
+      <form class="admin-columns-form" method="post" action="{{ url_for('admin_update_overview_ratios') }}">
+        <div class="admin-columns-list">
+          {% for ratio in ratio_catalog %}
+          <label>
+            <input type="checkbox" name="ratios" value="{{ ratio['key'] }}" {{ 'checked' if ratio_settings[ratio['key']] }}>
+            {{ ratio['label'] }}
+          </label>
+          {% endfor %}
+        </div>
+        <div>
+          <button type="submit" class="btn btn-primary">Save ratios</button>
+        </div>
+      </form>
+    </div>
+
     <div class="admin-panel" id="admin-panel-import" {{ 'hidden' if active_panel != 'import' }}>
       <p class="muted">
         Upload a raw source file for one company — it's parsed, validated, stored, and reconciled the same
@@ -552,361 +583,180 @@
       {% endif %}
       {% endwith %}
 
-      <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_refresh') }}" style="margin-bottom: var(--space-4);">
-        <button type="submit" class="btn btn-ghost">Refresh Pending Files</button>
-      </form>
-
-      <h3>Pending Financial Data ({{ ingest_pending_financial_total }})</h3>
+      <h3>Financial Data ({{ ingest_fq_total }})</h3>
       <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
         <input type="hidden" name="panel" value="ingest">
         <div class="field">
-          <label for="ingest-pf-search">Search</label>
-          <input class="input" type="text" id="ingest-pf-search" name="pf_q" value="{{ ingest_pending_financial_query }}"
-                 placeholder="File, company, source, kind&hellip;" autocomplete="off">
+          <label for="ingest-fq-status">Status</label>
+          <select class="input" id="ingest-fq-status" name="fq_status" onchange="this.form.requestSubmit()">
+            <option value="">All statuses</option>
+            {% for s in ['PENDING', 'NEEDS_REVIEW', 'FAILED', 'PROCESSED'] %}
+            <option value="{{ s }}" {{ 'selected' if s == ingest_fq_status_filter }}>{{ s|title|replace('_', ' ') }}</option>
+            {% endfor %}
+          </select>
         </div>
-        <button type="submit" class="btn btn-primary">Search</button>
-        {% if ingest_pending_financial_query %}
+        <div class="field">
+          <label for="ingest-fq-company">Company</label>
+          <select class="input" id="ingest-fq-company" name="fq_company" onchange="this.form.requestSubmit()">
+            <option value="">All companies</option>
+            {% for c in ingest_fq_companies %}<option value="{{ c }}" {{ 'selected' if c == ingest_fq_company_filter }}>{{ c }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="ingest-fq-kind">Kind</label>
+          <select class="input" id="ingest-fq-kind" name="fq_kind" onchange="this.form.requestSubmit()">
+            <option value="">All kinds</option>
+            {% for k in ingest_fq_kinds %}<option value="{{ k }}" {{ 'selected' if k == ingest_fq_kind_filter }}>{{ k }}</option>{% endfor %}
+          </select>
+        </div>
+        {% if ingest_fq_status_filter or ingest_fq_company_filter or ingest_fq_kind_filter %}
         <a class="btn btn-ghost" href="{{ url_for('admin', panel='ingest') }}">Clear</a>
         {% endif %}
       </form>
-      {% if ingest_pending_financial %}
+
+      <div class="admin-ingest-actions">
+        <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_refresh') }}">
+          <button type="submit" class="btn btn-ghost">Refresh Pending Files</button>
+        </form>
+        <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process_all') }}">
+          <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
+        </form>
+        <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_retry_failed') }}">
+          <button type="submit" class="btn btn-ghost">Retry Failed</button>
+        </form>
+      </div>
+
+      {% if ingest_fq_rows %}
       <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process') }}">
         <table class="table">
           <thead>
-            <tr><th></th><th>File</th><th>Company</th><th>Source</th><th>Kind</th><th>Discovered</th></tr>
+            <tr><th></th><th>File</th><th>Company</th><th>Source</th><th>Kind</th><th>Status</th><th>Detail</th><th>Updated</th></tr>
           </thead>
           <tbody>
-            {% for item in ingest_pending_financial %}
+            {% for item in ingest_fq_rows %}
             <tr>
               <td><input type="checkbox" name="item_id" value="{{ item['item_id'] }}"></td>
               <td>{{ item['file_path'].split('/')[-1] }}</td>
               <td>{{ item['company_id'] or '—' }}</td>
               <td>{{ item['source_id'] or '—' }}</td>
               <td>{{ item['item_kind'] }}</td>
-              <td>{{ item['discovered_at'] }}</td>
+              <td><span class="tag tag-outline">{{ item['status'] }}</span></td>
+              <td>{{ item['error_message'] or item['status_reason'] or '—' }}</td>
+              <td>{{ item['last_attempt_at'] or item['processed_at'] or item['discovered_at'] }}</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
         <button type="submit" class="btn btn-primary">Ingest Selected</button>
       </form>
-      <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process_all') }}" style="margin-top: var(--space-2);">
-        <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
-      </form>
-      {% if ingest_pending_financial_total_pages > 1 %}
+      {% if ingest_fq_total_pages > 1 %}
       <div class="admin-pagination">
         <span class="muted">
-          Showing {{ (ingest_pending_financial_page - 1) * ingest_pending_financial_page_size + 1 }}&ndash;{{ (ingest_pending_financial_page - 1) * ingest_pending_financial_page_size + ingest_pending_financial|length }}
-          of {{ ingest_pending_financial_total }}
+          Showing {{ (ingest_fq_page - 1) * ingest_fq_page_size + 1 }}&ndash;{{ (ingest_fq_page - 1) * ingest_fq_page_size + ingest_fq_rows|length }}
+          of {{ ingest_fq_total }}
         </span>
         <div class="admin-pagination-links">
-          {% set pf_pagination_args = {'panel': 'ingest', 'pf_q': ingest_pending_financial_query} %}
-          {% if ingest_pending_financial_page > 1 %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', pf_page=ingest_pending_financial_page - 1, **pf_pagination_args) }}">&larr; Previous</a>
+          {% set fq_pagination_args = {'panel': 'ingest', 'fq_status': ingest_fq_status_filter, 'fq_company': ingest_fq_company_filter, 'fq_kind': ingest_fq_kind_filter} %}
+          {% if ingest_fq_page > 1 %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', fq_page=ingest_fq_page - 1, **fq_pagination_args) }}">&larr; Previous</a>
           {% endif %}
-          <span class="muted">Page {{ ingest_pending_financial_page }} of {{ ingest_pending_financial_total_pages }}</span>
-          {% if ingest_pending_financial_page < ingest_pending_financial_total_pages %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', pf_page=ingest_pending_financial_page + 1, **pf_pagination_args) }}">Next &rarr;</a>
+          <span class="muted">Page {{ ingest_fq_page }} of {{ ingest_fq_total_pages }}</span>
+          {% if ingest_fq_page < ingest_fq_total_pages %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', fq_page=ingest_fq_page + 1, **fq_pagination_args) }}">Next &rarr;</a>
           {% endif %}
         </div>
       </div>
       {% endif %}
-      {% elif ingest_pending_financial_query %}
-      <div class="empty-state">No pending items match &ldquo;{{ ingest_pending_financial_query }}&rdquo;.</div>
+      {% elif ingest_fq_status_filter or ingest_fq_company_filter or ingest_fq_kind_filter %}
+      <div class="empty-state">No items match these filters.</div>
       {% else %}
-      <div class="empty-state">Nothing pending.</div>
+      <div class="empty-state">Nothing in the financial-data queue.</div>
       {% endif %}
 
-      <h3 style="margin-top: var(--space-6);">Needs Review ({{ ingest_needs_review_total }})</h3>
+      <h3 style="margin-top: var(--space-6);">Documents ({{ ingest_dq_total }})</h3>
       <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
         <input type="hidden" name="panel" value="ingest">
         <div class="field">
-          <label for="ingest-nr-company">Company</label>
-          <select class="input" id="ingest-nr-company" name="nr_company" onchange="this.form.requestSubmit()">
+          <label for="ingest-dq-status">Status</label>
+          <select class="input" id="ingest-dq-status" name="dq_status" onchange="this.form.requestSubmit()">
+            <option value="">All statuses</option>
+            {% for s in ['pending', 'failed', 'processed'] %}
+            <option value="{{ s }}" {{ 'selected' if s == ingest_dq_status_filter }}>{{ s|title }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="ingest-dq-company">Company</label>
+          <select class="input" id="ingest-dq-company" name="dq_company" onchange="this.form.requestSubmit()">
             <option value="">All companies</option>
-            {% for c in ingest_needs_review_companies %}<option value="{{ c }}" {{ 'selected' if c == ingest_needs_review_company_filter }}>{{ c }}</option>{% endfor %}
+            {% for c in ingest_dq_companies %}<option value="{{ c }}" {{ 'selected' if c == ingest_dq_company_filter }}>{{ c }}</option>{% endfor %}
           </select>
         </div>
-        {% if ingest_needs_review_company_filter %}
+        <div class="field">
+          <label for="ingest-dq-type">Type</label>
+          <select class="input" id="ingest-dq-type" name="dq_type" onchange="this.form.requestSubmit()">
+            <option value="">All types</option>
+            {% for t in ingest_dq_types %}<option value="{{ t }}" {{ 'selected' if t == ingest_dq_type_filter }}>{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        {% if ingest_dq_status_filter or ingest_dq_company_filter or ingest_dq_type_filter %}
         <a class="btn btn-ghost" href="{{ url_for('admin', panel='ingest') }}">Clear</a>
         {% endif %}
       </form>
-      {% if ingest_needs_review %}
-      <table class="table">
-        <thead><tr><th>File</th><th>Detected company</th><th>Reason</th></tr></thead>
-        <tbody>
-          {% for item in ingest_needs_review %}
-          <tr>
-            <td>{{ item['file_path'].split('/')[-1] }}</td>
-            <td>{{ item['company_id'] or '—' }}</td>
-            <td>{{ item['status_reason'] }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% if ingest_needs_review_total_pages > 1 %}
-      <div class="admin-pagination">
-        <span class="muted">
-          Showing {{ (ingest_needs_review_page - 1) * ingest_needs_review_page_size + 1 }}&ndash;{{ (ingest_needs_review_page - 1) * ingest_needs_review_page_size + ingest_needs_review|length }}
-          of {{ ingest_needs_review_total }}
-        </span>
-        <div class="admin-pagination-links">
-          {% set nr_pagination_args = {'panel': 'ingest', 'nr_company': ingest_needs_review_company_filter} %}
-          {% if ingest_needs_review_page > 1 %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', nr_page=ingest_needs_review_page - 1, **nr_pagination_args) }}">&larr; Previous</a>
-          {% endif %}
-          <span class="muted">Page {{ ingest_needs_review_page }} of {{ ingest_needs_review_total_pages }}</span>
-          {% if ingest_needs_review_page < ingest_needs_review_total_pages %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', nr_page=ingest_needs_review_page + 1, **nr_pagination_args) }}">Next &rarr;</a>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
-      {% elif ingest_needs_review_company_filter %}
-      <div class="empty-state">No items match this filter.</div>
-      {% else %}
-      <div class="empty-state">Nothing needs review.</div>
-      {% endif %}
 
-      <h3 style="margin-top: var(--space-6);">Failed Items ({{ ingest_failed_total }})</h3>
-      <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
-        <input type="hidden" name="panel" value="ingest">
-        <div class="field">
-          <label for="ingest-fi-company">Company</label>
-          <select class="input" id="ingest-fi-company" name="fi_company" onchange="this.form.requestSubmit()">
-            <option value="">All companies</option>
-            {% for c in ingest_failed_companies %}<option value="{{ c }}" {{ 'selected' if c == ingest_failed_company_filter }}>{{ c }}</option>{% endfor %}
-          </select>
-        </div>
-        <div class="field">
-          <label for="ingest-fi-kind">Kind</label>
-          <select class="input" id="ingest-fi-kind" name="fi_kind" onchange="this.form.requestSubmit()">
-            <option value="">All kinds</option>
-            {% for k in ingest_failed_kinds %}<option value="{{ k }}" {{ 'selected' if k == ingest_failed_kind_filter }}>{{ k }}</option>{% endfor %}
-          </select>
-        </div>
-        {% if ingest_failed_company_filter or ingest_failed_kind_filter %}
-        <a class="btn btn-ghost" href="{{ url_for('admin', panel='ingest') }}">Clear</a>
-        {% endif %}
-      </form>
-      {% if ingest_failed %}
-      <table class="table">
-        <thead><tr><th>File</th><th>Company</th><th>Error</th><th>Last attempt</th></tr></thead>
-        <tbody>
-          {% for item in ingest_failed %}
-          <tr>
-            <td>{{ item['file_path'].split('/')[-1] }}</td>
-            <td>{{ item['company_id'] or '—' }}</td>
-            <td>{{ item['error_message'] }}</td>
-            <td>{{ item['last_attempt_at'] }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% if ingest_failed_total_pages > 1 %}
-      <div class="admin-pagination">
-        <span class="muted">
-          Showing {{ (ingest_failed_page - 1) * ingest_failed_page_size + 1 }}&ndash;{{ (ingest_failed_page - 1) * ingest_failed_page_size + ingest_failed|length }}
-          of {{ ingest_failed_total }}
-        </span>
-        <div class="admin-pagination-links">
-          {% set fi_pagination_args = {'panel': 'ingest', 'fi_company': ingest_failed_company_filter, 'fi_kind': ingest_failed_kind_filter} %}
-          {% if ingest_failed_page > 1 %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', fi_page=ingest_failed_page - 1, **fi_pagination_args) }}">&larr; Previous</a>
-          {% endif %}
-          <span class="muted">Page {{ ingest_failed_page }} of {{ ingest_failed_total_pages }}</span>
-          {% if ingest_failed_page < ingest_failed_total_pages %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', fi_page=ingest_failed_page + 1, **fi_pagination_args) }}">Next &rarr;</a>
-          {% endif %}
-        </div>
+      <div class="admin-ingest-actions">
+        <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process_all_documents') }}">
+          <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
+        </form>
+        <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_retry_failed_documents') }}">
+          <button type="submit" class="btn btn-ghost">Retry Failed</button>
+        </form>
       </div>
-      {% endif %}
-      <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_retry_failed') }}">
-        <button type="submit" class="btn btn-ghost">Retry Failed</button>
-      </form>
-      {% elif ingest_failed_company_filter or ingest_failed_kind_filter %}
-      <div class="empty-state">No failed items match this filter.</div>
-      {% else %}
-      <div class="empty-state">No failed items.</div>
-      {% endif %}
 
-      <h3 style="margin-top: var(--space-6);">Pending Documents ({{ ingest_pending_documents_total }})</h3>
-      <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
-        <input type="hidden" name="panel" value="ingest">
-        <div class="field">
-          <label for="ingest-doc-search">Search</label>
-          <input class="input" type="text" id="ingest-doc-search" name="doc_q" value="{{ ingest_pending_documents_query }}"
-                 placeholder="Company, type, fiscal year, quarter&hellip;" autocomplete="off">
-        </div>
-        <button type="submit" class="btn btn-primary">Search</button>
-        {% if ingest_pending_documents_query %}
-        <a class="btn btn-ghost" href="{{ url_for('admin', panel='ingest') }}">Clear</a>
-        {% endif %}
-      </form>
-      {% if ingest_pending_documents %}
+      {% if ingest_dq_rows %}
       <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process_documents') }}">
         <table class="table">
           <thead>
-            <tr><th></th><th>Company</th><th>Type</th><th>Period</th><th>Added</th></tr>
+            <tr><th></th><th>Company</th><th>Type</th><th>Period</th><th>Status</th><th>Detail</th><th>Updated</th></tr>
           </thead>
           <tbody>
-            {% for doc in ingest_pending_documents %}
+            {% for doc in ingest_dq_rows %}
             <tr>
               <td><input type="checkbox" name="document_id" value="{{ doc['document_id'] }}"></td>
               <td>{{ doc['company_id'] or '—' }}</td>
               <td>{{ doc['document_type'] or '—' }}</td>
               <td>{{ doc['fiscal_year'] or '—' }}{{ ' ' + doc['quarter'] if doc['quarter'] else '' }}</td>
-              <td>{{ doc['retrieved_at'] }}</td>
+              <td><span class="tag tag-outline">{{ doc['processing_status'] }}</span></td>
+              <td>{{ doc['error_message'] or '—' }}</td>
+              <td>{{ doc['processed_at'] or doc['retrieved_at'] }}</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
         <button type="submit" class="btn btn-primary">Ingest Selected</button>
       </form>
-      <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process_all_documents') }}" style="margin-top: var(--space-2);">
-        <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
-      </form>
-      {% if ingest_pending_documents_total_pages > 1 %}
+      {% if ingest_dq_total_pages > 1 %}
       <div class="admin-pagination">
         <span class="muted">
-          Showing {{ (ingest_pending_documents_page - 1) * ingest_pending_documents_page_size + 1 }}&ndash;{{ (ingest_pending_documents_page - 1) * ingest_pending_documents_page_size + ingest_pending_documents|length }}
-          of {{ ingest_pending_documents_total }}
+          Showing {{ (ingest_dq_page - 1) * ingest_dq_page_size + 1 }}&ndash;{{ (ingest_dq_page - 1) * ingest_dq_page_size + ingest_dq_rows|length }}
+          of {{ ingest_dq_total }}
         </span>
         <div class="admin-pagination-links">
-          {% set doc_pagination_args = {'panel': 'ingest', 'doc_q': ingest_pending_documents_query} %}
-          {% if ingest_pending_documents_page > 1 %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', doc_page=ingest_pending_documents_page - 1, **doc_pagination_args) }}">&larr; Previous</a>
+          {% set dq_pagination_args = {'panel': 'ingest', 'dq_status': ingest_dq_status_filter, 'dq_company': ingest_dq_company_filter, 'dq_type': ingest_dq_type_filter} %}
+          {% if ingest_dq_page > 1 %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', dq_page=ingest_dq_page - 1, **dq_pagination_args) }}">&larr; Previous</a>
           {% endif %}
-          <span class="muted">Page {{ ingest_pending_documents_page }} of {{ ingest_pending_documents_total_pages }}</span>
-          {% if ingest_pending_documents_page < ingest_pending_documents_total_pages %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', doc_page=ingest_pending_documents_page + 1, **doc_pagination_args) }}">Next &rarr;</a>
+          <span class="muted">Page {{ ingest_dq_page }} of {{ ingest_dq_total_pages }}</span>
+          {% if ingest_dq_page < ingest_dq_total_pages %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', dq_page=ingest_dq_page + 1, **dq_pagination_args) }}">Next &rarr;</a>
           {% endif %}
         </div>
       </div>
       {% endif %}
-      {% elif ingest_pending_documents_query %}
-      <div class="empty-state">No pending documents match &ldquo;{{ ingest_pending_documents_query }}&rdquo;.</div>
+      {% elif ingest_dq_status_filter or ingest_dq_company_filter or ingest_dq_type_filter %}
+      <div class="empty-state">No documents match these filters.</div>
       {% else %}
-      <div class="empty-state">No pending documents.</div>
-      {% endif %}
-
-      <h3 style="margin-top: var(--space-6);">Failed Documents ({{ ingest_failed_documents_total }})</h3>
-      <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
-        <input type="hidden" name="panel" value="ingest">
-        <div class="field">
-          <label for="ingest-fd-company">Company</label>
-          <select class="input" id="ingest-fd-company" name="fd_company" onchange="this.form.requestSubmit()">
-            <option value="">All companies</option>
-            {% for c in ingest_failed_documents_companies %}<option value="{{ c }}" {{ 'selected' if c == ingest_failed_documents_company_filter }}>{{ c }}</option>{% endfor %}
-          </select>
-        </div>
-        <div class="field">
-          <label for="ingest-fd-type">Type</label>
-          <select class="input" id="ingest-fd-type" name="fd_type" onchange="this.form.requestSubmit()">
-            <option value="">All types</option>
-            {% for t in ingest_failed_documents_types %}<option value="{{ t }}" {{ 'selected' if t == ingest_failed_documents_type_filter }}>{{ t }}</option>{% endfor %}
-          </select>
-        </div>
-        {% if ingest_failed_documents_company_filter or ingest_failed_documents_type_filter %}
-        <a class="btn btn-ghost" href="{{ url_for('admin', panel='ingest') }}">Clear</a>
-        {% endif %}
-      </form>
-      {% if ingest_failed_documents %}
-      <table class="table">
-        <thead><tr><th>Company</th><th>Type</th><th>Error</th></tr></thead>
-        <tbody>
-          {% for doc in ingest_failed_documents %}
-          <tr>
-            <td>{{ doc['company_id'] or '—' }}</td>
-            <td>{{ doc['document_type'] or '—' }}</td>
-            <td>{{ doc['error_message'] }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% if ingest_failed_documents_total_pages > 1 %}
-      <div class="admin-pagination">
-        <span class="muted">
-          Showing {{ (ingest_failed_documents_page - 1) * ingest_failed_documents_page_size + 1 }}&ndash;{{ (ingest_failed_documents_page - 1) * ingest_failed_documents_page_size + ingest_failed_documents|length }}
-          of {{ ingest_failed_documents_total }}
-        </span>
-        <div class="admin-pagination-links">
-          {% set fd_pagination_args = {'panel': 'ingest', 'fd_company': ingest_failed_documents_company_filter, 'fd_type': ingest_failed_documents_type_filter} %}
-          {% if ingest_failed_documents_page > 1 %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', fd_page=ingest_failed_documents_page - 1, **fd_pagination_args) }}">&larr; Previous</a>
-          {% endif %}
-          <span class="muted">Page {{ ingest_failed_documents_page }} of {{ ingest_failed_documents_total_pages }}</span>
-          {% if ingest_failed_documents_page < ingest_failed_documents_total_pages %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', fd_page=ingest_failed_documents_page + 1, **fd_pagination_args) }}">Next &rarr;</a>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
-      <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_retry_failed_documents') }}">
-        <button type="submit" class="btn btn-ghost">Retry Failed</button>
-      </form>
-      {% elif ingest_failed_documents_company_filter or ingest_failed_documents_type_filter %}
-      <div class="empty-state">No failed documents match this filter.</div>
-      {% else %}
-      <div class="empty-state">No failed documents.</div>
-      {% endif %}
-
-      <h3 style="margin-top: var(--space-6);">Processing History ({{ ingest_processed_total }})</h3>
-      <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
-        <input type="hidden" name="panel" value="ingest">
-        <div class="field">
-          <label for="ingest-pr-company">Company</label>
-          <select class="input" id="ingest-pr-company" name="pr_company" onchange="this.form.requestSubmit()">
-            <option value="">All companies</option>
-            {% for c in ingest_processed_companies %}<option value="{{ c }}" {{ 'selected' if c == ingest_processed_company_filter }}>{{ c }}</option>{% endfor %}
-          </select>
-        </div>
-        <div class="field">
-          <label for="ingest-pr-kind">Kind</label>
-          <select class="input" id="ingest-pr-kind" name="pr_kind" onchange="this.form.requestSubmit()">
-            <option value="">All kinds</option>
-            {% for k in ingest_processed_kinds %}<option value="{{ k }}" {{ 'selected' if k == ingest_processed_kind_filter }}>{{ k }}</option>{% endfor %}
-          </select>
-        </div>
-        {% if ingest_processed_company_filter or ingest_processed_kind_filter %}
-        <a class="btn btn-ghost" href="{{ url_for('admin', panel='ingest') }}">Clear</a>
-        {% endif %}
-      </form>
-      {% if ingest_processed %}
-      <table class="table">
-        <thead><tr><th>File</th><th>Company</th><th>Processed at</th></tr></thead>
-        <tbody>
-          {% for item in ingest_processed %}
-          <tr>
-            <td>{{ item['file_path'].split('/')[-1] }}</td>
-            <td>{{ item['company_id'] or '—' }}</td>
-            <td>{{ item['processed_at'] }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% if ingest_processed_total_pages > 1 %}
-      <div class="admin-pagination">
-        <span class="muted">
-          Showing {{ (ingest_processed_page - 1) * ingest_processed_page_size + 1 }}&ndash;{{ (ingest_processed_page - 1) * ingest_processed_page_size + ingest_processed|length }}
-          of {{ ingest_processed_total }}
-        </span>
-        <div class="admin-pagination-links">
-          {% set pr_pagination_args = {'panel': 'ingest', 'pr_company': ingest_processed_company_filter, 'pr_kind': ingest_processed_kind_filter} %}
-          {% if ingest_processed_page > 1 %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', pr_page=ingest_processed_page - 1, **pr_pagination_args) }}">&larr; Previous</a>
-          {% endif %}
-          <span class="muted">Page {{ ingest_processed_page }} of {{ ingest_processed_total_pages }}</span>
-          {% if ingest_processed_page < ingest_processed_total_pages %}
-          <a class="btn btn-ghost" href="{{ url_for('admin', pr_page=ingest_processed_page + 1, **pr_pagination_args) }}">Next &rarr;</a>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
-      {% elif ingest_processed_company_filter or ingest_processed_kind_filter %}
-      <div class="empty-state">No processed items match this filter.</div>
-      {% else %}
-      <div class="empty-state">Nothing processed yet.</div>
+      <div class="empty-state">No documents in the queue.</div>
       {% endif %}
     </div>
   </div>

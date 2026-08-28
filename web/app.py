@@ -65,6 +65,7 @@ from research.system_insights import SystemInsightGenerationError, generate_syst
 from storage.database import init_db
 from storage.repositories import (
     COMPANY_LIST_COLUMNS,
+    OVERVIEW_RATIO_CATALOG,
     DEFAULT_THEME,
     VALID_THEMES,
     add_index_definition,
@@ -86,6 +87,7 @@ from storage.repositories import (
     get_company_index_tags,
     get_company_insights,
     get_company_list_column_settings,
+    get_overview_ratio_settings,
     get_all_company_index_tags,
     get_generated_report,
     get_investigation,
@@ -105,6 +107,7 @@ from storage.repositories import (
     list_investigation_hypotheses,
     list_investigation_hypothesis_evidence,
     list_investigations,
+    list_latest_shares_outstanding,
     list_llm_call_log,
     list_macro_series_summary,
     list_note_attachments_for_company,
@@ -128,6 +131,7 @@ from storage.repositories import (
     save_report_followups,
     set_company_index_tags,
     set_company_list_column_settings,
+    set_overview_ratio_settings,
     update_system_insight_status,
     update_user_theme,
 )
@@ -412,6 +416,7 @@ def create_app() -> Flask:
     @app.route("/companies")
     def companies():
         db = get_db()
+        shares_outstanding_by_company = list_latest_shares_outstanding(db)
         rows = []
         for c in list_companies(db):
             row = dict(c)
@@ -425,6 +430,14 @@ def create_app() -> Flask:
                 cached_quote = peek_cached_quote(ticker, row["country"])
                 if cached_quote is not None:
                     row["latest_price"] = cached_quote["price"]
+            # Market cap (Cr) = price/share x shares outstanding (Cr) — shares
+            # outstanding only exists for companies with real financial data
+            # ingested (~100 of ~2,500 today), so this stays None for most rows.
+            shares_outstanding = shares_outstanding_by_company.get(row["company_id"])
+            if row["latest_price"] is not None and shares_outstanding is not None:
+                row["market_cap_cr"] = row["latest_price"] * shares_outstanding
+            else:
+                row["market_cap_cr"] = None
             row["index_tags"] = get_company_index_tags(db, row["company_id"])
             rows.append(row)
         sectors = sorted({row["sector"] for row in rows if row["sector"]})
@@ -511,116 +524,57 @@ def create_app() -> Flask:
         the Companies panel's own pagination comment already gives for not
         materializing everything unconditionally).
 
-        Pending Financial Data and Pending Documents get free-text
-        search+pagination (largest tables in practice — hundreds of rows
-        from a data/raw/ rescan or a bulk document drop). Needs Review,
-        Failed Items, Failed Documents, and Processing History get
-        per-column dropdown filters + pagination instead — same distinct
-        query-param-prefix convention (nr_/fi_/fd_/pr_) so every sub-table
-        can filter/page independently on one page load, mirroring the
-        Companies panel's own dropdown-filter pattern."""
+        One unified, filterable+paginated table per underlying data source
+        (ingestion_queue_items, documents) rather than one sub-table per
+        status — a Status dropdown replaces what used to be 4 separately
+        rendered financial-queue sections (Pending/Needs Review/Failed/
+        Processed) and 2 document sections (Pending/Failed). Company/Kind
+        (Type) dropdown options come from *every* row regardless of the
+        current Status filter, so switching Status doesn't make options
+        disappear out from under the user."""
         discover_pending_financial_items(db)
 
-        pf_query = (request.args.get("pf_q") or "").strip()
-        pf = _paginate(
-            list_ingestion_queue_items(db, status="PENDING"),
-            query=pf_query,
-            haystack_fn=lambda r: " ".join(
-                filter(None, [r["file_path"], r["company_id"], r["source_id"], r["item_kind"]])
-            ).lower(),
-            page_arg="pf_page",
-            page_size=ADMIN_INGEST_PAGE_SIZE,
+        fq_all = list_ingestion_queue_items(db)
+        fq_status_filter = request.args.get("fq_status") or ""
+        fq_company_filter = request.args.get("fq_company") or ""
+        fq_kind_filter = request.args.get("fq_kind") or ""
+        fq = _filter_and_paginate(
+            list_ingestion_queue_items(db, status=fq_status_filter or None),
+            filters={"company_id": fq_company_filter, "item_kind": fq_kind_filter},
+            page_arg="fq_page", page_size=ADMIN_INGEST_PAGE_SIZE,
         )
 
-        doc_query = (request.args.get("doc_q") or "").strip()
-        doc = _paginate(
-            list_documents_by_status(db, "pending"),
-            query=doc_query,
-            haystack_fn=lambda r: " ".join(
-                filter(None, [r["company_id"], r["document_type"], r["fiscal_year"], r["quarter"]])
-            ).lower(),
-            page_arg="doc_page",
-            page_size=ADMIN_INGEST_PAGE_SIZE,
-        )
-
-        needs_review_all = list_ingestion_queue_items(db, status="NEEDS_REVIEW")
-        nr_company_filter = request.args.get("nr_company") or ""
-        nr = _filter_and_paginate(
-            needs_review_all, filters={"company_id": nr_company_filter},
-            page_arg="nr_page", page_size=ADMIN_INGEST_PAGE_SIZE,
-        )
-
-        failed_all = list_ingestion_queue_items(db, status="FAILED")
-        fi_company_filter = request.args.get("fi_company") or ""
-        fi_kind_filter = request.args.get("fi_kind") or ""
-        fi = _filter_and_paginate(
-            failed_all, filters={"company_id": fi_company_filter, "item_kind": fi_kind_filter},
-            page_arg="fi_page", page_size=ADMIN_INGEST_PAGE_SIZE,
-        )
-
-        failed_documents_all = list_documents_by_status(db, "failed")
-        fd_company_filter = request.args.get("fd_company") or ""
-        fd_type_filter = request.args.get("fd_type") or ""
-        fd = _filter_and_paginate(
-            failed_documents_all, filters={"company_id": fd_company_filter, "document_type": fd_type_filter},
-            page_arg="fd_page", page_size=ADMIN_INGEST_PAGE_SIZE,
-        )
-
-        processed_all = list_ingestion_queue_items(db, status="PROCESSED")
-        pr_company_filter = request.args.get("pr_company") or ""
-        pr_kind_filter = request.args.get("pr_kind") or ""
-        pr = _filter_and_paginate(
-            processed_all, filters={"company_id": pr_company_filter, "item_kind": pr_kind_filter},
-            page_arg="pr_page", page_size=ADMIN_INGEST_PAGE_SIZE,
+        dq_all = list_documents_by_status(db)
+        dq_status_filter = request.args.get("dq_status") or ""
+        dq_company_filter = request.args.get("dq_company") or ""
+        dq_type_filter = request.args.get("dq_type") or ""
+        dq = _filter_and_paginate(
+            list_documents_by_status(db, dq_status_filter or None),
+            filters={"company_id": dq_company_filter, "document_type": dq_type_filter},
+            page_arg="dq_page", page_size=ADMIN_INGEST_PAGE_SIZE,
         )
 
         return {
-            "ingest_pending_financial": pf["rows"],
-            "ingest_pending_financial_total": pf["total"],
-            "ingest_pending_financial_page": pf["page"],
-            "ingest_pending_financial_total_pages": pf["total_pages"],
-            "ingest_pending_financial_page_size": pf["page_size"],
-            "ingest_pending_financial_query": pf_query,
-            "ingest_needs_review": nr["rows"],
-            "ingest_needs_review_total": nr["total"],
-            "ingest_needs_review_page": nr["page"],
-            "ingest_needs_review_total_pages": nr["total_pages"],
-            "ingest_needs_review_page_size": nr["page_size"],
-            "ingest_needs_review_company_filter": nr_company_filter,
-            "ingest_needs_review_companies": _distinct_values(needs_review_all, "company_id"),
-            "ingest_failed": fi["rows"],
-            "ingest_failed_total": fi["total"],
-            "ingest_failed_page": fi["page"],
-            "ingest_failed_total_pages": fi["total_pages"],
-            "ingest_failed_page_size": fi["page_size"],
-            "ingest_failed_company_filter": fi_company_filter,
-            "ingest_failed_kind_filter": fi_kind_filter,
-            "ingest_failed_companies": _distinct_values(failed_all, "company_id"),
-            "ingest_failed_kinds": _distinct_values(failed_all, "item_kind"),
-            "ingest_pending_documents": doc["rows"],
-            "ingest_pending_documents_total": doc["total"],
-            "ingest_pending_documents_page": doc["page"],
-            "ingest_pending_documents_total_pages": doc["total_pages"],
-            "ingest_pending_documents_page_size": doc["page_size"],
-            "ingest_pending_documents_query": doc_query,
-            "ingest_failed_documents": fd["rows"],
-            "ingest_failed_documents_total": fd["total"],
-            "ingest_failed_documents_page": fd["page"],
-            "ingest_failed_documents_total_pages": fd["total_pages"],
-            "ingest_failed_documents_page_size": fd["page_size"],
-            "ingest_failed_documents_company_filter": fd_company_filter,
-            "ingest_failed_documents_type_filter": fd_type_filter,
-            "ingest_failed_documents_companies": _distinct_values(failed_documents_all, "company_id"),
-            "ingest_failed_documents_types": _distinct_values(failed_documents_all, "document_type"),
-            "ingest_processed": pr["rows"],
-            "ingest_processed_total": pr["total"],
-            "ingest_processed_page": pr["page"],
-            "ingest_processed_total_pages": pr["total_pages"],
-            "ingest_processed_page_size": pr["page_size"],
-            "ingest_processed_company_filter": pr_company_filter,
-            "ingest_processed_kind_filter": pr_kind_filter,
-            "ingest_processed_companies": _distinct_values(processed_all, "company_id"),
-            "ingest_processed_kinds": _distinct_values(processed_all, "item_kind"),
+            "ingest_fq_rows": fq["rows"],
+            "ingest_fq_total": fq["total"],
+            "ingest_fq_page": fq["page"],
+            "ingest_fq_total_pages": fq["total_pages"],
+            "ingest_fq_page_size": fq["page_size"],
+            "ingest_fq_status_filter": fq_status_filter,
+            "ingest_fq_company_filter": fq_company_filter,
+            "ingest_fq_kind_filter": fq_kind_filter,
+            "ingest_fq_companies": _distinct_values(fq_all, "company_id"),
+            "ingest_fq_kinds": _distinct_values(fq_all, "item_kind"),
+            "ingest_dq_rows": dq["rows"],
+            "ingest_dq_total": dq["total"],
+            "ingest_dq_page": dq["page"],
+            "ingest_dq_total_pages": dq["total_pages"],
+            "ingest_dq_page_size": dq["page_size"],
+            "ingest_dq_status_filter": dq_status_filter,
+            "ingest_dq_company_filter": dq_company_filter,
+            "ingest_dq_type_filter": dq_type_filter,
+            "ingest_dq_companies": _distinct_values(dq_all, "company_id"),
+            "ingest_dq_types": _distinct_values(dq_all, "document_type"),
         }
 
     @app.route("/admin")
@@ -684,6 +638,7 @@ def create_app() -> Flask:
         page_companies = filtered_companies[start:start + ADMIN_COMPANIES_PAGE_SIZE]
 
         column_settings = get_company_list_column_settings(db)
+        ratio_settings = get_overview_ratio_settings(db)
         index_tag_names = list_index_definitions(db)
         # Sectors, Industries & Tags panel: each vocabulary's full list plus
         # how many companies currently use each entry — an admin needs the
@@ -714,6 +669,8 @@ def create_app() -> Flask:
             taxonomy=taxonomy,
             list_columns=COMPANY_LIST_COLUMNS,
             column_settings=column_settings,
+            ratio_catalog=OVERVIEW_RATIO_CATALOG,
+            ratio_settings=ratio_settings,
             import_sources=sorted(ADAPTER_CLASSES),
             active_panel=request.args.get("panel", "companies"),
             import_selected_company=request.args.get("company_id", ""),
@@ -747,6 +704,12 @@ def create_app() -> Flask:
         db = get_db()
         set_company_list_column_settings(db, request.form.getlist("columns"))
         return redirect(url_for("admin"))
+
+    @app.route("/admin/overview-ratios", methods=["POST"])
+    def admin_update_overview_ratios():
+        db = get_db()
+        set_overview_ratio_settings(db, request.form.getlist("ratios"))
+        return redirect(url_for("admin", panel="overview_ratios"))
 
     # One route family for all three vocabularies (Sector/Industry/Index tag)
     # — structurally identical (a name-keyed lookup table an admin can add/
@@ -1114,6 +1077,7 @@ def create_app() -> Flask:
             )
 
         insights = None
+        insights_preview = None
         insights_history = []
         all_insights = list_company_insights(db, company_id)
         if all_insights:
@@ -1123,6 +1087,12 @@ def create_app() -> Flask:
                 "generated_at": latest_row["generated_at"],
                 "statement_type": latest_row["statement_type"],
             }
+            # Plain-text (not tag-highlighted) excerpt for the Overview
+            # tab's "Key Points" sidebar box — the full HTML version isn't
+            # safe to truncate mid-tag, so this is built from the raw text
+            # instead, before _highlight_tags ever runs on it.
+            raw_text = latest_row["insight_text"].strip()
+            insights_preview = raw_text if len(raw_text) <= 220 else raw_text[:220].rsplit(" ", 1)[0] + "…"
             insights_history = [
                 {
                     "html": str(_highlight_tags(row["insight_text"])),
@@ -1153,6 +1123,29 @@ def create_app() -> Flask:
             for row in list_company_notes(db, company_id)
         ]
 
+        latest_price = _latest_price(valuation_model_file) if valuation_model_file else None
+        live_quote = get_live_quote(
+            # nse_symbol only exists for Indian companies; a non-Indian
+            # company (no NSE/BSE identifiers at all) uses its own
+            # company_id as the yfinance ticker instead — see
+            # web/live_quote.py and cmd_ingest_yfinance's own convention.
+            company["nse_symbol"] or (company_id if company["country"] != "IN" else None),
+            company["country"],
+        )
+        # Same resolved price the page header already shows (live_quote,
+        # falling back to the ported dataset's own last price) — passed to
+        # the Overview ratio grid (valuation_dashboard.js) as a data
+        # attribute, since the live-computed feed (web/valuation_feed.py)
+        # deliberately never populates price itself (no market-data
+        # pipeline; see that module's docstring).
+        overview_price = live_quote["price"] if live_quote else latest_price
+        shares_outstanding = list_latest_shares_outstanding(db).get(company_id)
+        # Which ratio-grid rows an admin has enabled (Admin -> Overview
+        # Ratios) — the catalog itself lives in storage/repositories.py,
+        # each key's compute logic in valuation_dashboard.js's RATIO_CATALOG.
+        ratio_settings = get_overview_ratio_settings(db)
+        enabled_ratio_keys = [r["key"] for r in OVERVIEW_RATIO_CATALOG if ratio_settings[r["key"]]]
+
         return render_template(
             "company.html",
             company=company,
@@ -1165,20 +1158,17 @@ def create_app() -> Flask:
             nse_index_tags=nse_index_tags,
             bse_index_tags=bse_index_tags,
             other_index_tags=other_index_tags,
-            latest_price=_latest_price(valuation_model_file) if valuation_model_file else None,
-            live_quote=get_live_quote(
-                # nse_symbol only exists for Indian companies; a non-Indian
-                # company (no NSE/BSE identifiers at all) uses its own
-                # company_id as the yfinance ticker instead — see
-                # web/live_quote.py and cmd_ingest_yfinance's own convention.
-                company["nse_symbol"] or (company_id if company["country"] != "IN" else None),
-                company["country"],
-            ),
+            latest_price=latest_price,
+            live_quote=live_quote,
+            overview_price=overview_price,
+            shares_outstanding=shares_outstanding,
+            enabled_ratio_keys=enabled_ratio_keys,
             is_watchlisted=is_watchlisted(db, "company", company_id),
             has_ported_dataset=has_ported_dataset,
             valuation_data_url=valuation_data_url,
             docs_data_url=url_for("company_docs_feed", company_id=company_id),
             insights=insights,
+            insights_preview=insights_preview,
             insights_history=insights_history,
             notes=notes,
             company_threads=company_threads,
@@ -1761,51 +1751,73 @@ def create_app() -> Flask:
             hypotheses=hypotheses,
         )
 
+    INVESTIGATIONS_PAGE_SIZE = 20
+    WATCHLIST_PAGE_SIZE = 25
+
     @app.route("/investigations")
     def investigations():
-        example_threads = [
-            {
-                "thread_id": ex["thread_id"],
-                "kicker": ex["kicker"],
-                "title": THREADS[ex["thread_id"]]["title"],
-                "question": THREADS[ex["thread_id"]]["question"],
-                "confidence": THREADS[ex["thread_id"]]["confidence"],
-            }
-            for ex in EXAMPLES
-        ]
-        # Generated reports (research/signals_report.py, via /research/thread/generate)
-        # — newest first, ahead of the fixture examples, so a question someone just
-        # asked from the Research tab actually shows up here instead of only being
-        # reachable if they still have the direct URL.
-        generated_threads = []
+        # Generated reports (research/signals_report.py) and structured
+        # investigations (research/investigation.py) are two different tables
+        # under the hood, but from a user's perspective both are just "an
+        # investigation I ran" — merged into one entries list (one search box,
+        # one Type filter, one growing/paginated feed) instead of the two
+        # separately-searched, separately-paginated sections this page used
+        # to render side by side. The 3 hand-written EXAMPLES/THREADS fixtures
+        # (web/fixtures.py — illustrative wireframe content, not real data)
+        # deliberately don't appear here at all: mixing fabricated numbers
+        # into a feed of real investigations risked a user mistaking one for
+        # the other. They still have a real home — the Research page's own
+        # "try an example" showcase (research.html) links into the same
+        # /research/thread/<id> fixture-rendering branch.
+        entries = []
         for generated in list_generated_reports(get_db()):
             meta = extract_report_meta(generated["report_markdown"])
-            generated_threads.append(
+            entries.append(
                 {
-                    "thread_id": generated["thread_id"],
+                    "type": "generated",
+                    "type_label": "Quick Answer",
+                    "href": url_for("research_thread", thread_id=generated["thread_id"]),
+                    "title": meta["title"] or generated["question"],
+                    # Only shown when it adds information beyond the title.
+                    "subtitle": generated["question"] if meta["title"] else "",
                     # company_ids can be empty for a macro-only question
                     # (research/macro_evidence.py) — no company to list.
-                    "kicker": "Generated · " + (", ".join(generated["company_ids"]) or "Macro/regulatory"),
-                    "title": meta["title"] or generated["question"],
-                    "question": generated["question"],
-                    "confidence": meta["confidence"] or "Unknown",
-                    "generated_at": generated["generated_at"],
+                    "companies_label": ", ".join(generated["company_ids"]) or "Macro/regulatory",
+                    "right_tag": (meta["confidence"] or "Unknown") + " confidence",
+                    "generated_at": generated["generated_at"] or "",
                 }
             )
+        for inv in list_investigations(get_db()):
+            company_ids = json.loads(inv["company_ids"] or "[]")
+            entries.append(
+                {
+                    "type": "structured",
+                    "type_label": "Deep Dive",
+                    "href": url_for("investigate_view", investigation_id=inv["investigation_id"]),
+                    "title": inv["question"],
+                    "subtitle": "",
+                    "companies_label": ", ".join(company_ids) or "Macro/regulatory",
+                    "right_tag": inv["generated_at"],
+                    "generated_at": inv["generated_at"] or "",
+                }
+            )
+        entries.sort(key=lambda r: r["generated_at"], reverse=True)
 
-        structured_investigations = [
-            {
-                "investigation_id": inv["investigation_id"],
-                "question": inv["question"],
-                "company_ids": json.loads(inv["company_ids"] or "[]"),
-                "generated_at": inv["generated_at"],
-            }
-            for inv in list_investigations(get_db())
-        ]
+        iv_type_filter = request.args.get("iv_type") or ""
+        if iv_type_filter:
+            entries = [r for r in entries if r["type"] == iv_type_filter]
+        iv_query = (request.args.get("iv_q") or "").strip()
+        iv = _paginate(
+            entries, query=iv_query,
+            haystack_fn=lambda r: " ".join(filter(None, [r["title"], r["subtitle"], r["companies_label"]])).lower(),
+            page_arg="iv_page", page_size=INVESTIGATIONS_PAGE_SIZE,
+        )
 
         return render_template(
-            "investigations.html", threads=generated_threads + example_threads,
-            structured_investigations=structured_investigations,
+            "investigations.html",
+            entries=iv["rows"], entries_total=iv["total"],
+            entries_page=iv["page"], entries_total_pages=iv["total_pages"],
+            entries_query=iv_query, entries_type_filter=iv_type_filter,
         )
 
     def _tools_macro_context(db) -> dict:
@@ -1945,7 +1957,21 @@ def create_app() -> Flask:
                         "href": url_for("research_thread", thread_id=item["item_ref"]),
                     }
                 )
-        return render_template("watchlist.html", entries=entries)
+
+        wl_query = (request.args.get("wl_q") or "").strip()
+        wl_type_filter = request.args.get("wl_type") or ""
+        wl = _paginate(
+            [e for e in entries if not wl_type_filter or e["item_type"] == wl_type_filter],
+            query=wl_query,
+            haystack_fn=lambda r: " ".join(filter(None, [r["title"], r["subtitle"]])).lower(),
+            page_arg="wl_page", page_size=WATCHLIST_PAGE_SIZE,
+        )
+        return render_template(
+            "watchlist.html",
+            entries=wl["rows"], entries_total=wl["total"],
+            entries_page=wl["page"], entries_total_pages=wl["total_pages"],
+            entries_query=wl_query, entries_type_filter=wl_type_filter,
+        )
 
     def _safe_next() -> str:
         """The `next` field is same-origin form data we render ourselves, but validate

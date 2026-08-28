@@ -159,7 +159,7 @@
         <tr>
           <th class="sortable" data-sort-key="name">Company<span class="sort-indicator"></span></th>
           {% for col in columns %}
-          <th class="sortable {{ 'price' if col['key'] == 'price' else '' }}" data-sort-key="{{ col['key'] }}">{{ col['label'] }}<span class="sort-indicator"></span></th>
+          <th class="sortable {{ 'price' if col['key'] in ('price', 'market_cap') else '' }}" data-sort-key="{{ col['key'] }}">{{ col['label'] }}<span class="sort-indicator"></span></th>
           {% endfor %}
         </tr>
       </thead>
@@ -174,6 +174,7 @@
             data-sector="{{ c['sector'] or '' }}" data-industry="{{ c['industry'] or '' }}"
             data-country="{{ c['country'] }}"
             data-price="{{ c['latest_price'] if c['latest_price'] is not none else '' }}"
+            data-market-cap="{{ c['market_cap_cr'] if c['market_cap_cr'] is not none else '' }}"
             data-status="{{ c['status'] }}"
             data-tags="|{{ c['index_tags']|join('|') }}|"
             data-tags-sort="{{ c['index_tags']|join(', ')|lower }}">
@@ -187,6 +188,8 @@
           <td data-col="industry">{{ c['industry'] or '—' }}</td>
             {% elif col['key'] == 'price' %}
           <td data-col="price" class="price">{% if c['latest_price'] is not none %}{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '%.2f'|format(c['latest_price']) }}{% else %}—{% endif %}</td>
+            {% elif col['key'] == 'market_cap' %}
+          <td data-col="market_cap" class="price">{% if c['market_cap_cr'] is not none %}{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '{:,.0f}'.format(c['market_cap_cr']) }} Cr{% else %}—{% endif %}</td>
             {% elif col['key'] == 'status' %}
           <td data-col="status">
             {% if c['status'] == 'active' %}
@@ -268,14 +271,14 @@
       // regardless of direction rather than landing at the top on descending.
       const tbody = document.getElementById('companies-tbody');
       const headerCells = Array.from(document.querySelectorAll('table.companies thead th[data-sort-key]'));
-      const SORT_ATTR = { name: 'name', sector: 'sector', industry: 'industry', price: 'price', status: 'status', tags: 'tagsSort' };
+      const SORT_ATTR = { name: 'name', sector: 'sector', industry: 'industry', price: 'price', market_cap: 'marketCap', status: 'status', tags: 'tagsSort' };
       let sortState = { key: null, dir: 1 };
 
       function sortRows(key) {
         const attr = SORT_ATTR[key];
         if (!attr) return;
         sortState = sortState.key === key ? { key, dir: -sortState.dir } : { key, dir: 1 };
-        const numeric = key === 'price';
+        const numeric = key === 'price' || key === 'market_cap';
         rows
           .slice()
           .sort((a, b) => {

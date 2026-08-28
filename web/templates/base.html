@@ -42,15 +42,16 @@
     line-height: 1.5;
   }
 
-  /* ~80% of the browser width is the baseline for every page — scales with
+  /* ~85% of the browser width is the baseline for every page — scales with
      the window instead of sitting at a fixed px column, so it doesn't look
-     stranded in a sea of margin on a wide monitor. Capped (1040px) so prose
-     doesn't stretch to an unreadable line length on very large screens.
+     stranded in a sea of margin on a wide monitor. Capped so prose doesn't
+     stretch to an unreadable line length on very large screens (individual
+     prose elements also carry their own narrower max-width/ch caps).
      Below 640px there's no spare width to give back — width reverts to the
      viewport itself (minus padding) rather than shrinking further. */
   .page {
-    width: 80%;
-    max-width: 1320px;
+    width: 85%;
+    max-width: 1440px;
     margin: 0 auto;
     padding: 2.5rem 1.5rem 4rem;
     transition: max-width 0.15s ease;
@@ -60,8 +61,8 @@
      for tables/charts/columns, not just everything on the site getting
      wider. */
   .page.page-wide {
-    width: 88%;
-    max-width: 1600px;
+    width: 92%;
+    max-width: 1800px;
   }
   @media (max-width: 640px) {
     .page, .page.page-wide { width: auto; }

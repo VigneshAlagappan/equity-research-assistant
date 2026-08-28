@@ -496,6 +496,23 @@ CREATE TABLE IF NOT EXISTS company_list_column_settings (
 );
 
 -- ============================================================
+-- Company Overview-tab ratio grid configuration (Admin tab) -- which ratios
+-- from the fixed catalog (storage/repositories.py's OVERVIEW_RATIO_CATALOG)
+-- appear on a company's Overview tab (web/templates/company.html,
+-- web/static/js/valuation_dashboard.js). Same shape/reasoning as
+-- company_list_column_settings above: ratio_key values are fixed at the
+-- application layer, not user-defined -- adding a genuinely new ratio is a
+-- one-entry addition to the catalog in code, which then shows up here
+-- automatically (enabled by default) for an admin to toggle, no schema
+-- change needed per ratio.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS overview_ratio_settings (
+  ratio_key TEXT PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 1
+);
+
+-- ============================================================
 -- Ingestion queue (Admin -> Ingest tab, ingestion/coordinator.py) --
 -- discovered-but-not-yet-processed FINANCIAL/MACRO files under data/raw/.
 -- Documents don't get a row here -- they're already modeled in `documents`

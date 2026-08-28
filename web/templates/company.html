@@ -39,10 +39,33 @@
   .company-identity a { color: inherit; text-decoration: underline; text-decoration-color: var(--color-divider); }
   .company-identity a:hover { color: var(--color-accent); text-decoration-color: var(--color-accent); }
 
-  /* — Overview tab: About (identity) + a financial snapshot, stacked as
-     clearly separated, equally-weighted sections rather than run together. — */
-  .panel-section + .panel-section { margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px solid var(--color-divider); }
+  /* — Overview tab: financial snapshot (the bulk of what's actually being
+     looked at) and About (a compact company-identity reference) side by
+     side, 80/20 — not stacked, so About reads as a sidebar you can glance
+     at rather than another equally-weighted section to scroll through. — */
+  .overview-columns { display: grid; grid-template-columns: 4fr 1fr; gap: var(--space-6); align-items: start; }
+  .overview-columns .panel-section-about {
+    padding-left: var(--space-5); border-left: 1px solid var(--color-divider);
+  }
   .panel-section-financials :is(h2) { margin-top: 0; }
+  .sidebar-label {
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--ink-muted); margin: 0 0 var(--space-2);
+  }
+  .sidebar-label-spaced { margin-top: var(--space-5); }
+  .sidebar-preview-text { font-size: 13px; line-height: 1.6; margin: 0; }
+  .sidebar-read-more {
+    display: inline-block; font-size: 12px; font-weight: 600; margin-top: var(--space-2);
+    color: var(--color-accent); text-decoration: none;
+  }
+  .sidebar-read-more:hover { text-decoration: underline; }
+  @media (max-width: 900px) {
+    .overview-columns { grid-template-columns: 1fr; }
+    .overview-columns .panel-section-about {
+      padding-left: 0; border-left: none;
+      padding-top: var(--space-5); border-top: 1px solid var(--color-divider);
+    }
+  }
 
   .insights-meta { font-size: 12px; color: var(--ink-muted); display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); }
   .insights-action { font-size: 12px; padding: 0.15rem 0.6rem; }
@@ -68,9 +91,10 @@
   .overview-news-item:hover .overview-news-title { color: var(--color-accent); }
   .overview-news-title { font-size: 13px; line-height: 1.4; }
   .overview-news-source { font-size: 11px; color: var(--ink-muted); margin-top: 2px; }
-  .meta-list { margin: var(--space-4) 0 0; max-width: 480px; }
-  .meta-row { display: flex; gap: var(--space-3); padding: 5px 0; border-bottom: 1px solid var(--color-divider); font-size: 13px; }
-  .meta-row dt { width: 108px; flex: none; color: var(--ink-muted); }
+  .meta-list { margin: 0; max-width: 480px; }
+  .meta-row { display: flex; gap: var(--space-3); padding: 7px 0; border-bottom: 1px solid var(--color-divider); font-size: 13px; }
+  .meta-row:last-child { border-bottom: none; }
+  .meta-row dt { width: 96px; flex: none; color: var(--ink-muted); }
   .meta-row dd { margin: 0; }
   .watchlist-toggle-form { display: inline-flex; }
   .watchlist-toggle-btn {
@@ -426,11 +450,54 @@
     margin-bottom: var(--space-5);
   }
   .vm-kpi-grid-3 { grid-template-columns: repeat(3, 1fr); }
+
+  /* Screener.in-style ratio grid — a dense 3-column block of label/value
+     pairs with alternating row shading, replacing the old 6-card KPI grid
+     on the Overview tab (and the Financials tab's own default landing
+     view, which renders the same section). Framed as this app's own
+     .card.elev-sm (styles.css) rather than a bespoke border, so it reads
+     as one cohesive surface consistent with every other card on the site
+     — .vm-ratio-grid itself only owns the grid layout and cell dividers,
+     the card class owns the outer border/radius/padding/shadow. */
+  .vm-ratio-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 0; margin-bottom: var(--space-5);
+  }
+  .vm-ratio-cell {
+    display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
+    padding: 12px 18px; font-size: 13.5px; line-height: 1.3;
+    border-bottom: 1px solid var(--color-divider); border-right: 1px solid var(--color-divider);
+    transition: background-color 0.12s ease;
+  }
+  .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+3) { border-bottom: none; }
+  .vm-ratio-cell:nth-child(3n) { border-right: none; }
+  .vm-ratio-cell:nth-child(6n+1), .vm-ratio-cell:nth-child(6n+2), .vm-ratio-cell:nth-child(6n+3) {
+    background: var(--surface);
+  }
+  .vm-ratio-cell:hover { background: var(--color-accent-100); }
+  .vm-ratio-label {
+    color: var(--ink-muted); font-size: 12.5px;
+  }
+  .vm-ratio-value {
+    font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 14.5px;
+  }
+
   @media (max-width: 720px) {
     .vm-layout { flex-direction: column; }
     .vm-sidebar { width: 100%; position: static; }
     .vm-nav { flex-direction: row; flex-wrap: wrap; }
     .vm-kpi-grid, .vm-kpi-grid-3 { grid-template-columns: repeat(2, 1fr); }
+    .vm-ratio-grid { grid-template-columns: repeat(2, 1fr); }
+    .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+3) { border-bottom: 1px solid var(--color-divider); }
+    .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+2) { border-bottom: none; }
+    .vm-ratio-cell:nth-child(3n) { border-right: 1px solid var(--color-divider); }
+    .vm-ratio-cell:nth-child(2n) { border-right: none; }
+  }
+  @media (max-width: 480px) {
+    .vm-ratio-grid { grid-template-columns: 1fr; }
+    .vm-ratio-cell { border-right: none; }
+    .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+2) { border-bottom: 1px solid var(--color-divider); }
+    .vm-ratio-grid .vm-ratio-cell:last-child { border-bottom: none; }
   }
   .vm-num { font-variant-numeric: tabular-nums; }
   .vm-eps-chart { width: 100%; height: 140px; margin-top: var(--space-3); display: block; }
@@ -682,27 +749,38 @@
   </div>
 
   <section class="merged-section" id="sec-overview">
-    <div class="panel-section">
-      <h2>About</h2>
-      <dl class="meta-list">
-        <div class="meta-row"><dt>Full name</dt><dd>{{ company['legal_name'] }}</dd></div>
-        {% if website_display %}<div class="meta-row"><dt>Website</dt><dd><a href="{{ company['website'] }}" target="_blank" rel="noopener noreferrer">{{ website_display }}</a></dd></div>{% endif %}
-        {% if company['nse_symbol'] %}<div class="meta-row"><dt>NSE</dt><dd><a href="{{ nse_url }}" target="_blank" rel="noopener noreferrer">{{ company['nse_symbol'] }}</a></dd></div>{% endif %}
-        {% if company['bse_code'] %}<div class="meta-row"><dt>BSE</dt><dd><a href="{{ bse_url }}" target="_blank" rel="noopener noreferrer">{{ company['bse_code'] }}</a></dd></div>{% endif %}
-        {% if company['macro_economic_sector'] %}<div class="meta-row"><dt>Macro sector</dt><dd>{{ company['macro_economic_sector'] }}</dd></div>{% endif %}
-        {% if company['sector'] %}<div class="meta-row"><dt>Sector</dt><dd>{{ company['sector'] }}</dd></div>{% endif %}
-        {% if company['industry'] %}<div class="meta-row"><dt>Industry</dt><dd>{{ company['industry'] }}</dd></div>{% endif %}
-        {% if company['basic_industry'] %}<div class="meta-row"><dt>Basic industry</dt><dd>{{ company['basic_industry'] }}</dd></div>{% endif %}
-        {% if nse_index_tags %}<div class="meta-row"><dt>NSE indices</dt><dd>{{ nse_index_tags|join(', ') }}</dd></div>{% endif %}
-        {% if bse_index_tags %}<div class="meta-row"><dt>BSE indices</dt><dd>{{ bse_index_tags|join(', ') }}</dd></div>{% endif %}
-        {% if other_index_tags %}<div class="meta-row"><dt>Indices</dt><dd>{{ other_index_tags|join(', ') }}</dd></div>{% endif %}
-        {% if company['listed_date'] %}<div class="meta-row"><dt>Listed</dt><dd>{{ company['listed_date'] }}</dd></div>{% endif %}
-      </dl>
-    </div>
+    <div class="overview-columns">
+      <div class="panel-section panel-section-financials">
+        <div id="valuation-overview" data-url="{{ valuation_data_url }}"
+             data-price="{{ overview_price if overview_price is not none else '' }}"
+             data-shares-outstanding="{{ shares_outstanding if shares_outstanding is not none else '' }}"
+             data-ratio-keys="{{ enabled_ratio_keys|tojson|forceescape }}">
+          <div class="vm-content"><p class="muted">Loading model&hellip;</p></div>
+        </div>
+      </div>
 
-    <div class="panel-section panel-section-financials">
-      <div id="valuation-overview" data-url="{{ valuation_data_url }}">
-        <div class="vm-content"><p class="muted">Loading model&hellip;</p></div>
+      <div class="panel-section panel-section-about">
+        <h3 class="sidebar-label">About</h3>
+        <dl class="meta-list">
+          <div class="meta-row"><dt>Full name</dt><dd>{{ company['legal_name'] }}</dd></div>
+          {% if website_display %}<div class="meta-row"><dt>Website</dt><dd><a href="{{ company['website'] }}" target="_blank" rel="noopener noreferrer">{{ website_display }}</a></dd></div>{% endif %}
+          {% if company['nse_symbol'] %}<div class="meta-row"><dt>NSE</dt><dd><a href="{{ nse_url }}" target="_blank" rel="noopener noreferrer">{{ company['nse_symbol'] }}</a></dd></div>{% endif %}
+          {% if company['bse_code'] %}<div class="meta-row"><dt>BSE</dt><dd><a href="{{ bse_url }}" target="_blank" rel="noopener noreferrer">{{ company['bse_code'] }}</a></dd></div>{% endif %}
+          {% if company['macro_economic_sector'] %}<div class="meta-row"><dt>Macro sector</dt><dd>{{ company['macro_economic_sector'] }}</dd></div>{% endif %}
+          {% if company['sector'] %}<div class="meta-row"><dt>Sector</dt><dd>{{ company['sector'] }}</dd></div>{% endif %}
+          {% if company['industry'] %}<div class="meta-row"><dt>Industry</dt><dd>{{ company['industry'] }}</dd></div>{% endif %}
+          {% if company['basic_industry'] %}<div class="meta-row"><dt>Basic industry</dt><dd>{{ company['basic_industry'] }}</dd></div>{% endif %}
+          {% if nse_index_tags %}<div class="meta-row"><dt>NSE indices</dt><dd>{{ nse_index_tags|join(', ') }}</dd></div>{% endif %}
+          {% if bse_index_tags %}<div class="meta-row"><dt>BSE indices</dt><dd>{{ bse_index_tags|join(', ') }}</dd></div>{% endif %}
+          {% if other_index_tags %}<div class="meta-row"><dt>Indices</dt><dd>{{ other_index_tags|join(', ') }}</dd></div>{% endif %}
+          {% if company['listed_date'] %}<div class="meta-row"><dt>Listed</dt><dd>{{ company['listed_date'] }}</dd></div>{% endif %}
+        </dl>
+
+        {% if insights_preview %}
+        <h3 class="sidebar-label sidebar-label-spaced">Key Points</h3>
+        <p class="sidebar-preview-text">{{ insights_preview }}</p>
+        <a class="sidebar-read-more" href="#sec-key-insights">Read more &rarr;</a>
+        {% endif %}
       </div>
     </div>
   </section>
@@ -753,7 +831,10 @@
     </div>
     {% endif %}
 
-    <div id="valuation-dashboard" class="vm-layout" data-url="{{ valuation_data_url }}">
+    <div id="valuation-dashboard" class="vm-layout" data-url="{{ valuation_data_url }}"
+         data-price="{{ overview_price if overview_price is not none else '' }}"
+         data-shares-outstanding="{{ shares_outstanding if shares_outstanding is not none else '' }}"
+         data-ratio-keys="{{ enabled_ratio_keys|tojson|forceescape }}">
       <aside class="vm-sidebar">
         <nav class="vm-nav">
           <button type="button" class="vm-nav-btn active" data-section="overview">Overview</button>

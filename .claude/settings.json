@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python -m pytest tests/test_web.py -q)",
+      "Bash(.venv/bin/python -c \"from web.app import create_app; create_app\\(\\)\")",
+      "Bash(command -v node)",
+      "Bash(node --check web/static/js/valuation_dashboard.js)",
+      "Bash(.venv/bin/python -c ' *)"
+    ]
+  }
+}

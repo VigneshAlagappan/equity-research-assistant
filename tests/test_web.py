@@ -1017,10 +1017,18 @@ def test_generated_report_appears_in_investigations(tmp_path: Path, monkeypatch)
     body = page.data.decode()
     assert "Is HDFC Bank still growing profit?" in body
     assert "High confidence" in body
-    assert "Generated · HDFCBANK" in body
+    # Type badge and company label are separate elements in the unified
+    # investigations feed (web/templates/investigations.html), not
+    # concatenated into one string any more. "Quick Answer" is the
+    # user-facing label for a generated (single-pass) report.
+    assert ">Quick Answer<" in body
+    assert "HDFCBANK" in body
     assert f'/research/thread/{thread_id}"' in body
-    # example investigations still show up too, not replaced
-    assert "Kalyan Bank" in body
+    # The 3 hand-written EXAMPLES/THREADS fixtures (web/fixtures.py) are
+    # illustrative, not real data — deliberately not mixed into this real,
+    # growing feed (they still show up on the Research page's own "try an
+    # example" showcase instead).
+    assert "Kalyan Bank" not in body
 
 
 def test_generated_report_appears_under_every_named_companys_threads_tab(

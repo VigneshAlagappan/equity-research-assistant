@@ -30,7 +30,7 @@ import requests
 from pypdf import PdfReader
 
 from config.settings import from_repo_relative
-from pypdf.errors import PdfReadError
+from pypdf.errors import DependencyError, PyPdfError
 
 from research.evidence import Evidence
 from storage.fact_store import FactStore, default_fact_store
@@ -102,7 +102,14 @@ def _text_from_reader(reader: PdfReader) -> str | None:
 def _extract_pdf_text(path: str) -> str | None:
     try:
         return _text_from_reader(PdfReader(path))
-    except (PdfReadError, OSError):
+    except (PyPdfError, DependencyError, OSError):
+        # DependencyError (e.g. an AES-encrypted PDF needing the optional
+        # `cryptography` package) is a direct Exception subclass, not a
+        # PyPdfError — needs its own arm here, not just a broader PyPdfError
+        # catch. Missing it used to crash the whole ingestion batch instead
+        # of just this one unreadable document, same "absence isn't an
+        # error" rule this function already follows for every other
+        # unreadable-PDF case.
         return None
 
 
@@ -130,7 +137,7 @@ def _extract_pdf_text_from_url(url: str) -> str | None:
         return None
     try:
         return _text_from_reader(PdfReader(BytesIO(data)))
-    except PdfReadError:
+    except (PyPdfError, DependencyError):
         return None
 
 
@@ -157,7 +164,7 @@ def document_pages(row: sqlite3.Row) -> list[str] | None:
             return None
         try:
             return _pages_from_reader(PdfReader(str(from_repo_relative(row["raw_file_path"]))))
-        except (PdfReadError, OSError):
+        except (PyPdfError, DependencyError, OSError):
             return None
     if row["source_url"] and _looks_like_pdf_url(row["source_url"]):
         data = _fetch_url_bytes(row["source_url"])
@@ -165,7 +172,7 @@ def document_pages(row: sqlite3.Row) -> list[str] | None:
             return None
         try:
             return _pages_from_reader(PdfReader(BytesIO(data)))
-        except PdfReadError:
+        except (PyPdfError, DependencyError):
             return None
     return None
 

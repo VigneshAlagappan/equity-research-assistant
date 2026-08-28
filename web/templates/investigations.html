@@ -2,6 +2,8 @@
 
 {% block title %}Investigations — Signals{% endblock %}
 
+{% block page_class %}page-wide{% endblock %}
+
 {% block extra_style %}
   .investigations-list { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-4); }
   .investigation-row {
@@ -10,6 +12,7 @@
   }
   .investigation-row:hover { border-color: var(--color-accent); }
   .investigation-top-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+  .investigation-top-row .card-kicker { display: flex; align-items: center; gap: 8px; }
   .investigation-question { font-size: 13px; opacity: 0.75; }
 
   .empty-state {
@@ -20,45 +23,80 @@
     border: 1px dashed var(--color-divider);
     border-radius: var(--radius-md);
   }
+
+  /* Same filter/pagination pattern as the Admin Ingest panel (web/templates/admin.html) */
+  .admin-companies-filters {
+    display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;
+    margin-top: 0;
+  }
+  .admin-companies-filters .field { width: auto; flex: 1 1 180px; max-width: 280px; }
+  .admin-companies-filters .field label {
+    display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--ink-muted); margin-bottom: 4px;
+  }
+  .admin-companies-filters select.input, .admin-companies-filters input.input { min-height: 36px; }
+  .admin-pagination {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+    gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-3);
+    border-top: 1px solid var(--color-divider); font-size: 13px;
+  }
+  .admin-pagination-links { display: flex; align-items: center; gap: var(--space-2); }
 {% endblock %}
 
 {% block content %}
-  <p class="muted">
-    {% if threads %}{{ threads|length }} research thread{{ 's' if threads|length != 1 }}, kept with {{ 'their' if threads|length != 1 else 'its' }} evidence and conclusions.{% else %}Nothing investigated yet.{% endif %}
-    Generated reports are saved and can be deleted individually — the three example investigations below always remain.
-  </p>
+  <form class="admin-companies-filters" method="get" action="{{ url_for('investigations') }}">
+    <div class="field">
+      <label for="iv-search">Search</label>
+      <input class="input" type="text" id="iv-search" name="iv_q" value="{{ entries_query }}"
+             placeholder="Title, question, company&hellip;" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="iv-type">Type</label>
+      <select class="input" id="iv-type" name="iv_type" onchange="this.form.requestSubmit()">
+        <option value="">All types</option>
+        <option value="generated" {{ 'selected' if entries_type_filter == 'generated' }}>Quick Answer</option>
+        <option value="structured" {{ 'selected' if entries_type_filter == 'structured' }}>Deep Dive</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Search</button>
+    {% if entries_query or entries_type_filter %}
+    <a class="btn btn-ghost" href="{{ url_for('investigations') }}">Clear</a>
+    {% endif %}
+  </form>
 
-  {% if threads %}
+  {% if entries %}
   <div class="investigations-list">
-    {% for t in threads %}
-    <a class="card elev-sm investigation-row" href="{{ url_for('research_thread', thread_id=t.thread_id) }}">
+    {% for entry in entries %}
+    <a class="card elev-sm investigation-row" href="{{ entry.href }}">
       <div class="investigation-top-row">
-        <div class="card-kicker">{{ t.kicker }}</div>
-        <span class="tag tag-outline">{{ t.confidence }} confidence</span>
+        <div class="card-kicker">
+          <span class="tag {{ 'tag-accent' if entry.type == 'generated' else 'tag-neutral' }}">{{ entry.type_label }}</span>
+          {{ entry.companies_label }}
+        </div>
+        <span class="tag tag-outline">{{ entry.right_tag }}</span>
       </div>
-      <div class="card-title">{{ t.title }}</div>
-      <div class="investigation-question">{{ t.question }}</div>
+      <div class="card-title">{{ entry.title }}</div>
+      {% if entry.subtitle %}<div class="investigation-question">{{ entry.subtitle }}</div>{% endif %}
     </a>
     {% endfor %}
   </div>
+  {% if entries_total_pages > 1 %}
+  <div class="admin-pagination">
+    <span class="muted">Page {{ entries_page }} of {{ entries_total_pages }}</span>
+    <div class="admin-pagination-links">
+      {% set iv_pagination_args = {'iv_q': entries_query, 'iv_type': entries_type_filter} %}
+      {% if entries_page > 1 %}
+      <a class="btn btn-ghost" href="{{ url_for('investigations', iv_page=entries_page - 1, **iv_pagination_args) }}">&larr; Previous</a>
+      {% endif %}
+      {% if entries_page < entries_total_pages %}
+      <a class="btn btn-ghost" href="{{ url_for('investigations', iv_page=entries_page + 1, **iv_pagination_args) }}">Next &rarr;</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% elif entries_query or entries_type_filter %}
+  <div class="empty-state">No investigations match these filters.</div>
   {% else %}
   <div class="empty-state">No investigations yet. Start one from the Research tab.</div>
-  {% endif %}
-
-  {% if structured_investigations %}
-  <h3 style="margin-top: var(--space-6);">Structured investigations</h3>
-  <p class="muted">Competing hypotheses, each independently evaluated against its own evidence and ranked —
-    "Run structured investigation" from the Research tab.</p>
-  <div class="investigations-list">
-    {% for inv in structured_investigations %}
-    <a class="card elev-sm investigation-row" href="{{ url_for('investigate_view', investigation_id=inv.investigation_id) }}">
-      <div class="investigation-top-row">
-        <div class="card-kicker">{{ inv.company_ids|join(', ') if inv.company_ids else 'Macro/regulatory' }}</div>
-        <span class="tag tag-outline">{{ inv.generated_at }}</span>
-      </div>
-      <div class="card-title">{{ inv.question }}</div>
-    </a>
-    {% endfor %}
-  </div>
   {% endif %}
 {% endblock %}

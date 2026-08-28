@@ -204,6 +204,28 @@ def get_canonical_series(
     ).fetchall()
 
 
+def list_latest_shares_outstanding(conn: sqlite3.Connection) -> dict[str, float]:
+    """Latest reconciled shares-outstanding (Cr) per company, one query for
+    every company at once — used to compute market cap on the Companies
+    list, where a get_canonical_series() call per row (of ~2,500) would be
+    an N+1. Sparse: only companies with at least one shares_outstanding
+    observation appear."""
+    rows = conn.execute(
+        """
+        SELECT company_id, canonical_value FROM (
+            SELECT company_id, canonical_value,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY company_id ORDER BY fiscal_year DESC, quarter DESC
+                   ) AS rn
+            FROM canonical_financials
+            WHERE metric_key = 'shares_outstanding' AND period_type = 'annual' AND statement_type = 'consolidated'
+        )
+        WHERE rn = 1
+        """
+    ).fetchall()
+    return {row["company_id"]: row["canonical_value"] for row in rows}
+
+
 def reconcile_batch(conn: sqlite3.Connection, observations: Iterable[NormalizedObservation]) -> int:
     """Reconcile every distinct (company, metric, period) key touched by a batch of observations."""
     keys = {
@@ -544,10 +566,14 @@ def save_company_document(
     return conn.execute("SELECT * FROM documents WHERE document_id = ?", (cursor.lastrowid,)).fetchone()
 
 
-def list_documents_by_status(conn: sqlite3.Connection, status: str) -> list[sqlite3.Row]:
-    """Every document across every company at this processing_status —
-    unlike list_company_documents, not scoped to one company, since the
-    Admin -> Ingest queue view spans the whole document archive."""
+def list_documents_by_status(conn: sqlite3.Connection, status: str | None = None) -> list[sqlite3.Row]:
+    """Every document across every company at this processing_status (or,
+    with status=None, at any status) — unlike list_company_documents, not
+    scoped to one company, since the Admin -> Ingest queue view spans the
+    whole document archive. Same optional-status convention as
+    list_ingestion_queue_items."""
+    if status is None:
+        return conn.execute("SELECT * FROM documents ORDER BY retrieved_at DESC").fetchall()
     return conn.execute(
         "SELECT * FROM documents WHERE processing_status = ? ORDER BY retrieved_at DESC",
         (status,),
@@ -1373,6 +1399,7 @@ COMPANY_LIST_COLUMNS = [
     {"key": "sector", "label": "Sector"},
     {"key": "industry", "label": "Industry"},
     {"key": "price", "label": "Price"},
+    {"key": "market_cap", "label": "Market Cap"},
     {"key": "status", "label": "Status"},
     {"key": "tags", "label": "Index tags & IDs"},
 ]
@@ -1399,6 +1426,70 @@ def set_company_list_column_settings(conn: sqlite3.Connection, enabled_keys: Ite
         "INSERT INTO company_list_column_settings (column_key, enabled) VALUES (?, ?) "
         "ON CONFLICT(column_key) DO UPDATE SET enabled = excluded.enabled",
         [(key, 1 if key in enabled_keys else 0) for key in _COMPANY_LIST_COLUMN_KEYS],
+    )
+    conn.commit()
+
+
+# The Overview tab's ratio grid (web/templates/company.html, "About" ->
+# renders into web/static/js/valuation_dashboard.js's renderOverview()).
+# Every key here has a matching compute case in that file's RATIO_CATALOG
+# object — adding a genuinely new ratio is exactly two edits (one entry
+# here for the admin-facing label, one compute case there), never a schema
+# or settings-table change. `default_enabled=False` entries are ratios this
+# app can already compute from ingested data but aren't shown out of the
+# box — an admin can turn them on with no code change at all.
+OVERVIEW_RATIO_CATALOG = [
+    {"key": "marketCap", "label": "Market Cap", "default_enabled": True},
+    {"key": "price", "label": "Current Price", "default_enabled": True},
+    {"key": "stockPE", "label": "Stock P/E", "default_enabled": True},
+    {"key": "bookValue", "label": "Book Value", "default_enabled": True},
+    {"key": "dividendYield", "label": "Dividend Yield", "default_enabled": True},
+    {"key": "roe", "label": "ROE", "default_enabled": True},
+    {"key": "eps", "label": "EPS", "default_enabled": True},
+    {"key": "priceToBook", "label": "Price to Book Value", "default_enabled": True},
+    {"key": "debtToEquity", "label": "Debt to Equity", "default_enabled": True},
+    {"key": "payout", "label": "Dividend Payout", "default_enabled": True},
+    {"key": "shares", "label": "No. Equity Shares", "default_enabled": True},
+    {"key": "netProfit", "label": "Net Profit (latest FY)", "default_enabled": True},
+    {"key": "revenue", "label": "Revenue (latest FY)", "default_enabled": True},
+    {"key": "salesCagr", "label": "Sales Growth (full recorded range)", "default_enabled": True},
+    {"key": "profitCagr", "label": "Profit Growth (full recorded range)", "default_enabled": True},
+    {"key": "netMargin", "label": "Net Profit Margin", "default_enabled": False},
+    {"key": "taxRate", "label": "Tax Rate", "default_enabled": False},
+    {"key": "retention", "label": "Retention Ratio", "default_enabled": False},
+    {"key": "roa", "label": "Return on Assets (bank/NBFC)", "default_enabled": False},
+    {"key": "cdRatio", "label": "Credit-Deposit Ratio (bank)", "default_enabled": False},
+    {"key": "intCoverage", "label": "Interest Coverage", "default_enabled": False},
+    {"key": "networth", "label": "Net Worth", "default_enabled": False},
+    {"key": "totalAssets", "label": "Total Assets", "default_enabled": False},
+    {"key": "salesPerShare", "label": "Sales per Share", "default_enabled": False},
+]
+_OVERVIEW_RATIO_KEYS = {r["key"] for r in OVERVIEW_RATIO_CATALOG}
+_OVERVIEW_RATIO_DEFAULT_ENABLED = {r["key"] for r in OVERVIEW_RATIO_CATALOG if r["default_enabled"]}
+
+
+def get_overview_ratio_settings(conn: sqlite3.Connection) -> dict[str, bool]:
+    """Which of the ratio catalog's entries actually render on a company's
+    Overview tab. A ratio with no row yet defaults per its own
+    default_enabled — same reasoning get_company_list_column_settings
+    already gives for new columns, except the default can be off (most of
+    the always-on-by-default set is the original 15; extras start hidden
+    until an admin opts in)."""
+    rows = conn.execute("SELECT ratio_key, enabled FROM overview_ratio_settings").fetchall()
+    overrides = {row["ratio_key"]: bool(row["enabled"]) for row in rows}
+    return {key: overrides.get(key, key in _OVERVIEW_RATIO_DEFAULT_ENABLED) for key in _OVERVIEW_RATIO_KEYS}
+
+
+def set_overview_ratio_settings(conn: sqlite3.Connection, enabled_keys: Iterable[str]) -> None:
+    """Replace the whole set — same replace-all pattern as set_company_list_column_settings."""
+    enabled_keys = set(enabled_keys)
+    unknown = enabled_keys - _OVERVIEW_RATIO_KEYS
+    if unknown:
+        raise ValueError(f"Unknown ratio key(s): {sorted(unknown)}; must be one of {sorted(_OVERVIEW_RATIO_KEYS)}")
+    conn.executemany(
+        "INSERT INTO overview_ratio_settings (ratio_key, enabled) VALUES (?, ?) "
+        "ON CONFLICT(ratio_key) DO UPDATE SET enabled = excluded.enabled",
+        [(key, 1 if key in enabled_keys else 0) for key in _OVERVIEW_RATIO_KEYS],
     )
     conn.commit()
 
