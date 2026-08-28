@@ -33,6 +33,35 @@
   font-display: swap;
   src: url('../fonts/inter.woff2') format('woff2');
 }
+/* "signals" theme's type system (see that theme's :root block further down):
+   Sora for headings, IBM Plex Sans for body, IBM Plex Mono for numbers/
+   tickers — same self-hosted-only policy as the rest of this file. Sora and
+   IBM Plex Sans are true variable fonts (one file covers 400-700/400-600);
+   IBM Plex Mono on Google Fonts ships as static per-weight files, so only
+   its 400 weight is kept (this app never bolds mono text). Re-fetch from
+   https://fonts.googleapis.com/css2?family=Sora:wght@400..700&family=IBM+Plex+Sans:wght@400..600&family=IBM+Plex+Mono:wght@400
+   if this needs updating. */
+@font-face {
+  font-family: 'Sora';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('../fonts/sora.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('../fonts/ibm-plex-sans.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/ibm-plex-mono.woff2') format('woff2');
+}
 
 :root {
   --color-bg: #f3f2f2;
@@ -87,6 +116,10 @@
      interface headings' ceiling (they need the weight at small sizes); display
      text goes lighter still, to the normal cut (see the deck) */
   --font-body: "Lora", system-ui, sans-serif;
+  /* Only the "signals" theme overrides this (IBM Plex Mono) — every other
+     theme just gets a generic monospace stack for the handful of places
+     (ticker prices, table figures) that ask for one explicitly. */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --space-1: 4.6px;
   --space-2: 9.2px;
@@ -184,6 +217,83 @@
 :root[data-theme="schwab"] .tag { border-radius: var(--radius-sm); }
 :root[data-theme="schwab"] .price-up { color: #2e7d32; }
 :root[data-theme="schwab"] .price-down { color: #c62828; }
+
+/* — "Signals" theme (DEFAULT_THEME) — the 2026-08 redesign: dark,
+   teal-accented, Sora/IBM Plex type system, flatter and more rounded
+   componentry than every other theme here. Like Schwab, overrides
+   --font-heading/--font-body (see web/static/fonts/*.woff2's @font-face
+   blocks above) plus --font-mono (new shared token, generic monospace
+   stack everywhere else). fact/calc/statement/inference/success token
+   overrides for this theme live in base.html next to their un-scoped
+   defaults, not here — same reason base.html owns those tokens at all
+   (they're referenced by inline page styles this file doesn't touch). */
+:root[data-theme="signals"] {
+  --color-bg: #0b0f14;
+  --color-surface: #12171e;
+  --color-text: #e7eaee;
+  --color-divider: rgba(255, 255, 255, 0.08);
+  --color-accent: #45c4b8;
+  --color-accent-2: #38a89d;
+  --color-link: #8fb8e0;
+  /* .tag-accent (and anything else reaching for the accent tonal ramp
+     directly) would otherwise keep the light theme's warm-amber
+     accent-100/800 pair even under this theme — only the translucent-bg +
+     bright-text pattern (matching --calc/--calc-bg just below in base.html)
+     reads correctly against this theme's near-black background. */
+  --color-accent-100: rgba(69, 196, 184, 0.16);
+  --color-accent-800: #5fd6ca;
+  --font-heading: 'Sora', system-ui, sans-serif;
+  --font-body: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+:root[data-theme="signals"] .card {
+  background: var(--color-surface); border-radius: 12px;
+}
+:root[data-theme="signals"] .btn-primary {
+  background: var(--color-accent); color: #06110f; border-color: var(--color-accent);
+}
+:root[data-theme="signals"] .btn-primary:hover { background: var(--color-accent-2); border-color: var(--color-accent-2); }
+:root[data-theme="signals"] .btn,
+:root[data-theme="signals"] .tag { border-radius: 8px; }
+:root[data-theme="signals"] .price-up { color: #45c4b8; }
+:root[data-theme="signals"] .price-down { color: #e0787a; }
+/* tools.html's YoY-move indicator is the same up/down semantic as
+   price-up/down — its "up" already reaches for --color-accent-800 (bright
+   teal under this theme), so a hardcoded dim red for "down" reads as
+   mismatched brightness next to it. */
+:root[data-theme="signals"] .pattern-move.down { color: #e0787a; }
+
+/* — "Signals Light" — the mockup's own light-mode palette() branch, as a
+   sibling theme rather than a mode toggle on "signals": every other theme
+   here is a flat, independently selectable identity (light/white/green/dark
+   aren't "dark mode of white"), so a second Signals entry matches that
+   convention instead of introducing a new light/dark-mode axis just for
+   this one theme. */
+:root[data-theme="signals-light"] {
+  --color-bg: #f7f8f9;
+  --color-surface: #ffffff;
+  --color-text: #14181d;
+  --color-divider: rgba(0, 0, 0, 0.08);
+  --color-accent: #1f8f84;
+  --color-accent-2: #17756c;
+  --color-link: #2f6fb0;
+  --color-accent-100: rgba(31, 143, 132, 0.12);
+  --color-accent-800: #17756c;
+  --font-heading: 'Sora', system-ui, sans-serif;
+  --font-body: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+:root[data-theme="signals-light"] .card {
+  background: var(--color-surface); border-radius: 12px;
+}
+:root[data-theme="signals-light"] .btn-primary {
+  background: var(--color-accent); color: #06110f; border-color: var(--color-accent);
+}
+:root[data-theme="signals-light"] .btn-primary:hover { background: var(--color-accent-2); border-color: var(--color-accent-2); }
+:root[data-theme="signals-light"] .btn,
+:root[data-theme="signals-light"] .tag { border-radius: 8px; }
+:root[data-theme="signals-light"] .price-up { color: #1f8f84; }
+:root[data-theme="signals-light"] .price-down { color: #c62828; }
 
 body {
   background: var(--color-bg);
@@ -389,18 +499,14 @@ textarea.input { min-height: 90px; resize: vertical; }
 }
 .site-header-nav-group { display: flex; align-items: center; gap: 40px; min-width: 0; }
 .site-header-actions { display: flex; align-items: center; gap: 20px; }
-.site-header-brand { display: flex; align-items: center; text-decoration: none; flex: none; }
-.site-header-logo { height: 44px; width: auto; object-fit: contain; mix-blend-mode: multiply; display: block; }
-/* The logo asset is dark ink on a near-white background — `multiply` erases
-   that white background on a light page (source * dest stays close to
-   dest), but the same math on the Dark theme's near-black background
-   multiplies dark-on-dark and the whole logo nearly disappears. Inverting
-   the image swaps it to light ink on near-black, and `screen` is
-   multiply's mirror (erases black instead of white), so the same trick
-   works again against a dark backdrop. */
-:root[data-theme="dark"] .site-header-logo {
-  filter: invert(1);
-  mix-blend-mode: screen;
+.site-header-brand { display: flex; align-items: center; gap: 9px; text-decoration: none; flex: none; }
+/* Inline SVG (currentColor fill/stroke) rather than the old dark-ink-on-white
+   PNG — recolors correctly via --color-accent on every theme with no
+   mix-blend-mode/invert tricks needed. */
+.site-header-logo { height: 22px; width: auto; display: block; color: var(--color-accent); }
+.site-header-wordmark {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight, 700);
+  font-size: 15px; letter-spacing: 0.14em; color: var(--color-text);
 }
 .site-header-links { display: flex; align-items: center; gap: 28px; font-size: 14px; }
 .site-header-links a.site-nav-link {
@@ -487,7 +593,14 @@ textarea.input { min-height: 90px; resize: vertical; }
 }
 .site-search-input:focus { border-color: var(--color-accent); width: 240px; }
 .site-search-results {
-  position: absolute; right: 0; top: calc(100% + 8px); width: 320px; max-height: 360px; overflow-y: auto;
+  /* Anchored to the search box's own left edge, not right:0 — this sits in
+     the "signals" theme's topbar right next to the fixed sidebar
+     (.signals-sidebar, z-index 20), and right:0 with a fixed 320px width
+     let the dropdown extend further left than the search box itself,
+     under the sidebar — which then painted over it (higher z-index, opaque
+     background), visually truncating result text. Growing rightward from
+     the search box's own left edge instead never reaches back that far. */
+  position: absolute; left: 0; top: calc(100% + 8px); width: 320px; max-height: 360px; overflow-y: auto;
   background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: 8px;
   padding: 6px; box-shadow: var(--shadow-lg); z-index: 25;
 }
@@ -502,6 +615,77 @@ textarea.input { min-height: 90px; resize: vertical; }
 
 @media (max-width: 900px) {
   .site-search-input, .site-search-input:focus { width: 140px; }
+}
+
+/* — "signals" theme shell (base.html, _sidebar_shell.html,
+   _signals_topbar.html) — only ever rendered while that theme is active, so
+   plain var(--color-*) tokens are enough here (no data-theme scoping
+   needed, unlike classical/styles.css's other theme-specific overrides). */
+.signals-shell { min-height: 100vh; }
+/* Fixed, not sticky: sticky only "sticks" within its own box, and as a flex
+   item of .signals-shell (default align-items: stretch) this box was being
+   stretched to match whatever sibling content was tallest — with nothing
+   shorter than itself to stick within, it just scrolled away like anything
+   else. Fixed pins it to the viewport outright, independent of document
+   height; .signals-shell-main's margin-left (below) reserves its width so
+   page content doesn't render underneath it. */
+.signals-sidebar {
+  width: 76px; position: fixed; top: 0; left: 0; height: 100vh; z-index: 20;
+  background: var(--color-bg); border-right: 1px solid var(--color-divider);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 20px 0; gap: 30px;
+}
+.signals-sidebar-brand { color: var(--color-accent); display: flex; }
+.signals-sidebar-nav { display: flex; flex-direction: column; gap: 22px; align-items: center; flex: 1; }
+.signals-sidebar-link {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  text-decoration: none; color: var(--ink-faint, color-mix(in srgb, var(--color-text) 45%, transparent));
+}
+.signals-sidebar-link span { font-size: 10px; }
+.signals-sidebar-link:hover, .signals-sidebar-link.is-active { color: var(--color-accent); }
+.signals-sidebar-admin { color: color-mix(in srgb, var(--color-text) 45%, transparent); display: flex; }
+.signals-sidebar-admin:hover, .signals-sidebar-admin.is-active { color: var(--color-accent); }
+
+/* company.html's sticky tab bar (and everything on that page offset from
+   it — the Notes rail, the Valuation Model table's sticky header, anchor
+   scroll-margins) all read --site-header-h to sit just below whatever's
+   fixed/sticky above them. That variable's site-wide default (81px) is
+   .site-header's real height; under this theme the sticky element above
+   the page is .signals-topbar instead, at 56px — left unset, the tab bar
+   stuck 25px too low, leaving a gap that scrolled-past content showed
+   through. Scoped here rather than changed globally since .site-header
+   itself is still 81px tall wherever it's actually used (every other
+   theme). */
+.signals-shell-main { margin-left: 76px; min-width: 0; --site-header-h: 56px; }
+.signals-topbar {
+  height: 56px; display: flex; align-items: center; gap: 14px; padding: 0 28px;
+  border-bottom: 1px solid var(--color-divider); position: sticky; top: 0;
+  background: var(--color-bg); z-index: 15;
+}
+.signals-topbar-spacer { flex: 1; }
+.signals-topbar-ticker {
+  display: flex; align-items: baseline; gap: 7px; padding: 6px 12px;
+  background: var(--color-surface); border: 1px solid var(--color-divider);
+  border-radius: 8px; white-space: nowrap; font-family: var(--font-mono);
+}
+.signals-topbar-ticker-id { font-size: 10px; color: var(--ink-muted); font-family: var(--font-body); }
+.signals-topbar-ticker-price { font-size: 13px; }
+
+@media (max-width: 720px) {
+  /* Below this width the sidebar becomes a horizontal in-flow strip at the
+     top of the page instead of a fixed left column — position/height/
+     z-index and .signals-shell-main's margin-left all revert to normal
+     document flow accordingly. */
+  .signals-sidebar {
+    width: 100%; height: auto; position: static; flex-direction: row;
+    padding: 10px 14px; gap: 18px; border-right: none; border-bottom: 1px solid var(--color-divider);
+    overflow-x: auto;
+  }
+  .signals-sidebar-nav { flex-direction: row; flex: none; gap: 18px; }
+  .signals-sidebar-admin { margin-left: auto; }
+  .signals-shell-main { margin-left: 0; }
+  .signals-topbar { padding: 0 16px; }
+  .signals-topbar-ticker { display: none; }
 }
 
 @media (max-width: 640px) {

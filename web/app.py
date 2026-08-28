@@ -1514,7 +1514,7 @@ def create_app() -> Flask:
         session.clear()
         return redirect(url_for("login"))
 
-    _THEME_LABELS = [("schwab", "Schwab"), ("white", "White"), ("light", "Light"), ("green", "Green"), ("dark", "Dark")]
+    _THEME_LABELS = [("signals", "Signals"), ("signals-light", "Signals Light"), ("schwab", "Schwab"), ("white", "White"), ("light", "Light"), ("green", "Green"), ("dark", "Dark")]
 
     @app.route("/settings", methods=["GET", "POST"])
     def settings():

@@ -1,0 +1,59 @@
+<!-- "signals" theme's slim top bar — company search + (on a company page only)
+     that company's live price, matching _header.html's existing "display
+     only, never feeds valuation math" contextual badge rather than the
+     mockup's always-on fixed ticker, which has no real "current company"
+     concept behind it outside a company page. -->
+<div class="signals-topbar">
+  <div class="site-search" id="site-search">
+    <svg class="site-search-icon" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+      <circle cx="7" cy="7" r="5.25"></circle>
+      <line x1="11" y1="11" x2="14.5" y2="14.5"></line>
+    </svg>
+    <input type="text" class="site-search-input" id="site-search-input" placeholder="Search companies…" autocomplete="off" aria-label="Search companies">
+    <div class="site-search-results" id="site-search-results" hidden></div>
+  </div>
+
+  <div class="signals-topbar-spacer"></div>
+
+  {% if live_quote %}
+  <div class="signals-topbar-ticker">
+    <span class="signals-topbar-ticker-id">{{ company['nse_symbol'] or company_id }}</span>
+    <span class="signals-topbar-ticker-price">{{ '$' if company['currency'] == 'USD' else '₹' }}{{ '%.2f'|format(live_quote.price) }}</span>
+    <span class="{{ 'price-up' if live_quote.change >= 0 else 'price-down' }}">{{ '+' if live_quote.change_pct >= 0 else '' }}{{ '%.1f'|format(live_quote.change_pct) }}%</span>
+  </div>
+  {% endif %}
+
+  <details class="profile-menu">
+    <summary aria-label="Account menu">
+      {% if g.user %}
+      <span class="profile-avatar">{{ (g.user['email'] or g.user['username'])[0]|upper }}</span>
+      {% else %}
+      <span class="profile-avatar profile-avatar-guest" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="8" r="4"></circle>
+          <path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"></path>
+        </svg>
+      </span>
+      {% endif %}
+    </summary>
+    <div class="profile-dropdown">
+      {% if g.user %}
+      <div class="profile-email">{{ g.user['email'] or g.user['username'] }}</div>
+      <a href="{{ url_for('about') }}">About</a>
+      <a href="{{ url_for('settings') }}">Settings</a>
+      {% if g.user['is_admin'] %}
+      <a href="{{ url_for('admin') }}">Admin Settings</a>
+      <a href="{{ url_for('admin_usage') }}">Usage</a>
+      {% endif %}
+      <form action="{{ url_for('logout') }}" method="post">
+        <button type="submit">Log out</button>
+      </form>
+      {% else %}
+      <a href="{{ url_for('about') }}">About</a>
+      <a href="{{ url_for('settings') }}">Settings</a>
+      <a href="{{ url_for('login') }}">Log in</a>
+      {% endif %}
+    </div>
+  </details>
+</div>
+<script src="{{ static_url('js/header_search.js') }}"></script>

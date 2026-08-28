@@ -12,13 +12,31 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterable
+from pathlib import Path
 
+from config.settings import to_repo_relative
 from sources.base import NormalizedObservation
 from sources.macro import MacroNormalizedObservation
 from sources.rbi_bank_infrastructure import BankInfrastructureObservation
 from storage.database import utcnow_iso
 
 NORMALIZATION_VERSION = "v1"
+
+
+def _normalize_source_file(value: str | None) -> str | None:
+    """Source adapters (sources/*.py) pass whatever file_path they were
+    given straight through as source_file — usually already-absolute
+    (ingestion/coordinator.py resolves data/raw/ files against BASE_DIR
+    before handing them to a source adapter), which bakes today's repo
+    location into the row forever (config/settings.py's to_repo_relative()
+    docstring: this repo has already been renamed once, silently breaking
+    every previously-stored absolute path). Only real filesystem paths get
+    relativized — a synthetic identifier like "fred:FEDFUNDS" or
+    "yfinance:AAPL" (never absolute) is left untouched rather than risking
+    to_repo_relative() misinterpreting it as a path."""
+    if value and Path(value).is_absolute():
+        return to_repo_relative(value)
+    return value
 
 
 def insert_financial_observations(
@@ -38,7 +56,7 @@ def insert_financial_observations(
             """,
             (
                 obs.company_id, obs.metric_key, obs.period_type, obs.fiscal_year, obs.quarter,
-                obs.statement_type, obs.value, obs.unit, obs.currency, obs.source, obs.source_file,
+                obs.statement_type, obs.value, obs.unit, obs.currency, obs.source, _normalize_source_file(obs.source_file),
                 obs.source_url, obs.retrieved_at or now, obs.parser_version, NORMALIZATION_VERSION, now,
             ),
         )
@@ -1534,7 +1552,7 @@ def insert_macro_observations(
             """,
             (
                 obs.series_key, obs.region, obs.period_type, obs.period, obs.value, obs.unit,
-                obs.source, obs.source_file, obs.source_url, obs.retrieved_at or now, obs.parser_version, now,
+                obs.source, _normalize_source_file(obs.source_file), obs.source_url, obs.retrieved_at or now, obs.parser_version, now,
             ),
         )
         ids.append(cursor.lastrowid)
@@ -1559,7 +1577,7 @@ def insert_bank_infrastructure_observations(
             """,
             (
                 obs.bank_name, obs.metric, obs.period_type, obs.period, obs.value, obs.unit,
-                obs.source, obs.source_file, obs.parser_version, now, now,
+                obs.source, _normalize_source_file(obs.source_file), obs.parser_version, now, now,
             ),
         )
         ids.append(cursor.lastrowid)
@@ -1605,8 +1623,8 @@ def list_macro_series_summary(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 # admin account logs in by username instead — see schemas/sqlite_schema.sql)
 # ============================================================
 
-VALID_THEMES = {"light", "white", "green", "dark", "schwab"}
-DEFAULT_THEME = "schwab"
+VALID_THEMES = {"light", "white", "green", "dark", "schwab", "signals", "signals-light"}
+DEFAULT_THEME = "signals"
 
 
 def create_user(conn: sqlite3.Connection, email: str, password_hash: str) -> int:

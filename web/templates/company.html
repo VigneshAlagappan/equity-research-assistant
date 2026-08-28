@@ -32,6 +32,11 @@
   .company-title-row::-webkit-scrollbar { display: none; }
   .company-title-row > * { flex: none; }
   .company-name { margin: 0; font-size: 1.4rem; white-space: nowrap; }
+  .company-website-link {
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--ink-muted); flex: none;
+  }
+  .company-website-link:hover { color: var(--color-accent); }
   .price-inline { font-family: var(--font-body); font-size: 1rem; font-weight: 400; font-variant-numeric: tabular-nums; color: var(--ink-muted); }
   /* Live quote (yfinance) vs. yesterday's close — muted, not the saturated
      red/green a trading app would use, to stay in this app's understated palette. */
@@ -591,12 +596,39 @@
   }
   .chart-overlay-layout { display: flex; gap: var(--space-4); align-items: flex-start; flex-wrap: wrap; }
   .chart-overlay-picker { flex: 0 0 260px; min-width: 220px; }
-  .chart-overlay-picker-hint { font-size: 12px; color: var(--ink-muted); margin: 0 0 var(--space-2); }
-  .chart-overlay-section-title {
-    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
-    color: var(--ink-muted); margin: var(--space-2) 0 4px;
+  /* Collapsed by default (same <details> disclosure as .insights-history)
+     — the explanation only needs reading once, not permanent vertical
+     space on every visit. */
+  .chart-overlay-hint { margin: 0 0 var(--space-2); }
+  .chart-overlay-hint summary {
+    cursor: pointer; list-style: none; font-size: 11px; color: var(--ink-muted);
+    display: flex; align-items: center; gap: 6px; user-select: none;
   }
-  .chart-overlay-section-title:first-child { margin-top: 0; }
+  .chart-overlay-hint summary::-webkit-details-marker { display: none; }
+  .chart-overlay-hint summary::before { content: "▸"; font-size: 10px; transition: transform 0.15s ease; }
+  .chart-overlay-hint[open] summary::before { transform: rotate(90deg); }
+  .chart-overlay-hint summary:hover { color: var(--ink); }
+  .chart-overlay-hint p { font-size: 12px; color: var(--ink-muted); margin: 4px 0 0; padding-left: 16px; }
+  /* Each statement section is its own disclosure too, open by default only
+     when it already has a selection worth showing — six sections' worth of
+     attributes no longer costs six sections' worth of height just to load
+     the tab, only the ones actually in use. */
+  .chart-overlay-section { margin: 4px 0 0; }
+  .chart-overlay-section summary {
+    cursor: pointer; list-style: none; font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .03em; color: var(--ink-muted); padding: 4px 0;
+    display: flex; align-items: center; gap: 6px; user-select: none;
+  }
+  .chart-overlay-section summary::-webkit-details-marker { display: none; }
+  .chart-overlay-section summary::before { content: "▸"; font-size: 9px; transition: transform 0.15s ease; }
+  .chart-overlay-section[open] summary::before { transform: rotate(90deg); }
+  .chart-overlay-section summary:hover { color: var(--ink); }
+  .chart-overlay-section-count {
+    font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: normal;
+    background: var(--color-accent-100); color: var(--color-accent-800);
+    border-radius: 999px; padding: 0 6px; line-height: 1.5;
+  }
+  .chart-overlay-section-body { padding-left: 4px; }
   .chart-overlay-attr { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 2px 0; }
   .chart-overlay-attr input[type="checkbox"] { accent-color: var(--color-accent-700); }
   .chart-overlay-attr label { cursor: pointer; flex: 1 1 auto; }
@@ -655,6 +687,11 @@
   <div class="company-header">
     <div class="company-title-row">
       <h1 class="company-name">{{ company['display_name'] }}</h1>
+      {% if company['website'] %}
+      <a class="company-website-link" href="{{ company['website'] }}" target="_blank" rel="noopener noreferrer" aria-label="Open {{ company['display_name'] }}'s website" title="Open company website">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>
+      </a>
+      {% endif %}
       {% if live_quote %}
       <span class="price-inline">
         {{ currency_symbol }}{{ '%.2f'|format(live_quote.price) }}

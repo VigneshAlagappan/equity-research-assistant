@@ -27,7 +27,40 @@
     --inference-bg: #f1e6ec;
     --success: #2e7d32;
     --success-bg: #e6f4ea;
+    --statement: #a9752e;
+    --statement-bg: rgba(169, 117, 46, 0.14);
     --row-hover: color-mix(in srgb, var(--color-text) 4%, transparent);
+  }
+  /* Fact/calc/statement/inference/success are page-authored tokens (inline
+     styles across several templates reference them directly), not
+     :root[data-theme]-scoped in classical/styles.css like --color-accent
+     etc. — so the "signals" theme's own values for them live here, right
+     after the defaults, where they're guaranteed to win the cascade (same
+     rule/attribute-selector trick classical/styles.css's own theme blocks
+     use, just needed here too since this block redeclares the tokens). */
+  :root[data-theme="signals"] {
+    --fact: #c7ccd3;
+    --fact-bg: rgba(199, 204, 211, 0.12);
+    --calc: #5fd6ca;
+    --calc-bg: rgba(69, 196, 184, 0.14);
+    --statement: #d6a35f;
+    --statement-bg: rgba(214, 163, 95, 0.16);
+    --inference: #a99bdb;
+    --inference-bg: rgba(169, 155, 219, 0.16);
+    --success: #5fd6ca;
+    --success-bg: rgba(69, 196, 184, 0.14);
+  }
+  :root[data-theme="signals-light"] {
+    --fact: #2b323b;
+    --fact-bg: rgba(43, 50, 59, 0.08);
+    --calc: #1f8f84;
+    --calc-bg: rgba(31, 143, 132, 0.12);
+    --statement: #a9752e;
+    --statement-bg: rgba(169, 117, 46, 0.14);
+    --inference: #6f5fb0;
+    --inference-bg: rgba(111, 95, 176, 0.14);
+    --success: #1f8f84;
+    --success-bg: rgba(31, 143, 132, 0.12);
   }
 
   * { box-sizing: border-box; }
@@ -95,17 +128,42 @@
   .tag-calculation { background: var(--calc-bg); color: var(--calc); }
   .tag-inference { background: var(--inference-bg); color: var(--inference); }
   .tag-success { background: var(--success-bg); color: var(--success); }
+  /* Styling only — web/app.py's _TAG_RE/_highlight_tags don't emit this yet
+     (MANAGEMENT_STATEMENT isn't in the recognized [FACT]/[CALCULATION]/
+     [INFERENCE] set); this class exists so a future STATEMENT tag has
+     somewhere correct to land, matching the other three now rather than
+     needing a second design pass later. */
+  .tag-statement { background: var(--statement-bg); color: var(--statement); }
 
   {% block extra_style %}{% endblock %}
 </style>
 {% block extra_head %}{% endblock %}
 </head>
 <body>
+{# The "signals" theme (DEFAULT_THEME) replaces the top nav with a left icon
+   sidebar for the main app — see _sidebar_shell.html. Login/Signup opt back
+   out (use_sidebar=false) even under that theme, same "simple public header,
+   no app chrome" treatment landing.html/about.html already get by not
+   extending this file at all. Every other theme keeps the classic
+   _header.html top nav regardless of this block. #}
+{% set use_sidebar %}{% block use_sidebar %}true{% endblock %}{% endset %}
+{% if g.theme in ('signals', 'signals-light') and use_sidebar.strip() == 'true' %}
+<div class="signals-shell">
+  {% include "_sidebar_shell.html" %}
+  <div class="signals-shell-main">
+    {% include "_signals_topbar.html" %}
+    <div class="page {{ self.page_class() }}">
+      {{ self.content() }}
+    </div>
+  </div>
+</div>
+{% else %}
 {% include "_header.html" %}
 
 <div class="page {% block page_class %}{% endblock %}">
   {% block content %}{% endblock %}
 </div>
+{% endif %}
 {% include "_ask_ai.html" %}
 </body>
 </html>

@@ -2,13 +2,16 @@
 
 {% block title %}Sign up — Signals{% endblock %}
 
+{% block use_sidebar %}false{% endblock %}
+
 {% block extra_style %}
   .auth-wrap { max-width: 380px; margin: 3rem auto 0; }
   .auth-wrap h1 { font-size: 1.5rem; text-align: center; }
   .auth-sub { text-align: center; color: var(--ink-muted); font-size: 0.9rem; margin: 0 0 1.5rem; }
   .auth-error {
-    background: var(--fact-bg); color: #7a2a2a; border: 1px solid #d99;
-    border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.85rem; margin-bottom: 1rem;
+    background: color-mix(in srgb, #c0392b 14%, transparent);
+    border: 1px solid color-mix(in srgb, #c0392b 45%, transparent);
+    color: var(--ink); border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.85rem; margin-bottom: 1rem;
   }
   .auth-form .field { margin-bottom: 1rem; }
   .auth-hint { font-size: 0.75rem; color: var(--ink-muted); margin: 0.3rem 0 0; }

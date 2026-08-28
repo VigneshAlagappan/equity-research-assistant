@@ -134,19 +134,34 @@
     );
   }
 
+  // The picker used to spend a permanent ~4-line paragraph plus every
+  // section always fully expanded — real estate that only pays for itself
+  // on a first visit. The hint collapses into a one-line disclosure
+  // (matching .insights-history's own <details> pattern), and each section
+  // collapses too unless it already has a selection worth surfacing —
+  // same picking intent (any number of attributes, grouped by statement
+  // section, explicit L/R side), just not all paid for in vertical space
+  // on every load regardless of what's actually selected.
   function renderPicker(attributes, order, sides, colorOf) {
-    let html = '<p class="chart-overlay-picker-hint">Pick any number of attributes. There are only 2 y-axes, so each one carries an L/R side — attributes sharing a side share one scale. Auto-assigned by matching units; use L/R to move one yourself.</p>';
-    let currentSection = null;
+    const hint =
+      '<details class="chart-overlay-hint">' +
+        '<summary>How this works</summary>' +
+        '<p>Pick any number of attributes. There are only 2 y-axes, so each one carries an L/R side — attributes sharing a side share one scale. Auto-assigned by matching units; use L/R to move one yourself.</p>' +
+      "</details>";
     if (attributes.length === 0) {
-      html += '<p class="muted">No data available for this period type yet.</p>';
+      return hint + '<p class="muted">No data available for this period type yet.</p>';
     }
+
+    const sections = [];
+    let current = null;
     attributes.forEach((attr) => {
-      if (attr.section !== currentSection) {
-        currentSection = attr.section;
-        html += '<div class="chart-overlay-section-title">' + escapeHtml(SECTION_TITLES[currentSection] || currentSection) + "</div>";
+      if (!current || attr.section !== current.section) {
+        current = { section: attr.section, checkedCount: 0, html: "" };
+        sections.push(current);
       }
       const id = attrId(attr.section, attr.key);
       const isChecked = order.indexOf(id) !== -1;
+      if (isChecked) current.checkedCount += 1;
       const swatch = isChecked
         ? '<span class="chart-overlay-swatch" style="background: ' + colorOf(id) + '"></span>'
         : '<span class="chart-overlay-swatch" style="background: transparent"></span>';
@@ -157,7 +172,7 @@
             '<button type="button" class="chart-overlay-side-btn' + (side === "right" ? " is-active" : "") + '" data-side-toggle="' + escapeHtml(id) + '" data-side="right">R</button>' +
           "</span>"
         : "";
-      html +=
+      current.html +=
         '<div class="chart-overlay-attr">' +
           '<input type="checkbox" id="chart-attr-' + escapeHtml(id) + '" data-attr-id="' + escapeHtml(id) + '"' +
           (isChecked ? " checked" : "") + ">" +
@@ -166,7 +181,20 @@
           sideToggle +
         "</div>";
     });
-    return html;
+
+    const sectionsHtml = sections
+      .map((s) => {
+        const title = escapeHtml(SECTION_TITLES[s.section] || s.section);
+        const badge = s.checkedCount > 0 ? ' <span class="chart-overlay-section-count">' + s.checkedCount + "</span>" : "";
+        return (
+          '<details class="chart-overlay-section"' + (s.checkedCount > 0 ? " open" : "") + ">" +
+            "<summary>" + title + badge + "</summary>" +
+            '<div class="chart-overlay-section-body">' + s.html + "</div>" +
+          "</details>"
+        );
+      })
+      .join("");
+    return hint + sectionsHtml;
   }
 
   // "Nice numbers for graph labels" (Heckbert) — rounds a raw span to a
