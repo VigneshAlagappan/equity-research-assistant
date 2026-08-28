@@ -60,6 +60,8 @@ from storage.repositories import (
     list_documents_by_status,
     list_ingestion_queue_items,
     mark_document_processing_status,
+    set_document_processing_status,
+    set_ingestion_queue_item_status,
     upsert_ingestion_queue_item,
     update_ingestion_queue_item_result,
 )
@@ -238,6 +240,11 @@ def process_financial_items(conn, item_ids: list[int]) -> ProcessSummary:
             summary.outcomes.append(outcome)
             summary.failed += 1
             continue
+        if item["status"] == "ARCHIVED":
+            outcome = ProcessOutcome(item_id, ok=False, detail="archived — unarchive first")
+            summary.outcomes.append(outcome)
+            summary.failed += 1
+            continue
         update_ingestion_queue_item_result(conn, item_id, status="PROCESSING")
         item = get_ingestion_queue_item(conn, item_id)  # re-read after the PROCESSING stamp
         outcome = _process_financial_queue_item(conn, item)
@@ -258,6 +265,39 @@ def retry_failed_financial_items(conn) -> ProcessSummary:
     detection), without re-running discovery first."""
     failed = list_ingestion_queue_items(conn, status="FAILED")
     return process_financial_items(conn, [row["item_id"] for row in failed])
+
+
+def archive_financial_items(conn, item_ids: list[int]) -> int:
+    """Archive Selected — "no need for review/processing right now": parks a
+    row out of the Pending/Failed/Needs Review working set (excluded from
+    Ingest All Pending and Retry Failed, which both filter by status) without
+    deleting it or losing its history. A file that never matches its
+    adapter's naming convention (e.g. a misnamed IITM rainfall file) would
+    otherwise sit in Failed forever, re-failing every Retry Failed run.
+    Reversible via unarchive_financial_items() — this is a parking lot, not
+    a delete."""
+    archived = 0
+    for item_id in item_ids:
+        item = get_ingestion_queue_item(conn, item_id)
+        if item is None or item["status"] == "ARCHIVED":
+            continue
+        set_ingestion_queue_item_status(conn, item_id, "ARCHIVED")
+        archived += 1
+    return archived
+
+
+def unarchive_financial_items(conn, item_ids: list[int]) -> int:
+    """Unarchive — back to PENDING, so it's picked up by Ingest All Pending/
+    the normal queue again. Same "hand it back to the working set" contract
+    on the documents side (unarchive_documents)."""
+    unarchived = 0
+    for item_id in item_ids:
+        item = get_ingestion_queue_item(conn, item_id)
+        if item is None or item["status"] != "ARCHIVED":
+            continue
+        set_ingestion_queue_item_status(conn, item_id, "PENDING")
+        unarchived += 1
+    return unarchived
 
 
 def process_documents(conn, document_ids: list[int]) -> ProcessSummary:
@@ -327,3 +367,33 @@ def retry_failed_documents(conn) -> ProcessSummary:
     same reasoning as retry_failed_financial_items()."""
     failed = list_documents_by_status(conn, "failed")
     return process_documents(conn, [row["document_id"] for row in failed])
+
+
+def archive_documents(conn, document_ids: list[int]) -> int:
+    """Archive Selected — same "no need for review/processing right now"
+    parking lot as archive_financial_items(), for documents that keep
+    failing extraction (or just aren't worth processing yet): excluded from
+    Ingest All Pending/Retry Failed (both filter by processing_status)
+    without losing the row or its history. Reversible via
+    unarchive_documents()."""
+    archived = 0
+    for document_id in document_ids:
+        row = conn.execute("SELECT processing_status FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+        if row is None or row["processing_status"] == "archived":
+            continue
+        set_document_processing_status(conn, document_id, "archived")
+        archived += 1
+    return archived
+
+
+def unarchive_documents(conn, document_ids: list[int]) -> int:
+    """Unarchive — back to pending, so it's picked up by Ingest All Pending/
+    the normal queue again."""
+    unarchived = 0
+    for document_id in document_ids:
+        row = conn.execute("SELECT processing_status FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+        if row is None or row["processing_status"] != "archived":
+            continue
+        set_document_processing_status(conn, document_id, "pending")
+        unarchived += 1
+    return unarchived

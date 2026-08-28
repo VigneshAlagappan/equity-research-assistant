@@ -21,7 +21,10 @@
      the internal company_id eyebrow and the legal/sector/status/watchlist
      metadata used to take 3 stacked lines; nowrap + auto-hidden horizontal
      scroll (same trick as the tab bar) keeps it to one regardless of width,
-     scrolling sideways instead of wrapping when it doesn't all fit. */
+     scrolling sideways instead of wrapping when it doesn't all fit. Below
+     640px there's rarely room to scroll to anyway (and the hidden scrollbar
+     gives no hint that there's more) — wrapping there instead means nothing
+     ever reads as silently cut off. */
   .company-title-row {
     display: flex; flex-wrap: nowrap; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-3);
     overflow-x: auto; scrollbar-width: none;
@@ -38,34 +41,13 @@
   .company-identity { font-size: 13px; color: var(--ink-muted); white-space: nowrap; }
   .company-identity a { color: inherit; text-decoration: underline; text-decoration-color: var(--color-divider); }
   .company-identity a:hover { color: var(--color-accent); text-decoration-color: var(--color-accent); }
+  @media (max-width: 640px) {
+    .company-title-row { flex-wrap: wrap; overflow-x: visible; }
+    .company-identity { white-space: normal; flex-basis: 100%; }
+  }
 
-  /* — Overview tab: financial snapshot (the bulk of what's actually being
-     looked at) and About (a compact company-identity reference) side by
-     side, 80/20 — not stacked, so About reads as a sidebar you can glance
-     at rather than another equally-weighted section to scroll through. — */
-  .overview-columns { display: grid; grid-template-columns: 4fr 1fr; gap: var(--space-6); align-items: start; }
-  .overview-columns .panel-section-about {
-    padding-left: var(--space-5); border-left: 1px solid var(--color-divider);
-  }
   .panel-section-financials :is(h2) { margin-top: 0; }
-  .sidebar-label {
-    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
-    color: var(--ink-muted); margin: 0 0 var(--space-2);
-  }
-  .sidebar-label-spaced { margin-top: var(--space-5); }
-  .sidebar-preview-text { font-size: 13px; line-height: 1.6; margin: 0; }
-  .sidebar-read-more {
-    display: inline-block; font-size: 12px; font-weight: 600; margin-top: var(--space-2);
-    color: var(--color-accent); text-decoration: none;
-  }
-  .sidebar-read-more:hover { text-decoration: underline; }
-  @media (max-width: 900px) {
-    .overview-columns { grid-template-columns: 1fr; }
-    .overview-columns .panel-section-about {
-      padding-left: 0; border-left: none;
-      padding-top: var(--space-5); border-top: 1px solid var(--color-divider);
-    }
-  }
+  .company-identity-extra { font-size: 13px; color: var(--ink-muted); margin: var(--space-1) 0 0; }
 
   .insights-meta { font-size: 12px; color: var(--ink-muted); display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); }
   .insights-action { font-size: 12px; padding: 0.15rem 0.6rem; }
@@ -91,12 +73,7 @@
   .overview-news-item:hover .overview-news-title { color: var(--color-accent); }
   .overview-news-title { font-size: 13px; line-height: 1.4; }
   .overview-news-source { font-size: 11px; color: var(--ink-muted); margin-top: 2px; }
-  .meta-list { margin: 0; max-width: 480px; }
-  .meta-row { display: flex; gap: var(--space-3); padding: 7px 0; border-bottom: 1px solid var(--color-divider); font-size: 13px; }
-  .meta-row:last-child { border-bottom: none; }
-  .meta-row dt { width: 96px; flex: none; color: var(--ink-muted); }
-  .meta-row dd { margin: 0; }
-  .watchlist-toggle-form { display: inline-flex; }
+  .watchlist-toggle-form { display: inline-flex; margin-left: auto; }
   .watchlist-toggle-btn {
     font-size: 12px; padding: 0.15rem 0.6rem; border-radius: 999px;
     border: 1px solid var(--color-divider); background: transparent; color: var(--ink-muted);
@@ -691,6 +668,7 @@
       <span class="company-identity">
         {{ company['legal_name'] }}{% if website_display %} · <a href="{{ company['website'] }}" target="_blank" rel="noopener noreferrer">{{ website_display }}</a>{% endif %}{% if company['nse_symbol'] %} · NSE <a href="{{ nse_url }}" target="_blank" rel="noopener noreferrer">{{ company['nse_symbol'] }}</a>{% endif %}{% if company['bse_code'] %} · BSE <a href="{{ bse_url }}" target="_blank" rel="noopener noreferrer">{{ company['bse_code'] }}</a>{% endif %}
       </span>
+      {% if company['industry'] %}<span class="tag tag-neutral">{{ company['industry'] }}</span>{% endif %}
       {% if company['sector'] %}<span class="tag tag-neutral">{{ company['sector'] }}</span>{% endif %}
       <span class="tag {{ 'tag-accent' if company['status'] == 'active' else 'tag-neutral' }}">{{ company['status'] }}</span>
       <form class="watchlist-toggle-form" method="post"
@@ -709,6 +687,23 @@
       </form>
       {% endif %}
     </div>
+
+    {% set industry_bits = [company['basic_industry']] | select | list %}
+    {% set has_indices = nse_index_tags or bse_index_tags or other_index_tags %}
+    {% if industry_bits or has_indices or company['listed_date'] %}
+    <p class="company-identity-extra">
+      {%- if industry_bits %}{{ industry_bits | join(' · ') }}{% endif -%}
+      {%- if has_indices %}{% if industry_bits %} · {% endif -%}
+        {%- for tag in nse_index_tags -%}
+          {%- if not loop.first %}, {% endif -%}
+          <a href="https://www.nseindia.com/market-data/live-equity-market?symbol={{ tag.upper() | urlencode }}" target="_blank" rel="noopener noreferrer">{{ tag }}</a>
+        {%- endfor -%}
+        {%- if nse_index_tags and (bse_index_tags or other_index_tags) %}, {% endif -%}
+        {{- (bse_index_tags + other_index_tags) | join(', ') -}}
+      {%- endif -%}
+      {%- if company['listed_date'] %}{% if industry_bits or has_indices %} · {% endif %}Listed {{ company['listed_date'] }}{% endif -%}
+    </p>
+    {% endif %}
 
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
@@ -749,38 +744,12 @@
   </div>
 
   <section class="merged-section" id="sec-overview">
-    <div class="overview-columns">
-      <div class="panel-section panel-section-financials">
-        <div id="valuation-overview" data-url="{{ valuation_data_url }}"
-             data-price="{{ overview_price if overview_price is not none else '' }}"
-             data-shares-outstanding="{{ shares_outstanding if shares_outstanding is not none else '' }}"
-             data-ratio-keys="{{ enabled_ratio_keys|tojson|forceescape }}">
-          <div class="vm-content"><p class="muted">Loading model&hellip;</p></div>
-        </div>
-      </div>
-
-      <div class="panel-section panel-section-about">
-        <h3 class="sidebar-label">About</h3>
-        <dl class="meta-list">
-          <div class="meta-row"><dt>Full name</dt><dd>{{ company['legal_name'] }}</dd></div>
-          {% if website_display %}<div class="meta-row"><dt>Website</dt><dd><a href="{{ company['website'] }}" target="_blank" rel="noopener noreferrer">{{ website_display }}</a></dd></div>{% endif %}
-          {% if company['nse_symbol'] %}<div class="meta-row"><dt>NSE</dt><dd><a href="{{ nse_url }}" target="_blank" rel="noopener noreferrer">{{ company['nse_symbol'] }}</a></dd></div>{% endif %}
-          {% if company['bse_code'] %}<div class="meta-row"><dt>BSE</dt><dd><a href="{{ bse_url }}" target="_blank" rel="noopener noreferrer">{{ company['bse_code'] }}</a></dd></div>{% endif %}
-          {% if company['macro_economic_sector'] %}<div class="meta-row"><dt>Macro sector</dt><dd>{{ company['macro_economic_sector'] }}</dd></div>{% endif %}
-          {% if company['sector'] %}<div class="meta-row"><dt>Sector</dt><dd>{{ company['sector'] }}</dd></div>{% endif %}
-          {% if company['industry'] %}<div class="meta-row"><dt>Industry</dt><dd>{{ company['industry'] }}</dd></div>{% endif %}
-          {% if company['basic_industry'] %}<div class="meta-row"><dt>Basic industry</dt><dd>{{ company['basic_industry'] }}</dd></div>{% endif %}
-          {% if nse_index_tags %}<div class="meta-row"><dt>NSE indices</dt><dd>{{ nse_index_tags|join(', ') }}</dd></div>{% endif %}
-          {% if bse_index_tags %}<div class="meta-row"><dt>BSE indices</dt><dd>{{ bse_index_tags|join(', ') }}</dd></div>{% endif %}
-          {% if other_index_tags %}<div class="meta-row"><dt>Indices</dt><dd>{{ other_index_tags|join(', ') }}</dd></div>{% endif %}
-          {% if company['listed_date'] %}<div class="meta-row"><dt>Listed</dt><dd>{{ company['listed_date'] }}</dd></div>{% endif %}
-        </dl>
-
-        {% if insights_preview %}
-        <h3 class="sidebar-label sidebar-label-spaced">Key Points</h3>
-        <p class="sidebar-preview-text">{{ insights_preview }}</p>
-        <a class="sidebar-read-more" href="#sec-key-insights">Read more &rarr;</a>
-        {% endif %}
+    <div class="panel-section panel-section-financials">
+      <div id="valuation-overview" data-url="{{ valuation_data_url }}"
+           data-price="{{ overview_price if overview_price is not none else '' }}"
+           data-shares-outstanding="{{ shares_outstanding if shares_outstanding is not none else '' }}"
+           data-ratio-keys="{{ enabled_ratio_keys|tojson|forceescape }}">
+        <div class="vm-content"><p class="muted">Loading model&hellip;</p></div>
       </div>
     </div>
   </section>

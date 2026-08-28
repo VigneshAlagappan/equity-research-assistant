@@ -122,7 +122,11 @@ def _parse_response(text: str) -> dict:
     if match is None:
         raise KnowledgeExtractionError(f"model response contained no JSON object: {text[:200]!r}")
     try:
-        parsed = json.loads(match.group(0))
+        # strict=False tolerates literal control characters (raw newlines/tabs)
+        # inside quoted strings — Haiku sometimes emits an unescaped newline in
+        # a long "quote" field, which json.loads would otherwise reject outright
+        # even though the document is structurally valid JSON.
+        parsed = json.loads(match.group(0), strict=False)
     except json.JSONDecodeError as exc:
         raise KnowledgeExtractionError(f"model response wasn't valid JSON: {exc}") from None
     if not isinstance(parsed, dict) or "claims" not in parsed:
@@ -224,33 +228,57 @@ def extract_document_knowledge(
     pinned_model = model or ANTHROPIC_MODEL
     user_message = f"Document text:\n{text[:MAX_CHARS_FOR_EXTRACTION]}"
 
-    try:
-        result = route(
-            system=_build_system_prompt(), user_message=user_message, hardness=hardness,
-            max_tokens=MAX_TOKENS, pinned_model=pinned_model,
-        )
-    except AllProvidersUnavailableError as exc:
-        raise KnowledgeExtractionError(f"all configured models failed: {exc}") from exc
+    # Occasionally the model ignores "respond with ONLY a JSON object" and
+    # answers in prose instead, or emits a JSON-shaped response with a stray
+    # escaping mistake — a transient generation glitch, not a systematic
+    # inability to do this task. One corrective retry (same document, a
+    # sharper instruction) resolves most of these without a human re-running
+    # "Retry Failed" for what was really just bad luck on attempt one.
+    attempt_message = user_message
+    parsed: dict | None = None
+    parse_error: KnowledgeExtractionError | None = None
+    for attempt in range(2):
+        try:
+            result = route(
+                system=_build_system_prompt(), user_message=attempt_message, hardness=hardness,
+                max_tokens=MAX_TOKENS, pinned_model=pinned_model,
+            )
+        except AllProvidersUnavailableError as exc:
+            raise KnowledgeExtractionError(f"all configured models failed: {exc}") from exc
 
-    observability.record(
-        conn, task_name="knowledge_extraction", company_ids=[document_row["company_id"]] if document_row["company_id"] else [],
-        question=None, result=result,
-    )
-
-    response = result.response
-    if response.stop_reason == "refusal" or not response.text:
-        raise KnowledgeExtractionError(f"model returned no usable response (stop_reason={response.stop_reason})")
-    if response.stop_reason == "max_tokens":
-        # The response was cut off mid-JSON before it could close its
-        # brackets — _parse_response would just report a confusing "not
-        # valid JSON" error; this is a more actionable diagnosis (the
-        # document is unusually dense, or MAX_TOKENS needs raising again).
-        raise KnowledgeExtractionError(
-            f"model response was truncated at the {MAX_TOKENS}-token limit before finishing — "
-            "this document may be too dense to extract in one pass (Step 2D's chunking isn't built yet)"
+        observability.record(
+            conn, task_name="knowledge_extraction", company_ids=[document_row["company_id"]] if document_row["company_id"] else [],
+            question=None, result=result,
         )
 
-    parsed = _parse_response(response.text)
+        response = result.response
+        if response.stop_reason == "refusal" or not response.text:
+            raise KnowledgeExtractionError(f"model returned no usable response (stop_reason={response.stop_reason})")
+        if response.stop_reason == "max_tokens":
+            # The response was cut off mid-JSON before it could close its
+            # brackets — _parse_response would just report a confusing "not
+            # valid JSON" error; this is a more actionable diagnosis (the
+            # document is unusually dense, or MAX_TOKENS needs raising again).
+            # Not retried — a denser prompt won't fit in the same token limit.
+            raise KnowledgeExtractionError(
+                f"model response was truncated at the {MAX_TOKENS}-token limit before finishing — "
+                "this document may be too dense to extract in one pass (Step 2D's chunking isn't built yet)"
+            )
+
+        try:
+            parsed = _parse_response(response.text)
+            break
+        except KnowledgeExtractionError as exc:
+            parse_error = exc
+            attempt_message = (
+                f"{user_message}\n\nYour previous response did not contain a single valid JSON object as "
+                "instructed. Respond again with ONLY the JSON object described above — no prose, no markdown "
+                "code fences, no commentary before or after it."
+            )
+
+    if parsed is None:
+        raise parse_error
+
     return _persist(
         conn, document_id=document_row["document_id"], company_id=document_row["company_id"],
         fiscal_year=document_row["fiscal_year"], quarter=document_row["quarter"], parsed=parsed,

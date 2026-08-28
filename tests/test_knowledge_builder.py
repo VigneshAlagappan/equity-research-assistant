@@ -48,6 +48,28 @@ def _install_fake_client(monkeypatch, text: str | None, stop_reason: str = "end_
     return captured
 
 
+class _SequencedFakeMessages:
+    """Returns a different response text on each successive call — models
+    consulted via route() a second time (the corrective retry) shouldn't get
+    the same canned response a single-text fake client would give them."""
+
+    def __init__(self, texts: list[str], captured: list) -> None:
+        self._texts = list(texts)
+        self._captured = captured
+
+    def create(self, **kwargs):
+        self._captured.append(kwargs)
+        text = self._texts.pop(0) if self._texts else self._texts[-1]
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)], stop_reason="end_turn")
+
+
+def _install_sequenced_fake_client(monkeypatch, texts: list[str]) -> list:
+    captured: list = []
+    client = SimpleNamespace(messages=_SequencedFakeMessages(texts, captured))
+    monkeypatch.setattr("llm.providers.anthropic_provider.anthropic.Anthropic", lambda *a, **kw: client)
+    return captured
+
+
 _VALID_RESPONSE = """{
   "entities": [
     {"type": "Product", "name": "Widget Pro"},
@@ -241,6 +263,19 @@ def test_unparseable_response_raises_extraction_error(company_conn: sqlite3.Conn
 
     with pytest.raises(KnowledgeExtractionError):
         extract_document_knowledge(company_conn, doc)
+
+
+def test_retries_once_after_unparseable_response_then_succeeds(
+    company_conn: sqlite3.Connection, tmp_path: Path, monkeypatch
+) -> None:
+    doc = _add_pdf_document(company_conn, tmp_path)
+    captured = _install_sequenced_fake_client(monkeypatch, ["Sure, here is a summary in prose.", _VALID_RESPONSE])
+
+    result = extract_document_knowledge(company_conn, doc)
+
+    assert result.claims_created == 2
+    assert len(captured) == 2
+    assert "did not contain a single valid JSON object" in captured[1]["messages"][0]["content"]
 
 
 def test_refusal_raises_extraction_error(company_conn: sqlite3.Connection, tmp_path: Path, monkeypatch) -> None:

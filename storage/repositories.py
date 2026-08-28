@@ -607,6 +607,16 @@ def mark_document_processing_status(
     return conn.execute("SELECT * FROM documents WHERE document_id = ?", (document_id,)).fetchone()
 
 
+def set_document_processing_status(conn: sqlite3.Connection, document_id: int, status: str) -> sqlite3.Row | None:
+    """Archive/Unarchive — a manual status change, not a processing outcome,
+    so unlike mark_document_processing_status() this never touches
+    processed_at/error_message/file_hash; the row's history stays exactly as
+    it was, just parked (or unparked) out of the working set."""
+    conn.execute("UPDATE documents SET processing_status = ? WHERE document_id = ?", (status, document_id))
+    conn.commit()
+    return conn.execute("SELECT * FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+
+
 def list_ingestion_queue_items(
     conn: sqlite3.Connection, *, status: str | None = None, item_kind: str | None = None
 ) -> list[sqlite3.Row]:
@@ -698,6 +708,16 @@ def update_ingestion_queue_item_result(
         """,
         (status, error_message, utcnow_iso(), processed_at, last_processed_content_hash, item_id),
     )
+    conn.commit()
+    return get_ingestion_queue_item(conn, item_id)
+
+
+def set_ingestion_queue_item_status(conn: sqlite3.Connection, item_id: int, status: str) -> sqlite3.Row | None:
+    """Archive/Unarchive — a manual status change, not a processing attempt,
+    so unlike update_ingestion_queue_item_result() this never touches
+    last_attempt_at/error_message; the row's history stays exactly as it
+    was, just parked (or unparked) out of the working set."""
+    conn.execute("UPDATE ingestion_queue_items SET status = ? WHERE item_id = ?", (status, item_id))
     conn.commit()
     return get_ingestion_queue_item(conn, item_id)
 

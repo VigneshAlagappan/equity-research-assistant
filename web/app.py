@@ -45,6 +45,8 @@ from companies.stock_actions import (
 )
 from config.settings import ANTHROPIC_API_KEY_SET, DOCUMENTS_DIR, RAW_DIR, SECRET_KEY, from_repo_relative, to_repo_relative
 from ingestion.coordinator import (
+    archive_documents,
+    archive_financial_items,
     discover_pending_documents,
     discover_pending_financial_items,
     process_all_pending_documents,
@@ -53,6 +55,8 @@ from ingestion.coordinator import (
     process_financial_items,
     retry_failed_documents,
     retry_failed_financial_items,
+    unarchive_documents,
+    unarchive_financial_items,
 )
 from analytics.patterns import detect_yoy_spikes
 from ingestion.detector import ADAPTER_CLASSES
@@ -534,6 +538,8 @@ def create_app() -> Flask:
         disappear out from under the user."""
         discover_pending_financial_items(db)
 
+        active_ingest_tab = "documents" if request.args.get("ingest_tab") == "documents" else "financial"
+
         fq_all = list_ingestion_queue_items(db)
         fq_status_filter = request.args.get("fq_status") or ""
         fq_company_filter = request.args.get("fq_company") or ""
@@ -555,6 +561,7 @@ def create_app() -> Flask:
         )
 
         return {
+            "active_ingest_tab": active_ingest_tab,
             "ingest_fq_rows": fq["rows"],
             "ingest_fq_total": fq["total"],
             "ingest_fq_page": fq["page"],
@@ -865,6 +872,27 @@ def create_app() -> Flask:
         flash(f"Retried {summary.attempted}: {summary.succeeded} succeeded, {summary.failed} still failed.", "success")
         return redirect(url_for("admin", panel="ingest"))
 
+    @app.route("/admin/ingest/archive", methods=["POST"])
+    def admin_ingest_archive():
+        """Archive Selected — "no need for review/processing right now"
+        (ingestion/coordinator.py::archive_financial_items). Parks the
+        checked rows out of Pending/Failed/Needs Review without deleting
+        them; reversible via Unarchive Selected."""
+        db = get_db()
+        item_ids = [int(v) for v in request.form.getlist("item_id")]
+        count = archive_financial_items(db, item_ids)
+        flash(f"Archived {count} item(s).", "success")
+        return redirect(url_for("admin", panel="ingest", ingest_tab="financial"))
+
+    @app.route("/admin/ingest/unarchive", methods=["POST"])
+    def admin_ingest_unarchive():
+        """Unarchive Selected — back to PENDING."""
+        db = get_db()
+        item_ids = [int(v) for v in request.form.getlist("item_id")]
+        count = unarchive_financial_items(db, item_ids)
+        flash(f"Unarchived {count} item(s).", "success")
+        return redirect(url_for("admin", panel="ingest", ingest_tab="financial"))
+
     @app.route("/admin/ingest/documents/process", methods=["POST"])
     def admin_ingest_process_documents():
         """Process the specific pending documents checked in the UI —
@@ -889,6 +917,26 @@ def create_app() -> Flask:
         summary = retry_failed_documents(db)
         flash(f"Retried {summary.attempted}: {summary.succeeded} succeeded, {summary.failed} still failed.", "success")
         return redirect(url_for("admin", panel="ingest"))
+
+    @app.route("/admin/ingest/documents/archive", methods=["POST"])
+    def admin_ingest_archive_documents():
+        """Archive Selected — same parking-lot semantics as
+        admin_ingest_archive(), for documents (ingestion/coordinator.py::
+        archive_documents)."""
+        db = get_db()
+        document_ids = [int(v) for v in request.form.getlist("document_id")]
+        count = archive_documents(db, document_ids)
+        flash(f"Archived {count} document(s).", "success")
+        return redirect(url_for("admin", panel="ingest", ingest_tab="documents"))
+
+    @app.route("/admin/ingest/documents/unarchive", methods=["POST"])
+    def admin_ingest_unarchive_documents():
+        """Unarchive Selected — back to pending."""
+        db = get_db()
+        document_ids = [int(v) for v in request.form.getlist("document_id")]
+        count = unarchive_documents(db, document_ids)
+        flash(f"Unarchived {count} document(s).", "success")
+        return redirect(url_for("admin", panel="ingest", ingest_tab="documents"))
 
     @app.route("/admin/<company_id>/stock-actions", methods=["POST"])
     def admin_add_stock_action(company_id: str):
@@ -1487,7 +1535,20 @@ def create_app() -> Flask:
 
     @app.route("/")
     def home():
-        return render_template("landing.html")
+        # Real, live counts rather than copy that goes stale as the dataset
+        # grows — cheap single-column aggregates, fine to run on every
+        # landing-page load (same reasoning as the company-count queries
+        # elsewhere on this page).
+        db = get_db()
+        stat_companies = db.execute("SELECT count(*) FROM companies").fetchone()[0]
+        stat_sectors = db.execute("SELECT count(DISTINCT sector) FROM companies WHERE sector IS NOT NULL").fetchone()[0]
+        stat_documents = db.execute("SELECT count(*) FROM documents WHERE processing_status = 'processed'").fetchone()[0]
+        stat_claims = db.execute("SELECT count(*) FROM knowledge_claims").fetchone()[0]
+        return render_template(
+            "landing.html",
+            stat_companies=stat_companies, stat_sectors=stat_sectors,
+            stat_documents=stat_documents, stat_claims=stat_claims,
+        )
 
     @app.route("/about")
     def about():

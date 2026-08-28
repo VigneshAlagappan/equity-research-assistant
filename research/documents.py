@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import time
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
@@ -118,6 +119,13 @@ def _looks_like_pdf_url(url: str) -> bool:
 
 
 def _fetch_url_bytes(url: str) -> bytes | None:
+    # requests' `timeout=` with stream=True only bounds each individual
+    # socket read, not the download as a whole — a host trickling bytes just
+    # under that interval (throttled, or a huge slow filing) never trips it
+    # and can hang far past REQUEST_TIMEOUT_SECONDS. This wall-clock deadline
+    # is what actually caps total time spent on one link, so one slow host
+    # can't stall an entire batch ingestion run.
+    deadline = time.monotonic() + REQUEST_TIMEOUT_SECONDS * 4
     try:
         response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS, stream=True)
         response.raise_for_status()
@@ -125,6 +133,8 @@ def _fetch_url_bytes(url: str) -> bytes | None:
         for chunk in response.iter_content(chunk_size=65_536):
             content += chunk
             if len(content) > MAX_DOWNLOAD_BYTES:
+                return None
+            if time.monotonic() > deadline:
                 return None
         return bytes(content)
     except requests.RequestException:

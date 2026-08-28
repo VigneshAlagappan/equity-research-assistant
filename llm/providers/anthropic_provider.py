@@ -14,9 +14,16 @@ from llm.providers.base import ProviderResponse, ProviderUnavailable
 
 PROVIDER_NAME = "anthropic"
 
+# The SDK's own default (10 minutes) lets one stuck call block a whole batch
+# ingestion run — observed hanging well past any reasonable single-call
+# duration. Failing fast here raises APITimeoutError (an APIError subclass,
+# already turned into ProviderUnavailable below) so llm/router.py's fallback
+# chain — or knowledge_builder's own corrective retry — gets a turn instead.
+REQUEST_TIMEOUT_SECONDS = 90.0
+
 
 def generate(*, system: str, user_message: str, model: str, max_tokens: int) -> ProviderResponse:
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=REQUEST_TIMEOUT_SECONDS)
     try:
         response = client.messages.create(
             model=model,

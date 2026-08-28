@@ -21,6 +21,19 @@
   }
   .admin-panel { flex: 1 1 auto; min-width: 0; }
   .admin-panel[hidden] { display: none; }
+  /* Ingest panel: Financial Data and Documents are two distinct queues
+     (different backing tables, different pipelines) but one section to the
+     user — a sub-tab switch here rather than both tables stacked and always
+     visible, same "pick a view, don't scroll past everything" reasoning as
+     the sidebar nav itself. */
+  .admin-ingest-subnav { display: flex; gap: var(--space-2); border-bottom: 1px solid var(--color-divider); margin: var(--space-4) 0; }
+  .admin-ingest-subnav-btn {
+    background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    padding: 8px 4px; font-size: 14px; font-weight: 600; color: var(--ink-muted); cursor: pointer;
+  }
+  .admin-ingest-subnav-btn:hover { color: var(--ink); }
+  .admin-ingest-subnav-btn.active { color: var(--ink); border-bottom-color: var(--color-accent); }
+  .admin-ingest-subpanel[hidden] { display: none; }
   /* Plain <table class="table"> blocks (Needs Review, Failed Items, Pending/
      Failed Documents, Processing History) otherwise sit at the global 14px
      .table default — bring them to the same 13px as .admin-grid and the
@@ -583,14 +596,20 @@
       {% endif %}
       {% endwith %}
 
-      <h3>Financial Data ({{ ingest_fq_total }})</h3>
+      <div class="admin-ingest-subnav">
+        <button type="button" class="admin-ingest-subnav-btn {{ 'active' if active_ingest_tab != 'documents' }}" data-ingest-subpanel="financial">Financial Data ({{ ingest_fq_total }})</button>
+        <button type="button" class="admin-ingest-subnav-btn {{ 'active' if active_ingest_tab == 'documents' }}" data-ingest-subpanel="documents">Documents ({{ ingest_dq_total }})</button>
+      </div>
+
+      <div class="admin-ingest-subpanel" id="admin-ingest-subpanel-financial" {{ 'hidden' if active_ingest_tab == 'documents' }}>
       <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
         <input type="hidden" name="panel" value="ingest">
+        <input type="hidden" name="ingest_tab" value="financial">
         <div class="field">
           <label for="ingest-fq-status">Status</label>
           <select class="input" id="ingest-fq-status" name="fq_status" onchange="this.form.requestSubmit()">
             <option value="">All statuses</option>
-            {% for s in ['PENDING', 'NEEDS_REVIEW', 'FAILED', 'PROCESSED'] %}
+            {% for s in ['PENDING', 'NEEDS_REVIEW', 'FAILED', 'PROCESSED', 'ARCHIVED'] %}
             <option value="{{ s }}" {{ 'selected' if s == ingest_fq_status_filter }}>{{ s|title|replace('_', ' ') }}</option>
             {% endfor %}
           </select>
@@ -616,18 +635,22 @@
 
       <div class="admin-ingest-actions">
         <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_refresh') }}">
+          <input type="hidden" name="ingest_tab" value="financial">
           <button type="submit" class="btn btn-ghost">Refresh Pending Files</button>
         </form>
         <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process_all') }}">
+          <input type="hidden" name="ingest_tab" value="financial">
           <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
         </form>
         <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_retry_failed') }}">
+          <input type="hidden" name="ingest_tab" value="financial">
           <button type="submit" class="btn btn-ghost">Retry Failed</button>
         </form>
       </div>
 
       {% if ingest_fq_rows %}
       <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process') }}">
+        <input type="hidden" name="ingest_tab" value="financial">
         <table class="table">
           <thead>
             <tr><th></th><th>File</th><th>Company</th><th>Source</th><th>Kind</th><th>Status</th><th>Detail</th><th>Updated</th></tr>
@@ -640,7 +663,7 @@
               <td>{{ item['company_id'] or '—' }}</td>
               <td>{{ item['source_id'] or '—' }}</td>
               <td>{{ item['item_kind'] }}</td>
-              <td><span class="tag tag-outline">{{ item['status'] }}</span></td>
+              <td><span class="tag {{ 'tag-success' if item['status'] == 'PROCESSED' else 'tag-neutral' if item['status'] == 'ARCHIVED' else 'tag-outline' }}">{{ item['status'] }}</span></td>
               <td>{{ item['error_message'] or item['status_reason'] or '—' }}</td>
               <td>{{ item['last_attempt_at'] or item['processed_at'] or item['discovered_at'] }}</td>
             </tr>
@@ -648,6 +671,8 @@
           </tbody>
         </table>
         <button type="submit" class="btn btn-primary">Ingest Selected</button>
+        <button type="submit" class="btn btn-ghost" formaction="{{ url_for('admin_ingest_archive') }}">Archive Selected</button>
+        <button type="submit" class="btn btn-ghost" formaction="{{ url_for('admin_ingest_unarchive') }}">Unarchive Selected</button>
       </form>
       {% if ingest_fq_total_pages > 1 %}
       <div class="admin-pagination">
@@ -656,7 +681,7 @@
           of {{ ingest_fq_total }}
         </span>
         <div class="admin-pagination-links">
-          {% set fq_pagination_args = {'panel': 'ingest', 'fq_status': ingest_fq_status_filter, 'fq_company': ingest_fq_company_filter, 'fq_kind': ingest_fq_kind_filter} %}
+          {% set fq_pagination_args = {'panel': 'ingest', 'ingest_tab': 'financial', 'fq_status': ingest_fq_status_filter, 'fq_company': ingest_fq_company_filter, 'fq_kind': ingest_fq_kind_filter} %}
           {% if ingest_fq_page > 1 %}
           <a class="btn btn-ghost" href="{{ url_for('admin', fq_page=ingest_fq_page - 1, **fq_pagination_args) }}">&larr; Previous</a>
           {% endif %}
@@ -672,15 +697,17 @@
       {% else %}
       <div class="empty-state">Nothing in the financial-data queue.</div>
       {% endif %}
+      </div>
 
-      <h3 style="margin-top: var(--space-6);">Documents ({{ ingest_dq_total }})</h3>
+      <div class="admin-ingest-subpanel" id="admin-ingest-subpanel-documents" {{ 'hidden' if active_ingest_tab != 'documents' }}>
       <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
         <input type="hidden" name="panel" value="ingest">
+        <input type="hidden" name="ingest_tab" value="documents">
         <div class="field">
           <label for="ingest-dq-status">Status</label>
           <select class="input" id="ingest-dq-status" name="dq_status" onchange="this.form.requestSubmit()">
             <option value="">All statuses</option>
-            {% for s in ['pending', 'failed', 'processed'] %}
+            {% for s in ['pending', 'failed', 'processed', 'archived'] %}
             <option value="{{ s }}" {{ 'selected' if s == ingest_dq_status_filter }}>{{ s|title }}</option>
             {% endfor %}
           </select>
@@ -706,15 +733,18 @@
 
       <div class="admin-ingest-actions">
         <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process_all_documents') }}">
+          <input type="hidden" name="ingest_tab" value="documents">
           <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
         </form>
         <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_retry_failed_documents') }}">
+          <input type="hidden" name="ingest_tab" value="documents">
           <button type="submit" class="btn btn-ghost">Retry Failed</button>
         </form>
       </div>
 
       {% if ingest_dq_rows %}
       <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process_documents') }}">
+        <input type="hidden" name="ingest_tab" value="documents">
         <table class="table">
           <thead>
             <tr><th></th><th>Company</th><th>Type</th><th>Period</th><th>Status</th><th>Detail</th><th>Updated</th></tr>
@@ -726,7 +756,7 @@
               <td>{{ doc['company_id'] or '—' }}</td>
               <td>{{ doc['document_type'] or '—' }}</td>
               <td>{{ doc['fiscal_year'] or '—' }}{{ ' ' + doc['quarter'] if doc['quarter'] else '' }}</td>
-              <td><span class="tag tag-outline">{{ doc['processing_status'] }}</span></td>
+              <td><span class="tag {{ 'tag-success' if doc['processing_status'] == 'processed' else 'tag-neutral' if doc['processing_status'] == 'archived' else 'tag-outline' }}">{{ doc['processing_status'] }}</span></td>
               <td>{{ doc['error_message'] or '—' }}</td>
               <td>{{ doc['processed_at'] or doc['retrieved_at'] }}</td>
             </tr>
@@ -734,6 +764,8 @@
           </tbody>
         </table>
         <button type="submit" class="btn btn-primary">Ingest Selected</button>
+        <button type="submit" class="btn btn-ghost" formaction="{{ url_for('admin_ingest_archive_documents') }}">Archive Selected</button>
+        <button type="submit" class="btn btn-ghost" formaction="{{ url_for('admin_ingest_unarchive_documents') }}">Unarchive Selected</button>
       </form>
       {% if ingest_dq_total_pages > 1 %}
       <div class="admin-pagination">
@@ -742,7 +774,7 @@
           of {{ ingest_dq_total }}
         </span>
         <div class="admin-pagination-links">
-          {% set dq_pagination_args = {'panel': 'ingest', 'dq_status': ingest_dq_status_filter, 'dq_company': ingest_dq_company_filter, 'dq_type': ingest_dq_type_filter} %}
+          {% set dq_pagination_args = {'panel': 'ingest', 'ingest_tab': 'documents', 'dq_status': ingest_dq_status_filter, 'dq_company': ingest_dq_company_filter, 'dq_type': ingest_dq_type_filter} %}
           {% if ingest_dq_page > 1 %}
           <a class="btn btn-ghost" href="{{ url_for('admin', dq_page=ingest_dq_page - 1, **dq_pagination_args) }}">&larr; Previous</a>
           {% endif %}
@@ -758,6 +790,7 @@
       {% else %}
       <div class="empty-state">No documents in the queue.</div>
       {% endif %}
+      </div>
     </div>
   </div>
 
@@ -769,6 +802,18 @@
           buttons.forEach(function (b) { b.classList.toggle('active', b === btn); });
           document.querySelectorAll('.admin-panel').forEach(function (panel) {
             panel.hidden = panel.id !== 'admin-panel-' + btn.dataset.panel;
+          });
+        });
+      });
+    })();
+
+    (function () {
+      const buttons = document.querySelectorAll('.admin-ingest-subnav-btn');
+      buttons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          buttons.forEach(function (b) { b.classList.toggle('active', b === btn); });
+          document.querySelectorAll('.admin-ingest-subpanel').forEach(function (panel) {
+            panel.hidden = panel.id !== 'admin-ingest-subpanel-' + btn.dataset.ingestSubpanel;
           });
         });
       });
@@ -808,8 +853,12 @@
     // until the reloaded page shows the actual queue state.
     (function () {
       document.querySelectorAll('.admin-async-form').forEach(function (form) {
-        form.addEventListener('submit', function () {
-          const btn = form.querySelector('button[type="submit"]');
+        form.addEventListener('submit', function (event) {
+          // event.submitter is the actual button clicked — several of these
+          // forms (Ingest/Archive/Unarchive Selected) now share one form via
+          // formaction, so the first submit button in the DOM isn't
+          // necessarily the one that triggered this submit.
+          const btn = event.submitter || form.querySelector('button[type="submit"]');
           if (btn) {
             btn.disabled = true;
             btn.textContent = 'Working…';
