@@ -252,4 +252,5 @@ logs/*
 !logs/.gitkeep
 *.db
 *.db-journal
+*.db.bak-*
 data/.flask_secret_key
