@@ -5,7 +5,17 @@
       "Bash(.venv/bin/python -c \"from web.app import create_app; create_app\\(\\)\")",
       "Bash(command -v node)",
       "Bash(node --check web/static/js/valuation_dashboard.js)",
-      "Bash(.venv/bin/python -c ' *)"
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(kill -9 51455 51454 51450)",
+      "Bash(rm -f .git/gc.pid)",
+      "Bash(rm -f .git/objects/pack/*.tmp-*)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git update-ref *)",
+      "Bash(git branch *)",
+      "Bash(git reflog *)",
+      "Bash(git -c pack.window=1 -c pack.depth=1 gc --prune=now)",
+      "Bash(echo \"EXIT:$?\")"
     ]
   }
 }
