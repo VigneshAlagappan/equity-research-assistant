@@ -156,17 +156,34 @@ def list_companies_with_sector(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def search_companies(conn: sqlite3.Connection, query: str, *, limit: int = 8) -> list[sqlite3.Row]:
+def search_companies(
+    conn: sqlite3.Connection, query: str, *, limit: int = 8, index_name: str | None = None
+) -> list[sqlite3.Row]:
     """Active companies whose id/display name/legal name/NSE symbol contains
     `query` (case-insensitive substring, not a fuzzy match) — the header
     search box's typeahead. company_id first (exact-prefix tickers like
     "HDFC" surface before a display-name substring match buried elsewhere),
-    then display_name."""
+    then display_name.
+
+    index_name optionally restricts results to companies tagged with that
+    index in company_index_membership (e.g. "Nifty 500") — the Charts tab's
+    "Compare With" search (web/static/js/charts_overlay.js) only offers
+    companies the price-history db actually covers. None (the default)
+    keeps today's unfiltered behavior, so the header search is unaffected."""
     like = f"%{query.strip()}%"
     if not query.strip():
         return []
+    index_clause = (
+        "AND EXISTS (SELECT 1 FROM company_index_membership m WHERE m.company_id = companies.company_id AND m.index_name = ?)"
+        if index_name is not None
+        else ""
+    )
+    params: tuple = (like, like, like, like)
+    if index_name is not None:
+        params += (index_name,)
+    params += (f"{query.strip()}%", limit)
     return conn.execute(
-        """
+        f"""
         SELECT * FROM companies
         WHERE status = 'active' AND (
             company_id LIKE ? COLLATE NOCASE
@@ -174,12 +191,13 @@ def search_companies(conn: sqlite3.Connection, query: str, *, limit: int = 8) ->
             OR legal_name LIKE ? COLLATE NOCASE
             OR nse_symbol LIKE ? COLLATE NOCASE
         )
+        {index_clause}
         ORDER BY
             CASE WHEN company_id LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END,
             display_name
         LIMIT ?
         """,
-        (like, like, like, like, f"{query.strip()}%", limit),
+        params,
     ).fetchall()
 
 

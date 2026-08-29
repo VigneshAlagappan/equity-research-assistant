@@ -35,7 +35,9 @@ from research.investigation_planner import InvestigationPlan
 
 VERDICTS: frozenset[str] = frozenset({"SUPPORTED", "PARTIALLY_SUPPORTED", "REFUTED", "INSUFFICIENT_EVIDENCE"})
 
-MAX_TOKENS = 3072
+MAX_TOKENS = 8192  # a heavily-evidenced hypothesis (real SBFCFINANCE run: 117
+# evidence lines, 16 knowledge claims, 8 passages) genuinely needs this
+# headroom — 3072 truncated mid-response on that exact case in production.
 _MAX_QUOTE_CHARS = 240
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 

@@ -36,8 +36,18 @@ def _install_fake_llm(monkeypatch, text: str = "The answer. [FACT] some fact. [I
     return captured
 
 
-def _build_app(db_path: Path, monkeypatch):
+def _build_app(db_path: Path, tmp_path: Path, monkeypatch):
     monkeypatch.setattr("config.settings.DB_PATH", db_path)
+    # web/app.py's docs/add and note-attachment upload routes (and the raw-
+    # file admin importer) write real files under these dirs — without
+    # isolating them too, a test that exercises an upload writes its fixture
+    # bytes into the actual data/documents//data/raw checked-out on disk
+    # (found via a stray `data/documents/HDFCBANK/<timestamp>__ar.pdf` full
+    # of test fixture bytes accumulating on every full-suite run; DB_PATH
+    # being isolated didn't help since the file write and the DB row are
+    # two separate writes).
+    monkeypatch.setattr("config.settings.DOCUMENTS_DIR", tmp_path / "documents")
+    monkeypatch.setattr("config.settings.RAW_DIR", tmp_path / "raw")
     from web.app import create_app
 
     app = create_app()
@@ -53,7 +63,7 @@ def client(tmp_path: Path, monkeypatch):
     seed_companies(conn)
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         yield test_client
 
@@ -103,7 +113,7 @@ def test_docs_feed_has_quarters_for_quarterly_ingested_company(tmp_path: Path, m
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         response = test_client.get("/companies/HDFCBANK/docs-feed.json")
         assert response.status_code == 200
@@ -134,7 +144,7 @@ def test_docs_feed_has_years_for_annual_only_company(tmp_path: Path, monkeypatch
     ingest_yfinance_company(conn, "AAPL", "AAPL", currency="USD")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         response = test_client.get("/companies/AAPL/docs-feed.json")
         assert response.status_code == 200
@@ -195,7 +205,16 @@ def test_uploaded_document_stores_repo_relative_path_and_serves_correctly(client
 
     conn = init_db(db_path=settings.DB_PATH)
     row = conn.execute("SELECT raw_file_path FROM documents WHERE document_id = ?", (document_id,)).fetchone()
-    assert not row["raw_file_path"].startswith("/")  # stored relative to BASE_DIR, not absolute
+    # config.settings.to_repo_relative()'s own contract: relative-to-BASE_DIR
+    # when the path is under BASE_DIR, an absolute fallback string otherwise
+    # (its docstring) — this test's isolated DOCUMENTS_DIR (see _build_app())
+    # is deliberately OUTSIDE BASE_DIR, so the meaningful check here is that
+    # the stored path resolves to somewhere under that isolated dir (proving
+    # the upload never touched the real repo), not the specific relative/
+    # absolute string shape, which depends on where DOCUMENTS_DIR happens to be.
+    stored_path = Path(row["raw_file_path"])
+    resolved_path = stored_path if stored_path.is_absolute() else settings.BASE_DIR / stored_path
+    assert resolved_path.is_relative_to(settings.DOCUMENTS_DIR)
 
     file_response = client.get(f"/companies/HDFCBANK/docs/{document_id}/file")
     assert file_response.status_code == 200
@@ -218,7 +237,7 @@ def test_docs_feed_quarter_calendar_is_country_aware(tmp_path: Path, monkeypatch
     register_company(conn, "AAPL", "Apple Inc.", "Apple", country="US", currency="USD")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         india = test_client.get("/companies/HDFCBANK/docs-feed.json").get_json()
         us = test_client.get("/companies/AAPL/docs-feed.json").get_json()
@@ -236,7 +255,7 @@ def test_docs_feed_quarter_calendar_is_country_aware(tmp_path: Path, monkeypatch
 def test_companies_page_shows_empty_state_when_no_companies(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "empty.db"
     init_db(db_path=db_path).close()
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
 
     with app.test_client() as test_client:
         response = test_client.get("/companies")
@@ -289,7 +308,7 @@ def test_company_report_renders_ingested_data(tmp_path: Path, monkeypatch) -> No
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         page = test_client.get("/companies/HDFCBANK?tab=financials")
         feed = test_client.get("/companies/HDFCBANK/valuation-feed.json").get_json()
@@ -337,7 +356,7 @@ def test_statement_type_toggle_switches_data(tmp_path: Path, monkeypatch) -> Non
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener", statement_type="consolidated")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         consolidated = test_client.get("/companies/HDFCBANK/valuation-feed.json?statement_type=consolidated").get_json()
         standalone = test_client.get("/companies/HDFCBANK/valuation-feed.json?statement_type=standalone").get_json()
@@ -363,7 +382,7 @@ def test_highlighted_answer_never_double_escapes_ordinary_text(tmp_path: Path, m
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Margins < 20% & rising. [FACT] some fact.")
 
@@ -409,7 +428,7 @@ def test_chat_post_returns_answer_and_charts(tmp_path: Path, monkeypatch) -> Non
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     captured = _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x. [INFERENCE] y.")
 
@@ -515,7 +534,7 @@ def test_research_ask_returns_answer_and_charts(tmp_path: Path, monkeypatch) -> 
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     captured = _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x. [INFERENCE] y.")
 
@@ -546,7 +565,7 @@ def test_research_ask_renders_markdown_structure_in_answer(tmp_path: Path, monke
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(
         monkeypatch,
@@ -650,7 +669,7 @@ def test_research_ask_supports_peer_comparison(tmp_path: Path, monkeypatch) -> N
         ingest_file(conn, file_path, company_id=company_id, source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Comparison. [FACT] x.")
 
@@ -680,7 +699,7 @@ def test_company_ask_saves_answer_as_a_thread(tmp_path: Path, monkeypatch) -> No
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
 
@@ -718,7 +737,7 @@ def test_research_ask_saves_a_thread(tmp_path: Path, monkeypatch) -> None:
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
 
@@ -749,7 +768,7 @@ def test_research_ask_appears_in_investigations_and_reuses_on_repeat(tmp_path: P
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     captured = _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
 
@@ -781,7 +800,7 @@ def test_research_thread_delete_removes_it(tmp_path: Path, monkeypatch) -> None:
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
 
@@ -810,7 +829,7 @@ def test_research_thread_delete_also_drops_it_from_watchlist(tmp_path: Path, mon
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
 
@@ -953,7 +972,7 @@ def test_research_thread_generate_creates_a_thread_and_page(tmp_path: Path, monk
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_signals_llm(monkeypatch, text="## The Short Answer\nNet profit rose. [FACT] x.")
 
@@ -999,7 +1018,7 @@ def test_generated_report_appears_in_investigations(tmp_path: Path, monkeypatch)
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     report_text = "# Is HDFC Bank still growing profit?\n\n## The Short Answer\nYes. [FACT] x.\n\n**Confidence:** High\n"
     _install_fake_signals_llm(monkeypatch, text=report_text)
@@ -1045,7 +1064,7 @@ def test_generated_report_appears_under_every_named_companys_threads_tab(
         ingest_file(conn, file_path, company_id=company_id, source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     report_text = "# Compare HDFC Bank and ICICI Bank profit growth\n\n## The Short Answer\nBoth grew. [FACT] x.\n\n**Confidence:** Moderate\n"
     _install_fake_signals_llm(monkeypatch, text=report_text)
@@ -1085,7 +1104,7 @@ def test_watchlisted_generated_report_appears_in_watchlist(tmp_path: Path, monke
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     report_text = "# Is HDFC Bank still growing profit?\n\n## The Short Answer\nYes. [FACT] x.\n\n**Confidence:** High\n"
     _install_fake_signals_llm(monkeypatch, text=report_text)

@@ -15,7 +15,7 @@ import json
 import re
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -43,7 +43,8 @@ from companies.stock_actions import (
     delete_stock_action,
     list_stock_actions,
 )
-from config.settings import ANTHROPIC_API_KEY_SET, DOCUMENTS_DIR, RAW_DIR, SECRET_KEY, from_repo_relative, to_repo_relative
+from config import settings as app_settings
+from config.settings import ANTHROPIC_API_KEY_SET, SECRET_KEY, from_repo_relative, to_repo_relative
 from ingestion.coordinator import (
     archive_documents,
     archive_financial_items,
@@ -67,6 +68,8 @@ from research.investigation import InvestigationError, run_investigation
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
 from storage.database import init_db
+from storage.price_database import init_price_db
+from storage.price_repository import get_price_history
 from storage.repositories import (
     COMPANY_LIST_COLUMNS,
     OVERVIEW_RATIO_CATALOG,
@@ -339,11 +342,19 @@ def create_app() -> Flask:
         conn: sqlite3.Connection | None = g.pop("db_conn", None)
         if conn is not None:
             conn.close()
+        price_conn: sqlite3.Connection | None = g.pop("price_db_conn", None)
+        if price_conn is not None:
+            price_conn.close()
 
     def get_db() -> sqlite3.Connection:
         if "db_conn" not in g:
             g.db_conn = init_db()
         return g.db_conn
+
+    def get_price_db() -> sqlite3.Connection:
+        if "price_db_conn" not in g:
+            g.price_db_conn = init_price_db()
+        return g.price_db_conn
 
     @app.before_request
     def _require_login():
@@ -405,6 +416,7 @@ def create_app() -> Flask:
         # /companies/<company_id> dynamic route below regardless of
         # registration order — header_search.js's typeahead.
         query = request.args.get("q", "")
+        index_name = request.args.get("index") or None
         db = get_db()
         results = [
             {
@@ -413,7 +425,7 @@ def create_app() -> Flask:
                 "nse_symbol": row["nse_symbol"],
                 "sector": row["sector"],
             }
-            for row in search_companies(db, query)
+            for row in search_companies(db, query, index_name=index_name)
         ]
         return jsonify(results=results)
 
@@ -793,7 +805,7 @@ def create_app() -> Flask:
         # filename never silently overwrites a previous raw file — every
         # upload is kept, matching the "raw observations are never
         # overwritten" rule the rest of ingestion already follows.
-        dest_dir = RAW_DIR / company_id / source_id
+        dest_dir = app_settings.RAW_DIR / company_id / source_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         dest_path = dest_dir / f"{stamp}__{filename}"
@@ -1309,7 +1321,7 @@ def create_app() -> Flask:
 
         # data/documents/<COMPANY>/note_attachments/<timestamp>__<file> —
         # same never-overwrite convention as company_add_document.
-        dest_dir = DOCUMENTS_DIR / company_id / _NOTE_ATTACHMENTS_DIR_NAME
+        dest_dir = app_settings.DOCUMENTS_DIR / company_id / _NOTE_ATTACHMENTS_DIR_NAME
         dest_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         dest_path = dest_dir / f"{stamp}__{filename}"
@@ -1365,7 +1377,37 @@ def create_app() -> Flask:
         db = get_db()
         if get_company(db, company_id) is None:
             abort(404, f"No company registered with company_id={company_id!r}")
-        return jsonify(build_charts_feed(db, company_id, statement_type=statement_type, period_type=period_type))
+        return jsonify(
+            build_charts_feed(
+                db, company_id, statement_type=statement_type, period_type=period_type, price_conn=get_price_db()
+            )
+        )
+
+    @app.route("/companies/<company_id>/price-feed.json")
+    def company_price_feed(company_id: str):
+        period = request.args.get("period", "1y")
+        period_days = {"1y": 366, "5y": 1827, "10y": 3653}
+        if period not in period_days and period != "max":
+            abort(400, "period must be one of '1y', '5y', '10y', 'max'")
+        db = get_db()
+        if get_company(db, company_id) is None:
+            abort(404, f"No company registered with company_id={company_id!r}")
+        start_date = "1990-01-01" if period == "max" else (
+            datetime.now(timezone.utc) - timedelta(days=period_days[period])
+        ).strftime("%Y-%m-%d")
+        end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        price_db = get_price_db()
+        rows = get_price_history(price_db, company_id, start_date, end_date)
+        return jsonify(
+            {
+                "dates": [r["trade_date"] for r in rows],
+                "open": [r["open"] for r in rows],
+                "high": [r["high"] for r in rows],
+                "low": [r["low"] for r in rows],
+                "close": [r["close"] for r in rows],
+                "volume": [r["volume"] for r in rows],
+            }
+        )
 
     @app.route("/companies/<company_id>/docs-feed.json")
     def company_docs_feed(company_id: str):
@@ -1408,7 +1450,7 @@ def create_app() -> Flask:
             # never-overwrite, company-scoped convention admin_import_raw_file
             # uses for data/raw/, just under DOCUMENTS_DIR since these are
             # narrative documents, not financial-statement source files.
-            dest_dir = DOCUMENTS_DIR / company_id
+            dest_dir = app_settings.DOCUMENTS_DIR / company_id
             dest_dir.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             dest_path = dest_dir / f"{stamp}__{filename}"

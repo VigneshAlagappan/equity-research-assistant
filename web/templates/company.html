@@ -590,10 +590,6 @@
     --chart-series-7: #db2777; --chart-series-8: #64748b;
   }
   .chart-overlay-controls { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); flex-wrap: wrap; }
-  .chart-overlay-range-select {
-    font-size: 12px; padding: 3px 6px; border: 1px solid var(--color-divider);
-    border-radius: var(--radius-sm); background: var(--bg); color: var(--ink);
-  }
   .chart-overlay-layout { display: flex; gap: var(--space-4); align-items: flex-start; flex-wrap: wrap; }
   .chart-overlay-picker { flex: 0 0 260px; min-width: 220px; }
   /* Collapsed by default (same <details> disclosure as .insights-history)
@@ -640,7 +636,14 @@
   }
   .chart-overlay-side-btn + .chart-overlay-side-btn { border-left: 1px solid var(--color-divider); }
   .chart-overlay-side-btn.is-active { background: var(--color-accent-700); color: #fff; }
-  .chart-overlay-chart { flex: 1 1 420px; min-width: 280px; }
+  .chart-overlay-chart { flex: 1 1 420px; min-width: 280px; position: relative; }
+  .chart-overlay-tooltip {
+    position: absolute; pointer-events: none; transform: translate(-50%, -110%);
+    background: var(--ink); color: var(--surface); font-size: 12px; line-height: 1.4;
+    padding: 6px 10px; border-radius: 6px; white-space: pre-line; z-index: 30;
+    box-shadow: var(--shadow-lg, 0 4px 12px rgba(0,0,0,.2)); max-width: 220px;
+  }
+  .chart-overlay-hit { fill: transparent; cursor: pointer; }
   .chart-overlay-svg { width: 100%; height: 320px; display: block; }
   .chart-overlay-legend { display: flex; gap: var(--space-3); font-size: 12px; margin-top: 4px; flex-wrap: wrap; }
   .chart-overlay-legend-item { display: flex; align-items: center; gap: 5px; }
@@ -650,6 +653,17 @@
   .chart-overlay-axis-note { font-size: 9px; fill: var(--ink-muted); font-style: italic; }
   .chart-overlay-line { fill: none; stroke-width: 2; }
   .chart-overlay-empty { font-size: 13px; color: var(--ink-muted); padding: var(--space-4) 0; text-align: center; }
+
+  /* — Compare With (web/static/js/charts_overlay.js): the search dropdown
+     itself reuses .site-search-* (styles.css) verbatim — same component as
+     the top-nav company search, not a second bespoke style. */
+  .chart-compare { margin-bottom: var(--space-3); }
+  .chart-compare-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .chart-compare-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--color-divider); border-radius: 999px; font-size: 12px; background: var(--surface); }
+  .chart-compare-pill-remove { border: none; background: transparent; color: var(--ink-muted); cursor: pointer; padding: 0; line-height: 1; font-size: 14px; }
+  .chart-compare-search { position: relative; display: inline-block; }
+  .chart-compare-search .site-search-input,
+  .chart-compare-search .site-search-input:focus { width: 220px; padding-left: 10px; }
 
   /* — Valuation Model tab only: the assumptions panel, CAGR-window picker,
      and intrinsic-value walk that Financials deliberately doesn't have
@@ -821,7 +835,11 @@
 
   <section class="merged-section" id="sec-charts">
     <h2>Charts</h2>
-    <div id="charts-overlay" class="chart-overlay" data-url="{{ url_for('company_charts_feed', company_id=company_id, statement_type=statement_type) }}">
+    <div id="charts-overlay" class="chart-overlay"
+         data-compare-url-template="{{ url_for('company_charts_feed', company_id='__ID__', statement_type=statement_type) }}"
+         data-search-url="{{ url_for('companies_search') }}"
+         data-primary-id="{{ company_id }}"
+         data-primary-name="{{ company['display_name'] }}">
       <p class="muted">Loading chart&hellip;</p>
     </div>
   </section>

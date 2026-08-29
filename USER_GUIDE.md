@@ -72,6 +72,7 @@ existing `data/equity_research.db` unless you pass `--force` — see each script
 | 9 | [Ask in your browser (chat)](#9-ask-in-your-browser-chat) | `serve` → `/chat` |
 | 10 | [Register and ingest a US company](#10-register-and-ingest-a-us-company) | `add-company --country US`, `ingest-yfinance` |
 | 11 | [Ingest US macro data (FRED)](#11-ingest-us-macro-data-fred) | `ingest-fred` |
+| 12 | [Daily price history (NSE 500)](#12-daily-price-history-nse-500) | `scripts.backfill_price_history`, `scripts.fetch_daily_prices` |
 
 ---
 
@@ -359,6 +360,54 @@ python main.py ingest-fred UNRATE --unit PERCENT
   can draw on this series alongside India's RBI/IITM data — each is attributed to
   `"USA"` or `"INDIA"` in the evidence the assistant cites, so nothing gets conflated
   across countries.
+
+---
+
+### 12. Daily price history (NSE 500)
+
+Daily OHLCV (open/high/low/close/volume) price data for every Nifty 500 company,
+fetched from Yahoo Finance — separate from `analyze`'s fundamentals, this is for
+price charting. Not yet a `main.py` subcommand — run the scripts directly (as
+modules, so their `storage`/`sources` imports resolve):
+
+**One-time (or occasional) backfill:**
+
+```bash
+python -m scripts.backfill_price_history --period 1y
+```
+
+Loops over every company tagged `Nifty 500` (already populated by `add-company`/
+`seed-companies` or a full NSE import — see `companies/nse_import.py`) and upserts
+its history into a dedicated database, `data/price_history.db`. `--period` accepts
+`1y` (default), `5y`, `10y`, or `max`; add `--company-id HDFCBANK` to backfill just
+one company. Safe to re-run any time (e.g. after switching from `1y` to `10y`) —
+existing days are overwritten in place, never duplicated. Expect ~10-15 minutes for
+the full 499-company run (deliberately rate-limited to stay polite to Yahoo's
+endpoint).
+
+**Daily job (keeps it current):**
+
+```bash
+python -m scripts.fetch_daily_prices
+```
+
+Upserts the last 5 trading days for every company (not just "today") so a missed
+run — a skipped weekend, the job not running for a few days — self-heals on the
+next run instead of leaving a gap. Point your OS's scheduler (cron, Task
+Scheduler, ...) at this to run it once daily after market close; this guide
+doesn't set that up for you.
+
+**Where the data goes / why it's a separate file:** `data/price_history.db` is
+*not* the same database as `data/equity_research.db` and is *not* git-tracked
+(it's covered by the repo's blanket `*.db` ignore rule, and — unlike
+`equity_research.db` — never git-shard-committed either). It's cheap to
+regenerate from Yahoo Finance at any time, so after a fresh clone just run the
+backfill command above instead of expecting it to already be there.
+
+**Reading it back:** `GET /companies/<company_id>/price-feed.json?period=1y` (via
+`serve`, feature 7) returns `{"dates": [...], "open": [...], "high": [...],
+"low": [...], "close": [...], "volume": [...]}` for that company. There's no chart
+panel rendering this in the browser yet — today this is a raw JSON feed only.
 
 ---
 

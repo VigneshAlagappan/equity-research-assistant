@@ -27,6 +27,15 @@ LOG_DIR = BASE_DIR / "logs"
 SCHEMA_PATH = BASE_DIR / "schemas" / "sqlite_schema.sql"
 DB_PATH = DATA_DIR / "equity_research.db"
 
+# Daily OHLCV price history lives in its own db file, deliberately separate
+# from DB_PATH: cheaply regenerable from yfinance at any time (unlike
+# DB_PATH's LLM-extracted knowledge graph), gitignored via the existing
+# blanket "*.db" rule, and never git-shard-committed (scripts/db_shard.py
+# stays equity_research.db-only) -- regenerate on a fresh clone via
+# scripts/backfill_price_history.py instead.
+PRICE_SCHEMA_PATH = BASE_DIR / "schemas" / "price_schema.sql"
+PRICE_DB_PATH = DATA_DIR / "price_history.db"
+
 # ------------------------------------------------------------------
 # Source trust order (default reconciliation priority)
 #
