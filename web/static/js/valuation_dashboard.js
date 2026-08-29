@@ -192,6 +192,20 @@
   // or settings-table change. A key enabled in settings but missing here
   // (or vice versa) is simply skipped, not an error, so the two can be
   // edited independently without a deploy-ordering hazard.
+  // A company with zero ingested financial data has an empty YEARS array,
+  // so c.latestYear/c.YEARS[0] are undefined — without this guard, the
+  // label functions below render as the literal string "FYundefined"
+  // instead of gracefully dropping the year suffix, same as fmt() already
+  // does for the *values* on a data-less row.
+  function fySuffix(latestYear) {
+    return latestYear !== undefined && latestYear !== null ? ", FY" + latestYear : "";
+  }
+  function fyRangeSuffix(years, latestYear) {
+    return years && years.length && latestYear !== undefined && latestYear !== null
+      ? ", FY" + years[0] + "–" + latestYear
+      : "";
+  }
+
   const RATIO_CATALOG = {
     marketCap: { label: "Market Cap", value: (c) => fmt(c.marketCap, "big", c.currency) },
     price: { label: "Current Price", value: (c) => fmt(c.price, "perShare", c.currency) },
@@ -204,10 +218,10 @@
     debtToEquity: { label: "Debt to Equity", value: (c) => fmt(c.debtToEquity, "x") },
     payout: { label: "Dividend Payout", value: (c) => fmt(c.lastPayout, "pct") },
     shares: { label: "No. Equity Shares", value: (c) => fmt(c.shares, "sharesCount", c.currency) },
-    netProfit: { label: (c) => "Net Profit, FY" + c.latestYear, value: (c) => fmt(c.lastNetProfit, "big", c.currency) },
-    revenue: { label: (c) => "Revenue, FY" + c.latestYear, value: (c) => fmt(c.lastRevenue, "big", c.currency) },
-    salesCagr: { label: (c) => "Sales Growth, FY" + c.YEARS[0] + "–" + c.latestYear, value: (c) => fmt(c.salesCagr, "pct") },
-    profitCagr: { label: (c) => "Profit Growth, FY" + c.YEARS[0] + "–" + c.latestYear, value: (c) => fmt(c.profitCagr, "pct") },
+    netProfit: { label: (c) => "Net Profit" + fySuffix(c.latestYear), value: (c) => fmt(c.lastNetProfit, "big", c.currency) },
+    revenue: { label: (c) => "Revenue" + fySuffix(c.latestYear), value: (c) => fmt(c.lastRevenue, "big", c.currency) },
+    salesCagr: { label: (c) => "Sales Growth" + fyRangeSuffix(c.YEARS, c.latestYear), value: (c) => fmt(c.salesCagr, "pct") },
+    profitCagr: { label: (c) => "Profit Growth" + fyRangeSuffix(c.YEARS, c.latestYear), value: (c) => fmt(c.profitCagr, "pct") },
     netMargin: { label: "Net Profit Margin", value: (c) => fmt(c.lastNetMargin, "pct") },
     taxRate: { label: "Tax Rate", value: (c) => fmt(c.lastTaxRate, "pctAbs") },
     retention: { label: "Retention Ratio", value: (c) => fmt(c.lastRetention, "pct") },

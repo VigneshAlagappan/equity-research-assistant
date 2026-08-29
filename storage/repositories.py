@@ -1438,6 +1438,8 @@ COMPANY_LIST_COLUMNS = [
     {"key": "industry", "label": "Industry"},
     {"key": "price", "label": "Price"},
     {"key": "market_cap", "label": "Market Cap"},
+    {"key": "week52", "label": "52-Week L/H"},
+    {"key": "all_time", "label": "All-Time L/H"},
     {"key": "status", "label": "Status"},
     {"key": "tags", "label": "Index tags & IDs"},
 ]

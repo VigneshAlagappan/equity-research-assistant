@@ -116,6 +116,48 @@ def get_avg_volume(conn: sqlite3.Connection, company_id: str, start_date: str, e
     return row["avg_volume"] if row and row["avg_volume"] is not None else None
 
 
+def list_latest_close(conn: sqlite3.Connection) -> dict[str, float]:
+    """Latest close price per company, one query for every company at once
+    -- avoids an N+1 across ~500 rows on the Companies list, same reasoning
+    storage/repositories.py's list_latest_shares_outstanding() documents."""
+    rows = conn.execute(
+        """
+        SELECT company_id, close FROM (
+            SELECT company_id, close,
+                   ROW_NUMBER() OVER (PARTITION BY company_id ORDER BY trade_date DESC) AS rn
+            FROM daily_prices
+        )
+        WHERE rn = 1
+        """
+    ).fetchall()
+    return {row["company_id"]: row["close"] for row in rows}
+
+
+def list_52_week_range(conn: sqlite3.Connection) -> dict[str, tuple[float, float]]:
+    """(low, high) close over the trailing 52 weeks per company, one query
+    for every company at once."""
+    rows = conn.execute(
+        """
+        SELECT company_id, MIN(close) AS lo, MAX(close) AS hi
+        FROM daily_prices
+        WHERE trade_date >= date('now', '-364 days')
+        GROUP BY company_id
+        """
+    ).fetchall()
+    return {row["company_id"]: (row["lo"], row["hi"]) for row in rows}
+
+
+def list_all_time_range(conn: sqlite3.Connection) -> dict[str, tuple[float, float]]:
+    """(low, high) close over the full history on file per company, one
+    query for every company at once. "All-time" means all of what
+    scripts/backfill_price_history.py has actually pulled, not a claim
+    about the company's real trading history predating that."""
+    rows = conn.execute(
+        "SELECT company_id, MIN(close) AS lo, MAX(close) AS hi FROM daily_prices GROUP BY company_id"
+    ).fetchall()
+    return {row["company_id"]: (row["lo"], row["hi"]) for row in rows}
+
+
 def get_latest_close(conn: sqlite3.Connection, company_id: str) -> sqlite3.Row | None:
     """Most recent bar on file for one company, or None if it has none yet."""
     return conn.execute(

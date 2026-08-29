@@ -48,6 +48,12 @@ def _build_app(db_path: Path, tmp_path: Path, monkeypatch):
     # two separate writes).
     monkeypatch.setattr("config.settings.DOCUMENTS_DIR", tmp_path / "documents")
     monkeypatch.setattr("config.settings.RAW_DIR", tmp_path / "raw")
+    # get_price_db() (web/app.py) reads settings.PRICE_DB_PATH fresh per
+    # request — without isolating it too, the Companies list route reads
+    # the real data/price_history.db during a test (real closes for real
+    # Nifty 500 companies), silently pre-empting whatever a test expected
+    # from its peek_cached_quote fallback.
+    monkeypatch.setattr("config.settings.PRICE_DB_PATH", tmp_path / "price_history.db")
     from web.app import create_app
 
     app = create_app()

@@ -69,7 +69,12 @@ from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
 from storage.database import init_db
 from storage.price_database import init_price_db
-from storage.price_repository import get_price_history
+from storage.price_repository import (
+    get_price_history,
+    list_52_week_range,
+    list_all_time_range,
+    list_latest_close,
+)
 from storage.repositories import (
     COMPANY_LIST_COLUMNS,
     OVERVIEW_RATIO_CATALOG,
@@ -433,12 +438,24 @@ def create_app() -> Flask:
     def companies():
         db = get_db()
         shares_outstanding_by_company = list_latest_shares_outstanding(db)
+        # price_history.db (scripts/backfill_price_history.py) now covers
+        # essentially every Nifty 500 company with real daily closes, far
+        # more complete than the old ported-dashboard/live-quote-cache
+        # fallback chain below — bulk-fetched once here (3 queries total,
+        # not one per row) rather than a get_latest_close() call per company.
+        price_db = get_price_db()
+        latest_close_by_company = list_latest_close(price_db)
+        week52_by_company = list_52_week_range(price_db)
+        all_time_by_company = list_all_time_range(price_db)
         rows = []
         for c in list_companies(db):
             row = dict(c)
             row["latest_price"] = _latest_price(row["valuation_model_file"]) if row["valuation_model_file"] else None
             if row["latest_price"] is None:
-                # No ported dashboard — fall back to whatever price is
+                row["latest_price"] = latest_close_by_company.get(row["company_id"])
+            if row["latest_price"] is None:
+                # No ported dashboard and no backfilled price history (e.g.
+                # not a Nifty 500 company) — fall back to whatever price is
                 # already cached from someone having visited this company's
                 # own page (get_live_quote there). Never fetches here: with
                 # ~2,500 rows a live call per row isn't viable on a list page.
@@ -448,12 +465,16 @@ def create_app() -> Flask:
                     row["latest_price"] = cached_quote["price"]
             # Market cap (Cr) = price/share x shares outstanding (Cr) — shares
             # outstanding only exists for companies with real financial data
-            # ingested (~100 of ~2,500 today), so this stays None for most rows.
+            # ingested (~60 of ~2,500 today), so this stays None for most rows.
             shares_outstanding = shares_outstanding_by_company.get(row["company_id"])
             if row["latest_price"] is not None and shares_outstanding is not None:
                 row["market_cap_cr"] = row["latest_price"] * shares_outstanding
             else:
                 row["market_cap_cr"] = None
+            week52 = week52_by_company.get(row["company_id"])
+            row["week52_low"], row["week52_high"] = week52 if week52 else (None, None)
+            all_time = all_time_by_company.get(row["company_id"])
+            row["all_time_low"], row["all_time_high"] = all_time if all_time else (None, None)
             row["index_tags"] = get_company_index_tags(db, row["company_id"])
             rows.append(row)
         sectors = sorted({row["sector"] for row in rows if row["sector"]})
