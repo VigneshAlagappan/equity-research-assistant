@@ -24,7 +24,7 @@ a:hover{color:color-mix(in srgb, var(--color-link) 75%, black)}
 .hero-ctas .btn,.cta-band .btn{text-decoration:none;padding:11px 26px;font-size:15px;border-radius:999px !important}
 
 .stats{
-  display:grid;grid-template-columns:repeat(4,1fr);gap:0;
+  display:grid;grid-template-columns:repeat(5,1fr);gap:0;
   max-width:960px;margin:0 auto 64px;padding:28px 24px;
   border:1px solid var(--color-divider);border-radius:20px;
   background:var(--color-surface);
@@ -119,6 +119,7 @@ a:hover{color:color-mix(in srgb, var(--color-link) 75%, black)}
   .hero h1{font-size:32px}
   .stats{grid-template-columns:1fr 1fr;row-gap:20px}
   .stat:nth-child(3){border-left:none}
+  .stat:nth-child(5){border-left:none;grid-column:span 2}
   .features{grid-template-columns:1fr 1fr}
 }
 @media (max-width: 480px) {
@@ -151,7 +152,8 @@ a:hover{color:color-mix(in srgb, var(--color-link) 75%, black)}
 </header>
 
 <section class="stats">
-  <div class="stat"><div class="stat-value">{{ '{:,}'.format(stat_companies) }}+</div><div class="stat-label">NSE companies tracked</div></div>
+  <div class="stat"><div class="stat-value">{{ '{:,}'.format(stat_companies) }}+</div><div class="stat-label">Indian market-listed companies tracked</div></div>
+  <div class="stat"><div class="stat-value">{{ stat_us_companies }}</div><div class="stat-label">US-listed companies tracked</div></div>
   <div class="stat"><div class="stat-value">{{ stat_sectors }}</div><div class="stat-label">Sectors covered</div></div>
   <div class="stat"><div class="stat-value">{{ stat_documents }}</div><div class="stat-label">Filings analyzed</div></div>
   <div class="stat"><div class="stat-value">{{ '{:,}'.format(stat_claims) }}+</div><div class="stat-label">Claims extracted, with sources</div></div>

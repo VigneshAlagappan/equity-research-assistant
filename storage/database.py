@@ -50,6 +50,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_company_notes_updated_at(conn)
     _migrate_llm_call_log_columns(conn)
     _seed_sources(conn)
+    _migrate_source_trust_ranks(conn)
     _seed_sectors_and_industries(conn)
     _seed_index_definitions(conn)
     _seed_admin_user(conn)
@@ -401,6 +402,25 @@ def _migrate_raw_file_paths_to_repo_relative(conn: sqlite3.Connection) -> None:
                 (raw_path[marker_at:], row[pk_column]),
             )
     conn.commit()
+
+
+def _migrate_source_trust_ranks(conn: sqlite3.Connection) -> None:
+    """sources is seeded with INSERT OR IGNORE (_seed_sources, below), so a
+    row already seeded on a prior run never picks up a later trust_rank
+    correction on its own. config/settings.py promoted nse/bse from
+    trust_rank 2 to 0 (NSE XBRL as the target source of truth for
+    structured financial facts, ahead of the hand-curated 'proprietary'
+    tier it used to sit below) — propagate that to any database that
+    already has the old value. trust_rank/description are code-owned
+    config with no admin-editable UI, so an unconditional UPDATE (not a
+    conditional backfill) is the correct way to keep an existing database
+    in sync with DEFAULT_SOURCES, same as this function will need to do
+    again the next time a rank changes."""
+    conn.executemany(
+        "UPDATE sources SET trust_rank = :trust_rank, description = :description "
+        "WHERE source_id = :source_id AND source_id IN ('nse', 'bse')",
+        DEFAULT_SOURCES,
+    )
 
 
 def _seed_sources(conn: sqlite3.Connection) -> None:

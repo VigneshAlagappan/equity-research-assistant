@@ -660,7 +660,14 @@ textarea.input { min-height: 90px; resize: vertical; }
 .signals-topbar {
   height: 56px; display: flex; align-items: center; gap: 14px; padding: 0 28px;
   border-bottom: 1px solid var(--color-divider); position: sticky; top: 0;
-  background: var(--color-bg); z-index: 15;
+  background: var(--color-bg);
+  /* Matches .site-header's own z-index (30) — this is that same "sticky bar
+     above everything else on the page" role, just for this theme. Was 15,
+     below company.html's .company-tabs-wrap (20, also sticky-to-top): the
+     tab bar painted over this bar's own search-results dropdown as both
+     stuck to the top of the viewport, cutting the dropdown's text off
+     mid-row instead of showing it on top. */
+  z-index: 30;
 }
 .signals-topbar-spacer { flex: 1; }
 .signals-topbar-ticker {

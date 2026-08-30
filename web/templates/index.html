@@ -84,6 +84,32 @@
   }
   .company-website-link:hover { color: var(--color-accent); }
   table.companies td.price, table.companies th.price { font-variant-numeric: tabular-nums; text-align: right; }
+  table.companies td.price .price-change { display: block; font-size: 11px; margin-top: 1px; }
+  /* Default (untheme-scoped) colors, same pattern web/templates/company.html
+     uses for its own .price-up/.price-down — classical/styles.css's
+     :root[data-theme="..."] .price-up/.price-down rules override these for
+     the themes that define their own accent-matched pair (signals,
+     signals-light, schwab), same specificity trick as everywhere else those
+     rules apply. */
+  .price-up { color: #2e7d32; }
+  .price-down { color: #c62828; }
+
+  /* 52-week / all-time range cells: a thin track the full width of the
+     column with a dot marking where the latest price sits between the
+     range's low and high, labels below giving the two endpoints. */
+  table.companies td.range-cell { min-width: 150px; text-align: left; }
+  .range-track {
+    position: relative; height: 2px; margin: 9px 3px 6px;
+    background: var(--color-divider); border-radius: 1px;
+  }
+  .range-dot {
+    position: absolute; top: 50%; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--color-accent); transform: translate(-50%, -50%);
+  }
+  .range-labels {
+    display: flex; justify-content: space-between; gap: 6px;
+    font-size: 11px; color: var(--ink-muted); font-variant-numeric: tabular-nums;
+  }
   table.companies .companies-ids {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--ink-muted);
     display: block;
@@ -217,13 +243,36 @@
             {% elif col['key'] == 'industry' %}
           <td data-col="industry">{{ c['industry'] or '—' }}</td>
             {% elif col['key'] == 'price' %}
-          <td data-col="price" class="price">{% if c['latest_price'] is not none %}{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '%.2f'|format(c['latest_price']) }}{% else %}—{% endif %}</td>
+          <td data-col="price" class="price">
+            {% if c['latest_price'] is not none %}
+            {{ '$' if c['currency'] == 'USD' else '₹' }}{{ '{:,.2f}'.format(c['latest_price']) }}
+            {% if c['price_change_pct'] is not none %}
+            <span class="price-change {{ 'price-up' if c['price_change_pct'] >= 0 else 'price-down' }}">{{ '+' if c['price_change_pct'] >= 0 else '' }}{{ '%.1f'|format(c['price_change_pct']) }}%</span>
+            {% endif %}
+            {% else %}—{% endif %}
+          </td>
             {% elif col['key'] == 'market_cap' %}
           <td data-col="market_cap" class="price">{% if c['market_cap_cr'] is not none %}{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '{:,.0f}'.format(c['market_cap_cr']) }} Cr{% else %}—{% endif %}</td>
             {% elif col['key'] == 'week52' %}
-          <td data-col="week52" class="price">{% if c['week52_low'] is not none %}{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '%.2f'|format(c['week52_low']) }} &ndash; {{ '$' if c['currency'] == 'USD' else '₹' }}{{ '%.2f'|format(c['week52_high']) }}{% else %}—{% endif %}</td>
+          <td data-col="week52" class="price range-cell">
+            {% if c['week52_low'] is not none %}
+            <div class="range-track">{% if c['week52_pct'] is not none %}<div class="range-dot" style="left: {{ '%.1f'|format(c['week52_pct']) }}%;"></div>{% endif %}</div>
+            <div class="range-labels">
+              <span>{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '{:,.0f}'.format(c['week52_low']) }}</span>
+              <span>{{ '{:,.0f}'.format(c['week52_high']) }}</span>
+            </div>
+            {% else %}—{% endif %}
+          </td>
             {% elif col['key'] == 'all_time' %}
-          <td data-col="all_time" class="price">{% if c['all_time_low'] is not none %}{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '%.2f'|format(c['all_time_low']) }} &ndash; {{ '$' if c['currency'] == 'USD' else '₹' }}{{ '%.2f'|format(c['all_time_high']) }}{% else %}—{% endif %}</td>
+          <td data-col="all_time" class="price range-cell">
+            {% if c['all_time_low'] is not none %}
+            <div class="range-track">{% if c['all_time_pct'] is not none %}<div class="range-dot" style="left: {{ '%.1f'|format(c['all_time_pct']) }}%;"></div>{% endif %}</div>
+            <div class="range-labels">
+              <span>{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '{:,.0f}'.format(c['all_time_low']) }}</span>
+              <span>{{ '{:,.0f}'.format(c['all_time_high']) }}</span>
+            </div>
+            {% else %}—{% endif %}
+          </td>
             {% elif col['key'] == 'status' %}
           <td data-col="status">
             {% if c['status'] == 'active' %}

@@ -161,6 +161,21 @@
   .statement-toggle a.active { background: var(--color-accent); color: var(--accent-ink); font-weight: 600; }
   .statement-toggle a:not(.active):hover { background: var(--row-hover); }
 
+  /* Annual/Quarterly toggle (Financials tab) — same pill styling as
+     .statement-toggle right next to it, but plain <button>s wired by
+     valuation_dashboard.js (client-side re-fetch, no page reload), same
+     interaction shape as the Charts tab's own Annual/Quarterly toggle
+     (.chart-overlay-side-btn below) rather than a server-rendered link. */
+  .vm-toggle-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-4); }
+  .vm-toggle-row .statement-toggle { margin-bottom: 0; }
+  .vm-period-toggle { display: inline-flex; border: 1px solid var(--color-divider); border-radius: var(--radius-md); overflow: hidden; }
+  .vm-period-btn {
+    padding: var(--space-1) var(--space-3); font-size: 12px; border: none; background: transparent;
+    color: var(--ink-muted); cursor: pointer; font-family: inherit;
+  }
+  .vm-period-btn.is-active { background: var(--color-accent); color: var(--accent-ink); font-weight: 600; }
+  .vm-period-btn:not(.is-active):hover { background: var(--row-hover); }
+
   .empty-state {
     padding: var(--space-6);
     text-align: center;
@@ -426,6 +441,25 @@
   #valuation-dashboard-interactive .vm-sidebar { width: auto; position: static; }
   #valuation-dashboard-interactive .vm-nav { flex-direction: row; }
   #valuation-dashboard-interactive .vm-nav-btn.active { border-left-color: transparent; border-bottom: 2px solid var(--color-accent); }
+
+  /* Financials tab (#valuation-dashboard) — a horizontal row of rounded
+     pill buttons for its 6-section nav, sitting directly under the
+     Consolidated/Standalone + Annual/Quarterly toggles instead of the
+     vertical sidebar every section count used to share (design ask: match
+     a reference dark-theme layout with the section nav as a pill row, not
+     a side rail). Same is-active fill as .statement-toggle/.vm-period-btn
+     right above it, so the whole toggle+nav block reads as one family of
+     pill controls. */
+  #valuation-dashboard.vm-layout { flex-direction: column; align-items: stretch; }
+  #valuation-dashboard .vm-sidebar { width: auto; position: static; }
+  #valuation-dashboard .vm-nav { flex-direction: row; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
+  #valuation-dashboard .vm-nav-btn {
+    border: 1px solid var(--color-divider); border-radius: 999px; padding: var(--space-2) var(--space-4);
+  }
+  #valuation-dashboard .vm-nav-btn.active {
+    background: var(--color-accent); color: var(--accent-ink);
+    border-color: var(--color-accent); font-weight: 600; opacity: 1;
+  }
   .vm-section-desc { max-width: 70ch; margin-bottom: var(--space-5); }
   .vm-kpi-grid {
     display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3);
@@ -489,41 +523,56 @@
   .vm-table-scroll table { font-size: 12.5px; border-collapse: separate; border-spacing: 0; }
   .vm-table-scroll th, .vm-table-scroll td { padding: 5px 8px; }
 
-  /* Frozen header rows + first two columns (Parameter, Trend) — this table
-     scrolls both directions once the 10 forecast-year columns run past the
-     viewport, and without this you'd lose track of which row/year a cell
-     belongs to. Excludes .vm-growth-section rows (the "Balance Sheet" /
-     "Income Statement" / ... dividers): those are one colspan cell each,
-     and sticky-positioning a spanned cell doesn't freeze just its visible
+  /* Frozen first two columns (Parameter, Trend) — this table scrolls
+     horizontally once the 10 forecast-year columns run past the viewport,
+     and without this you'd lose track of which row a cell belongs to.
+     Excludes .vm-growth-section rows (the "Balance Sheet" / "Income
+     Statement" / ... dividers): those are one colspan cell each, and
+     sticky-positioning a spanned cell doesn't freeze just its visible
      slice — it'd try to stick the whole spanned box, overlapping the data
      below as you scroll. Every sticky cell needs its own opaque background
      (transparent would let scrolled content show through) — a box-shadow
      on the frozen edge is the visual cue that it's floating above scrolled
-     content, not just another cell in the grid. */
-  .vm-table-scroll thead th {
-    position: sticky; top: calc(var(--site-header-h) + var(--company-tabbar-h)); height: 27px; background: var(--bg); z-index: 3;
-  }
-  .vm-table-scroll thead tr:first-child th { top: calc(var(--site-header-h) + var(--company-tabbar-h)); }
-  .vm-table-scroll thead tr:last-child th {
-    top: calc(var(--site-header-h) + var(--company-tabbar-h) + 27px);
-    box-shadow: 0 3px 6px -3px color-mix(in srgb, var(--ink) 35%, transparent);
-  }
+     content, not just another cell in the grid.
+
+     No vertical (top) stickiness on the header row, deliberately —
+     `position: sticky; top: ...` here previously tried to pin the header
+     to the viewport, but overflow-x: auto above this rule (needed for the
+     horizontal scroll) makes the browser compute this element's overflow-y
+     as "auto" too, per the CSS Overflow spec's promotion rule (any
+     non-"visible" axis promotes the other from "visible" to "auto") —
+     silently turning .vm-table-scroll itself, not the page, into the
+     sticky positioning's containing block. Verified: the header rendered
+     "stuck" at a fixed offset from the TABLE's own top edge instead of the
+     viewport's, landing mid-table and overlapping the first 1-2 data
+     rows on every load, on both this table and the (already-static, see
+     the .vm-financials-table override below — same underlying bug, fixed
+     there first) Financials-tab tables. There's no CSS-only way to keep
+     overflow-x: auto without this promotion, so vertical sticky is
+     dropped entirely rather than shipped broken. */
   .vm-table-scroll tbody tr:not(.vm-growth-section) td:first-child,
   .vm-table-scroll thead th:first-child {
     position: sticky; left: 0; z-index: 2; background: var(--bg);
     min-width: 170px; max-width: 170px;
   }
+  /* .vm-trend-header, not :nth-child(2) — the Type column (FACT/CALC badge)
+     now sits between Parameter and Trend in every .vm-table-scroll table,
+     so Trend is no longer reliably the 2nd column; a positional selector
+     silently freezes the wrong header cell instead (verified: broke this
+     exact way when Type was added). Class-based ties it to the column's
+     identity, not its index, so it survives the next column insertion too. */
   .vm-table-scroll tbody tr:not(.vm-growth-section) .vm-trend-cell,
-  .vm-table-scroll thead th:nth-child(2) {
+  .vm-table-scroll thead th.vm-trend-header {
     position: sticky; left: 170px; z-index: 2; background: var(--bg);
     box-shadow: 3px 0 6px -3px color-mix(in srgb, var(--ink) 30%, transparent);
   }
   .vm-table-scroll thead th:first-child,
-  .vm-table-scroll thead th:nth-child(2) { z-index: 4; }
+  .vm-table-scroll thead th.vm-trend-header { z-index: 4; }
   .vm-table-scroll tbody tr:not(.vm-growth-section):hover td:first-child,
   .vm-table-scroll tbody tr:not(.vm-growth-section):hover .vm-trend-cell {
     background: color-mix(in srgb, var(--ink) 4%, var(--bg));
   }
+
   .vm-growth-section td {
     font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-accent);
     background: var(--surface); padding: 6px 8px;
@@ -589,13 +638,21 @@
     --chart-series-5: #dc2626; --chart-series-6: #0891b2;
     --chart-series-7: #db2777; --chart-series-8: #64748b;
   }
-  .chart-overlay-controls { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); flex-wrap: wrap; }
-  .chart-overlay-layout { display: flex; gap: var(--space-4); align-items: flex-start; flex-wrap: wrap; }
-  .chart-overlay-picker { flex: 0 0 260px; min-width: 220px; }
+  .chart-overlay-controls { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  /* One horizontal toolbar (period/range toggle + one dropdown pill per
+     statement section) above the chart, replacing a fixed-width left
+     sidebar — the chart below gets the page's full width instead of
+     sharing it with a permanent side column (real-estate ask: move the
+     picker from the side to the top). Each section is a <details> pill
+     that drops its checkbox list down as a floating panel (position:
+     absolute) rather than pushing the toolbar row taller when opened. */
+  .chart-overlay-toolbar {
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4);
+  }
   /* Collapsed by default (same <details> disclosure as .insights-history)
      — the explanation only needs reading once, not permanent vertical
      space on every visit. */
-  .chart-overlay-hint { margin: 0 0 var(--space-2); }
+  .chart-overlay-hint { flex: none; }
   .chart-overlay-hint summary {
     cursor: pointer; list-style: none; font-size: 11px; color: var(--ink-muted);
     display: flex; align-items: center; gap: 6px; user-select: none;
@@ -604,28 +661,41 @@
   .chart-overlay-hint summary::before { content: "▸"; font-size: 10px; transition: transform 0.15s ease; }
   .chart-overlay-hint[open] summary::before { transform: rotate(90deg); }
   .chart-overlay-hint summary:hover { color: var(--ink); }
-  .chart-overlay-hint p { font-size: 12px; color: var(--ink-muted); margin: 4px 0 0; padding-left: 16px; }
-  /* Each statement section is its own disclosure too, open by default only
-     when it already has a selection worth showing — six sections' worth of
-     attributes no longer costs six sections' worth of height just to load
-     the tab, only the ones actually in use. */
-  .chart-overlay-section { margin: 4px 0 0; }
+  .chart-overlay-hint p {
+    position: absolute; top: 100%; left: 0; margin: 4px 0 0; z-index: 20;
+    background: var(--surface); border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg, 0 4px 12px rgba(0,0,0,.2));
+    font-size: 12px; color: var(--ink-muted); padding: 10px 12px; width: 260px;
+  }
+  .chart-overlay-hint { position: relative; }
+  /* Each statement section is a dropdown pill, open by default only when it
+     already has a selection worth showing at a glance. */
+  .chart-overlay-section {
+    position: relative; flex: none;
+    border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+  }
   .chart-overlay-section summary {
     cursor: pointer; list-style: none; font-size: 11px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: .03em; color: var(--ink-muted); padding: 4px 0;
+    letter-spacing: .03em; color: var(--ink-muted); padding: var(--space-2) var(--space-3);
     display: flex; align-items: center; gap: 6px; user-select: none;
   }
   .chart-overlay-section summary::-webkit-details-marker { display: none; }
-  .chart-overlay-section summary::before { content: "▸"; font-size: 9px; transition: transform 0.15s ease; }
-  .chart-overlay-section[open] summary::before { transform: rotate(90deg); }
+  .chart-overlay-section summary::after { content: "▸"; font-size: 9px; transition: transform 0.15s ease; }
+  .chart-overlay-section[open] summary::after { transform: rotate(90deg); }
   .chart-overlay-section summary:hover { color: var(--ink); }
+  .chart-overlay-section[open] { border-color: var(--color-accent); }
   .chart-overlay-section-count {
     font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: normal;
     background: var(--color-accent-100); color: var(--color-accent-800);
     border-radius: 999px; padding: 0 6px; line-height: 1.5;
   }
-  .chart-overlay-section-body { padding-left: 4px; }
-  .chart-overlay-attr { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 2px 0; }
+  .chart-overlay-section-body {
+    position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 20;
+    background: var(--surface); border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg, 0 4px 12px rgba(0,0,0,.2));
+    padding: 8px 10px; min-width: 240px; max-height: 320px; overflow-y: auto;
+  }
+  .chart-overlay-attr { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 0; white-space: nowrap; }
   .chart-overlay-attr input[type="checkbox"] { accent-color: var(--color-accent-700); }
   .chart-overlay-attr label { cursor: pointer; flex: 1 1 auto; }
   .chart-overlay-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; flex: none; }
@@ -636,7 +706,7 @@
   }
   .chart-overlay-side-btn + .chart-overlay-side-btn { border-left: 1px solid var(--color-divider); }
   .chart-overlay-side-btn.is-active { background: var(--color-accent-700); color: #fff; }
-  .chart-overlay-chart { flex: 1 1 420px; min-width: 280px; position: relative; }
+  .chart-overlay-chart { position: relative; }
   .chart-overlay-tooltip {
     position: absolute; pointer-events: none; transform: translate(-50%, -110%);
     background: var(--ink); color: var(--surface); font-size: 12px; line-height: 1.4;
@@ -796,9 +866,10 @@
 
   <section class="merged-section" id="sec-overview">
     <div class="panel-section panel-section-financials">
-      <div id="valuation-overview" data-url="{{ valuation_data_url }}"
+      <div id="valuation-overview" data-url="{{ financials_data_url }}"
            data-price="{{ overview_price if overview_price is not none else '' }}"
            data-shares-outstanding="{{ shares_outstanding if shares_outstanding is not none else '' }}"
+           data-shares-outstanding-fy="{{ shares_outstanding_fy if shares_outstanding_fy is not none else '' }}"
            data-ratio-keys="{{ enabled_ratio_keys|tojson|forceescape }}">
         <div class="vm-content"><p class="muted">Loading model&hellip;</p></div>
       </div>
@@ -810,7 +881,7 @@
     <div id="insights-panel" data-company-id="{{ company_id }}" data-statement-type="{{ statement_type }}">
       {% if insights %}
       <p class="insights-meta">
-        Generated {{ insights.generated_at[:10] }} ({{ insights.statement_type }}) &middot;
+        Generated <span class="local-time" data-utc="{{ insights.generated_at }}" data-utc-format="date">{{ insights.generated_at[:10] }}</span> ({{ insights.statement_type }}) &middot;
         <button type="button" class="btn btn-ghost insights-action" id="insights-regenerate" {{ 'disabled' if not api_key_set }}>Regenerate</button>
       </p>
       <div class="card-body insights-text" id="insights-text">{{ insights.html|safe }}</div>
@@ -825,7 +896,7 @@
       <summary>Previous insights ({{ insights_history|length }})</summary>
       {% for h in insights_history %}
       <div class="insights-history-item">
-        <p class="insights-meta">{{ h.generated_at[:10] }} ({{ h.statement_type }})</p>
+        <p class="insights-meta"><span class="local-time" data-utc="{{ h.generated_at }}" data-utc-format="date">{{ h.generated_at[:10] }}</span> ({{ h.statement_type }})</p>
         <div class="insights-text">{{ h.html|safe }}</div>
       </div>
       {% endfor %}
@@ -847,22 +918,28 @@
   <section class="merged-section" id="sec-financials">
     <h2>Financials</h2>
     {% if not has_ported_dataset %}
-    <div class="statement-toggle">
-      <a class="{{ 'active' if statement_type == 'consolidated' else '' }}"
-         href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='consolidated') }}#sec-financials">Consolidated</a>
-      <a class="{{ 'active' if statement_type == 'standalone' else '' }}"
-         href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='standalone') }}#sec-financials">Standalone</a>
+    <div class="vm-toggle-row">
+      <div class="statement-toggle">
+        <a class="{{ 'active' if statement_type == 'consolidated' else '' }}"
+           href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='consolidated') }}#sec-financials">Consolidated</a>
+        <a class="{{ 'active' if statement_type == 'standalone' else '' }}"
+           href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='standalone') }}#sec-financials">Standalone</a>
+      </div>
+      <div class="vm-period-toggle" data-vm-period-toggle>
+        <button type="button" class="vm-period-btn is-active" data-period-type="annual">Annual</button>
+        <button type="button" class="vm-period-btn" data-period-type="quarterly">Quarterly</button>
+      </div>
     </div>
     {% endif %}
 
-    <div id="valuation-dashboard" class="vm-layout" data-url="{{ valuation_data_url }}"
+    <div id="valuation-dashboard" class="vm-layout" data-url="{{ financials_data_url }}"
          data-price="{{ overview_price if overview_price is not none else '' }}"
          data-shares-outstanding="{{ shares_outstanding if shares_outstanding is not none else '' }}"
+         data-shares-outstanding-fy="{{ shares_outstanding_fy if shares_outstanding_fy is not none else '' }}"
          data-ratio-keys="{{ enabled_ratio_keys|tojson|forceescape }}">
       <aside class="vm-sidebar">
         <nav class="vm-nav">
-          <button type="button" class="vm-nav-btn active" data-section="overview">Overview</button>
-          <button type="button" class="vm-nav-btn" data-section="balanceSheet">Balance Sheet</button>
+          <button type="button" class="vm-nav-btn active" data-section="balanceSheet">Balance Sheet</button>
           <button type="button" class="vm-nav-btn" data-section="incomeStatement">Income Statement</button>
           <button type="button" class="vm-nav-btn" data-section="perShare">Per-Share Metrics</button>
           <button type="button" class="vm-nav-btn" data-section="profitability">Profitability Ratios</button>
@@ -956,7 +1033,7 @@
           <div class="investigation-question">{{ t.question }}</div>
         </a>
         <div class="investigation-meta-row">
-          <span class="muted investigation-timestamp">{{ t.generated_at[:10] }}</span>
+          <span class="muted investigation-timestamp local-time" data-utc="{{ t.generated_at }}" data-utc-format="date">{{ t.generated_at[:10] }}</span>
           <button type="button" class="notes-link-action notes-link-danger" data-action="delete-thread" data-thread-id="{{ t.thread_id }}">Delete</button>
         </div>
       </div>

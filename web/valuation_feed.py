@@ -1,8 +1,18 @@
-"""Builds the valuation-dashboard JSON feed (see web/static/js/valuation_dashboard.js)
-from real ingested data — the path every company without a ported, richer
-dataset (companies.valuation_model_file — see the "HDFC Bank Equity
-Dashboard" Claude Design import) falls back to. Same shape as a ported file:
-{"YEARS": [...], "METRICS": {section: [{key, label, unit, values}]}}.
+"""Builds the annual-only valuation-model JSON feed for the Valuation Model
+tab's Growth Projection / Intrinsic Value calculator (see
+web/static/js/valuation_dashboard_interactive.js) — the path every company
+without a ported, richer dataset (companies.valuation_model_file — see the
+"HDFC Bank Equity Dashboard" Claude Design import) falls back to. Same shape
+as a ported file: {"YEARS": [...], "METRICS": {section: [{key, label, unit,
+values}]}}.
+
+The Financials tab (and the Overview tab's snapshot) moved off this feed to
+web/charts_feed.py's build_charts_feed() instead, which is annual/quarterly-
+period-aware — this feed stays annual-only on purpose, since Growth
+Projection's assumptions (CAGR window, projected/terminal growth) are
+inherently annual concepts with no established quarterly equivalent, same
+reasoning build_charts_feed() itself gives for dropping ROE/ROA in quarterly
+mode.
 
 Advances/deposits/EPS/book value/dividend/shares-outstanding used to have no
 ingested source anywhere and came back as an all-null row — that changed
@@ -74,8 +84,15 @@ def _values_for(years: list[int], series: dict[int, float]) -> list[float | None
     return [series.get(year) for year in years]
 
 
-def _row(key: str, label: str, unit: str, years: list[int], series: dict[int, float]) -> dict:
-    return {"key": key, "label": label, "unit": unit, "values": _values_for(years, series)}
+def _row(
+    key: str, label: str, unit: str, years: list[int], series: dict[int, float], row_type: str = "fact",
+) -> dict:
+    """row_type ("fact" | "calc") — see web/charts_feed.py's identical _row()
+    docstring; same FACT/CALC badge, same classification rule, just kept as
+    a separate function here since this feed's whole shape (year-keyed, not
+    period-key-tuple-keyed) is already independently duplicated from
+    charts_feed.py."""
+    return {"key": key, "label": label, "unit": unit, "values": _values_for(years, series), "type": row_type}
 
 
 def build_valuation_feed(conn: sqlite3.Connection, company_id: str, statement_type: str = "consolidated") -> dict:
@@ -178,7 +195,7 @@ def build_valuation_feed(conn: sqlite3.Connection, company_id: str, statement_ty
     metrics = {
         "balanceSheet": [
             _row("networth", "Networth (reserves only)", "big", years, networth),
-            _row("she", "Shareholders Equity (SHE)", "big", years, she),
+            _row("she", "Shareholders Equity (SHE)", "big", years, she, row_type="calc"),
             _row("deposits", "Gross Deposits", "big", years, raw["deposits"]),
             _row("borrowings", "Gross Borrowings", "big", years, raw["borrowings"]),
             _row("advances", "Advances", "big", years, raw["advances"]),
@@ -194,32 +211,32 @@ def build_valuation_feed(conn: sqlite3.Connection, company_id: str, statement_ty
             _row("netProfit", "Net Profit (PAT)", "big", years, raw["net_profit"]),
         ],
         "perShare": [
-            _row("eps", "EPS (Net Profit / share)", "perShare", years, eps_series),
-            _row("bookValue", "Book Value (Networth based)", "perShare", years, book_value_series),
+            _row("eps", "EPS (Net Profit / share)", "perShare", years, eps_series, row_type="calc"),
+            _row("bookValue", "Book Value (Networth based)", "perShare", years, book_value_series, row_type="calc"),
             _row("dividend", "Dividend per share", "perShare", years, raw["dividend_per_share"]),
-            _row("salesPerShare", "Sales (Revenue per share)", "perShare", years, sales_per_share_series),
+            _row("salesPerShare", "Sales (Revenue per share)", "perShare", years, sales_per_share_series, row_type="calc"),
             _row("shares", "Shares Outstanding", "sharesCount", years, raw["shares_outstanding"]),
         ],
         "profitability": [
-            _row("netMargin", "Net Profit Margin", "pct", years, net_margin),
-            _row("roe", "RONW / ROE", "pct", years, roe_series),
-            _row("taxRate", "Tax Paid % of Revenue", "pctAbs", years, tax_rate),
-            _row("payout", "Dividend Payout Ratio", "pct", years, payout),
-            _row("retention", "Retention Ratio", "pct", years, retention),
+            _row("netMargin", "Net Profit Margin", "pct", years, net_margin, row_type="calc"),
+            _row("roe", "RONW / ROE", "pct", years, roe_series, row_type="calc"),
+            _row("taxRate", "Tax Paid % of Revenue", "pctAbs", years, tax_rate, row_type="calc"),
+            _row("payout", "Dividend Payout Ratio", "pct", years, payout, row_type="calc"),
+            _row("retention", "Retention Ratio", "pct", years, retention, row_type="calc"),
         ],
         "bankRatios": [
-            _row("cdRatio", "Credit-Deposit Ratio", "pct", years, cd_ratio),
-            _row("advDepBorrow", "Advances / (Deposits + Borrowings)", "pct", years, adv_dep_borrow),
-            _row("otherIncEarn", "Other Income / Earnings", "pct", years, other_inc_earn),
-            _row("npAssets", "Net Profit / Total Assets", "pct", years, roa_series),
-            _row("intCoverage", "Interest Coverage (Earnings / Interest Outgo)", "x", years, int_coverage),
-            _row("intOverProfit", "Interest Outgo / Net Profit", "x", years, int_over_profit),
+            _row("cdRatio", "Credit-Deposit Ratio", "pct", years, cd_ratio, row_type="calc"),
+            _row("advDepBorrow", "Advances / (Deposits + Borrowings)", "pct", years, adv_dep_borrow, row_type="calc"),
+            _row("otherIncEarn", "Other Income / Earnings", "pct", years, other_inc_earn, row_type="calc"),
+            _row("npAssets", "Net Profit / Total Assets", "pct", years, roa_series, row_type="calc"),
+            _row("intCoverage", "Interest Coverage (Earnings / Interest Outgo)", "x", years, int_coverage, row_type="calc"),
+            _row("intOverProfit", "Interest Outgo / Net Profit", "x", years, int_over_profit, row_type="calc"),
         ],
         "valuation": [
             _row("price", "Price", "perShare", years, empty),
-            _row("pe", "P/E", "x", years, empty),
-            _row("pbv", "P/BV (Shareholder Equity)", "x", years, empty),
-            _row("divYield", "Dividend Yield", "pct", years, empty),
+            _row("pe", "P/E", "x", years, empty, row_type="calc"),
+            _row("pbv", "P/BV (Shareholder Equity)", "x", years, empty, row_type="calc"),
+            _row("divYield", "Dividend Yield", "pct", years, empty, row_type="calc"),
         ],
     }
 

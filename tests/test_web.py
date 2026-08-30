@@ -94,7 +94,7 @@ def test_companies_page_shows_cached_price_without_ported_dashboard(client, monk
     )
     response = client.get("/companies")
     assert response.status_code == 200
-    assert b"1234.50" in response.data
+    assert b"1,234.50" in response.data
 
 
 def test_companies_page_has_separate_sortable_sector_and_industry_columns(client) -> None:

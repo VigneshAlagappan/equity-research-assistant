@@ -608,13 +608,18 @@
       const rightSeries = allSeries.filter((s) => (state.sides[attrId(s.section, s.key)] || "left") === "right");
       const currency = loaded[0].ds.CURRENCY;
 
+      // Compare With on its own row, then one horizontal toolbar (period/
+      // range toggle + attribute-picker pills, each a <details> dropdown
+      // rather than an always-visible sidebar list) so the chart itself
+      // gets the page's full width below instead of sharing it with a
+      // fixed-width side column.
       root.innerHTML =
         renderCompareBar(state) +
-        renderControls(state.periodType, state.range) +
-        '<div class="chart-overlay-layout">' +
-          '<div class="chart-overlay-picker">' + renderPicker(unionAttrs, state.order, state.sides, colorOf) + "</div>" +
-          '<div class="chart-overlay-chart">' + renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames) + "</div>" +
-        "</div>";
+        '<div class="chart-overlay-toolbar">' +
+          renderControls(state.periodType, state.range) +
+          renderPicker(unionAttrs, state.order, state.sides, colorOf) +
+        "</div>" +
+        '<div class="chart-overlay-chart">' + renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames) + "</div>";
 
       root.querySelectorAll("[data-attr-id]").forEach((checkbox) => {
         checkbox.addEventListener("change", () => {

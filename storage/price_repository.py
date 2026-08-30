@@ -133,6 +133,33 @@ def list_latest_close(conn: sqlite3.Connection) -> dict[str, float]:
     return {row["company_id"]: row["close"] for row in rows}
 
 
+def list_latest_daily_change(conn: sqlite3.Connection) -> dict[str, float]:
+    """Percent change from the prior trading day's close to the latest one on
+    file, per company, one query for every company at once -- same reasoning
+    as list_latest_close(). Omits any company with fewer than two bars on
+    file (nothing to compare the latest close against)."""
+    rows = conn.execute(
+        """
+        SELECT company_id, close, rn
+        FROM (
+            SELECT company_id, close,
+                   ROW_NUMBER() OVER (PARTITION BY company_id ORDER BY trade_date DESC) AS rn
+            FROM daily_prices
+        )
+        WHERE rn <= 2
+        """
+    ).fetchall()
+    closes_by_company: dict[str, dict[int, float]] = {}
+    for row in rows:
+        closes_by_company.setdefault(row["company_id"], {})[row["rn"]] = row["close"]
+    result: dict[str, float] = {}
+    for company_id, closes in closes_by_company.items():
+        latest, previous = closes.get(1), closes.get(2)
+        if latest is not None and previous:
+            result[company_id] = (latest - previous) / previous * 100
+    return result
+
+
 def list_52_week_range(conn: sqlite3.Connection) -> dict[str, tuple[float, float]]:
     """(low, high) close over the trailing 52 weeks per company, one query
     for every company at once."""

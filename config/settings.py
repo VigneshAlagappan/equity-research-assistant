@@ -39,8 +39,20 @@ PRICE_DB_PATH = DATA_DIR / "price_history.db"
 # ------------------------------------------------------------------
 # Source trust order (default reconciliation priority)
 #
-# "official company filing -> NSE/BSE filing -> licensed data provider ->
-#  secondary financial source" (README: Source / Provenance & Reconciliation)
+# For STRUCTURED FINANCIAL FACTS specifically, NSE XBRL is now the target
+# source of truth (trust_rank 0, ahead of everything else) — once a
+# reporting period has a validated NSE observation on file, storage/
+# repositories.py's reconcile() both prefers it over every other source for
+# metrics NSE reported AND refuses to backfill metrics NSE didn't report
+# for that same period from legacy data (blank instead of mixed). This
+# supersedes the older "official company filing -> NSE/BSE filing ->
+# licensed data provider -> secondary financial source" default order
+# below investor_relations/proprietary — "proprietary" is a hand-curated
+# spreadsheet of numbers, i.e. exactly the "Existing Manual/Legacy data"
+# this policy demotes, not a genuine official filing; investor_relations
+# itself feeds no financial_observations today (no adapter uses that
+# source_id — it's narrative documents only), so this reordering has no
+# other practical effect yet.
 #
 # NSE and BSE sit at the same trust_rank: filings submitted to both
 # exchanges are often identical, so they're a confirming cross-check
@@ -57,13 +69,16 @@ DEFAULT_SOURCES: list[dict[str, object]] = [
     {
         "source_id": "nse",
         "name": "National Stock Exchange",
-        "trust_rank": 2,
-        "description": "Exchange filing. Tied with BSE — see Open Decisions.",
+        "trust_rank": 0,
+        "description": (
+            "Exchange XBRL filing — target source of truth for structured financial facts, "
+            "ahead of every other source once a period is validated. Tied with BSE — see Open Decisions."
+        ),
     },
     {
         "source_id": "bse",
         "name": "Bombay Stock Exchange",
-        "trust_rank": 2,
+        "trust_rank": 0,
         "description": "Exchange filing. Tied with NSE — see Open Decisions.",
     },
     {
@@ -76,7 +91,7 @@ DEFAULT_SOURCES: list[dict[str, object]] = [
         "source_id": "proprietary",
         "name": "Proprietary (hand-prepared/verified workbook)",
         "trust_rank": 1,
-        "description": "Own curated numbers, same trust tier as an official filing — tied with Investor Relations rather than ranked below it.",
+        "description": "Own curated numbers, same trust tier as an official filing — tied with Investor Relations rather than ranked below it. Ranked below NSE XBRL (trust_rank 0) once a period is validated there.",
     },
     {
         "source_id": "yfinance",

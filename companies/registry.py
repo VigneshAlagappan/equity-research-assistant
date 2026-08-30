@@ -125,6 +125,19 @@ def get_company(conn: sqlite3.Connection, company_id: str) -> sqlite3.Row | None
     ).fetchone()
 
 
+def update_company_website(conn: sqlite3.Connection, company_id: str, website: str) -> None:
+    """Set just the website column — unlike register_company(), doesn't
+    require every other mutable field passed back through to avoid stomping
+    it. For scripts/backfill_company_websites.py's one-time yfinance
+    backfill of the handful of US companies registered without one (unlike
+    the Indian ones, which already carry it)."""
+    conn.execute(
+        "UPDATE companies SET website = ?, updated_at = ? WHERE company_id = ?",
+        (website, utcnow_iso(), normalize_company_id(company_id)),
+    )
+    conn.commit()
+
+
 _SECTOR_PEER_FIELDS = ("basic_industry", "macro_economic_sector")
 
 

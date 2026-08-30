@@ -145,8 +145,21 @@ def _values_for(period_keys: list[tuple[int, int]], series: dict[tuple[int, int]
     return [series.get(pk) for pk in period_keys]
 
 
-def _row(key: str, label: str, unit: str, period_keys: list[tuple[int, int]], series: dict[tuple[int, int], float]) -> dict:
-    return {"key": key, "label": label, "unit": unit, "values": _values_for(period_keys, series)}
+def _row(
+    key: str, label: str, unit: str, period_keys: list[tuple[int, int]], series: dict[tuple[int, int], float],
+    row_type: str = "fact",
+) -> dict:
+    """row_type is "fact" (a canonical_financials value passed through
+    unchanged — even if just relabeled, like "networth" = raw reserves) or
+    "calc" (built from arithmetic on top of one or more raw values —
+    divide/add/fill_missing-with-a-formula/ratio_series below all count,
+    even where a fallback is only used for SOME periods: the row can show a
+    computed figure at all, so it's calc for its whole column, not per
+    cell). Surfaced client-side as the Financials tab's FACT/CALC badge
+    (web/static/js/valuation_dashboard.js) — same tag-fact/tag-calculation
+    styling already used for [FACT]/[CALCULATION] in AI-generated insights
+    (base.html), reused here rather than inventing a second badge design."""
+    return {"key": key, "label": label, "unit": unit, "values": _values_for(period_keys, series), "type": row_type}
 
 
 def build_charts_feed(
@@ -318,7 +331,7 @@ def build_charts_feed(
     metrics: dict[str, list[dict]] = {
         "balanceSheet": [
             _row("networth", "Networth (reserves only)", "big", period_keys, networth),
-            _row("she", "Shareholders Equity (SHE)", "big", period_keys, she),
+            _row("she", "Shareholders Equity (SHE)", "big", period_keys, she, row_type="calc"),
             _row("deposits", "Gross Deposits", "big", period_keys, raw["deposits"]),
             _row("borrowings", "Gross Borrowings", "big", period_keys, raw["borrowings"]),
             _row("advances", "Advances", "big", period_keys, raw["advances"]),
@@ -334,32 +347,32 @@ def build_charts_feed(
             _row("netProfit", "Net Profit (PAT)", "big", period_keys, raw["net_profit"]),
         ],
         "perShare": [
-            _row("eps", "EPS (Net Profit / share)", "perShare", period_keys, eps_series),
-            _row("bookValue", "Book Value (Networth based)", "perShare", period_keys, book_value_series),
+            _row("eps", "EPS (Net Profit / share)", "perShare", period_keys, eps_series, row_type="calc"),
+            _row("bookValue", "Book Value (Networth based)", "perShare", period_keys, book_value_series, row_type="calc"),
             _row("dividend", "Dividend per share", "perShare", period_keys, raw["dividend_per_share"]),
-            _row("salesPerShare", "Sales (Revenue per share)", "perShare", period_keys, sales_per_share_series),
+            _row("salesPerShare", "Sales (Revenue per share)", "perShare", period_keys, sales_per_share_series, row_type="calc"),
             _row("shares", "Shares Outstanding", "sharesCount", period_keys, raw["shares_outstanding"]),
         ],
         "profitability": [
-            _row("netMargin", "Net Profit Margin", "pct", period_keys, net_margin),
-            _row("roe", "RONW / ROE", "pct", period_keys, roe_series),
-            _row("taxRate", "Tax Paid % of Revenue", "pctAbs", period_keys, tax_rate),
-            _row("payout", "Dividend Payout Ratio", "pct", period_keys, payout),
-            _row("retention", "Retention Ratio", "pct", period_keys, retention),
+            _row("netMargin", "Net Profit Margin", "pct", period_keys, net_margin, row_type="calc"),
+            _row("roe", "RONW / ROE", "pct", period_keys, roe_series, row_type="calc"),
+            _row("taxRate", "Tax Paid % of Revenue", "pctAbs", period_keys, tax_rate, row_type="calc"),
+            _row("payout", "Dividend Payout Ratio", "pct", period_keys, payout, row_type="calc"),
+            _row("retention", "Retention Ratio", "pct", period_keys, retention, row_type="calc"),
         ],
         "bankRatios": [
-            _row("cdRatio", "Credit-Deposit Ratio", "pct", period_keys, cd_ratio),
-            _row("advDepBorrow", "Advances / (Deposits + Borrowings)", "pct", period_keys, adv_dep_borrow),
-            _row("otherIncEarn", "Other Income / Earnings", "pct", period_keys, other_inc_earn),
-            _row("npAssets", "Net Profit / Total Assets", "pct", period_keys, roa_series),
-            _row("intCoverage", "Interest Coverage (Earnings / Interest Outgo)", "x", period_keys, int_coverage),
-            _row("intOverProfit", "Interest Outgo / Net Profit", "x", period_keys, int_over_profit),
+            _row("cdRatio", "Credit-Deposit Ratio", "pct", period_keys, cd_ratio, row_type="calc"),
+            _row("advDepBorrow", "Advances / (Deposits + Borrowings)", "pct", period_keys, adv_dep_borrow, row_type="calc"),
+            _row("otherIncEarn", "Other Income / Earnings", "pct", period_keys, other_inc_earn, row_type="calc"),
+            _row("npAssets", "Net Profit / Total Assets", "pct", period_keys, roa_series, row_type="calc"),
+            _row("intCoverage", "Interest Coverage (Earnings / Interest Outgo)", "x", period_keys, int_coverage, row_type="calc"),
+            _row("intOverProfit", "Interest Outgo / Net Profit", "x", period_keys, int_over_profit, row_type="calc"),
         ],
         "priceVolume": [
             _row("closePrice", "Close Price (period end)", "rupee", period_keys, close_price_series),
             _row("volume", "Avg Daily Volume", "volume", period_keys, volume_series),
-            _row("peRatio", pe_label, "x", period_keys, pe_ratio_series),
-            _row("pbRatio", pb_label, "x", period_keys, pb_ratio_series),
+            _row("peRatio", pe_label, "x", period_keys, pe_ratio_series, row_type="calc"),
+            _row("pbRatio", pb_label, "x", period_keys, pb_ratio_series, row_type="calc"),
         ],
     }
     if period_type != "annual":

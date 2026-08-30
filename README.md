@@ -308,8 +308,17 @@ is a data row, not a migration.
 Conflicting sources are never silently overwritten — both are kept, and the
 reconciliation decision is itself recorded.
 
-Default source priority: **official company filing → NSE/BSE filing → licensed data
-provider → secondary financial source.** This is what lets the assistant say:
+Default source priority for structured financial facts: **NSE XBRL (once
+validated for a period) → official company filing / hand-curated proprietary
+data → licensed data provider → secondary financial source.** NSE XBRL is the
+target source of truth here (2026-08 directive) — once a reporting period has
+a validated NSE observation on file, every other source is ineligible for
+*that period*, metric by metric: a metric the filing didn't report goes
+blank rather than being backfilled from legacy data (`storage/repositories.py`'s
+`reconcile()`/`_period_is_xbrl_migrated()`). Until a period is migrated, the
+older default order still applies: official company filing → NSE/BSE filing →
+licensed data provider → secondary financial source. This is what lets the
+assistant say:
 
 > Net Profit FY2025: ₹X crore — Primary source: NSE filing. Cross-check: Screener.
 

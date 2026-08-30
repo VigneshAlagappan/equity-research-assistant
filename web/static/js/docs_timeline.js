@@ -16,6 +16,14 @@
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
+  // retrieved_at is UTC (storage/database.py's utcnow_iso) — show the
+  // viewer's own local calendar date, not the server's.
+  function localDate(isoUtc) {
+    const d = new Date(isoUtc);
+    if (Number.isNaN(d.getTime())) return isoUtc.slice(0, 10);
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+
   function init(root, modalHost, addModalHost) {
     const companyId = root.dataset.companyId;
     const dataUrl = root.dataset.url;
@@ -314,7 +322,7 @@
               <div>
                 <div class="docs-modal-kicker">${escapeHtml(d.typeLabel)} · ${escapeHtml(d.periodLabel)}</div>
                 <div class="docs-modal-title">${attribution}</div>
-                ${d.retrieved_at ? `<div class="docs-modal-meta">Added ${escapeHtml(d.retrieved_at.slice(0, 10))}</div>` : ""}
+                ${d.retrieved_at ? `<div class="docs-modal-meta">Added ${escapeHtml(localDate(d.retrieved_at))}</div>` : ""}
               </div>
               <button type="button" class="docs-modal-close" data-action="close-doc">Close</button>
             </div>

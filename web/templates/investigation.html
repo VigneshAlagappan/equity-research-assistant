@@ -48,7 +48,7 @@
     <h2>{{ investigation.question }}</h2>
   </div>
   <div class="investigation-meta">
-    {{ investigation.generated_at }} &middot;
+    <span class="local-time" data-utc="{{ investigation.generated_at }}">{{ investigation.generated_at }}</span> &middot;
     {{ investigation.company_ids|join(', ') if investigation.company_ids else 'Macro/regulatory' }} &middot;
     {{ investigation.statement_type }} &middot;
     {{ hypotheses|length }} hypothes{{ 'is' if hypotheses|length == 1 else 'es' }}

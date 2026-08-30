@@ -74,6 +74,7 @@ from storage.price_repository import (
     list_52_week_range,
     list_all_time_range,
     list_latest_close,
+    list_latest_daily_change,
 )
 from storage.repositories import (
     COMPANY_LIST_COLUMNS,
@@ -122,6 +123,8 @@ from storage.repositories import (
     list_latest_shares_outstanding,
     list_llm_call_log,
     list_macro_series_summary,
+    list_reconciliation_log_by_company,
+    list_xbrl_migration_status,
     list_note_attachments_for_company,
     list_report_evidence,
     list_report_followups,
@@ -415,6 +418,27 @@ def create_app() -> Flask:
                 return value
         return None
 
+    def _is_shares_outstanding_current(fiscal_year: str | None) -> bool:
+        """Whether a shares_outstanding row's fiscal year (e.g. "FY2014") is
+        recent enough to drive a Market Cap figure someone might act on,
+        rather than a confidently-wrong number computed from a share count
+        that's years or a decade stale (as of 2026-08, most of the ~2,500
+        companies here have no shares_outstanding data past FY2013/FY2014 —
+        list_latest_shares_outstanding() still returns "the latest row on
+        file" for them, which is not the same as "current"). Allows the
+        latest fully-elapsed Indian fiscal year (ending March 31) or the one
+        before it, to cover an annual report not yet filed for the FY that
+        just ended."""
+        if not fiscal_year or not fiscal_year.startswith("FY"):
+            return False
+        try:
+            fy = int(fiscal_year[2:])
+        except ValueError:
+            return False
+        today = datetime.now(timezone.utc)
+        latest_reported_fy = today.year if today.month >= 4 else today.year - 1
+        return fy >= latest_reported_fy - 1
+
     @app.route("/companies/search.json")
     def companies_search():
         # Static path, so Flask/Werkzeug matches it ahead of the
@@ -445,14 +469,32 @@ def create_app() -> Flask:
         # not one per row) rather than a get_latest_close() call per company.
         price_db = get_price_db()
         latest_close_by_company = list_latest_close(price_db)
+        daily_change_by_company = list_latest_daily_change(price_db)
         week52_by_company = list_52_week_range(price_db)
         all_time_by_company = list_all_time_range(price_db)
+
+        def _range_pct(price, low, high):
+            """Where `price` sits between `low` and `high`, as 0-100 — for
+            positioning the 52-week/all-time range markers. Clamped: a stale
+            valuation-model price can fall slightly outside the price-history
+            range it's plotted against."""
+            if price is None or low is None or high is None or high <= low:
+                return None
+            return max(0.0, min(100.0, (price - low) / (high - low) * 100))
+
         rows = []
         for c in list_companies(db):
             row = dict(c)
             row["latest_price"] = _latest_price(row["valuation_model_file"]) if row["valuation_model_file"] else None
+            row["price_change_pct"] = None
             if row["latest_price"] is None:
                 row["latest_price"] = latest_close_by_company.get(row["company_id"])
+                if row["latest_price"] is not None:
+                    # Only meaningful when the shown price actually is this
+                    # table's latest close — a ported valuation-model price
+                    # above (often months stale) has no daily-change figure
+                    # to pair it with.
+                    row["price_change_pct"] = daily_change_by_company.get(row["company_id"])
             if row["latest_price"] is None:
                 # No ported dashboard and no backfilled price history (e.g.
                 # not a Nifty 500 company) — fall back to whatever price is
@@ -463,18 +505,29 @@ def create_app() -> Flask:
                 cached_quote = peek_cached_quote(ticker, row["country"])
                 if cached_quote is not None:
                     row["latest_price"] = cached_quote["price"]
+                    row["price_change_pct"] = cached_quote["change_pct"]
             # Market cap (Cr) = price/share x shares outstanding (Cr) — shares
             # outstanding only exists for companies with real financial data
-            # ingested (~60 of ~2,500 today), so this stays None for most rows.
-            shares_outstanding = shares_outstanding_by_company.get(row["company_id"])
-            if row["latest_price"] is not None and shares_outstanding is not None:
-                row["market_cap_cr"] = row["latest_price"] * shares_outstanding
+            # ingested (~60 of ~2,500 today), so this stays None for most
+            # rows. Also None when the shares figure on file is too stale to
+            # trust (_is_shares_outstanding_current) — a decade-old share
+            # count times today's price is a confidently-wrong number, worse
+            # than showing nothing.
+            shares_outstanding_entry = shares_outstanding_by_company.get(row["company_id"])
+            if (
+                row["latest_price"] is not None
+                and shares_outstanding_entry is not None
+                and _is_shares_outstanding_current(shares_outstanding_entry[1])
+            ):
+                row["market_cap_cr"] = row["latest_price"] * shares_outstanding_entry[0]
             else:
                 row["market_cap_cr"] = None
             week52 = week52_by_company.get(row["company_id"])
             row["week52_low"], row["week52_high"] = week52 if week52 else (None, None)
+            row["week52_pct"] = _range_pct(row["latest_price"], row["week52_low"], row["week52_high"])
             all_time = all_time_by_company.get(row["company_id"])
             row["all_time_low"], row["all_time_high"] = all_time if all_time else (None, None)
+            row["all_time_pct"] = _range_pct(row["latest_price"], row["all_time_low"], row["all_time_high"])
             row["index_tags"] = get_company_index_tags(db, row["company_id"])
             rows.append(row)
         sectors = sorted({row["sector"] for row in rows if row["sector"]})
@@ -617,6 +670,65 @@ def create_app() -> Flask:
             "ingest_dq_types": _distinct_values(dq_all, "document_type"),
         }
 
+    def _audit_panel_context(db) -> dict:
+        """Only computed when the Audit Log panel is actually being viewed,
+        same reasoning _ingest_panel_context() gives for the Ingest panel.
+
+        One table, one row per NSE-listed active company — not two separate
+        tables (migration status + a standalone reconciliation-log table),
+        because those two datasets have different grains and the second
+        can't stand alone anyway: a company with zero XBRL activity (the
+        vast majority today) has zero reconciliation_log rows, so a flat
+        event log can never show it — only a company-per-row structure can
+        answer "what's pending" for a company that's never been touched.
+        Each row instead carries its own recent decision trail as nested
+        detail (audit_migration_rows[i]['recent_log']), collapsed by
+        default and expanded client-side (admin.html's toggle script) —
+        same real-estate-efficient disclosure shape already used elsewhere
+        in this app, just hand-rolled with plain <tr>s here since <details>
+        can't wrap table rows directly.
+
+        A free-text search (company id/name/NSE symbol) is layered on top
+        of the status filter for the same reason Import Data's company
+        field got a search box instead of a dropdown — 2,600 rows is too
+        many to page through by eye."""
+        status_filter = request.args.get("al_status") or ""
+        query = (request.args.get("al_q") or "").strip().lower()
+        migration_rows = list_xbrl_migration_status(db)
+
+        filtered_rows = migration_rows
+        if query:
+            filtered_rows = [
+                r for r in filtered_rows
+                if query in (r["company_id"] or "").lower()
+                or query in (r["display_name"] or "").lower()
+                or query in (r["nse_symbol"] or "").lower()
+            ]
+
+        page_size = ADMIN_INGEST_PAGE_SIZE
+        page = _filter_and_paginate(
+            filtered_rows, filters={"migration_status": status_filter},
+            page_arg="al_page", page_size=page_size,
+        )
+
+        recent_log_by_company = list_reconciliation_log_by_company(
+            db, [r["company_id"] for r in page["rows"]], limit_per_company=20,
+        )
+        for row in page["rows"]:
+            row["recent_log"] = recent_log_by_company.get(row["company_id"], [])
+
+        return {
+            "audit_rows": page["rows"],
+            "audit_total": page["total"],
+            "audit_page": page["page"],
+            "audit_total_pages": page["total_pages"],
+            "audit_page_size": page["page_size"],
+            "audit_status_filter": status_filter,
+            "audit_query": request.args.get("al_q", ""),
+            "audit_pending_count": sum(1 for r in migration_rows if r["migration_status"] == "pending"),
+            "audit_not_started_count": sum(1 for r in migration_rows if r["migration_status"] == "not_started"),
+        }
+
     @app.route("/admin")
     def admin():
         db = get_db()
@@ -688,6 +800,13 @@ def create_app() -> Flask:
             "industry": {"items": industries, "counts": count_companies_by_industry(db)},
             "index-tag": {"items": index_tag_names, "counts": count_companies_by_index_tag(db)},
         }
+        import_selected_company = request.args.get("company_id", "")
+        import_selected_company_label = ""
+        if import_selected_company:
+            match = next((c for c in all_companies if c["company_id"] == import_selected_company), None)
+            if match:
+                import_selected_company_label = f"{match['display_name']} ({match['company_id']})"
+
         return render_template(
             "admin.html",
             companies=page_companies,
@@ -713,7 +832,8 @@ def create_app() -> Flask:
             ratio_settings=ratio_settings,
             import_sources=sorted(ADAPTER_CLASSES),
             active_panel=request.args.get("panel", "companies"),
-            import_selected_company=request.args.get("company_id", ""),
+            import_selected_company=import_selected_company,
+            import_selected_company_label=import_selected_company_label,
             stock_action_types=sorted(ACTION_TYPES),
             stock_action_selected_company=request.args.get("sa_company_id", ""),
             stock_actions=(
@@ -721,6 +841,7 @@ def create_app() -> Flask:
                 if request.args.get("sa_company_id") else []
             ),
             **(_ingest_panel_context(db) if request.args.get("panel") == "ingest" else {}),
+            **(_audit_panel_context(db) if request.args.get("panel") == "audit" else {}),
         )
 
     @app.route("/admin/usage")
@@ -1101,16 +1222,20 @@ def create_app() -> Flask:
         valuation_model_file = company["valuation_model_file"]
         has_ported_dataset = bool(valuation_model_file) and _valuation_model_data_path(valuation_model_file).exists()
 
-        # Same feed backs both the facts-only Financials tab and the
-        # assumptions-driven Valuation Model tab — the two tabs render it
-        # differently (Valuation Model adds the editable assumptions panel,
-        # Growth Projection, and Intrinsic Value/Margin of Safety on top),
-        # not two different data sources.
+        # valuation_data_url backs only the Valuation Model tab's Growth
+        # Projection / Intrinsic Value calculator (assumptions-driven,
+        # inherently annual — see web/valuation_feed.py's module docstring).
+        # financials_data_url backs the Financials tab and the Overview
+        # tab's snapshot — both just facts, so both get the annual/quarterly
+        # toggle via web/charts_feed.py's already period-aware feed (the
+        # same one the Charts tab uses) instead.
         if has_ported_dataset:
             # A richer, manually-ported dataset (see the "HDFC Bank Equity
-            # Dashboard" Claude Design import) — not statement_type-aware,
-            # the ported file isn't split consolidated/standalone.
+            # Dashboard" Claude Design import) — not statement_type-aware
+            # and annual-only (no period_type concept at all), so both
+            # dashboards read the same static file here.
             valuation_data_url = url_for("static", filename=f"data/{valuation_model_file}")
+            financials_data_url = valuation_data_url
         else:
             # Same dashboard template, every company — built live from
             # whatever this company's canonical_financials actually has.
@@ -1118,6 +1243,12 @@ def create_app() -> Flask:
             # different page layout. See web/valuation_feed.py.
             valuation_data_url = url_for(
                 "company_valuation_feed", company_id=company_id, statement_type=statement_type
+            )
+            # No period_type baked in, same convention as the Charts tab's
+            # own data-compare-url-template below — the client appends
+            # "&period_type=annual|quarterly" itself once the toggle exists.
+            financials_data_url = url_for(
+                "company_charts_feed", company_id=company_id, statement_type=statement_type
             )
 
         website_display = None
@@ -1220,7 +1351,16 @@ def create_app() -> Flask:
         # deliberately never populates price itself (no market-data
         # pipeline; see that module's docstring).
         overview_price = live_quote["price"] if live_quote else latest_price
-        shares_outstanding = list_latest_shares_outstanding(db).get(company_id)
+        shares_outstanding_entry = list_latest_shares_outstanding(db).get(company_id)
+        shares_outstanding = shares_outstanding_entry[0] if shares_outstanding_entry else None
+        # Bare year (e.g. 2014, not "FY2014") — matches the plain-int
+        # fiscal-year convention web/valuation_feed.py's own YEARS array
+        # already uses, so valuation_dashboard.js's RATIO_CATALOG can show
+        # "No. Equity Shares, FY2014" / "Market Cap, FY2014" the same way it
+        # already suffixes Net Profit/Revenue with their own fiscal year —
+        # visible, not just a hover tooltip, so a stale share count reads as
+        # stale everywhere its number appears, not just on the Companies list.
+        shares_outstanding_fy = int(shares_outstanding_entry[1][2:]) if shares_outstanding_entry else None
         # Which ratio-grid rows an admin has enabled (Admin -> Overview
         # Ratios) — the catalog itself lives in storage/repositories.py,
         # each key's compute logic in valuation_dashboard.js's RATIO_CATALOG.
@@ -1243,10 +1383,12 @@ def create_app() -> Flask:
             live_quote=live_quote,
             overview_price=overview_price,
             shares_outstanding=shares_outstanding,
+            shares_outstanding_fy=shares_outstanding_fy,
             enabled_ratio_keys=enabled_ratio_keys,
             is_watchlisted=is_watchlisted(db, "company", company_id),
             has_ported_dataset=has_ported_dataset,
             valuation_data_url=valuation_data_url,
+            financials_data_url=financials_data_url,
             docs_data_url=url_for("company_docs_feed", company_id=company_id),
             insights=insights,
             insights_preview=insights_preview,
@@ -1603,13 +1745,17 @@ def create_app() -> Flask:
         # landing-page load (same reasoning as the company-count queries
         # elsewhere on this page).
         db = get_db()
-        stat_companies = db.execute("SELECT count(*) FROM companies").fetchone()[0]
+        # Split by country now that non-Indian companies are tracked too —
+        # a bare count(*) would silently blend the two into a number neither
+        # "NSE companies" nor "US companies" honestly describes.
+        stat_companies = db.execute("SELECT count(*) FROM companies WHERE country = 'IN'").fetchone()[0]
+        stat_us_companies = db.execute("SELECT count(*) FROM companies WHERE country = 'US'").fetchone()[0]
         stat_sectors = db.execute("SELECT count(DISTINCT sector) FROM companies WHERE sector IS NOT NULL").fetchone()[0]
         stat_documents = db.execute("SELECT count(*) FROM documents WHERE processing_status = 'processed'").fetchone()[0]
         stat_claims = db.execute("SELECT count(*) FROM knowledge_claims").fetchone()[0]
         return render_template(
             "landing.html",
-            stat_companies=stat_companies, stat_sectors=stat_sectors,
+            stat_companies=stat_companies, stat_us_companies=stat_us_companies, stat_sectors=stat_sectors,
             stat_documents=stat_documents, stat_claims=stat_claims,
         )
 

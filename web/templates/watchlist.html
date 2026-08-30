@@ -137,7 +137,7 @@
         </a>
         <div class="watchlist-actions">
           <span class="tag {{ 'tag-neutral' if entry.item_type == 'company' else 'tag-outline' }}">{{ entry.item_type }}</span>
-          <span class="watchlist-pinned-at">Pinned {{ entry.pinned_at[:10] }}</span>
+          <span class="watchlist-pinned-at">Pinned <span class="local-time" data-utc="{{ entry.pinned_at }}" data-utc-format="date">{{ entry.pinned_at[:10] }}</span></span>
           <form method="post" action="{{ url_for('watchlist_remove') }}">
             <input type="hidden" name="item_type" value="{{ entry.item_type }}">
             <input type="hidden" name="item_ref" value="{{ entry.item_ref }}">

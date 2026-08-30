@@ -143,7 +143,7 @@
         <div class="card elev-sm insight-card">
           <p class="insight-text">{{ insight.insight_text }}</p>
           <div class="insight-meta">
-            <span class="insight-companies">{{ insight.company_ids|join(', ') }}{{ ' · ' if insight.company_ids }}{{ insight.generated_at }}</span>
+            <span class="insight-companies">{{ insight.company_ids|join(', ') }}{{ ' · ' if insight.company_ids }}<span class="local-time" data-utc="{{ insight.generated_at }}">{{ insight.generated_at }}</span></span>
             <div class="insight-actions">
               {% if insight.status == 'new' %}
               <form method="post" action="{{ url_for('tools_insights_retain', insight_id=insight.insight_id) }}">

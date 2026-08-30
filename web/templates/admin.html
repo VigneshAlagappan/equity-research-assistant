@@ -5,27 +5,29 @@
 {% block page_class %}page-wide{% endblock %}
 
 {% block extra_style %}
-  .admin-layout { display: flex; gap: var(--space-6); align-items: flex-start; }
-  .admin-sidebar {
-    width: 190px; flex: none; position: sticky; top: var(--space-4);
+  /* Horizontal top-tab bar — same bottom-border underline convention as
+     web/templates/tools.html's .tools-subheader/.tools-nav-btn (and this
+     page's own .admin-ingest-subnav for the Ingest sub-tabs), in place of
+     the earlier pill-button left sidebar. Panel-switching JS below is
+     unchanged — it only ever toggled .active/[hidden] by class name, never
+     depended on the sidebar layout. */
+  .admin-nav {
+    display: flex; flex-wrap: wrap; gap: 24px; margin-bottom: var(--space-5);
+    border-bottom: 1px solid var(--color-divider);
   }
-  .admin-nav { display: flex; flex-direction: column; gap: 2px; }
   .admin-nav-btn {
-    text-align: left; background: none; border: none; padding: 6px 10px;
-    border-radius: var(--radius-sm); font-size: 13px; color: var(--ink-muted);
-    cursor: pointer; opacity: 0.85;
+    background: none; border: none; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; padding: 0 2px var(--space-2); font-size: 14px;
+    color: var(--ink-muted); cursor: pointer; white-space: nowrap;
   }
-  .admin-nav-btn:hover { opacity: 1; }
-  .admin-nav-btn.active {
-    background: var(--color-accent-100); color: var(--color-accent-800); opacity: 1; font-weight: 600;
-  }
-  .admin-panel { flex: 1 1 auto; min-width: 0; }
+  .admin-nav-btn:hover { color: var(--color-accent); }
+  .admin-nav-btn.active { color: var(--color-accent); border-bottom-color: var(--color-accent); font-weight: 600; }
   .admin-panel[hidden] { display: none; }
   /* Ingest panel: Financial Data and Documents are two distinct queues
      (different backing tables, different pipelines) but one section to the
      user — a sub-tab switch here rather than both tables stacked and always
      visible, same "pick a view, don't scroll past everything" reasoning as
-     the sidebar nav itself. */
+     the top nav itself. */
   .admin-ingest-subnav { display: flex; gap: var(--space-2); border-bottom: 1px solid var(--color-divider); margin: var(--space-4) 0; }
   .admin-ingest-subnav-btn {
     background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
@@ -49,12 +51,6 @@
   .admin-columns-list .locked {
     display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-muted);
   }
-  @media (max-width: 900px) {
-    .admin-layout { flex-direction: column; }
-    .admin-sidebar { width: 100%; position: static; }
-    .admin-nav { flex-direction: row; flex-wrap: wrap; }
-  }
-
   .admin-grid {
     display: grid;
     grid-template-columns: 150px 1fr 1fr 130px 140px 170px 280px 70px;
@@ -135,6 +131,20 @@
 
   .import-form { display: flex; flex-direction: column; gap: var(--space-3); max-width: 460px; }
 
+  /* Audit Log — one table, each company row expandable in place (a hand-
+     rolled disclosure since <details> can't wrap table rows) rather than a
+     second standalone table, so a company with zero reconciliation history
+     still gets a row instead of being invisible in a flat event log. */
+  .admin-audit-row { cursor: pointer; }
+  .admin-audit-row:hover { background: color-mix(in srgb, var(--color-text) 4%, transparent); }
+  .admin-audit-expand {
+    background: none; border: none; cursor: pointer; font: inherit; font-size: 16px;
+    color: var(--ink-muted); padding: 0 var(--space-2); line-height: 1; transition: transform 0.15s;
+  }
+  .admin-audit-row.is-expanded .admin-audit-expand { transform: rotate(90deg); color: var(--color-text); }
+  .admin-audit-detail-row td { background: color-mix(in srgb, var(--color-text) 3%, transparent); padding: var(--space-3); }
+  .admin-audit-detail-table { font-size: 12px; margin: 0; }
+
   .taxonomy-section { margin-top: var(--space-5); }
   .taxonomy-section:first-of-type { margin-top: var(--space-3); }
   .taxonomy-section-title { font-size: 15px; font-weight: 600; }
@@ -169,18 +179,16 @@
 {% endblock %}
 
 {% block content %}
-  <div class="admin-layout">
-    <aside class="admin-sidebar">
-      <nav class="admin-nav">
-        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'companies' }}" data-panel="companies">Companies</button>
-        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'taxonomy' }}" data-panel="taxonomy">Sectors, Industries &amp; Tags</button>
-        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'columns' }}" data-panel="columns">Company List Columns</button>
-        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'overview_ratios' }}" data-panel="overview_ratios">Overview Ratios</button>
-        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'import' }}" data-panel="import">Import Data</button>
-        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'stock_actions' }}" data-panel="stock_actions">Stock Actions</button>
-        <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'ingest' }}" data-panel="ingest">Ingest</button>
-      </nav>
-    </aside>
+    <nav class="admin-nav">
+      <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'companies' }}" data-panel="companies">Companies</button>
+      <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'taxonomy' }}" data-panel="taxonomy">Sectors, Industries &amp; Tags</button>
+      <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'columns' }}" data-panel="columns">Company List Columns</button>
+      <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'overview_ratios' }}" data-panel="overview_ratios">Overview Ratios</button>
+      <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'import' }}" data-panel="import">Import Data</button>
+      <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'stock_actions' }}" data-panel="stock_actions">Stock Actions</button>
+      <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'ingest' }}" data-panel="ingest">Ingest</button>
+      <button type="button" class="admin-nav-btn {{ 'active' if active_panel == 'audit' }}" data-panel="audit">Audit Log</button>
+    </nav>
 
     <div class="admin-panel" id="admin-panel-companies" {{ 'hidden' if active_panel != 'companies' }}>
       <p class="muted">Edit a company's name, sector, industry, and active/archived status. Ingested financial data is edited only via Import Data (this tab) or the CLI, never here.</p>
@@ -441,12 +449,14 @@
       {% if active_companies and import_sources %}
       <form class="import-form" method="post" action="{{ url_for('admin_import_raw_file') }}" enctype="multipart/form-data">
         <div class="field">
-          <label for="import-company">Company</label>
-          <select class="input" id="import-company" name="company_id" required>
-            {% for c in active_companies %}
-            <option value="{{ c['company_id'] }}" {{ 'selected' if c['company_id'] == import_selected_company }}>{{ c['display_name'] }} ({{ c['company_id'] }})</option>
-            {% endfor %}
-          </select>
+          <label for="import-company-input">Company</label>
+          <div class="site-search" data-company-picker>
+            <input type="text" class="input" id="import-company-input" data-company-picker-input
+                   placeholder="Search by name, ID, or NSE symbol&hellip;" autocomplete="off"
+                   value="{{ import_selected_company_label }}">
+            <input type="hidden" name="company_id" data-company-picker-value required value="{{ import_selected_company }}">
+            <div class="site-search-results" data-company-picker-results hidden></div>
+          </div>
         </div>
         <div class="field">
           <label for="import-source">Source</label>
@@ -665,7 +675,7 @@
               <td>{{ item['item_kind'] }}</td>
               <td><span class="tag {{ 'tag-success' if item['status'] == 'PROCESSED' else 'tag-neutral' if item['status'] == 'ARCHIVED' else 'tag-outline' }}">{{ item['status'] }}</span></td>
               <td>{{ item['error_message'] or item['status_reason'] or '—' }}</td>
-              <td>{{ item['last_attempt_at'] or item['processed_at'] or item['discovered_at'] }}</td>
+              <td>{% set ts = item['last_attempt_at'] or item['processed_at'] or item['discovered_at'] %}<span class="local-time" data-utc="{{ ts }}">{{ ts }}</span></td>
             </tr>
             {% endfor %}
           </tbody>
@@ -758,7 +768,7 @@
               <td>{{ doc['fiscal_year'] or '—' }}{{ ' ' + doc['quarter'] if doc['quarter'] else '' }}</td>
               <td><span class="tag {{ 'tag-success' if doc['processing_status'] == 'processed' else 'tag-neutral' if doc['processing_status'] == 'archived' else 'tag-outline' }}">{{ doc['processing_status'] }}</span></td>
               <td>{{ doc['error_message'] or '—' }}</td>
-              <td>{{ doc['processed_at'] or doc['retrieved_at'] }}</td>
+              <td>{% set ts = doc['processed_at'] or doc['retrieved_at'] %}<span class="local-time" data-utc="{{ ts }}">{{ ts }}</span></td>
             </tr>
             {% endfor %}
           </tbody>
@@ -792,8 +802,113 @@
       {% endif %}
       </div>
     </div>
-  </div>
 
+    <div class="admin-panel" id="admin-panel-audit" {{ 'hidden' if active_panel != 'audit' }}>
+      <p class="muted">
+        One row per NSE-listed company: where its data stands against NSE XBRL migration, and its recent
+        reconciliation decision trail on demand — expand a row to see every source candidate its canonical
+        values were chosen from, and why (including a metric an XBRL filing didn't report, left blank rather
+        than backfilled from legacy data).
+      </p>
+      <p class="muted" style="margin-top: 0;">
+        {{ audit_pending_count }} compan{{ 'y' if audit_pending_count == 1 else 'ies' }} with legacy data more
+        recent than their XBRL coverage &middot; {{ audit_not_started_count }} with no XBRL coverage yet.
+      </p>
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('admin') }}">
+        <input type="hidden" name="panel" value="audit">
+        <div class="field">
+          <label for="audit-q">Search</label>
+          <input class="input" type="text" id="audit-q" name="al_q" placeholder="Name, ID, or NSE symbol&hellip;" value="{{ audit_query }}">
+        </div>
+        <div class="field">
+          <label for="audit-status">Status</label>
+          <select class="input" id="audit-status" name="al_status" onchange="this.form.requestSubmit()">
+            <option value="">All statuses</option>
+            <option value="pending" {{ 'selected' if audit_status_filter == 'pending' }}>Pending</option>
+            <option value="not_started" {{ 'selected' if audit_status_filter == 'not_started' }}>Not started</option>
+            <option value="up_to_date" {{ 'selected' if audit_status_filter == 'up_to_date' }}>Up to date</option>
+            <option value="no_data" {{ 'selected' if audit_status_filter == 'no_data' }}>No data</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-ghost">Filter</button>
+        {% if audit_status_filter or audit_query %}
+        <a class="btn btn-ghost" href="{{ url_for('admin', panel='audit') }}">Clear</a>
+        {% endif %}
+      </form>
+
+      {% if audit_rows %}
+      <table class="table admin-audit-table">
+        <thead>
+          <tr><th></th><th>Company</th><th>NSE Symbol</th><th>Latest legacy period</th><th>Latest XBRL period</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {% for row in audit_rows %}
+          <tr class="admin-audit-row" data-audit-toggle>
+            <td><button type="button" class="admin-audit-expand" aria-expanded="false" aria-label="Show reconciliation history">&rsaquo;</button></td>
+            <td><a href="{{ url_for('company_report', company_id=row['company_id']) }}">{{ row['display_name'] }}</a> ({{ row['company_id'] }})</td>
+            <td>{{ row['nse_symbol'] }}</td>
+            <td>{{ row['latest_legacy_period'] or '—' }}</td>
+            <td>{{ row['latest_xbrl_period'] or '—' }}</td>
+            <td>
+              <span class="tag {{ 'tag-outline' if row['migration_status'] == 'pending' else 'tag-neutral' if row['migration_status'] == 'not_started' else 'tag-success' if row['migration_status'] == 'up_to_date' else 'tag-neutral' }}">
+                {{ row['migration_status']|replace('_', ' ') }}
+              </span>
+            </td>
+          </tr>
+          <tr class="admin-audit-detail-row" hidden>
+            <td colspan="6">
+              {% if row['recent_log'] %}
+              <table class="table admin-audit-detail-table">
+                <thead>
+                  <tr><th>When</th><th>Metric</th><th>Period</th><th>Statement</th><th>Source</th><th>Chosen</th><th>Note</th></tr>
+                </thead>
+                <tbody>
+                  {% for log in row['recent_log'] %}
+                  <tr>
+                    <td><span class="local-time" data-utc="{{ log['considered_at'] }}">{{ log['considered_at'] }}</span></td>
+                    <td>{{ log['metric_key'] }}</td>
+                    <td>{{ log['fiscal_year'] }}{{ log['quarter'] or '' }}</td>
+                    <td>{{ log['statement_type'] or '—' }}</td>
+                    <td>{{ log['source'] }}</td>
+                    <td><span class="tag {{ 'tag-success' if log['was_chosen'] else 'tag-neutral' }}">{{ 'yes' if log['was_chosen'] else 'no' }}</span></td>
+                    <td>{{ log['note'] }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              {% else %}
+              <div class="empty-state">No reconciliation activity recorded for this company yet.</div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if audit_total_pages > 1 %}
+      <div class="admin-pagination">
+        <span class="muted">
+          Showing {{ (audit_page - 1) * audit_page_size + 1 }}&ndash;{{ (audit_page - 1) * audit_page_size + audit_rows|length }}
+          of {{ audit_total }}
+        </span>
+        <div class="admin-pagination-links">
+          {% set audit_pagination_args = {'panel': 'audit', 'al_status': audit_status_filter, 'al_q': audit_query} %}
+          {% if audit_page > 1 %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', al_page=audit_page - 1, **audit_pagination_args) }}">&larr; Previous</a>
+          {% endif %}
+          <span class="muted">Page {{ audit_page }} of {{ audit_total_pages }}</span>
+          {% if audit_page < audit_total_pages %}
+          <a class="btn btn-ghost" href="{{ url_for('admin', al_page=audit_page + 1, **audit_pagination_args) }}">Next &rarr;</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      {% else %}
+      <div class="empty-state">No NSE-listed active companies match this filter.</div>
+      {% endif %}
+    </div>
+
+  <script src="{{ static_url('js/company_picker.js') }}"></script>
   <script>
     (function () {
       const buttons = document.querySelectorAll('.admin-nav-btn');
@@ -804,6 +919,26 @@
             panel.hidden = panel.id !== 'admin-panel-' + btn.dataset.panel;
           });
         });
+      });
+    })();
+
+    // Audit Log — each company row's detail (its recent reconciliation_log
+    // entries) is a sibling <tr> rendered hidden by the server; clicking the
+    // row (or its chevron button) just toggles that one sibling. Delegated
+    // on the table body rather than bound per-row, same reasoning the
+    // Ingest actions forms don't bind per-checkbox listeners.
+    (function () {
+      const table = document.querySelector('.admin-audit-table');
+      if (!table) return;
+      table.addEventListener('click', function (event) {
+        const row = event.target.closest('[data-audit-toggle]');
+        if (!row) return;
+        const detail = row.nextElementSibling;
+        if (!detail || !detail.classList.contains('admin-audit-detail-row')) return;
+        detail.hidden = !detail.hidden;
+        row.classList.toggle('is-expanded', !detail.hidden);
+        const expandBtn = row.querySelector('.admin-audit-expand');
+        if (expandBtn) expandBtn.setAttribute('aria-expanded', String(!detail.hidden));
       });
     })();
 

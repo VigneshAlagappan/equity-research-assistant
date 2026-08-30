@@ -65,6 +65,44 @@ def insert_financial_observations(
     return ids
 
 
+#: Source policy (2026-08 NSE XBRL directive): once a reporting period has a
+#: validated NSE observation on file, NSE XBRL is the sole source of truth
+#: for structured financial facts in that period — a metric it didn't report
+#: must stay blank, never fall back to legacy. This is the source_id
+#: reconcile() treats that way; extending to BSE happens once a BSE adapter
+#: exists (they're tied on trust_rank already — see config/settings.py).
+XBRL_SOURCE_ID = "nse"
+
+
+def _period_is_xbrl_migrated(
+    conn: sqlite3.Connection,
+    company_id: str,
+    period_type: str,
+    fiscal_year: str,
+    quarter: str | None,
+    statement_type: str | None,
+) -> bool:
+    """Whether ANY validated XBRL_SOURCE_ID observation exists for this exact
+    (company, period_type, fiscal_year, quarter, statement_type) scope —
+    regardless of which metric_key it's for. "Validated" today just means
+    "present as an nse-sourced observation": there's no separate filing
+    -validation gate yet (Open Decisions), so ingestion itself is the only
+    checkpoint. standalone/consolidated are independently migrated since
+    statement_type is part of the scope, same as everywhere else in this
+    module — an XBRL consolidated filing never affects standalone
+    reconciliation for the same period, and vice versa."""
+    row = conn.execute(
+        """
+        SELECT 1 FROM financial_observations
+        WHERE company_id = ? AND source = ? AND period_type = ?
+          AND fiscal_year = ? AND quarter IS ? AND statement_type IS ?
+        LIMIT 1
+        """,
+        (company_id, XBRL_SOURCE_ID, period_type, fiscal_year, quarter, statement_type),
+    ).fetchone()
+    return row is not None
+
+
 def reconcile(
     conn: sqlite3.Connection,
     company_id: str,
@@ -76,12 +114,24 @@ def reconcile(
 ) -> int | None:
     """Reconcile every observation for one (company, metric, period) key.
 
-    Phase 2 has exactly one source per company, so this degenerates to the
-    trivial pass-through the README describes ("only source available"). The
-    same logic already generalizes to multiple sources (picks the lowest
-    sources.trust_rank, most-recent observation as tiebreak) for when NSE/BSE
-    ingestion lands in a later phase — it isn't special-cased to "one source".
-    Returns the canonical_id, or None if there are no observations for this key.
+    Multiple sources are handled by picking the lowest sources.trust_rank,
+    most-recent observation as tiebreak. One case is special-cased ahead of
+    trust_rank, not just ordered by it: once _period_is_xbrl_migrated() is
+    true for this key's period scope, only XBRL_SOURCE_ID observations are
+    eligible candidates for ANY metric in that scope — even one XBRL simply
+    didn't report — rather than silently falling back to a legacy source.
+    That's a real behavioral carve-out (not something a trust_rank number
+    alone can express), because trust_rank only ranks candidates that exist
+    for this exact metric; it can't say "this period is XBRL's now, so a
+    metric XBRL is silent on should go blank, not legacy". See
+    config/settings.py's DEFAULT_SOURCES comment for the source policy this
+    implements.
+
+    Returns the canonical_id, or None if there are no eligible observations
+    for this key (either genuinely none on file, or every candidate was
+    rejected as legacy-in-a-migrated-period) — in the latter case, any
+    stale canonical_financials row from before migration is deleted rather
+    than left showing a pre-migration legacy value.
     """
     rows = conn.execute(
         """
@@ -94,6 +144,35 @@ def reconcile(
         """,
         (company_id, metric_key, period_type, fiscal_year, quarter, statement_type),
     ).fetchall()
+
+    def _delete_stale_canonical_row() -> None:
+        # reconciliation_log rows from the pre-migration reconciliation still
+        # reference this canonical_id (nullable FK, no ON DELETE CASCADE) —
+        # null those references out first so the DELETE below doesn't trip
+        # the foreign-key constraint; the log rows themselves are kept (audit
+        # trail), just no longer pointing at a canonical row that no longer
+        # exists.
+        conn.execute(
+            """
+            UPDATE reconciliation_log SET canonical_id = NULL
+            WHERE canonical_id IN (
+                SELECT canonical_id FROM canonical_financials
+                WHERE company_id = ? AND metric_key = ? AND period_type = ?
+                  AND fiscal_year = ? AND quarter IS ? AND statement_type IS ?
+            )
+            """,
+            (company_id, metric_key, period_type, fiscal_year, quarter, statement_type),
+        )
+        conn.execute(
+            """
+            DELETE FROM canonical_financials
+            WHERE company_id = ? AND metric_key = ? AND period_type = ?
+              AND fiscal_year = ? AND quarter IS ? AND statement_type IS ?
+            """,
+            (company_id, metric_key, period_type, fiscal_year, quarter, statement_type),
+        )
+        conn.commit()
+
     if not rows:
         return None
 
@@ -107,16 +186,44 @@ def reconcile(
         latest_per_source[row["source"]] = row
     candidates = list(latest_per_source.values())
 
+    all_candidates = candidates  # kept for the audit-log loop below even once `candidates` is narrowed
+    migrated = _period_is_xbrl_migrated(conn, company_id, period_type, fiscal_year, quarter, statement_type)
+    if migrated:
+        xbrl_candidates = [row for row in candidates if row["source"] == XBRL_SOURCE_ID]
+        if not xbrl_candidates:
+            # Period is on XBRL now, but this metric wasn't in the filing —
+            # blank, not backfilled from whatever legacy candidates exist.
+            _delete_stale_canonical_row()
+            now = utcnow_iso()
+            for row in candidates:
+                conn.execute(
+                    """
+                    INSERT INTO reconciliation_log (canonical_id, observation_id, considered_at, was_chosen, note)
+                    VALUES (NULL, ?, ?, 0, ?)
+                    """,
+                    (
+                        row["observation_id"], now,
+                        f"not chosen (source={row['source']}): period migrated to validated "
+                        f"{XBRL_SOURCE_ID!r} XBRL and this metric wasn't in the filing — left blank, not legacy-filled",
+                    ),
+                )
+            conn.commit()
+            return None
+        candidates = xbrl_candidates
+
     def sort_key(row: sqlite3.Row) -> tuple[int, str, int]:
         rank = row["trust_rank"] if row["trust_rank"] is not None else 999
         return (rank, row["retrieved_at"], row["observation_id"])
 
     chosen = min(candidates, key=sort_key)
-    reason = (
-        "only source available"
-        if len(candidates) == 1
-        else f"source '{chosen['source']}' preferred by trust_rank"
-    )
+    if migrated:
+        reason = f"source '{chosen['source']}' — period validated on NSE XBRL"
+    else:
+        reason = (
+            "only source available"
+            if len(candidates) == 1
+            else f"source '{chosen['source']}' preferred by trust_rank"
+        )
 
     # SQLite's UNIQUE constraint (and therefore ON CONFLICT) never fires when
     # a NULL participates in the unique columns — quarter/statement_type are
@@ -163,8 +270,14 @@ def reconcile(
              NORMALIZATION_VERSION, now, canonical_id),
         )
 
-    for row in candidates:
+    for row in all_candidates:
         was_chosen = row["observation_id"] == chosen["observation_id"]
+        note_for_rejected = (
+            f"not chosen (source={row['source']}, trust_rank={row['trust_rank']}): "
+            f"period validated on NSE XBRL — legacy sources aren't eligible for this period"
+            if migrated and row["source"] != XBRL_SOURCE_ID
+            else None
+        )
         conn.execute(
             """
             INSERT INTO reconciliation_log (canonical_id, observation_id, considered_at, was_chosen, note)
@@ -172,7 +285,9 @@ def reconcile(
             """,
             (
                 canonical_id, row["observation_id"], now, 1 if was_chosen else 0,
-                reason if was_chosen else f"not chosen (source={row['source']}, trust_rank={row['trust_rank']})",
+                reason if was_chosen else (
+                    note_for_rejected or f"not chosen (source={row['source']}, trust_rank={row['trust_rank']})"
+                ),
             ),
         )
     conn.commit()
@@ -222,16 +337,25 @@ def get_canonical_series(
     ).fetchall()
 
 
-def list_latest_shares_outstanding(conn: sqlite3.Connection) -> dict[str, float]:
-    """Latest reconciled shares-outstanding (Cr) per company, one query for
-    every company at once — used to compute market cap on the Companies
-    list, where a get_canonical_series() call per row (of ~2,500) would be
-    an N+1. Sparse: only companies with at least one shares_outstanding
-    observation appear."""
+def list_latest_shares_outstanding(conn: sqlite3.Connection) -> dict[str, tuple[float, str]]:
+    """Latest reconciled (shares-outstanding value in Cr, its fiscal year e.g.
+    "FY2014") per company, one query for every company at once — used to
+    compute market cap on the Companies list, where a get_canonical_series()
+    call per row (of ~2,500) would be an N+1. Sparse: only companies with at
+    least one shares_outstanding observation appear.
+
+    The fiscal year comes along because "latest on file" and "current" are
+    not the same thing here: a company whose financial-statement ingestion
+    stalled years ago (common in this dataset — as of 2026-08, most
+    companies' newest shares_outstanding row is FY2013/FY2014) still has
+    exactly one "latest" row, just a stale one. A caller computing market
+    cap from it needs the fiscal year to decide whether that's current
+    enough to show at all, not just the value — see web/app.py's
+    _is_shares_outstanding_current()."""
     rows = conn.execute(
         """
-        SELECT company_id, canonical_value FROM (
-            SELECT company_id, canonical_value,
+        SELECT company_id, canonical_value, fiscal_year FROM (
+            SELECT company_id, canonical_value, fiscal_year,
                    ROW_NUMBER() OVER (
                        PARTITION BY company_id ORDER BY fiscal_year DESC, quarter DESC
                    ) AS rn
@@ -241,15 +365,42 @@ def list_latest_shares_outstanding(conn: sqlite3.Connection) -> dict[str, float]
         WHERE rn = 1
         """
     ).fetchall()
-    return {row["company_id"]: row["canonical_value"] for row in rows}
+    return {row["company_id"]: (row["canonical_value"], row["fiscal_year"]) for row in rows}
 
 
 def reconcile_batch(conn: sqlite3.Connection, observations: Iterable[NormalizedObservation]) -> int:
-    """Reconcile every distinct (company, metric, period) key touched by a batch of observations."""
+    """Reconcile every distinct (company, metric, period) key touched by a
+    batch of observations.
+
+    When the batch includes an XBRL_SOURCE_ID observation, that also
+    "migrates" its (company, period_type, fiscal_year, quarter,
+    statement_type) scope (reconcile()'s docstring) — every OTHER metric
+    already on file for that same period must be re-reconciled too, not
+    just the metrics this particular filing happened to report, or a
+    legacy metric XBRL is silent on would keep showing its stale
+    pre-migration canonical value instead of going blank.
+    """
+    observations = list(observations)
     keys = {
         (obs.company_id, obs.metric_key, obs.period_type, obs.fiscal_year, obs.quarter, obs.statement_type)
         for obs in observations
     }
+
+    period_scopes = {
+        (obs.company_id, obs.period_type, obs.fiscal_year, obs.quarter, obs.statement_type)
+        for obs in observations if obs.source == XBRL_SOURCE_ID
+    }
+    for company_id, period_type, fiscal_year, quarter, statement_type in period_scopes:
+        sibling_metrics = conn.execute(
+            """
+            SELECT DISTINCT metric_key FROM financial_observations
+            WHERE company_id = ? AND period_type = ? AND fiscal_year = ? AND quarter IS ? AND statement_type IS ?
+            """,
+            (company_id, period_type, fiscal_year, quarter, statement_type),
+        ).fetchall()
+        for row in sibling_metrics:
+            keys.add((company_id, row["metric_key"], period_type, fiscal_year, quarter, statement_type))
+
     return sum(1 for key in keys if reconcile(conn, *key) is not None)
 
 
@@ -277,6 +428,150 @@ def reconcile_company(conn: sqlite3.Connection, company_id: str) -> int:
         )
         is not None
     )
+
+
+def list_reconciliation_log(
+    conn: sqlite3.Connection,
+    *,
+    company_id: str | None = None,
+    source: str | None = None,
+    limit: int = 200,
+) -> list[sqlite3.Row]:
+    """Recent reconciliation_log entries, newest first — the Admin Audit Log
+    panel's raw decision trail (every candidate reconcile() considered for
+    a (company, metric, period) key, chosen or not, with why). Joined
+    through financial_observations for company_id/metric_key/period/source,
+    since reconciliation_log itself only stores observation_id/canonical_id
+    — canonical_id can be NULL (a candidate rejected outright, or a stale
+    canonical row deleted after a period migrated to XBRL — see reconcile()'s
+    _delete_stale_canonical_row), so joining via canonical_financials would
+    silently drop exactly the rows an XBRL-migration audit most needs to
+    show."""
+    query = """
+        SELECT rl.log_id, rl.considered_at, rl.was_chosen, rl.note,
+               fo.company_id, fo.metric_key, fo.period_type, fo.fiscal_year,
+               fo.quarter, fo.statement_type, fo.source
+        FROM reconciliation_log rl
+        JOIN financial_observations fo ON fo.observation_id = rl.observation_id
+        WHERE 1=1
+    """
+    params: list[object] = []
+    if company_id:
+        query += " AND fo.company_id = ?"
+        params.append(company_id)
+    if source:
+        query += " AND fo.source = ?"
+        params.append(source)
+    query += " ORDER BY rl.considered_at DESC, rl.log_id DESC LIMIT ?"
+    params.append(limit)
+    return conn.execute(query, params).fetchall()
+
+
+def list_reconciliation_log_by_company(
+    conn: sqlite3.Connection, company_ids: Iterable[str], *, limit_per_company: int = 20
+) -> dict[str, list[sqlite3.Row]]:
+    """Recent reconciliation_log entries for a batch of companies at once,
+    capped per company — the Admin Audit Log table's per-row expandable
+    detail (list_xbrl_migration_status()'s companion), fetched for a whole
+    page of companies in one query rather than one query per row (the N+1
+    admin.html's own Companies-panel comment already flags as a real
+    problem at ~2,600 rows). ROW_NUMBER()-per-company keeps this bounded
+    even for a company with a long history (IDFCFIRSTB already has 130+
+    entries and growing), same windowing approach list_latest_shares_outstanding()
+    already uses for "top N per company" from one query."""
+    ids = list(company_ids)
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        f"""
+        SELECT * FROM (
+            SELECT rl.log_id, rl.considered_at, rl.was_chosen, rl.note,
+                   fo.company_id, fo.metric_key, fo.period_type, fo.fiscal_year,
+                   fo.quarter, fo.statement_type, fo.source,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY fo.company_id ORDER BY rl.considered_at DESC, rl.log_id DESC
+                   ) AS rn
+            FROM reconciliation_log rl
+            JOIN financial_observations fo ON fo.observation_id = rl.observation_id
+            WHERE fo.company_id IN ({placeholders})
+        )
+        WHERE rn <= ?
+        ORDER BY company_id, considered_at DESC
+        """,
+        (*ids, limit_per_company),
+    ).fetchall()
+    by_company: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        by_company.setdefault(row["company_id"], []).append(row)
+    return by_company
+
+
+def list_xbrl_migration_status(conn: sqlite3.Connection) -> list[dict]:
+    """Per NSE-listed active company: the latest quarterly period on file
+    from ANY source vs the latest one specifically validated on NSE XBRL —
+    the Admin Audit Log panel's "what's pending" view (source policy: NSE
+    XBRL as the target source of truth for structured financial facts).
+
+    A company is "pending" when legacy data extends past where XBRL
+    coverage currently reaches (fo.source='nse' has never overtaken it);
+    "not_started" when there's no XBRL coverage on file at all yet, but
+    there is legacy quarterly data to eventually migrate; "no_data" when
+    there's no quarterly data of any kind. Scoped to quarterly — that's
+    XBRL's actual reporting cadence today (sources/nse_xbrl.py) — and to
+    companies with an nse_symbol, since only those are fetchable from NSE's
+    API at all (scripts/fetch_nse_xbrl.py).
+
+    fiscal_year||quarter (e.g. "FY2025Q3") sorts correctly as plain text
+    since fiscal_year is always "FY" + 4 digits and quarter is always a
+    single "Q1".."Q4" — MAX()/< on that concatenation is a valid
+    chronological comparison without parsing it apart.
+    """
+    coverage_rows = conn.execute(
+        """
+        SELECT company_id,
+               MAX(CASE WHEN source = 'nse' THEN fiscal_year || quarter END) AS latest_xbrl_period,
+               MAX(fiscal_year || quarter) AS latest_any_period
+        FROM financial_observations
+        WHERE period_type = 'quarterly'
+        GROUP BY company_id
+        """
+    ).fetchall()
+    coverage_by_company = {row["company_id"]: row for row in coverage_rows}
+
+    companies = conn.execute(
+        """
+        SELECT company_id, display_name, nse_symbol FROM companies
+        WHERE nse_symbol IS NOT NULL AND nse_symbol != '' AND status = 'active'
+        """
+    ).fetchall()
+
+    _STATUS_ORDER = {"pending": 0, "not_started": 1, "no_data": 2, "up_to_date": 3}
+    results: list[dict] = []
+    for company in companies:
+        coverage = coverage_by_company.get(company["company_id"])
+        latest_xbrl = coverage["latest_xbrl_period"] if coverage else None
+        latest_any = coverage["latest_any_period"] if coverage else None
+        if latest_any is None:
+            migration_status = "no_data"
+        elif latest_xbrl is None:
+            migration_status = "not_started"
+        elif latest_xbrl < latest_any:
+            migration_status = "pending"
+        else:
+            migration_status = "up_to_date"
+        results.append(
+            {
+                "company_id": company["company_id"],
+                "display_name": company["display_name"],
+                "nse_symbol": company["nse_symbol"],
+                "latest_xbrl_period": latest_xbrl,
+                "latest_legacy_period": latest_any,
+                "migration_status": migration_status,
+            }
+        )
+    results.sort(key=lambda r: (_STATUS_ORDER[r["migration_status"]], r["display_name"] or ""))
+    return results
 
 
 WATCHLIST_ITEM_TYPES = ("company", "thread")
@@ -1437,9 +1732,9 @@ COMPANY_LIST_COLUMNS = [
     {"key": "sector", "label": "Sector"},
     {"key": "industry", "label": "Industry"},
     {"key": "price", "label": "Price"},
-    {"key": "market_cap", "label": "Market Cap"},
-    {"key": "week52", "label": "52-Week L/H"},
-    {"key": "all_time", "label": "All-Time L/H"},
+    {"key": "market_cap", "label": "Mkt Cap"},
+    {"key": "week52", "label": "52W Range"},
+    {"key": "all_time", "label": "All-Time Range"},
     {"key": "status", "label": "Status"},
     {"key": "tags", "label": "Index tags & IDs"},
 ]
