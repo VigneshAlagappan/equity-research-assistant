@@ -28,6 +28,7 @@
       <a class="site-nav-link {{ 'current' if request.endpoint == 'tools' else '' }}" href="{{ url_for('tools') }}">Tools</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'investigations' else '' }}" href="{{ url_for('investigations') }}">Investigations</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'watchlist' else '' }}" href="{{ url_for('watchlist') }}">Watchlist</a>
+      <a class="site-nav-link {{ 'current' if request.endpoint == 'docs' else '' }}" href="{{ url_for('docs') }}">Docs</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'about' else '' }}" href="{{ url_for('about') }}">About</a>
     </div>
     {% endif %}

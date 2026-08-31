@@ -409,6 +409,62 @@ backfill command above instead of expecting it to already be there.
 "low": [...], "close": [...], "volume": [...]}` for that company. There's no chart
 panel rendering this in the browser yet — today this is a raw JSON feed only.
 
+### 13. Database sharding (git storage)
+
+`data/equity_research.db` is git-tracked, but GitHub hard-blocks any single
+file over 100MB — and the db is already well past even the 50MB warning
+threshold. So it's never committed directly; instead it's split into
+≤50MB parts under `data/db_shards/` and *those* are what's actually
+tracked (already the case today — `git log -- data/db_shards/` shows the
+switch in commit `8df59aa`).
+
+**Reshard (after any ingestion — this is what actually needs to run
+regularly):**
+
+```bash
+python scripts/db_shard.py
+```
+
+Snapshots the live db via SQLite's own online backup API and rewrites
+`data/db_shards/` from scratch. Safe to run even while the app or an
+ingestion job is writing to the db concurrently — it never locks or copies
+the file at the OS level. Prints the part count and a checksum when done.
+Add `--chunk-mb 40` to use a smaller part size than the 49MB default.
+
+**Commit and push the new shards (a separate, deliberate step — not
+something to fold into a schedule without deciding this explicitly first):**
+
+```bash
+git add data/db_shards/
+git commit -m "Reshard: <what changed, e.g. 'Nifty 50 batch 2 ingested'>"
+git push
+```
+
+This is the part worth pausing on: resharding just writes local files, but
+committing and pushing sends whatever's currently in the live db to a
+shared remote, unattended if scheduled. Confirm the remote/branch and
+that unattended pushes are actually wanted before wiring this into cron —
+running the reshard step alone, on its own, is harmless and can be
+scheduled freely.
+
+**Reassemble (after a fresh clone, or pulling someone else's reshard):**
+
+```bash
+python scripts/db_unshard.py
+```
+
+Refuses to overwrite an existing `data/equity_research.db` unless you pass
+`--force` — this script can't tell "no db yet" apart from "db already open
+by a running app" on its own, so it just declines rather than guessing.
+Verifies the reassembled file's checksum against `data/db_shards/checksum.sha256`
+before finishing.
+
+**Staleness check:** as of this writing, `data/db_shards/` on disk matches
+git's last committed shard exactly (`git status --short data/db_shards/`
+shows nothing) — meaning it predates a fair amount of ingestion work done
+since. Run the reshard command above before the next commit if you want
+what's in git to reflect what's actually in the live db.
+
 ---
 
 ## A typical workflow, start to finish

@@ -1738,6 +1738,15 @@ def create_app() -> Flask:
             return redirect(url_for("settings"))
         return render_template("settings.html", themes=_THEME_LABELS)
 
+    _DOCS_SECTIONS = ("sources", "xbrl")
+
+    @app.route("/docs")
+    def docs():
+        active_section = request.args.get("section", "sources")
+        if active_section not in _DOCS_SECTIONS:
+            active_section = "sources"
+        return render_template("docs.html", active_section=active_section)
+
     @app.route("/")
     def home():
         # Real, live counts rather than copy that goes stale as the dataset
