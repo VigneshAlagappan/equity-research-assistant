@@ -62,6 +62,7 @@ from ingestion.coordinator import (
 from analytics.patterns import detect_yoy_spikes
 from ingestion.detector import ADAPTER_CLASSES
 from ingestion.pipeline import ingest_file
+from sources.nse_fetch import NSEFetchError, refresh_company_filings
 from research.assistant import answer_question
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.investigation import InvestigationError, run_investigation
@@ -151,6 +152,7 @@ from storage.repositories import (
     update_user_theme,
 )
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
+from web.shareholding_feed import build_shareholding_feed
 from web.fixtures import EXAMPLES, THREADS
 from web.live_quote import get_live_quote, peek_cached_quote
 from web.news import fetch_company_news, google_news_last_24h_url
@@ -989,6 +991,56 @@ def create_app() -> Flask:
         flash(f"Reconciled {count} metric/period combinations for {company_id}.", "success")
         return redirect(url_for("company_report", company_id=company_id))
 
+    @app.route("/companies/<company_id>/refresh", methods=["POST"])
+    def admin_refresh_company(company_id: str):
+        """Live-fetch this company's latest NSE filings and ingest whatever's
+        new — the same fetch+filter+download logic scripts/fetch_nse_xbrl.py's
+        CLI runs (sources/nse_fetch.py's refresh_company_filings(), one
+        capability, two triggers), followed by the same ingest_file() +
+        reconcile_batch() any other file ingestion here uses. Synchronous —
+        a company's worth of NSE requests is normally a few seconds, worst
+        case under a minute with retries (see refresh_company_filings'
+        pacing); no background-job infrastructure exists in this app to
+        defer it to."""
+        db = get_db()
+        company = get_company(db, company_id)
+        if company is None:
+            abort(404, f"No company registered with company_id={company_id!r}")
+        if not company["nse_symbol"]:
+            abort(404, f"{company_id} has no nse_symbol on file — nothing to refresh from NSE")
+
+        dest_dir = app_settings.RAW_DIR / company_id / "nse"
+        try:
+            result = refresh_company_filings(company["nse_symbol"], dest_dir)
+        except NSEFetchError as exc:
+            flash(f"Refresh failed: {exc}", "error")
+            return redirect(url_for("company_report", company_id=company_id))
+
+        reconciled = 0
+        for path in result.downloaded_files:
+            # statement_type is encoded in the filename
+            # (refresh_company_filings' own dest_path convention:
+            # "<date>_<statement_type>_<seq>.xml") rather than re-derived
+            # here — ingest_file's own default ("consolidated") would be
+            # wrong for half of what this just downloaded.
+            statement_type = path.stem.split("_")[1]
+            ingest_result = ingest_file(db, path, company_id=company_id, source_id="nse", statement_type=statement_type)
+            reconciled += ingest_result.reconciled_count
+
+        if result.downloaded_files:
+            flash(
+                f"Refreshed {company_id}: downloaded {len(result.downloaded_files)} new filing(s), "
+                f"{reconciled} metric/period combination(s) reconciled.",
+                "success",
+            )
+        else:
+            suffix = f" (most recent on NSE: {result.most_recent_date})" if result.most_recent_date else ""
+            flash(f"Up to date — no new filings from NSE{suffix}.", "success")
+        if result.error_count:
+            flash(f"{result.error_count} request(s) to NSE failed during refresh — see server logs.", "error")
+
+        return redirect(url_for("company_report", company_id=company_id))
+
     @app.route("/admin/ingest/refresh", methods=["POST"])
     def admin_ingest_refresh():
         """Refresh Pending Files — re-scan data/raw/ now, rather than
@@ -1209,7 +1261,7 @@ def create_app() -> Flask:
         tab = request.args.get("tab", "overview")
         valid_tabs = (
             "overview", "key_insights", "charts", "financials", "valuation_model",
-            "commentary", "news", "notes", "docs", "threads",
+            "shareholding", "commentary", "news", "notes", "docs", "threads",
         )
         if tab not in valid_tabs:
             abort(400, f"tab must be one of {', '.join(valid_tabs)}")
@@ -1390,6 +1442,7 @@ def create_app() -> Flask:
             valuation_data_url=valuation_data_url,
             financials_data_url=financials_data_url,
             docs_data_url=url_for("company_docs_feed", company_id=company_id),
+            shareholding_data_url=url_for("company_shareholding_feed", company_id=company_id),
             insights=insights,
             insights_preview=insights_preview,
             insights_history=insights_history,
@@ -1578,6 +1631,13 @@ def create_app() -> Flask:
         if get_company(db, company_id) is None:
             abort(404, f"No company registered with company_id={company_id!r}")
         return jsonify(build_docs_feed(db, company_id))
+
+    @app.route("/companies/<company_id>/shareholding-feed.json")
+    def company_shareholding_feed(company_id: str):
+        db = get_db()
+        if get_company(db, company_id) is None:
+            abort(404, f"No company registered with company_id={company_id!r}")
+        return jsonify(build_shareholding_feed(db, company_id))
 
     @app.route("/companies/<company_id>/docs/add", methods=["POST"])
     def company_add_document(company_id: str):

@@ -699,6 +699,73 @@ CREATE INDEX IF NOT EXISTS idx_stock_actions_company ON stock_actions(company_id
 -- it's a separate nullable column rather than a fake "admin@..." email.
 -- ============================================================
 
+-- ============================================================
+-- Shareholding pattern (SEBI LODR Reg 31) -- an independent domain from
+-- financial_observations/canonical_financials: NSE's corporate-share-
+-- holdings-master listing gives one row per quarterly submission
+-- (aggregate promoter/public/employee-trust %), and each submission's own
+-- linked XBRL adds individually-named holders on top (not every
+-- sub-category is named -- see sources/nse_shareholding.py's module
+-- docstring). Single-source (NSE only) today, so neither table here is
+-- routed through metric_aliases/reconciliation -- upserted directly,
+-- keyed on the natural (company, period[, holder]) identity.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS shareholding_observations (
+  observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  fiscal_year TEXT NOT NULL,
+  quarter TEXT NOT NULL,
+  promoter_holding_percent REAL,
+  public_holding_percent REAL,
+  employee_trust_percent REAL,
+  -- Institutional breakdown of the public_holding_percent total above --
+  -- Screener-style FII/DII/Government/Public(non-institutional) split,
+  -- read off the SAME SHP XBRL's own category-rollup contexts (Table I,
+  -- CategoryOfShareholdersAxis) rather than hand-aggregated here -- see
+  -- sources/nse_shareholding.py's parse_shp_category_breakdown(). Only
+  -- populated where that XBRL parses (same taxonomy-version gap as the
+  -- named-holder tables); NULL for an older filing, not a wrong zero.
+  fii_percent REAL,
+  dii_percent REAL,
+  government_percent REAL,
+  public_non_institutional_percent REAL,
+  num_shareholders INTEGER,
+  source TEXT NOT NULL DEFAULT 'nse',
+  source_url TEXT,                  -- the SHP xbrl link, for provenance
+  submission_date TEXT,
+  retrieved_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(company_id, fiscal_year, quarter)
+);
+CREATE INDEX IF NOT EXISTS idx_shareholding_company ON shareholding_observations(company_id, fiscal_year, quarter);
+
+-- One row per individually-named shareholder disclosed in a submission's
+-- SHP XBRL -- promoter individuals/HUF and promoter-group bodies corporate
+-- on the "promoter" side; named institutional holders (mutual funds, FPIs,
+-- insurers, pension funds, and similar) on the "public" side. Retail /
+-- aggregate-only sub-categories never produce a row here, by taxonomy
+-- design.
+CREATE TABLE IF NOT EXISTS shareholding_holders (
+  holder_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  fiscal_year TEXT NOT NULL,
+  quarter TEXT NOT NULL,
+  side TEXT NOT NULL,                -- promoter | public
+  category TEXT NOT NULL,            -- e.g. "Individuals / HUF", "Mutual Funds / UTI"
+  holder_name TEXT NOT NULL,
+  num_shares REAL,
+  percent_of_shares REAL,
+  source TEXT NOT NULL DEFAULT 'nse',
+  source_url TEXT,
+  submission_date TEXT,
+  retrieved_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  CHECK (side IN ('promoter', 'public')),
+  UNIQUE(company_id, fiscal_year, quarter, side, holder_name)
+);
+CREATE INDEX IF NOT EXISTS idx_shareholding_holders_lookup ON shareholding_holders(company_id, fiscal_year, quarter, side, percent_of_shares);
+
 CREATE TABLE IF NOT EXISTS users (
   user_id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT UNIQUE,

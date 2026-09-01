@@ -13,6 +13,7 @@
   <script defer src="{{ static_url('js/charts_overlay.js') }}"></script>
   <script defer src="{{ static_url('js/notes_panel.js') }}"></script>
   <script defer src="{{ static_url('js/threads_panel.js') }}"></script>
+  <script defer src="{{ static_url('js/shareholding_panel.js') }}"></script>
 {% endblock %}
 
 {% block extra_style %}
@@ -764,6 +765,58 @@
   }
   .vm-walk-label { opacity: 0.7; }
   .vm-walk-strong { font-weight: 600; }
+
+  /* — Shareholding Pattern tab ("Major Holders") — real data
+     (web/shareholding_feed.py), rendered client-side by
+     web/static/js/shareholding_panel.js, which owns all of #shp-root's
+     markup; these rules just style what it renders. Ported from a Claude
+     Design prototype (claude.ai/design, "Signals.dc.html"), then reshaped
+     into a Screener-style wide table at the user's request — same
+     .vm-table-scroll/.table mechanics (sticky Parameter + Trend columns)
+     the Financials/Valuation Model tabs already use, rather than a new
+     table pattern. Bucket color = one of the app's existing evidence-tag
+     tokens (--calc/--fact/--statement/--inference) reused for a different
+     meaning here (holder category, not fact-vs-inference) — picked because
+     they already happen to land teal/blue/amber/purple and are already
+     dark-mode-tuned, not because the two meanings are related. */
+  .shp-loading, .shp-error { color: var(--ink-muted); }
+  .shp-subtabs {
+    display: flex; gap: var(--space-4); border-bottom: 1px solid var(--border);
+    margin-bottom: var(--space-4); flex-wrap: wrap;
+  }
+  .shp-subtab {
+    border: none; background: transparent; padding: 0.6rem 0.1rem; margin-bottom: -1px;
+    font: 500 0.85rem var(--font-heading, inherit); color: var(--ink-muted); cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .shp-subtab:hover:not(:disabled) { color: var(--ink); }
+  .shp-subtab.is-active { color: var(--accent); border-bottom-color: var(--accent); }
+  .shp-subtab:disabled { cursor: default; opacity: 0.55; }
+  .shp-lock { margin-left: 3px; opacity: 0.7; }
+
+  .shp-table-scroll { margin-top: var(--space-3); }
+  .shp-bucket-promoter { --bucket-color: var(--calc); }
+  .shp-bucket-fii { --bucket-color: var(--fact); }
+  .shp-bucket-dii { --bucket-color: var(--statement); }
+  .shp-bucket-public { --bucket-color: var(--inference); }
+  .shp-row-category td:first-child { font-weight: 600; }
+  .shp-row-toggle {
+    border: none; background: transparent; padding: 0; font: inherit; color: inherit;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+  }
+  .shp-row-toggle-static { display: inline-flex; align-items: center; gap: 7px; cursor: default; }
+  .shp-chevron { color: var(--ink-muted); font-size: 0.7rem; display: inline-block; width: 0.7em; transition: transform 0.15s ease; }
+  .shp-chevron.is-open { transform: rotate(90deg); }
+  .shp-chevron-empty { visibility: hidden; }
+  .shp-swatch { width: 9px; height: 9px; border-radius: 3px; background: var(--bucket-color); flex-shrink: 0; }
+  .shp-row-sub { color: var(--ink-muted); font-weight: 400; font-size: 0.85em; }
+  .shp-row-label-sub { padding-left: 1.55rem; color: var(--ink-muted); }
+  .shp-row-category .vm-spark path { fill: none; stroke: var(--bucket-color); stroke-width: 1.5; }
+  .shp-delta-col { border-left: 1px solid var(--border); }
+  .shp-delta.is-up { color: var(--success); }
+  .shp-delta.is-down { color: #b3453f; }
+  .shp-delta.is-flat { color: var(--ink-muted); }
+  .shp-footnote { margin-top: var(--space-3); }
 {% endblock %}
 
 {% block content %}
@@ -806,6 +859,11 @@
       <form action="{{ url_for('admin_reconcile_company', company_id=company_id) }}" method="post" style="display:inline">
         <button type="submit" class="import-link-btn">&#8635; Reconcile</button>
       </form>
+      {% if company['nse_symbol'] %}
+      <form action="{{ url_for('admin_refresh_company', company_id=company_id) }}" method="post" style="display:inline">
+        <button type="submit" class="import-link-btn" title="Fetch this company's latest filings live from NSE">&#8635; Refresh from NSE</button>
+      </form>
+      {% endif %}
       {% endif %}
     </div>
 
@@ -847,6 +905,7 @@
       <a href="#sec-valuation-model" data-target="sec-valuation-model" class="{{ 'active' if tab == 'valuation_model' else '' }}">Valuation Model</a>
       <a href="#sec-docs" data-target="sec-docs" class="{{ 'active' if tab == 'docs' else '' }}">Docs</a>
       <a href="#sec-notes" data-target="sec-notes" class="{{ 'active' if tab == 'notes' else '' }}">Notes</a>
+      <a href="#sec-shareholding" data-target="sec-shareholding" class="{{ 'active' if tab == 'shareholding' else '' }}">Shareholding Pattern</a>
       <a href="#sec-threads" data-target="sec-threads" class="{{ 'active' if tab == 'threads' else '' }}">Threads</a>
       <a href="#sec-commentary" data-target="sec-commentary" class="{{ 'active' if tab == 'commentary' else '' }}">Commentary</a>
       <a href="#sec-news" data-target="sec-news" class="{{ 'active' if tab == 'news' else '' }}">News</a>
@@ -1016,6 +1075,14 @@
       </div>
     </div>
     <script type="application/json" id="notes-initial-data">{{ notes|tojson }}</script>
+  </section>
+
+  <section class="merged-section" id="sec-shareholding">
+    <h2>Shareholding Pattern</h2>
+    <!-- Rendered client-side by web/static/js/shareholding_panel.js from
+         web/shareholding_feed.py's real data — see that JS file's header
+         comment for the empty-company fallback message. -->
+    <div id="shp-root" data-url="{{ shareholding_data_url }}" data-company-id="{{ company_id }}"></div>
   </section>
 
   <section class="merged-section" id="sec-threads">

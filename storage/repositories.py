@@ -1964,3 +1964,156 @@ def update_user_theme(conn: sqlite3.Connection, user_id: int, theme: str) -> Non
         raise ValueError(f"theme must be one of {sorted(VALID_THEMES)}, got {theme!r}")
     conn.execute("UPDATE users SET theme = ? WHERE user_id = ?", (theme, user_id))
     conn.commit()
+
+
+# ============================================================
+# Shareholding pattern (SEBI LODR Reg 31) -- sources/nse_shareholding.py.
+# Single-source (NSE only) today, so upserted directly by natural key
+# rather than routed through the metric_aliases/reconciliation machinery
+# the financials tables use.
+# ============================================================
+
+def insert_shareholding_observations(conn: sqlite3.Connection, company_id: str, summaries: Iterable) -> int:
+    """Upsert one row per (company, fiscal_year, quarter) -- a re-fetch of
+    an already-seen quarter overwrites its percentages/provenance in place
+    (a later submission for the same quarter is a correction, not a second
+    observation to keep both of), same "latest wins" reasoning as
+    sources/nse_fetch.py's own seq_Id dedup for revised filings."""
+    now = utcnow_iso()
+    count = 0
+    for s in summaries:
+        conn.execute(
+            """
+            INSERT INTO shareholding_observations
+                (company_id, fiscal_year, quarter, promoter_holding_percent,
+                 public_holding_percent, employee_trust_percent, source,
+                 source_url, submission_date, retrieved_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'nse', ?, ?, ?, ?)
+            ON CONFLICT(company_id, fiscal_year, quarter) DO UPDATE SET
+                promoter_holding_percent = excluded.promoter_holding_percent,
+                public_holding_percent = excluded.public_holding_percent,
+                employee_trust_percent = excluded.employee_trust_percent,
+                source_url = excluded.source_url,
+                submission_date = excluded.submission_date,
+                retrieved_at = excluded.retrieved_at
+            """,
+            (
+                company_id, s.fiscal_year, s.quarter, s.promoter_percent,
+                s.public_percent, s.employee_trust_percent, s.source_url,
+                s.submission_date, now, now,
+            ),
+        )
+        count += 1
+    conn.commit()
+    return count
+
+
+def update_shareholding_category_breakdown(
+    conn: sqlite3.Connection, company_id: str, fiscal_year: str, quarter: str, breakdown
+) -> None:
+    """Backfill the FII/DII/Government/Public(non-institutional) columns
+    onto an already-upserted shareholding_observations row -- a separate
+    call from insert_shareholding_observations() because this data comes
+    from a per-quarter XBRL parse (one extra HTTP call per quarter,
+    sources/nse_shareholding.py's fetch_shareholding_detail()), not the
+    master listing every summary row is upserted from. A no-op if that row
+    doesn't exist yet (shouldn't happen in the normal fetch-then-detail
+    call order, but silently doing nothing is safer than erroring the
+    whole ingest run over one quarter's ordering)."""
+    conn.execute(
+        """
+        UPDATE shareholding_observations
+        SET fii_percent = ?, dii_percent = ?, government_percent = ?,
+            public_non_institutional_percent = ?, num_shareholders = ?
+        WHERE company_id = ? AND fiscal_year = ? AND quarter = ?
+        """,
+        (
+            breakdown.fii_percent, breakdown.dii_percent, breakdown.government_percent,
+            breakdown.public_non_institutional_percent, breakdown.num_shareholders,
+            company_id, fiscal_year, quarter,
+        ),
+    )
+    conn.commit()
+
+
+def insert_shareholding_holders(
+    conn: sqlite3.Connection,
+    company_id: str,
+    fiscal_year: str,
+    quarter: str,
+    holdings: Iterable,
+    *,
+    source_url: str | None,
+    submission_date: str | None,
+) -> int:
+    """Upsert one row per (company, fiscal_year, quarter, side, holder_name)
+    -- same latest-wins reasoning as insert_shareholding_observations()."""
+    now = utcnow_iso()
+    count = 0
+    for h in holdings:
+        conn.execute(
+            """
+            INSERT INTO shareholding_holders
+                (company_id, fiscal_year, quarter, side, category, holder_name,
+                 num_shares, percent_of_shares, source, source_url,
+                 submission_date, retrieved_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'nse', ?, ?, ?, ?)
+            ON CONFLICT(company_id, fiscal_year, quarter, side, holder_name) DO UPDATE SET
+                category = excluded.category,
+                num_shares = excluded.num_shares,
+                percent_of_shares = excluded.percent_of_shares,
+                source_url = excluded.source_url,
+                submission_date = excluded.submission_date,
+                retrieved_at = excluded.retrieved_at
+            """,
+            (
+                company_id, fiscal_year, quarter, h.side, h.category, h.holder_name,
+                h.num_shares, h.percent_of_shares, source_url, submission_date, now, now,
+            ),
+        )
+        count += 1
+    conn.commit()
+    return count
+
+
+_SHAREHOLDING_HISTORY_QUARTERS = 12
+
+
+def list_shareholding_history(
+    conn: sqlite3.Connection, company_id: str, limit: int = _SHAREHOLDING_HISTORY_QUARTERS
+) -> list[dict]:
+    """Up to the last `limit` quarters' shareholding summaries, oldest
+    first (left-to-right column order for a Screener-style time-series
+    table) -- for the company page's Shareholding Pattern tab."""
+    rows = conn.execute(
+        """
+        SELECT * FROM shareholding_observations
+        WHERE company_id = ?
+        ORDER BY fiscal_year DESC, quarter DESC
+        LIMIT ?
+        """,
+        (company_id, limit),
+    ).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
+def list_shareholding_holders_all(conn: sqlite3.Connection, company_id: str) -> list[dict]:
+    """Every individually-named holder row on file for this company, across
+    every quarter -- the raw material web/shareholding_feed.py groups into
+    per-quarter FII/DII/Public-other buckets (sources.nse_shareholding.
+    classify_public_category) and per-holder trend sparklines. One query
+    covering the whole company rather than one per quarter: this table is
+    small (a few dozen named holders per quarter, and named-holder
+    extraction only covers the last several quarters -- see
+    sources/nse_shareholding.py's module docstring), so the feed builder
+    just filters/groups the full set in Python against
+    list_shareholding_history()'s own quarter list."""
+    rows = conn.execute(
+        """
+        SELECT fiscal_year, quarter, side, category, holder_name, num_shares, percent_of_shares
+        FROM shareholding_holders
+        WHERE company_id = ?
+        """,
+        (company_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]

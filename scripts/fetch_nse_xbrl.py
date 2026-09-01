@@ -1,8 +1,11 @@
 """Download a company's NSE quarterly-results XBRL filings into
 data/raw/<company>/nse/, ready for ingestion (main.py ingest / the Admin
-Ingest queue). sources/nse_fetch.py owns the actual HTTP/session/caching
-work; this script just resolves a company_id -> nse_symbol, filters the
-filing index to the requested window, and downloads what's missing.
+Ingest queue). sources/nse_fetch.py's refresh_company_filings() owns the
+actual fetch+filter+download logic (and the HTTP/session/caching work
+under that) — the same function the company-page "Refresh" button
+(web/app.py's admin_refresh_company) calls; this script is a thin CLI
+wrapper: resolve a company_id -> nse_symbol, parse args into that
+function's parameters, print the result.
 
 Downloading files here never touches the database — it only stages input
 under data/raw/, same as a user manually saving a Screener export there
@@ -21,18 +24,11 @@ sys.path, same as every other script here.)
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime
-from pathlib import Path
+from datetime import datetime
 
 from companies.registry import get_company
 from config import settings
-from sources.nse_fetch import (
-    NSEFetchError,
-    download_filing,
-    fetch_filing_index,
-    fetch_integrated_filing_index,
-    filter_last_n_years,
-)
+from sources.nse_fetch import refresh_company_filings
 from storage.database import init_db
 
 _CACHE_DIR = settings.DATA_DIR / ".cache" / "nse_xbrl"
@@ -63,61 +59,29 @@ def main() -> None:
 
     print(f"{company_id} -> NSE symbol {symbol!r}", flush=True)
 
-    try:
-        filings = fetch_filing_index(symbol, nse_period=args.period, cache_dir=_CACHE_DIR)
-    except NSEFetchError as exc:
-        raise SystemExit(f"Failed to list NSE filings for {symbol}: {exc}") from exc
+    from_date = datetime.strptime(args.from_date, "%Y-%m-%d").date() if args.from_date else None
+    to_date = datetime.strptime(args.to_date, "%Y-%m-%d").date() if args.to_date else None
 
-    # NSE migrated financial-results filing to SEBI's newer "Integrated
-    # Filing" framework partway through (verified: fetch_filing_index()'s
-    # own listing for IDFCFIRSTB stops dead at Q3 FY25, this one picks up
-    # cleanly from Q4 FY25 onward with no gap or overlap) — only relevant
-    # for Quarterly, the only cadence this framework reports at.
-    if args.period == "Quarterly":
-        try:
-            integrated_filings = fetch_integrated_filing_index(symbol, cache_dir=_CACHE_DIR)
-        except NSEFetchError as exc:
-            print(f"WARNING: failed to list newer Integrated Filing results for {symbol}: {exc}", flush=True)
-            integrated_filings = []
-        if integrated_filings:
-            print(f"{len(integrated_filings)} additional filing(s) from NSE's newer Integrated Filing listing", flush=True)
-        filings = filings + integrated_filings
+    dest_dir = settings.RAW_DIR / company_id / "nse"
+    result = refresh_company_filings(
+        symbol, dest_dir,
+        periods=(args.period,),
+        years=args.years, from_date=from_date, to_date=to_date,
+        cache_dir=_CACHE_DIR,
+    )
 
-    if not filings:
+    if result.most_recent_date is None and not result.downloaded_files and result.skipped_count == 0:
         print("NSE returned no filings for this symbol/period.")
         return
 
-    if args.years is not None:
-        filings = filter_last_n_years(filings, args.years)
-    if args.from_date:
-        cutoff = datetime.strptime(args.from_date, "%Y-%m-%d").date()
-        filings = [f for f in filings if f.to_date >= cutoff]
-    if args.to_date:
-        cutoff = datetime.strptime(args.to_date, "%Y-%m-%d").date()
-        filings = [f for f in filings if f.to_date <= cutoff]
+    print(f"Most recent reporting period end on NSE: {result.most_recent_date}", flush=True)
+    for path in result.downloaded_files:
+        print(f"  downloaded {path.relative_to(settings.BASE_DIR)}", flush=True)
 
-    filings.sort(key=lambda f: (f.to_date, f.statement_type))
-    most_recent = max(f.to_date for f in filings) if filings else None
-    print(f"{len(filings)} filing(s) in window. Most recent reporting period end on NSE: {most_recent}", flush=True)
-
-    dest_dir = settings.RAW_DIR / company_id / "nse"
-    downloaded = skipped = errors = 0
-    for filing in filings:
-        dest_path = dest_dir / f"{filing.to_date.isoformat()}_{filing.statement_type}_{filing.seq_number}.xml"
-        try:
-            fetched = download_filing(filing, dest_path)
-        except NSEFetchError as exc:
-            errors += 1
-            print(f"  ERROR {filing.to_date} {filing.statement_type} seq={filing.seq_number}: {exc}", flush=True)
-            continue
-        if fetched:
-            downloaded += 1
-            print(f"  downloaded {dest_path.relative_to(settings.BASE_DIR)}", flush=True)
-        else:
-            skipped += 1
-            print(f"  already on disk: {dest_path.relative_to(settings.BASE_DIR)}", flush=True)
-
-    print(f"\nDone. downloaded={downloaded} already_on_disk={skipped} errors={errors}", flush=True)
+    print(
+        f"\nDone. downloaded={len(result.downloaded_files)} already_on_disk={result.skipped_count} "
+        f"errors={result.error_count}", flush=True,
+    )
 
 
 if __name__ == "__main__":

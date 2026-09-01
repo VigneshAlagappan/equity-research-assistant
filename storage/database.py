@@ -49,6 +49,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_raw_file_paths_to_repo_relative(conn)
     _migrate_company_notes_updated_at(conn)
     _migrate_llm_call_log_columns(conn)
+    _migrate_shareholding_observations_columns(conn)
     _seed_sources(conn)
     _migrate_source_trust_ranks(conn)
     _seed_sectors_and_industries(conn)
@@ -159,6 +160,23 @@ def _migrate_llm_call_log_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE llm_call_log ADD COLUMN reuse_hit INTEGER NOT NULL DEFAULT 0")
     if "reused_thread_id" not in columns:
         conn.execute("ALTER TABLE llm_call_log ADD COLUMN reused_thread_id TEXT")
+
+
+def _migrate_shareholding_observations_columns(conn: sqlite3.Connection) -> None:
+    """`CREATE TABLE IF NOT EXISTS` is a no-op on a shareholding_observations
+    table that already existed before the FII/DII/Government/Public
+    institutional-breakdown columns were added — same pattern as the other
+    _migrate_* functions above. Empty `columns` means the table itself
+    doesn't exist yet (a genuinely fresh DB, where CREATE TABLE just above
+    already created it with every column) -- nothing to backfill."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(shareholding_observations)")}
+    if not columns:
+        return
+    for column in ("fii_percent", "dii_percent", "government_percent", "public_non_institutional_percent"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE shareholding_observations ADD COLUMN {column} REAL")
+    if "num_shareholders" not in columns:
+        conn.execute("ALTER TABLE shareholding_observations ADD COLUMN num_shareholders INTEGER")
 
 
 def _migrate_users_theme_column(conn: sqlite3.Connection) -> None:

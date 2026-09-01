@@ -30,11 +30,13 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
+
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -386,3 +388,96 @@ def filter_last_n_years(filings: list[NSEFilingRef], years: int, *, as_of: date 
     as_of = as_of or datetime.now(timezone.utc).date()
     cutoff = as_of.replace(year=as_of.year - years)
     return [f for f in filings if f.to_date >= cutoff]
+
+
+_DEFAULT_XBRL_CACHE_DIR = settings.DATA_DIR / ".cache" / "nse_xbrl"
+
+
+@dataclass
+class RefreshResult:
+    """What one refresh_company_filings() call actually did — enough for
+    either caller (CLI print, or a web route's flash message) to report a
+    result without re-deriving it."""
+
+    downloaded_files: list[Path] = field(default_factory=list)
+    skipped_count: int = 0  # already on disk, not re-downloaded
+    error_count: int = 0
+    most_recent_date: date | None = None  # most recent reporting period end NSE has on file, in the requested window
+
+
+def refresh_company_filings(
+    symbol: str,
+    dest_dir: Path,
+    *,
+    periods: tuple[str, ...] = NSE_PERIODS,
+    years: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    cache_dir: Path | None = None,
+) -> RefreshResult:
+    """List + download every NSE quarterly-results filing not already on
+    disk under dest_dir, for one company. The one place this app's fetch+
+    filter+download logic lives — scripts/fetch_nse_xbrl.py's CLI and the
+    company-page "Refresh" web route (web/app.py's admin_refresh_company)
+    both call this directly rather than each keeping their own copy (this
+    app's "one ingestion capability, two triggers" principle).
+
+    Never touches the database — same as the CLI this replaced: staging
+    files under dest_dir is as far as this goes. Ingesting what it
+    downloads is a separate, explicit step the caller runs afterward (see
+    ingestion.pipeline.ingest_file()).
+
+    periods defaults to both Quarterly and Annual (matches this app's own
+    batch-fetch convention — see NIFTY500_USA_XBRL_BATCHES.md); the CLI
+    passes a single period through here to preserve its existing
+    --period flag's exact prior behavior."""
+    cache_dir = cache_dir if cache_dir is not None else _DEFAULT_XBRL_CACHE_DIR
+    result = RefreshResult()
+
+    all_filings: list[NSEFilingRef] = []
+    for nse_period in periods:
+        try:
+            filings = fetch_filing_index(symbol, nse_period=nse_period, cache_dir=cache_dir)
+        except NSEFetchError as exc:
+            logger.warning("refresh_company_filings: failed to list %s filings for %s: %s", nse_period, symbol, exc)
+            result.error_count += 1
+            continue
+        # NSE migrated financial-results filing to SEBI's newer "Integrated
+        # Filing" framework partway through — see fetch_integrated_filing_index()'s
+        # own docstring; only relevant for Quarterly, the only cadence that
+        # framework reports at.
+        if nse_period == "Quarterly":
+            try:
+                filings = filings + fetch_integrated_filing_index(symbol, cache_dir=cache_dir)
+            except NSEFetchError as exc:
+                logger.warning("refresh_company_filings: failed to list Integrated Filing results for %s: %s", symbol, exc)
+                result.error_count += 1
+        all_filings.extend(filings)
+
+    if years is not None:
+        all_filings = filter_last_n_years(all_filings, years)
+    if from_date is not None:
+        all_filings = [f for f in all_filings if f.to_date >= from_date]
+    if to_date is not None:
+        all_filings = [f for f in all_filings if f.to_date <= to_date]
+
+    if all_filings:
+        result.most_recent_date = max(f.to_date for f in all_filings)
+
+    for filing in all_filings:
+        dest_path = dest_dir / f"{filing.to_date.isoformat()}_{filing.statement_type}_{filing.seq_number}.xml"
+        try:
+            fetched = download_filing(filing, dest_path)
+        except NSEFetchError as exc:
+            result.error_count += 1
+            logger.warning(
+                "refresh_company_filings: failed to download %s %s seq=%s: %s",
+                filing.to_date, filing.statement_type, filing.seq_number, exc,
+            )
+            continue
+        if fetched:
+            result.downloaded_files.append(dest_path)
+        else:
+            result.skipped_count += 1
+
+    return result
