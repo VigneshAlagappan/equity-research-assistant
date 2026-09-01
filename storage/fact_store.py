@@ -25,6 +25,7 @@ from typing import Callable
 class FactStore:
     # Financials / structured facts (retrieval/structured_search.py)
     get_canonical_series: Callable[..., list[sqlite3.Row]]
+    list_canonical_financials_for_companies: Callable[..., list[sqlite3.Row]]
 
     # Knowledge graph — entities/claims/relationships/evidence
     # (research/investigation_planner.py, research/hypothesis_generator.py,
@@ -87,6 +88,7 @@ def default_fact_store() -> FactStore:
         list_all_knowledge_entities,
         list_all_knowledge_evidence,
         list_all_knowledge_relationships,
+        list_canonical_financials_for_companies,
         list_company_documents,
         list_company_ids_with_financial_data,
         list_generated_reports,
@@ -106,6 +108,7 @@ def default_fact_store() -> FactStore:
 
     return FactStore(
         get_canonical_series=get_canonical_series,
+        list_canonical_financials_for_companies=list_canonical_financials_for_companies,
         list_knowledge_entities_for_companies=list_knowledge_entities_for_companies,
         find_knowledge_claims_about_entity=find_knowledge_claims_about_entity,
         list_knowledge_evidence_for_claim=list_knowledge_evidence_for_claim,

@@ -425,3 +425,98 @@ def find_claims_about_entity(driver: Driver, entity_type: str, entity_name: str)
         )
         for row in rows
     ]
+
+
+# ============================================================
+# Financial figures (TRIAL) — projects canonical_financials, the
+# deterministic layer architecture.md calls out as "SQLite knows the
+# facts," into this same graph. Everything above (sync_graph/
+# sync_knowledge_graph) is about relationships BETWEEN companies/claims;
+# this is the first time an actual number crosses into Neo4j at all.
+#
+# (:Company)-[:REPORTED]->(:Observation {value, unit, statement_type})
+#            -[:OF_METRIC]->(:Metric {key, display_name, category})
+# (:Observation)-[:DURING]->(:TimePeriod {key})
+#
+# TimePeriod nodes are the SAME ones _sync_knowledge_claims()'s VALID_DURING
+# already creates (identical "FY2024-Q1"/"FY2024" key format) -- a genuine
+# payoff of putting financials in the graph at all: a metric's period and a
+# document claim's period now MERGE onto one node, so "what did management
+# say during the same quarter this ratio moved" becomes a real 2-hop
+# traversal instead of a separate SQL join you'd have to write yourself.
+#
+# Deliberately NOT wired into sync_graph()/sync_knowledge_graph() or their
+# callers' automatic resync -- canonical_financials is 1000+ rows per
+# company, so syncing every registered company (2,500+) on every traversal
+# is a real scale/cost decision to make deliberately later, not a trial
+# default. Call sync_financials() directly, scoped to whichever
+# company_ids you actually want in the graph right now.
+# ============================================================
+
+
+def _observation_id(row: sqlite3.Row) -> str:
+    return "|".join(str(x) for x in (
+        row["company_id"], row["metric_key"], row["period_type"],
+        row["fiscal_year"], row["quarter"] or "", row["statement_type"] or "",
+    ))
+
+
+def _period_key(row: sqlite3.Row) -> str | None:
+    if not row["fiscal_year"]:
+        return None
+    return f"{row['fiscal_year']}-{row['quarter']}" if row["quarter"] else row["fiscal_year"]
+
+
+def _sync_metrics(tx, rows: list[sqlite3.Row]) -> None:
+    by_key = {
+        r["metric_key"]: {"key": r["metric_key"], "display_name": r["display_name"], "category": r["category"]}
+        for r in rows
+    }
+    tx.run(
+        "UNWIND $rows AS row "
+        "MERGE (m:Metric {key: row.key}) "
+        "SET m.display_name = row.display_name, m.category = row.category",
+        rows=list(by_key.values()),
+    )
+
+
+def _sync_observations(tx, rows: list[sqlite3.Row]) -> None:
+    tx.run(
+        "UNWIND $rows AS row "
+        "MATCH (c:Company {id: row.company_id}), (m:Metric {key: row.metric_key}) "
+        "MERGE (o:Observation {obs_id: row.obs_id}) "
+        "SET o.value = row.value, o.unit = row.unit, o.statement_type = row.statement_type, "
+        "    o.period_type = row.period_type, o.fiscal_year = row.fiscal_year, o.quarter = row.quarter "
+        "MERGE (c)-[:REPORTED]->(o) "
+        "MERGE (o)-[:OF_METRIC]->(m)",
+        rows=[
+            {
+                "obs_id": _observation_id(r), "company_id": r["company_id"], "metric_key": r["metric_key"],
+                "value": r["canonical_value"], "unit": r["unit"], "statement_type": r["statement_type"],
+                "period_type": r["period_type"], "fiscal_year": r["fiscal_year"], "quarter": r["quarter"],
+            }
+            for r in rows
+        ],
+    )
+    periods = [{"obs_id": _observation_id(r), "period_key": _period_key(r)} for r in rows if _period_key(r)]
+    if periods:
+        tx.run(
+            "UNWIND $rows AS row "
+            "MERGE (tp:TimePeriod {key: row.period_key}) "
+            "WITH tp, row "
+            "MATCH (o:Observation {obs_id: row.obs_id}) "
+            "MERGE (o)-[:DURING]->(tp)",
+            rows=periods,
+        )
+
+
+def sync_financials(conn: sqlite3.Connection, driver: Driver, *, fact_store: FactStore, company_ids: list[str]) -> int:
+    """TRIAL. Full, idempotent (re)sync of canonical_financials for exactly
+    these companies -- see the module comment above for the graph shape and
+    why this isn't wired into the automatic resync path yet. Returns the
+    row count synced, for a caller to report back."""
+    rows = fact_store.list_canonical_financials_for_companies(conn, company_ids)
+    with driver.session() as session:
+        session.execute_write(_sync_metrics, rows)
+        session.execute_write(_sync_observations, rows)
+    return len(rows)

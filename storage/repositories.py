@@ -337,6 +337,32 @@ def get_canonical_series(
     ).fetchall()
 
 
+def list_canonical_financials_for_companies(conn: sqlite3.Connection, company_ids: list[str]) -> list[sqlite3.Row]:
+    """Every canonical_financials row for the given companies in one query,
+    joined with metrics_dictionary for a human-readable display_name/
+    category -- the bulk read context/graph_neo4j.py's sync_financials()
+    (trial: projects canonical_financials into Neo4j) needs. Deliberately
+    company-scoped, not a list-everything query: canonical_financials runs
+    to 1000+ rows per company, and get_canonical_series() above is
+    per-metric/per-company by design (retrieval/structured_search.py's
+    normal access pattern) -- this is the one place a bulk multi-metric
+    read is actually needed."""
+    if not company_ids:
+        return []
+    placeholders = ",".join("?" * len(company_ids))
+    return conn.execute(
+        f"""
+        SELECT cf.company_id, cf.metric_key, cf.period_type, cf.fiscal_year, cf.quarter,
+               cf.statement_type, cf.canonical_value, cf.unit,
+               md.display_name, md.category
+        FROM canonical_financials cf
+        LEFT JOIN metrics_dictionary md ON md.metric_key = cf.metric_key
+        WHERE cf.company_id IN ({placeholders})
+        """,
+        company_ids,
+    ).fetchall()
+
+
 def list_latest_shares_outstanding(conn: sqlite3.Connection) -> dict[str, tuple[float, str]]:
     """Latest reconciled (shares-outstanding value in Cr, its fiscal year e.g.
     "FY2014") per company, one query for every company at once — used to
