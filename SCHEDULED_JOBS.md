@@ -8,8 +8,8 @@ scheduling policy and gap analysis only.
 ## 1. Financials — quarterly (India + USA)
 
 - **India**: ready. `scripts/fetch_nse_xbrl.py` + `sources/nse_xbrl.py` —
-  the pipeline already running for Nifty 50 (13 of 50 done as of this
-  writing) and planned for Nifty 500. Re-running per company is idempotent
+  the pipeline already running for Nifty 50 (41 of 51 constituents on file
+  done as of this writing) and planned for Nifty 500. Re-running per company is idempotent
   (already-downloaded files skipped, already-ingested observations not
   reprocessed).
 - **USA**: gap. `sources/yfinance_financials.py` is annual-only by its own
