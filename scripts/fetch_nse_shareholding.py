@@ -20,9 +20,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import uuid
 from datetime import date
 
 from companies.registry import get_company
+from ingestion.event_bus import publish
+from ingestion.events import DatasetIngestedEvent
 from sources.nse_fetch import NSEFetchError
 from sources.nse_shareholding import fetch_shareholding_detail, fetch_shareholding_master
 from storage.database import init_db
@@ -92,6 +95,19 @@ def main() -> None:
             update_shareholding_category_breakdown(conn, company_id, s.fiscal_year, s.quarter, breakdown)
             breakdown_note = " + FII/DII/Government breakdown"
         print(f"  {s.fiscal_year} {s.quarter}: {len(holdings)} named holder(s){breakdown_note}", flush=True)
+
+    publish(
+        conn,
+        DatasetIngestedEvent(
+            dataset_id=f"nse_shareholding:{company_id}",
+            dataset_type="shareholding",
+            source="nse",
+            scope={"company_id": company_id},
+            storage_reference={"table": "shareholding_observations", "company_id": company_id},
+            ingestion_id=str(uuid.uuid4()),
+            metadata={"summary_count": obs_count, "named_holder_count": holder_total},
+        ),
+    )
 
     conn.close()
     print(f"\nDone. summaries={obs_count} named_holders={holder_total} errors={errors}", flush=True)

@@ -39,9 +39,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import ingestion.workers  # noqa: F401 -- registers built-in workers (knowledge_builder, chunk_indexer, ...)
 from companies.registry import get_company
 from config import settings
 from ingestion.detector import (
@@ -50,11 +52,12 @@ from ingestion.detector import (
     detect_macro_source_from_path,
     is_macro_path,
 )
+from ingestion.event_bus import publish
+from ingestion.events import DatasetIngestedEvent
 from ingestion.pipeline import ingest_bank_infrastructure_file, ingest_file, ingest_macro_file
-from research.document_chunker import chunk_and_index_document
-from research.knowledge_builder import KnowledgeExtractionError, extract_document_knowledge
 from storage.database import utcnow_iso
 from storage.repositories import (
+    get_document,
     get_ingestion_queue_item,
     get_ingestion_queue_item_by_path,
     list_documents_by_status,
@@ -301,20 +304,24 @@ def unarchive_financial_items(conn, item_ids: list[int]) -> int:
 
 
 def process_documents(conn, document_ids: list[int]) -> ProcessSummary:
-    """Register each document (content hash refreshed) and run Step 2A's
-    Knowledge Builder extraction against it — "processing" a document now
-    means both, not just the Step 1 status flip. A document with no
-    extractable text (non-PDF, unfetchable link) still succeeds with zero
-    claims, same "absence isn't an error" rule research/documents.py
-    already follows; an extraction that raises (LLM unavailable,
-    unparseable response) marks the document FAILED with the error
-    recorded, retryable via retry_failed_documents()."""
+    """Register each document (content hash refreshed) and publish a
+    `document` DATASET_INGESTED event for it — "processing" a document now
+    means both, not just the Step 1 status flip. The event fans out to two
+    independent workers (ingestion/workers/knowledge_builder_worker.py,
+    ingestion/workers/chunk_indexer_worker.py) instead of this function
+    calling Step 2A extraction and Step 2D chunking inline; this function
+    just reads their outcomes back to decide the document's status, same
+    as before. A document with no extractable text (non-PDF, unfetchable
+    link) still succeeds with zero claims, same "absence isn't an error"
+    rule research/documents.py already follows; an extraction that raises
+    (LLM unavailable, unparseable response) marks the document FAILED with
+    the error recorded, retryable via retry_failed_documents()."""
     summary = ProcessSummary()
     for document_id in document_ids:
         # get_company_document (storage/repositories.py) is company-scoped;
-        # the queue view isn't, so look the row up directly instead of
-        # requiring a company_id here.
-        row = conn.execute("SELECT * FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+        # the queue view isn't, so get_document() (also company-agnostic)
+        # is used here instead.
+        row = get_document(conn, document_id)
         if row is None:
             continue
         summary.attempted += 1
@@ -324,25 +331,40 @@ def process_documents(conn, document_ids: list[int]) -> ProcessSummary:
             if path.exists():
                 file_hash = _content_hash(path)
 
-        try:
-            extraction = extract_document_knowledge(conn, row)
-        except KnowledgeExtractionError as exc:
-            logger.warning("Knowledge extraction failed for document %s: %s", document_id, exc, exc_info=True)
-            mark_document_processing_status(conn, document_id, status="failed", error_message=str(exc))
+        event = DatasetIngestedEvent(
+            dataset_id=f"document:{document_id}",
+            dataset_type="document",
+            source=row["source"] or "document",
+            scope={"document_id": document_id, "company_id": row["company_id"]},
+            storage_reference={"table": "documents", "document_id": document_id},
+            ingestion_id=str(uuid.uuid4()),
+        )
+        outcomes = {outcome.worker_name: outcome.result for outcome in publish(conn, event)}
+
+        kb_result = outcomes.get("knowledge_builder")
+        if kb_result is None or kb_result.status == "failed":
+            error = kb_result.error if kb_result is not None else "knowledge_builder worker not registered"
+            logger.warning("Knowledge extraction failed for document %s: %s", document_id, error)
+            mark_document_processing_status(conn, document_id, status="failed", error_message=error)
             summary.failed += 1
-            summary.outcomes.append(ProcessOutcome(document_id, ok=False, detail=str(exc)))
+            summary.outcomes.append(ProcessOutcome(document_id, ok=False, detail=error))
             continue
 
         # Chunking/indexing (Step 2D) is best-effort on top of an already-
         # successful extraction — deterministic and low-risk (no LLM call),
         # but a failure here shouldn't undo a real, already-persisted
         # knowledge-extraction success. Same graceful-degradation spirit as
-        # the Neo4j/Ollama fallbacks elsewhere in this app.
-        chunk_count = 0
-        try:
-            chunk_count = chunk_and_index_document(conn, row)
-        except Exception:
-            logger.warning("Chunk indexing failed for document %s (extraction still succeeded)", document_id, exc_info=True)
+        # the Neo4j/Ollama fallbacks elsewhere in this app; the two workers
+        # dispatch independently, so a chunk_indexer failure never touches
+        # the knowledge_builder outcome above.
+        chunk_result = outcomes.get("chunk_indexer")
+        if chunk_result is not None and chunk_result.status == "failed":
+            logger.warning(
+                "Chunk indexing failed for document %s (extraction still succeeded): %s",
+                document_id, chunk_result.error,
+            )
+        chunk_count = chunk_result.data.get("chunk_count", 0) if chunk_result and chunk_result.status == "ok" else 0
+        claims_created = kb_result.data.get("claims_created", 0)
 
         mark_document_processing_status(
             conn, document_id, status="processed", file_hash=file_hash, processed_at=utcnow_iso(), error_message=None
@@ -351,7 +373,7 @@ def process_documents(conn, document_ids: list[int]) -> ProcessSummary:
         summary.outcomes.append(
             ProcessOutcome(
                 document_id, ok=True,
-                detail=f"registered, {extraction.claims_created} claim(s) extracted, {chunk_count} chunk(s) indexed",
+                detail=f"registered, {claims_created} claim(s) extracted, {chunk_count} chunk(s) indexed",
             )
         )
     return summary
@@ -378,7 +400,7 @@ def archive_documents(conn, document_ids: list[int]) -> int:
     unarchive_documents()."""
     archived = 0
     for document_id in document_ids:
-        row = conn.execute("SELECT processing_status FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+        row = get_document(conn, document_id)
         if row is None or row["processing_status"] == "archived":
             continue
         set_document_processing_status(conn, document_id, "archived")
@@ -391,7 +413,7 @@ def unarchive_documents(conn, document_ids: list[int]) -> int:
     the normal queue again."""
     unarchived = 0
     for document_id in document_ids:
-        row = conn.execute("SELECT processing_status FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+        row = get_document(conn, document_id)
         if row is None or row["processing_status"] != "archived":
             continue
         set_document_processing_status(conn, document_id, "pending")

@@ -157,6 +157,7 @@
       loadError: null,
       data: null, // { quarters: [...] }, newest first from the feed
       activeSubtab: "major",
+      periodType: "quarterly", // "quarterly" | "annual" (Q4 of each fiscal year)
       expandedBuckets: null, // bucketKey -> bool, seeded once data loads
     };
 
@@ -172,21 +173,11 @@
         .then((data) => {
           state.data = data;
           state.loading = false;
-          if (data.quarters.length) {
-            // Default-open the two largest-by-latest-percent buckets that
-            // actually have named holders -- the rest start collapsed
-            // rather than dumping every category's holder rows at once.
-            const latest = data.quarters[0];
-            const openKeys = new Set(
-              latest.buckets
-                .filter((b) => b.holder_count > 0 && b.percent !== null)
-                .sort((a, b) => b.percent - a.percent)
-                .slice(0, 2)
-                .map((b) => b.key)
-            );
-            state.expandedBuckets = {};
-            BUCKET_ORDER.forEach((b) => { state.expandedBuckets[b.key] = openKeys.has(b.key); });
-          }
+          // Every category starts collapsed, always -- no auto-opening the
+          // largest buckets. Real-estate-efficient default: reveal a
+          // holder list only on an explicit click.
+          state.expandedBuckets = {};
+          BUCKET_ORDER.forEach((b) => { state.expandedBuckets[b.key] = false; });
           render();
         })
         .catch(() => {
@@ -206,9 +197,18 @@
     }
 
     function majorHoldersHtml() {
-      const quartersAsc = state.data.quarters.slice().reverse(); // oldest -> newest, left to right
-      const latest = state.data.quarters[0];
+      const allQuartersAsc = state.data.quarters.slice().reverse(); // oldest -> newest, left to right
+      const isAnnual = state.periodType === "annual";
+      // Annual = Q4 of each fiscal year, the fiscal-year-end shareholding
+      // snapshot -- same "Q4 stands in for annual" convention this app's
+      // own Financials tab already uses for balance-sheet-style figures
+      // (NIFTY500_USA_XBRL_BATCHES.md: "quarterly + Q4-derived annual").
+      // SEBI's SHP filing is itself always quarterly -- there's no separate
+      // annual submission to fetch -- so this is a client-side view over
+      // the same data, not a different feed.
+      const quartersAsc = isAnnual ? allQuartersAsc.filter((q) => q.quarter === "Q4") : allQuartersAsc;
 
+      const latest = (isAnnual ? quartersAsc[quartersAsc.length - 1] : null) || state.data.quarters[0];
       const asOfBits = [`Data through ${escapeHtml(latest.label)}`];
       if (latest.submission_date) asOfBits.push(`filed ${escapeHtml(latest.submission_date)}`);
       if (latest.num_shareholders) asOfBits.push(`${latest.num_shareholders.toLocaleString()} total shareholders`);
@@ -216,7 +216,23 @@
         ? ` &middot; <a href="${escapeHtml(latest.source_url)}" target="_blank" rel="noopener noreferrer">Latest source filing (XBRL)&nbsp;↗</a>`
         : "";
 
-      const headerCells = quartersAsc.map((q) => `<th class="vm-num">${escapeHtml(q.label)}</th>`).join("");
+      const periodToggle = `
+        <div class="vm-period-toggle" data-vm-period-toggle style="margin-bottom: var(--space-3)">
+          <button type="button" class="vm-period-btn${isAnnual ? "" : " is-active"}" data-action="period-type" data-type="quarterly">Quarterly</button>
+          <button type="button" class="vm-period-btn${isAnnual ? " is-active" : ""}" data-action="period-type" data-type="annual" title="Q4 of each fiscal year">Annual</button>
+        </div>`;
+
+      if (!quartersAsc.length) {
+        return `
+          <p class="muted">${asOfBits.join(" · ")}${sourceLink}</p>
+          ${periodToggle}
+          <div class="empty-state">No fiscal-year-end (Q4) shareholding filing on file yet for this company.</div>
+        `;
+      }
+
+      const headerCells = quartersAsc
+        .map((q) => `<th class="vm-num">${escapeHtml(isAnnual ? q.fiscal_year : q.label)}</th>`)
+        .join("");
 
       const rows = BUCKET_ORDER.map((meta) => {
         const values = quartersAsc.map((q) => q.buckets.find((b) => b.key === meta.key).percent);
@@ -228,19 +244,20 @@
         );
       }).join("");
 
+      const footnote = isAnnual
+        ? `Annual view shows each fiscal year's Q4 (year-end) shareholding filing — SEBI's Shareholding Pattern filing is itself always quarterly, there is no separate annual submission. Click a category to reveal its individually named holders; "Change" is the percentage-point move from the first to the last year shown.`
+        : `Named holders sourced from NSE's Shareholding Pattern (SEBI LODR Regulation 31) XBRL filings. Click a category to reveal its individually named holders; "Change" is the percentage-point move from its first to its last quarter on file.`;
+
       return `
         <p class="muted">${asOfBits.join(" · ")}${sourceLink}</p>
-        <div class="vm-period-toggle" data-vm-period-toggle style="margin-bottom: var(--space-3)">
-          <button type="button" class="vm-period-btn is-active" disabled title="SEBI shareholding filings are quarterly only">Quarterly</button>
-          <button type="button" class="vm-period-btn" disabled title="SEBI shareholding filings are quarterly only">Annual</button>
-        </div>
+        ${periodToggle}
         <div class="vm-table-scroll shp-table-scroll">
           <table class="table">
             <thead><tr><th>Category / Holder</th><th class="vm-trend-header">Trend</th>${headerCells}<th class="vm-num shp-delta-col">Change</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>
-        <p class="muted shp-footnote">Named holders sourced from NSE's Shareholding Pattern (SEBI LODR Regulation 31) XBRL filings. Click a category to reveal its individually named holders; "Change" is the percentage-point move from its first to its last quarter on file.</p>
+        <p class="muted shp-footnote">${footnote}</p>
       `;
     }
 
@@ -277,6 +294,9 @@
       const action = el.dataset.action;
       if (action === "subtab") {
         state.activeSubtab = el.dataset.key;
+        render();
+      } else if (action === "period-type") {
+        state.periodType = el.dataset.type;
         render();
       } else if (action === "toggle-bucket") {
         const key = el.dataset.bucket;

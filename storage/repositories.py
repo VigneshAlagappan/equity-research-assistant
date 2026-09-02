@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from config.settings import to_repo_relative
+from ingestion.events import DatasetIngestedEvent
 from sources.base import NormalizedObservation
 from sources.macro import MacroNormalizedObservation
 from sources.rbi_bank_infrastructure import BankInfrastructureObservation
@@ -366,9 +367,25 @@ def list_canonical_financials_for_companies(conn: sqlite3.Connection, company_id
 def list_latest_shares_outstanding(conn: sqlite3.Connection) -> dict[str, tuple[float, str]]:
     """Latest reconciled (shares-outstanding value in Cr, its fiscal year e.g.
     "FY2014") per company, one query for every company at once — used to
-    compute market cap on the Companies list, where a get_canonical_series()
-    call per row (of ~2,500) would be an N+1. Sparse: only companies with at
+    compute market cap on the Companies list and to drive the company page's
+    Overview ratio grid, where a get_canonical_series() call per row (of
+    ~2,500 on the list) would be an N+1. Sparse: only companies with at
     least one shares_outstanding observation appear.
+
+    Across BOTH period_type='annual' and 'quarterly' rows, not annual-only —
+    a company's quarterly XBRL filing reports its own share count every
+    quarter, and that can move between annual filings (ESOP allotments,
+    buybacks, rights issues); restricting to annual-only meant a company
+    with a fresher quarterly filing than its last annual one still showed
+    the stale annual figure (verified live: ICICIBANK's FY2026 annual row
+    is 716.115 Cr shares, but its Q1 FY2027 quarterly row -- filed after
+    that annual figure -- already shows 717.47 Cr). ORDER BY fiscal_year
+    DESC, quarter DESC naturally picks whichever period is chronologically
+    latest regardless of which period_type it came from: quarter is NULL on
+    an annual row, and SQLite sorts NULL last in a DESC ordering, so an
+    annual and same-fiscal-year Q4 row (normally identical in value anyway)
+    only matters as a tie-break -- a later fiscal_year string always wins
+    first regardless.
 
     The fiscal year comes along because "latest on file" and "current" are
     not the same thing here: a company whose financial-statement ingestion
@@ -386,7 +403,7 @@ def list_latest_shares_outstanding(conn: sqlite3.Connection) -> dict[str, tuple[
                        PARTITION BY company_id ORDER BY fiscal_year DESC, quarter DESC
                    ) AS rn
             FROM canonical_financials
-            WHERE metric_key = 'shares_outstanding' AND period_type = 'annual' AND statement_type = 'consolidated'
+            WHERE metric_key = 'shares_outstanding' AND statement_type = 'consolidated'
         )
         WHERE rn = 1
         """
@@ -394,9 +411,55 @@ def list_latest_shares_outstanding(conn: sqlite3.Connection) -> dict[str, tuple[
     return {row["company_id"]: (row["canonical_value"], row["fiscal_year"]) for row in rows}
 
 
-def reconcile_batch(conn: sqlite3.Connection, observations: Iterable[NormalizedObservation]) -> int:
-    """Reconcile every distinct (company, metric, period) key touched by a
-    batch of observations.
+# ------------------------------------------------------------------
+# Metric vocabulary (metrics_dictionary / metric_aliases) — used by
+# normalization/financials.py to seed/resolve the vendor-label -> metric_key
+# mapping, and by financials/ratios.py to check a metric's applicable_sectors.
+# ------------------------------------------------------------------
+
+
+def seed_metric_vocabulary(
+    conn: sqlite3.Connection, metrics: Iterable[tuple], aliases: Iterable[tuple]
+) -> None:
+    """Bulk-insert metrics_dictionary/metric_aliases rows, leaving existing
+    ones untouched (INSERT OR IGNORE)."""
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO metrics_dictionary
+            (metric_key, display_name, category, applicable_sectors, default_unit)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        metrics,
+    )
+    conn.executemany(
+        "INSERT OR IGNORE INTO metric_aliases (source, raw_label, metric_key) VALUES (?, ?, ?)",
+        aliases,
+    )
+    conn.commit()
+
+
+def get_metric_key_for_alias(conn: sqlite3.Connection, source: str, raw_label: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT metric_key FROM metric_aliases WHERE source = ? AND raw_label = ?",
+        (source, raw_label),
+    ).fetchone()
+
+
+def get_metric_dictionary_entry(conn: sqlite3.Connection, metric_key: str) -> sqlite3.Row | None:
+    """Full metrics_dictionary row for one metric_key (default_unit,
+    applicable_sectors, ...) — normalization/financials.py reads
+    default_unit from it, financials/ratios.py reads applicable_sectors."""
+    return conn.execute(
+        "SELECT * FROM metrics_dictionary WHERE metric_key = ?", (metric_key,)
+    ).fetchone()
+
+
+def compute_reconciliation_keys(
+    conn: sqlite3.Connection, observations: Iterable[NormalizedObservation]
+) -> list[tuple[str, str, str, str, str | None, str | None]]:
+    """Every distinct (company, metric, period_type, fiscal_year, quarter,
+    statement_type) key a batch of observations touches, expanded to
+    include XBRL's migration side effect.
 
     When the batch includes an XBRL_SOURCE_ID observation, that also
     "migrates" its (company, period_type, fiscal_year, quarter,
@@ -405,6 +468,13 @@ def reconcile_batch(conn: sqlite3.Connection, observations: Iterable[NormalizedO
     just the metrics this particular filing happened to report, or a
     legacy metric XBRL is silent on would keep showing its stale
     pre-migration canonical value instead of going blank.
+
+    Pulled out of reconcile_batch() so ingestion/pipeline.py can compute the
+    same key set to publish on a DATASET_INGESTED event's
+    storage_reference — the Financial Derivation Worker
+    (ingestion/workers/financial_derivation.py) reconciles from those keys
+    alone, without needing the observations themselves re-passed through
+    the event or re-ingested on replay.
     """
     observations = list(observations)
     keys = {
@@ -427,6 +497,14 @@ def reconcile_batch(conn: sqlite3.Connection, observations: Iterable[NormalizedO
         for row in sibling_metrics:
             keys.add((company_id, row["metric_key"], period_type, fiscal_year, quarter, statement_type))
 
+    return list(keys)
+
+
+def reconcile_batch(conn: sqlite3.Connection, observations: Iterable[NormalizedObservation]) -> int:
+    """Reconcile every distinct (company, metric, period) key touched by a
+    batch of observations. See compute_reconciliation_keys() for how that
+    key set (including XBRL's migration side effect) is derived."""
+    keys = compute_reconciliation_keys(conn, observations)
     return sum(1 for key in keys if reconcile(conn, *key) is not None)
 
 
@@ -867,6 +945,14 @@ def list_company_documents(conn: sqlite3.Connection, company_id: str) -> list[sq
         "SELECT * FROM documents WHERE company_id = ? ORDER BY fiscal_year, quarter",
         (company_id,),
     ).fetchall()
+
+
+def get_document(conn: sqlite3.Connection, document_id: int) -> sqlite3.Row | None:
+    """Not company-scoped — for the Ingest queue's coordinator, which
+    already has document_id from ingestion_queue_items/documents-by-status
+    and has no separate company_id to filter by (unlike
+    get_company_document(), which exists for the company-facing routes)."""
+    return conn.execute("SELECT * FROM documents WHERE document_id = ?", (document_id,)).fetchone()
 
 
 def get_company_document(conn: sqlite3.Connection, company_id: str, document_id: int) -> sqlite3.Row | None:
@@ -2102,7 +2188,13 @@ def insert_shareholding_holders(
     return count
 
 
-_SHAREHOLDING_HISTORY_QUARTERS = 12
+# 40 quarters = 10 years -- matches the Financials tab's own 10-year framing
+# (valuation_dashboard_interactive.js's growth-projection table). Was 12
+# (3 years) originally; too tight once the Major Holders table grew an
+# Annual view (Q4-of-each-year), which needs several years of Q4s to be
+# useful and would otherwise silently truncate a company's older years --
+# found via ICICIBANK (20 quarters on file, oldest 8 got cut off).
+_SHAREHOLDING_HISTORY_QUARTERS = 40
 
 
 def list_shareholding_history(
@@ -2143,3 +2235,225 @@ def list_shareholding_holders_all(conn: sqlite3.Connection, company_id: str) -> 
         (company_id,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ============================================================
+# Batch job audit log -- ingestion/batch_log.py is the only caller of these;
+# everything else reads via list_batch_job_runs/list_batch_job_items (Admin
+# UI, main.py's batch-log CLI command).
+# ============================================================
+
+
+def start_batch_job_run(conn: sqlite3.Connection, job_name: str, scope_label: str | None = None) -> int:
+    now = utcnow_iso()
+    cursor = conn.execute(
+        "INSERT INTO batch_job_runs (job_name, scope_label, started_at, status) VALUES (?, ?, ?, 'running')",
+        (job_name, scope_label, now),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def finish_batch_job_run(conn: sqlite3.Connection, run_id: int, *, status: str, notes: str | None = None) -> None:
+    counts = conn.execute(
+        "SELECT "
+        "  COUNT(*) AS total, "
+        "  SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS succeeded, "
+        "  SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed "
+        "FROM batch_job_items WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    conn.execute(
+        "UPDATE batch_job_runs SET finished_at = ?, status = ?, notes = ?, "
+        "  items_total = ?, items_succeeded = ?, items_failed = ? "
+        "WHERE run_id = ?",
+        (
+            utcnow_iso(), status, notes,
+            counts["total"] or 0, counts["succeeded"] or 0, counts["failed"] or 0,
+            run_id,
+        ),
+    )
+    conn.commit()
+
+
+def start_batch_job_item(conn: sqlite3.Connection, run_id: int, company_id: str | None) -> int:
+    cursor = conn.execute(
+        "INSERT INTO batch_job_items (run_id, company_id, started_at, status) VALUES (?, ?, ?, 'running')",
+        (run_id, company_id, utcnow_iso()),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def finish_batch_job_item(conn: sqlite3.Connection, item_id: int, *, status: str, detail: str | None = None) -> None:
+    conn.execute(
+        "UPDATE batch_job_items SET finished_at = ?, status = ?, detail = ? WHERE item_id = ?",
+        (utcnow_iso(), status, detail, item_id),
+    )
+    conn.commit()
+
+
+def list_batch_job_runs(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
+    """Most recent runs first -- Admin UI / CLI history view."""
+    rows = conn.execute(
+        "SELECT * FROM batch_job_runs ORDER BY started_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_batch_job_items(conn: sqlite3.Connection, run_id: int) -> list[dict]:
+    """Every item in one run, in the order they started -- for drilling into
+    which companies failed and why."""
+    rows = conn.execute(
+        "SELECT * FROM batch_job_items WHERE run_id = ? ORDER BY item_id ASC", (run_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ============================================================
+# Dataset-centric ingestion events (ingestion/events.py, ingestion/event_bus.py)
+# ============================================================
+
+def insert_dataset_event(conn: sqlite3.Connection, event: DatasetIngestedEvent) -> None:
+    """Append one DATASET_INGESTED event to the Event Store. event_id/
+    ingested_at are expected to already be filled (event_bus.publish() does
+    that before calling this) -- this function only ever appends, never
+    updates, matching the Event Store's immutable-history contract."""
+    conn.execute(
+        """
+        INSERT INTO dataset_events (
+            event_id, event_type, dataset_id, dataset_type, source, scope_json,
+            period, storage_reference_json, ingestion_id, ingested_at, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event.event_id, event.event_type, event.dataset_id, event.dataset_type, event.source,
+            json.dumps(event.scope), event.period, json.dumps(event.storage_reference),
+            event.ingestion_id, event.ingested_at, json.dumps(event.metadata), utcnow_iso(),
+        ),
+    )
+    conn.commit()
+
+
+def get_dataset_event(conn: sqlite3.Connection, event_id: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM dataset_events WHERE event_id = ?", (event_id,)).fetchone()
+
+
+def list_dataset_events(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str | None = None,
+    dataset_type: str | None = None,
+    source: str | None = None,
+    ingestion_id: str | None = None,
+    since: str | None = None,
+) -> list[sqlite3.Row]:
+    """Query the Event Store -- ingestion/event_bus.py's replay() uses this
+    to find events to re-dispatch (README: manual replay / worker failure
+    recovery / historical processing for a newly-added worker). Filters
+    combine with AND; every filter is optional so callers only constrain
+    what they care about."""
+    clauses, params = [], []
+    if event_id is not None:
+        clauses.append("event_id = ?")
+        params.append(event_id)
+    if dataset_type is not None:
+        clauses.append("dataset_type = ?")
+        params.append(dataset_type)
+    if source is not None:
+        clauses.append("source = ?")
+        params.append(source)
+    if ingestion_id is not None:
+        clauses.append("ingestion_id = ?")
+        params.append(ingestion_id)
+    if since is not None:
+        clauses.append("ingested_at >= ?")
+        params.append(since)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.execute(
+        f"SELECT * FROM dataset_events {where} ORDER BY ingested_at ASC", params
+    ).fetchall()
+
+
+def start_worker_log(
+    conn: sqlite3.Connection, *, event_id: str, ingestion_id: str, worker_name: str, worker_version: str
+) -> int:
+    """A worker is about to run against one event -- same start/finish
+    shape as start_batch_job_item()/finish_batch_job_item(). A replay that
+    re-runs the same (event_id, worker_name, worker_version) increments
+    retry_count on the existing row instead of violating the table's
+    UNIQUE constraint, so history for that exact worker version stays one
+    row (the log's own idempotency key), not a growing pile of duplicates."""
+    now = utcnow_iso()
+    existing = get_worker_log(conn, event_id, worker_name, worker_version)
+    if existing is not None:
+        conn.execute(
+            "UPDATE worker_processing_log SET status = 'running', started_at = ?, completed_at = NULL, "
+            "  retry_count = retry_count + 1 WHERE log_id = ?",
+            (now, existing["log_id"]),
+        )
+        conn.commit()
+        return existing["log_id"]
+    cursor = conn.execute(
+        """
+        INSERT INTO worker_processing_log (event_id, ingestion_id, worker_name, worker_version, status, started_at)
+        VALUES (?, ?, ?, ?, 'running', ?)
+        """,
+        (event_id, ingestion_id, worker_name, worker_version, now),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def finish_worker_log(
+    conn: sqlite3.Connection,
+    log_id: int,
+    *,
+    status: str,
+    output_reference: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    conn.execute(
+        "UPDATE worker_processing_log SET status = ?, completed_at = ?, output_reference = ?, error_message = ? "
+        "WHERE log_id = ?",
+        (status, utcnow_iso(), output_reference, error_message, log_id),
+    )
+    conn.commit()
+
+
+def get_worker_log(
+    conn: sqlite3.Connection, event_id: str, worker_name: str, worker_version: str
+) -> sqlite3.Row | None:
+    """The idempotency check ingestion/event_bus.py's replay() relies on:
+    a non-forced replay skips a worker for an event once this returns a row
+    with status 'ok' or 'skipped' for that exact worker_version."""
+    return conn.execute(
+        "SELECT * FROM worker_processing_log WHERE event_id = ? AND worker_name = ? AND worker_version = ?",
+        (event_id, worker_name, worker_version),
+    ).fetchone()
+
+
+def list_worker_processing_log(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str | None = None,
+    worker_name: str | None = None,
+    status: str | None = None,
+) -> list[sqlite3.Row]:
+    """"What did each worker do with this ingestion event" -- and the
+    reverse, "what has this worker done across every event" -- same query,
+    filtered differently."""
+    clauses, params = [], []
+    if event_id is not None:
+        clauses.append("event_id = ?")
+        params.append(event_id)
+    if worker_name is not None:
+        clauses.append("worker_name = ?")
+        params.append(worker_name)
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.execute(
+        f"SELECT * FROM worker_processing_log {where} ORDER BY log_id ASC", params
+    ).fetchall()

@@ -27,6 +27,7 @@ from __future__ import annotations
 import time
 
 from sources.yfinance_prices import fetch_daily_bars
+from storage.company_repository import select_index_members_with_nse_symbol
 from storage.database import init_db
 from storage.price_database import init_price_db
 from storage.price_repository import upsert_daily_bars
@@ -39,15 +40,7 @@ FETCH_PERIOD = "5d"
 
 def main() -> None:
     main_conn = init_db()
-    rows = main_conn.execute(
-        """
-        SELECT c.company_id, c.nse_symbol
-        FROM companies c
-        JOIN company_index_membership m ON m.company_id = c.company_id
-        WHERE m.index_name = 'Nifty 500' AND c.nse_symbol IS NOT NULL
-        ORDER BY c.company_id
-        """
-    ).fetchall()
+    rows = select_index_members_with_nse_symbol(main_conn, "Nifty 500")
     main_conn.close()
 
     total = len(rows)

@@ -9,12 +9,13 @@ differently is a data edit (INSERT into these tables), never a code change.
 from __future__ import annotations
 
 import logging
-import sqlite3
 from datetime import datetime, timezone
 
 from normalization.periods import PeriodParseError, parse_period_header
 from normalization.units import NumericParseError, infer_unit, parse_numeric
 from sources.base import NormalizedObservation
+from storage.db_types import DBConnection
+from storage.repositories import get_metric_dictionary_entry, get_metric_key_for_alias, seed_metric_vocabulary
 
 logger = logging.getLogger(__name__)
 
@@ -325,29 +326,14 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
 ]
 
 
-def ensure_metric_vocabulary(conn: sqlite3.Connection) -> None:
+def ensure_metric_vocabulary(conn: DBConnection) -> None:
     """Seed metrics_dictionary and metric_aliases, leaving existing rows untouched."""
-    conn.executemany(
-        """
-        INSERT OR IGNORE INTO metrics_dictionary
-            (metric_key, display_name, category, applicable_sectors, default_unit)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        DEFAULT_METRICS,
-    )
-    conn.executemany(
-        "INSERT OR IGNORE INTO metric_aliases (source, raw_label, metric_key) VALUES (?, ?, ?)",
-        DEFAULT_METRIC_ALIASES,
-    )
-    conn.commit()
+    seed_metric_vocabulary(conn, DEFAULT_METRICS, DEFAULT_METRIC_ALIASES)
 
 
-def resolve_metric_key(conn: sqlite3.Connection, source: str, raw_label: str) -> str | None:
+def resolve_metric_key(conn: DBConnection, source: str, raw_label: str) -> str | None:
     """Look up the metric_key for a vendor's raw row label, or None if there's no alias yet."""
-    row = conn.execute(
-        "SELECT metric_key FROM metric_aliases WHERE source = ? AND raw_label = ?",
-        (source, raw_label.strip()),
-    ).fetchone()
+    row = get_metric_key_for_alias(conn, source, raw_label.strip())
     return row["metric_key"] if row else None
 
 
@@ -371,10 +357,8 @@ def _localize_unit(unit: str, currency: str) -> str:
     return _UNIT_CURRENCY_LOCALIZATIONS.get(unit, {}).get(currency, unit)
 
 
-def _default_unit_for_metric(conn: sqlite3.Connection, metric_key: str, currency: str = "INR") -> str:
-    row = conn.execute(
-        "SELECT default_unit FROM metrics_dictionary WHERE metric_key = ?", (metric_key,)
-    ).fetchone()
+def _default_unit_for_metric(conn: DBConnection, metric_key: str, currency: str = "INR") -> str:
+    row = get_metric_dictionary_entry(conn, metric_key)
     unit = row["default_unit"] if row and row["default_unit"] else "NUMBER"
     return _localize_unit(unit, currency)
 

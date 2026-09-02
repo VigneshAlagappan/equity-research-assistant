@@ -632,12 +632,21 @@
      series, x-axis always FY. Only 2 physical y-axes exist (left/right), so
      each attribute carries an explicit side; attributes sharing a side share
      one linear scale. See charts_overlay.js for the auto-assign heuristic
-     and the per-attribute toggle that overrides it. */
+     and the per-attribute toggle that overrides it.
+
+     Capped and centered, not stretched to the page-wide (up to 1800px)
+     container's full width -- a wide monitor was stretching one line
+     chart edge to edge, which reads worse than a contained, centered chart
+     at a normal reading width. Compare bar/toolbar/chart share this cap so
+     the whole section reads as one centered column, not a full-width
+     toolbar over a narrower chart. */
   .chart-overlay {
     --chart-series-1: var(--color-accent-700); --chart-series-2: #2563eb;
     --chart-series-3: #16a34a; --chart-series-4: #9333ea;
     --chart-series-5: #dc2626; --chart-series-6: #0891b2;
     --chart-series-7: #db2777; --chart-series-8: #64748b;
+    max-width: 1040px;
+    margin: 0 auto;
   }
   .chart-overlay-controls { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   /* One horizontal toolbar (period/range toggle + one dropdown pill per

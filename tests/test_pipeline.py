@@ -8,6 +8,7 @@ with reconciliation_reason "only source available".
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -59,6 +60,20 @@ def test_ingest_file_inserts_observations_and_reconciles(
         "SELECT was_chosen FROM reconciliation_log"
     ).fetchall()
     assert all(r["was_chosen"] == 1 for r in log_rows)  # single source -> every candidate is "the" candidate
+
+    event_row = db_conn_with_companies.execute(
+        "SELECT * FROM dataset_events WHERE dataset_type = 'company_financials'"
+    ).fetchone()
+    assert event_row is not None
+    assert event_row["dataset_id"] == "screener:HDFCBANK"
+    assert json.loads(event_row["scope_json"]) == {"company_id": "HDFCBANK", "statement_type": "consolidated"}
+
+    worker_log = db_conn_with_companies.execute(
+        "SELECT * FROM worker_processing_log WHERE event_id = ? AND worker_name = 'financial_derivation'",
+        (event_row["event_id"],),
+    ).fetchone()
+    assert worker_log["status"] == "ok"
+    assert worker_log["output_reference"] == f"reconciled_count={result.reconciled_count}"
 
 
 def test_ingest_file_gate_blocks_archived_company(

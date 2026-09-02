@@ -257,3 +257,45 @@ def test_processing_a_document_also_chunks_and_indexes_it(
         "SELECT COUNT(*) AS n FROM document_chunks WHERE document_id = ?", (doc["document_id"],)
     ).fetchone()["n"]
     assert chunk_count >= 1
+
+    # Both Step 2A/2D calls now go through a published `document` event,
+    # fanning out to two independent workers -- confirm both actually ran.
+    event_row = db_conn_with_companies.execute(
+        "SELECT * FROM dataset_events WHERE dataset_type = 'document'"
+    ).fetchone()
+    assert event_row is not None
+    assert event_row["dataset_id"] == f"document:{doc['document_id']}"
+    worker_logs = {
+        row["worker_name"]: row["status"]
+        for row in db_conn_with_companies.execute(
+            "SELECT worker_name, status FROM worker_processing_log WHERE event_id = ?", (event_row["event_id"],)
+        ).fetchall()
+    }
+    assert worker_logs == {"knowledge_builder": "ok", "chunk_indexer": "ok", "financial_derivation": "skipped"}
+
+
+def test_extraction_failure_via_the_event_bus_marks_the_document_failed(
+    db_conn_with_companies: sqlite3.Connection, tmp_path: Path, monkeypatch
+) -> None:
+    """The Knowledge Builder Worker's failure (surfaced through publish())
+    must still fail the document exactly like the old inline call did --
+    routing extraction through the event bus doesn't change that contract."""
+    from tests.test_documents import _make_minimal_pdf
+    from tests.test_knowledge_builder import _install_fake_client
+
+    pdf_path = tmp_path / "report.pdf"
+    _make_minimal_pdf(pdf_path, "Revenue grew twelve percent this quarter")
+    doc = save_company_document(
+        db_conn_with_companies, "HDFCBANK", document_type="annual_report",
+        fiscal_year="FY2024", quarter=None, added_by_user="tester", raw_file_path=str(pdf_path),
+    )
+    _install_fake_client(monkeypatch, "I'm not going to respond in JSON.")
+
+    summary = process_all_pending_documents(db_conn_with_companies)
+
+    assert summary.failed == 1
+    row = db_conn_with_companies.execute(
+        "SELECT processing_status, error_message FROM documents WHERE document_id = ?", (doc["document_id"],)
+    ).fetchone()
+    assert row["processing_status"] == "failed"
+    assert row["error_message"]

@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import ingestion.workers  # noqa: F401 -- registers built-in workers (financial_derivation, ...)
 from companies.lifecycle import assert_active
 from ingestion.detector import ADAPTER_CLASSES, detect_from_path, detect_macro_source_from_path
+from ingestion.event_bus import publish
+from ingestion.events import DatasetIngestedEvent
 from ingestion.validation import validate_macro_observation, validate_observation
 from normalization.companies import normalize_company_id
 from sources.base import NormalizedObservation
@@ -29,13 +33,59 @@ from sources.iitm_rainfall import parse_iitm_file
 from sources.rbi_indicators import looks_like_rbi_indicator_workbook, parse_rbi_indicator_workbook
 from sources.yfinance_financials import YFinanceAdapter
 from storage.repositories import (
+    compute_reconciliation_keys,
     insert_bank_infrastructure_observations,
     insert_financial_observations,
     insert_macro_observations,
-    reconcile_batch,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _publish_financial_ingestion(
+    conn: sqlite3.Connection, *, company_id: str, source_id: str, statement_type: str,
+    valid: list[NormalizedObservation],
+) -> int:
+    """Compute the touched reconciliation keys, publish a
+    company_financials DATASET_INGESTED event, and return the reconciled
+    count the Financial Derivation Worker (ingestion/workers/
+    financial_derivation.py) reports back -- the worker does the actual
+    reconciliation now, not this pipeline (README: Signals Dataset-Centric
+    Ingestion -- derived calculations belong downstream of ingestion)."""
+    keys = compute_reconciliation_keys(conn, valid)
+    event = DatasetIngestedEvent(
+        dataset_id=f"{source_id}:{company_id}",
+        dataset_type="company_financials",
+        source=source_id,
+        scope={"company_id": company_id, "statement_type": statement_type},
+        storage_reference={"table": "financial_observations", "reconcile_keys": [list(k) for k in keys]},
+        ingestion_id=str(uuid.uuid4()),
+        metadata={"observation_count": len(valid)},
+    )
+    outcomes = publish(conn, event)
+    for outcome in outcomes:
+        if outcome.worker_name == "financial_derivation":
+            return outcome.result.data.get("reconciled_count", 0)
+    return 0
+
+
+def _publish_dataset_ingested(
+    conn: sqlite3.Connection, *, dataset_id: str, dataset_type: str, source: str,
+    storage_reference: dict, scope: dict, period: str | None = None, metadata: dict | None = None,
+) -> None:
+    """Publish a DATASET_INGESTED event for a dataset type with no
+    downstream worker yet (macro, bank_infrastructure) -- every registered
+    worker still runs and reports "skipped" (none is relevant), which is
+    exactly the zero-risk "future dataset, future worker" extensibility
+    this framework is for. No return value: unlike
+    _publish_financial_ingestion(), nothing here needs a synchronous result
+    back yet."""
+    event = DatasetIngestedEvent(
+        dataset_id=dataset_id, dataset_type=dataset_type, source=source,
+        storage_reference=storage_reference, ingestion_id=str(uuid.uuid4()),
+        scope=scope, period=period, metadata=metadata or {},
+    )
+    publish(conn, event)
 
 
 @dataclass
@@ -120,7 +170,9 @@ def ingest_file(
 
     insert_financial_observations(conn, valid)
     result.inserted_count = len(valid)
-    result.reconciled_count = reconcile_batch(conn, valid)
+    result.reconciled_count = _publish_financial_ingestion(
+        conn, company_id=company_id, source_id=source_id, statement_type=statement_type, valid=valid,
+    )
 
     logger.info(
         "Ingested %s (%s): parsed=%d inserted=%d skipped=%d reconciled=%d",
@@ -168,7 +220,9 @@ def ingest_yfinance_company(
 
     insert_financial_observations(conn, valid)
     result.inserted_count = len(valid)
-    result.reconciled_count = reconcile_batch(conn, valid)
+    result.reconciled_count = _publish_financial_ingestion(
+        conn, company_id=company_id, source_id=adapter.source_id, statement_type=statement_type, valid=valid,
+    )
 
     logger.info(
         "Ingested %s (yfinance): parsed=%d inserted=%d skipped=%d reconciled=%d",
@@ -235,6 +289,19 @@ def ingest_macro_file(
 
     insert_macro_observations(conn, valid)
     result.inserted_count = len(valid)
+    if valid:
+        _publish_dataset_ingested(
+            conn,
+            dataset_id=f"macro:{source_id}:{result.series_key}",
+            dataset_type="macro",
+            source=source_id,
+            storage_reference={"table": "macro_observations"},
+            scope={
+                "series_keys": sorted({obs.series_key for obs in valid}),
+                "regions": sorted({obs.region for obs in valid if obs.region}),
+            },
+            metadata={"observation_count": len(valid)},
+        )
 
     logger.info(
         "Ingested %s (macro/%s): parsed=%d inserted=%d skipped=%d",
@@ -279,6 +346,19 @@ def ingest_fred_series(
 
     insert_macro_observations(conn, valid)
     result.inserted_count = len(valid)
+    if valid:
+        _publish_dataset_ingested(
+            conn,
+            dataset_id=f"macro:fred:{result.series_key}",
+            dataset_type="macro",
+            source="fred",
+            storage_reference={"table": "macro_observations"},
+            scope={
+                "series_keys": sorted({obs.series_key for obs in valid}),
+                "regions": sorted({obs.region for obs in valid if obs.region}),
+            },
+            metadata={"observation_count": len(valid)},
+        )
 
     logger.info(
         "Ingested %s (macro/fred): parsed=%d inserted=%d skipped=%d",
@@ -307,6 +387,19 @@ def ingest_bank_infrastructure_file(
 
     insert_bank_infrastructure_observations(conn, parsed)
     result.inserted_count = len(parsed)
+    if parsed:
+        _publish_dataset_ingested(
+            conn,
+            dataset_id=f"bank_infrastructure:{source_id}",
+            dataset_type="bank_infrastructure",
+            source=source_id,
+            storage_reference={"table": "bank_infrastructure_observations"},
+            scope={
+                "bank_names": sorted({obs.bank_name for obs in parsed}),
+                "metrics": sorted({obs.metric for obs in parsed}),
+            },
+            metadata={"observation_count": len(parsed)},
+        )
 
     logger.info(
         "Ingested %s (bank_infrastructure/%s): parsed=%d inserted=%d",

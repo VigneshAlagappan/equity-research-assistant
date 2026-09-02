@@ -39,6 +39,7 @@ from config.settings import (
 )
 from financials.report import build_analysis_report
 from ingestion.detector import is_macro_path
+from ingestion.event_bus import replay
 from ingestion.pipeline import (
     ingest_bank_infrastructure_file,
     ingest_file,
@@ -49,7 +50,13 @@ from ingestion.pipeline import (
 from normalization.financials import ensure_metric_vocabulary
 from research.assistant import answer_question
 from storage.database import init_db, list_tables
-from storage.repositories import add_watchlist_item, list_watchlist_items, remove_watchlist_item
+from storage.repositories import (
+    add_watchlist_item,
+    list_batch_job_items,
+    list_batch_job_runs,
+    list_watchlist_items,
+    remove_watchlist_item,
+)
 from web.fixtures import THREADS
 
 logger = logging.getLogger(__name__)
@@ -239,6 +246,70 @@ def cmd_list_companies(args: argparse.Namespace) -> None:
         logger.info(
             "%-12s %-28s status=%s sector=%s",
             company["company_id"], company["display_name"], company["status"], company["sector"],
+        )
+
+
+def cmd_list_batch_runs(args: argparse.Namespace) -> None:
+    """Recent batch job runs (scripts/batch_fetch_nse.py and similar) — start/end, status, per-run outcome counts."""
+    setup_logging()
+    conn = init_db()
+    runs = list_batch_job_runs(conn, limit=args.limit)
+    conn.close()
+    if not runs:
+        logger.info("No batch job runs on file yet.")
+        return
+    for r in runs:
+        logger.info(
+            "run_id=%-4s %-24s %-10s status=%-9s ok=%s failed=%s started=%s finished=%s %s",
+            r["run_id"], r["job_name"], r["scope_label"] or "", r["status"],
+            r["items_succeeded"], r["items_failed"], r["started_at"], r["finished_at"] or "-",
+            f"note={r['notes']}" if r["notes"] else "",
+        )
+
+
+def cmd_show_batch_run(args: argparse.Namespace) -> None:
+    """Every item (company) in one batch run — status and detail/error per item."""
+    setup_logging()
+    conn = init_db()
+    items = list_batch_job_items(conn, args.run_id)
+    conn.close()
+    if not items:
+        logger.info("No items found for run_id=%s.", args.run_id)
+        return
+    for it in items:
+        logger.info(
+            "%-14s status=%-8s %s",
+            it["company_id"] or "-", it["status"], it["detail"] or "",
+        )
+
+
+def cmd_replay_events(args: argparse.Namespace) -> None:
+    """Re-dispatch already-stored DATASET_INGESTED events to registered
+    workers (ingestion/event_bus.py::replay()) -- worker failure recovery,
+    backfilling a newly-added worker over history, or reprocessing after a
+    worker's logic changed. Never re-fetches/re-ingests source data; a
+    worker re-derives purely from what its event's storage_reference
+    points at. Idempotent unless --force: a worker already logged ok/skipped
+    for an event is left alone."""
+    setup_logging()
+    conn = init_db()
+    outcomes = replay(
+        conn,
+        event_id=args.event_id,
+        dataset_type=args.dataset_type,
+        worker_name=args.worker,
+        since=args.since,
+        force=args.force,
+    )
+    conn.close()
+    if not outcomes:
+        logger.info("Nothing to replay (no matching events, or every worker already ok/skipped -- use --force to override).")
+        return
+    for outcome in outcomes:
+        logger.info(
+            "%-22s v%-3s %-8s %s",
+            outcome.worker_name, outcome.worker_version, outcome.result.status,
+            outcome.result.output_reference or outcome.result.error or "",
         )
 
 
@@ -598,6 +669,32 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_watchlist_parser = subparsers.add_parser("list-watchlist", help="List everything pinned")
     list_watchlist_parser.set_defaults(func=cmd_list_watchlist)
+
+    list_batch_runs_parser = subparsers.add_parser(
+        "list-batch-runs", help="Recent batch job runs (scripts/batch_fetch_nse.py and similar) — audit log"
+    )
+    list_batch_runs_parser.add_argument("--limit", type=int, default=20)
+    list_batch_runs_parser.set_defaults(func=cmd_list_batch_runs)
+
+    show_batch_run_parser = subparsers.add_parser(
+        "show-batch-run", help="Every item (company) in one batch run — status and detail/error per item"
+    )
+    show_batch_run_parser.add_argument("run_id", type=int)
+    show_batch_run_parser.set_defaults(func=cmd_show_batch_run)
+
+    replay_events_parser = subparsers.add_parser(
+        "replay-events",
+        help="Re-dispatch stored DATASET_INGESTED events to registered workers (worker recovery/backfill/audit)",
+    )
+    replay_events_parser.add_argument("--event-id", help="Replay one specific event")
+    replay_events_parser.add_argument("--dataset-type", help='e.g. "company_financials", "document", "macro"')
+    replay_events_parser.add_argument("--worker", help="Only replay this worker (by name), e.g. financial_derivation")
+    replay_events_parser.add_argument("--since", help="Only events with ingested_at >= this ISO-8601 timestamp")
+    replay_events_parser.add_argument(
+        "--force", action="store_true",
+        help="Re-run a worker even if it already logged ok/skipped for that event (default: skip)",
+    )
+    replay_events_parser.set_defaults(func=cmd_replay_events)
 
     serve_parser = subparsers.add_parser(
         "serve", help="Run the local web viewer (renders the same analyze report in-browser)"

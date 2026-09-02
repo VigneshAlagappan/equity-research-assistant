@@ -22,6 +22,7 @@ import time
 import yfinance as yf
 
 from companies.registry import update_company_website
+from storage.company_repository import select_companies_missing_website
 from storage.database import init_db
 
 REQUEST_DELAY_SECONDS = 0.6
@@ -33,13 +34,7 @@ def main() -> None:
     args = parser.parse_args()
 
     conn = init_db()
-    query = "SELECT company_id FROM companies WHERE country != 'IN' AND website IS NULL"
-    params: tuple = ()
-    if args.company_id:
-        query += " AND company_id = ?"
-        params = (args.company_id,)
-    query += " ORDER BY company_id"
-    rows = conn.execute(query, params).fetchall()
+    rows = select_companies_missing_website(conn, company_id=args.company_id)
 
     total = len(rows)
     print(f"{total} companies missing a website", flush=True)

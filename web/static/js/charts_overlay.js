@@ -610,9 +610,9 @@
 
       // Compare With on its own row, then one horizontal toolbar (period/
       // range toggle + attribute-picker pills, each a <details> dropdown
-      // rather than an always-visible sidebar list) so the chart itself
-      // gets the page's full width below instead of sharing it with a
-      // fixed-width side column.
+      // rather than an always-visible sidebar list) above the chart --
+      // .chart-overlay in company.html caps and centers all three at a
+      // fixed reading width, not the page-wide container's full breadth.
       root.innerHTML =
         renderCompareBar(state) +
         '<div class="chart-overlay-toolbar">' +

@@ -11,10 +11,11 @@ anything derives from it.
 from __future__ import annotations
 
 import datetime as dt
-import sqlite3
 
 from normalization.companies import normalize_company_id
+from storage import company_repository as repo
 from storage.database import utcnow_iso
+from storage.db_types import DBConnection, Row
 
 #: split and bonus are the same share-count math (ratio_from -> ratio_to);
 #: rights differs only by optionally carrying a subscription_price, since
@@ -31,7 +32,7 @@ class StockActionNotFoundError(ValueError):
 
 
 def add_stock_action(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     action_type: str,
     action_date: str,
@@ -42,7 +43,7 @@ def add_stock_action(
     source: str | None = None,
     source_url: str | None = None,
     notes: str | None = None,
-) -> sqlite3.Row:
+) -> Row:
     if action_type not in ACTION_TYPES:
         raise InvalidStockActionError(f"action_type must be one of {sorted(ACTION_TYPES)}, got {action_type!r}")
     try:
@@ -55,35 +56,20 @@ def add_stock_action(
         raise InvalidStockActionError("subscription_price only applies to a 'rights' action")
 
     company_id = normalize_company_id(company_id)
-    now = utcnow_iso()
-    cursor = conn.execute(
-        """
-        INSERT INTO stock_actions (
-            company_id, action_type, action_date, ratio_from, ratio_to,
-            subscription_price, source, source_url, notes, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (company_id, action_type, action_date, ratio_from, ratio_to,
-         subscription_price, source, source_url, notes, now, now),
+    return repo.insert_stock_action(
+        conn, company_id=company_id, action_type=action_type, action_date=action_date,
+        ratio_from=ratio_from, ratio_to=ratio_to, subscription_price=subscription_price,
+        source=source, source_url=source_url, notes=notes, now=utcnow_iso(),
     )
-    conn.commit()
-    return conn.execute("SELECT * FROM stock_actions WHERE action_id = ?", (cursor.lastrowid,)).fetchone()
 
 
-def list_stock_actions(conn: sqlite3.Connection, company_id: str) -> list[sqlite3.Row]:
+def list_stock_actions(conn: DBConnection, company_id: str) -> list[Row]:
     """Every recorded action for this company, most recent first."""
-    company_id = normalize_company_id(company_id)
-    return conn.execute(
-        "SELECT * FROM stock_actions WHERE company_id = ? ORDER BY action_date DESC, action_id DESC",
-        (company_id,),
-    ).fetchall()
+    return repo.select_stock_actions(conn, normalize_company_id(company_id))
 
 
-def delete_stock_action(conn: sqlite3.Connection, company_id: str, action_id: int) -> None:
+def delete_stock_action(conn: DBConnection, company_id: str, action_id: int) -> None:
     company_id = normalize_company_id(company_id)
-    cursor = conn.execute(
-        "DELETE FROM stock_actions WHERE action_id = ? AND company_id = ?", (action_id, company_id)
-    )
-    conn.commit()
-    if cursor.rowcount == 0:
+    rowcount = repo.delete_stock_action_row(conn, company_id, action_id)
+    if rowcount == 0:
         raise StockActionNotFoundError(f"No stock action id={action_id} for company_id={company_id!r}")

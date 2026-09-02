@@ -776,3 +776,104 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL,
   CHECK (email IS NOT NULL OR username IS NOT NULL)
 );
+
+-- ============================================================
+-- Batch job audit log — start/end + per-item outcome for a multi-company
+-- bulk-fetch run (NSE XBRL financials, NSE shareholding pattern, and
+-- whatever else SCHEDULED_JOBS.md/NIFTY500_USA_XBRL_BATCHES.md describe as
+-- "batches" going forward). Two-table shape like llm_call_log above but
+-- split parent/child rather than one flat row: a batch run is naturally
+-- one row per COMPANY within one row per RUN, not one row per call the way
+-- an LLM call already is. ingestion/batch_log.py is the only writer.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS batch_job_runs (
+  run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_name TEXT NOT NULL,             -- e.g. 'nse_xbrl_fetch', 'nse_shareholding_fetch'
+  scope_label TEXT,                   -- human label, e.g. 'Nifty 50 remaining (9)', 'Nifty 500 batch 1'
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL DEFAULT 'running',  -- running | completed | failed
+  items_total INTEGER NOT NULL DEFAULT 0,
+  items_succeeded INTEGER NOT NULL DEFAULT 0,
+  items_failed INTEGER NOT NULL DEFAULT 0,
+  notes TEXT,                         -- free-text summary, or how this run was reconstructed if backfilled
+  CHECK (status IN ('running', 'completed', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_batch_job_runs_job ON batch_job_runs(job_name, started_at);
+
+CREATE TABLE IF NOT EXISTS batch_job_items (
+  item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL REFERENCES batch_job_runs(run_id),
+  company_id TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL DEFAULT 'running',  -- running | ok | failed
+  detail TEXT,                        -- e.g. "downloaded=9 reconciled=594", or the error message on failure
+  CHECK (status IN ('running', 'ok', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_batch_job_items_run ON batch_job_items(run_id);
+
+-- ============================================================
+-- Dataset-centric, event-driven ingestion (ingestion/events.py,
+-- ingestion/event_bus.py) -- the generic Source -> Fetch -> Parse ->
+-- Normalize -> Validate -> Store -> DATASET_INGESTED lifecycle every
+-- dataset type (company financials, macro, bank infrastructure,
+-- shareholding, documents, future types) shares. Ingestion never hard-codes
+-- a specific downstream capability -- it publishes one event, and
+-- independent workers (ingestion/workers/*.py) subscribe and decide
+-- relevance for themselves.
+--
+-- dataset_events -- the Event Store: an immutable, append-only record of
+--   every DATASET_INGESTED event ever published. Carries only metadata
+--   describing what was ingested and where it landed (scope_json/
+--   storage_reference_json), never the dataset itself -- a worker re-reads
+--   the already-normalized/validated data from its own table using that
+--   pointer, so replaying an event never requires re-fetching/re-ingesting
+--   source data.
+-- worker_processing_log -- separate from the Event Store on purpose (README
+--   above: Event vs Processing Log responsibilities must never blur). One
+--   row per (event, worker, worker_version) execution -- answers "what did
+--   each worker do with this ingestion event". UNIQUE(event_id, worker_name,
+--   worker_version) is the idempotency guarantee ingestion/event_bus.py's
+--   replay() relies on: replaying the same event never re-runs a worker
+--   version that already logged ok/skipped for it.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS dataset_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL DEFAULT 'DATASET_INGESTED',
+  dataset_id TEXT NOT NULL,          -- logical series id, e.g. "nse:RELIANCE", "india_rainfall_monthly"
+  dataset_type TEXT NOT NULL,        -- "company_financials" | "macro" | "bank_infrastructure" |
+                                      -- "shareholding" | "document" | future types -- open vocabulary,
+                                      -- never enumerated/hard-coded in the event store or bus themselves
+  source TEXT NOT NULL,              -- source_id
+  scope_json TEXT NOT NULL,          -- JSON: company_id / region / series_key / document_id / ...
+  period TEXT,                       -- e.g. "FY2025", "2026-08" -- NULL when not period-shaped
+  storage_reference_json TEXT NOT NULL,  -- JSON: generic pointer to where the normalized data landed
+  ingestion_id TEXT NOT NULL,        -- ties back to the specific ingestion run that published this
+  ingested_at TEXT NOT NULL,
+  metadata_json TEXT,                -- JSON: open bag (counts etc) -- never the raw dataset
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dataset_events_type ON dataset_events(dataset_type, ingested_at);
+CREATE INDEX IF NOT EXISTS idx_dataset_events_ingestion ON dataset_events(ingestion_id);
+
+CREATE TABLE IF NOT EXISTS worker_processing_log (
+  log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL REFERENCES dataset_events(event_id),
+  ingestion_id TEXT NOT NULL,        -- denormalized from the event, so "what happened to ingestion X"
+                                      -- doesn't need a join back through dataset_events
+  worker_name TEXT NOT NULL,
+  worker_version TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',  -- running | ok | skipped | failed
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  output_reference TEXT,             -- e.g. "reconciled_count=12" -- where applicable, not always set
+  error_message TEXT,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  CHECK (status IN ('running', 'ok', 'skipped', 'failed')),
+  UNIQUE(event_id, worker_name, worker_version)
+);
+CREATE INDEX IF NOT EXISTS idx_worker_log_event ON worker_processing_log(event_id);
+CREATE INDEX IF NOT EXISTS idx_worker_log_worker ON worker_processing_log(worker_name, status);
