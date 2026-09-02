@@ -79,7 +79,8 @@ tags fetching JSON from Flask routes.
   │  Deterministic layer   │                        │   Research / AI layer      │
   │  companies/, ingestion/│                        │   research/, retrieval/    │
   │  normalization/,       │                        │   context/, llm/           │
-  │  financials/, charts/  │                        │                            │
+  │  financials/, charts/, │                        │                            │
+  │  indicators/           │                        │                            │
   └───────────┬────────────┘                        └──────────────┬─────────────┘
               │                                                    │
               ▼                                                    ▼
@@ -99,7 +100,7 @@ tags fetching JSON from Flask routes.
 
 The guiding split (see `research/assistant.py`'s module docstring): **retrieval
 never calls the LLM**. Everything under `companies/`, `ingestion/`,
-`normalization/`, `financials/`, `retrieval/` is deterministic Python/SQL —
+`normalization/`, `financials/`, `indicators/`, `retrieval/` is deterministic Python/SQL —
 the LLM is only ever handed a compact, pre-computed `Evidence` block and asked
 to reason over it, never to fetch or calculate numbers itself.
 
@@ -116,15 +117,61 @@ to reason over it, never to fetch or calculate numbers itself.
 | `sources/` | Source adapters — one per data provider. Company financials: `screener.py` (India, Screener.in exports), `yfinance_financials.py` (US and other non-Indian tickers, live-fetched via Yahoo Finance), `proprietary.py` (hand-prepared workbooks). Non-company macro data: `macro.py`'s generic CSV convention (India: `rbi`/`imd`/`iitm`/`mospi`/`irda`), source-specific parsers for shapes that don't fit it (`rbi_indicators.py`/`rbi_dbie_tables.py`/`rbi_bank_infrastructure.py`, `iitm_rainfall.py`), and `fred.py` (US — FRED, live-fetched, the US counterpart to the RBI/IMD/IITM adapters). Each turns a raw file/API response into `NormalizedObservation`/`MacroNormalizedObservation` rows. |
 | `normalization/` | Canonicalizes raw labels into the shared metric vocabulary (`financials.py` — also localizes each metric's default unit to the company's `currency`, e.g. `INR_CRORE`→`USD_MILLION`), company identifiers (`companies.py`), fiscal periods (`periods.py` — parametrized by each company's `fiscal_year_end_month`, not a single global calendar), and units/currency (`units.py`). |
 | `financials/` | Deterministic math over `canonical_financials`: YoY/CAGR (`calculations.py`), ROA/ROE/vendor-reported ratios (`ratios.py`), and the human-readable text report (`report.py`) both the CLI's `analyze` command and the LLM evidence retrieval are built from. |
+| `indicators/` | The **Configurable Indicator Framework** — deterministic, rule-based factual patterns over existing facts (never an LLM-generated insight). `framework.py` (`IndicatorRule`/`RULE_REGISTRY`/`TriggeredIndicator` shapes), `rules.py` (the seeded `shareholding` and `financial_trajectory` rule families), `config.py` (pure Global→Sector→Company override resolution), `evaluation.py` (`evaluate_company_indicators()`, the engine), `settings.py` (the Settings page's read/write model). See [Configurable Indicator Framework](#configurable-indicator-framework-indicators) below. |
 | `retrieval/` | `structured_search.py` — turns `financials/`'s calculations into typed `Evidence` for the LLM. `document_search.py` (Step 2D) — FTS5 keyword search over `research/document_chunker.py`'s indexed chunks, returning typed `DocumentPassage` results. Retrieval only, no LLM calls, in both. |
 | `research/` | Four LLM call sites: `assistant.py` (Q&A), `insights.py` (Key Insights summaries), `signals_report.py` (full Signals investigation reports), and `knowledge_builder.py` (structured knowledge extraction from a document — its own section below) — plus `evidence.py` (the `Evidence`/citation model), `documents.py` (extracts `MANAGEMENT_STATEMENT` evidence from uploaded/linked Docs-tab PDFs, and exposes `document_text()`/`document_pages()`, shared with `knowledge_builder.py`/`document_chunker.py`), `document_chunker.py` (Step 2D — no LLM call, purely mechanical page-scoped chunking + FTS5 indexing), and `macro_evidence.py` (the third evidence source — macro/regulatory data spanning both India and US sources, attributed per-series to `"INDIA"` or `"USA"`; a narrow, deliberate exception to "retrieval never calls the LLM," since an LLM call picks which macro series/date-range apply before the deterministic fetch runs). |
 | `context/` | The **Context Optimizer** — `optimizer.py` (dedup, value-scoring, token-budget compression of an `Evidence` list), `reuse.py` (reuse-before-recompute: returns a fresh, near-duplicate prior investigation instead of a new LLM call — now used by both `research/assistant.py`'s Q&A path and `research/signals_report.py`'s full reports), `graph.py`/`graph_neo4j.py` (sector-peer knowledge-graph traversal: surfaces a *different* company's relevant prior investigation, via `config/knowledge_graph_seed.py`'s curated domain relationships), and `knowledge_graph.py` (Step 2B's Research Knowledge Graph — a distinct, cross-*entity* traversal over the Knowledge Builder's `knowledge_claims`/`knowledge_relationships`, its own section below). Both graphs are pure Python/SQLite by default, or the same real Neo4j instance when `GRAPH_BACKEND=neo4j` (sharing `Company` nodes between the two), with automatic fallback to SQLite if Neo4j isn't reachable. |
 | `llm/` | The **Model Router + Fallback layer** — `hardness.py` (task-complexity classifier), `router.py` (fallback chain across models/providers), `capability_registry.py` (static model metadata; which models are policy-disabled is read from `config/settings.py`'s `DISABLED_MODELS`), `providers/` (Anthropic + local Ollama), `observability.py` (per-call logging/cost tracking). The tier→model policy itself (`TIER_PREFERRED_MODEL`, `TIER_MIN_REASONING_STRENGTH`, `DISABLED_MODELS`) lives in `config/settings.py`, not scattered across these modules — edit that one file to change routing. |
 | `charts/` | matplotlib chart generation for legacy server-rendered PNGs (`financial_charts.py`). |
 | `config/` | `settings.py` (paths, source trust order, LLM/model-tiering policy, repo-relative path helpers), `knowledge_graph_seed.py` (curated sector-peer causal edges — `context/graph.py`'s vocabulary), `knowledge_ontology.py` (Step 2C — the fixed `ENTITY_TYPES`/`RELATIONSHIP_TYPES`/`CLAIM_TYPES` vocabulary `research/knowledge_builder.py`'s extraction validates against, kept distinct from `STRUCTURAL_NODE_TYPES` — Claim/Evidence/Document/TimePeriod, never something the model extracts by name — plus `CANONICAL_HOME`, an explicit map of which subsystem owns each concept's real value). |
-| `storage/` | `database.py` (connection + schema init/migrations), `repositories.py` (all SQL — every other module goes through this, nothing else touches sqlite directly). |
+| `storage/` | `database.py` (connection + schema init/migrations), `repositories.py` (general-purpose SQL — reference data, financials, documents, Knowledge Builder, generated reports, LLM observability), `db_types.py` (`DBConnection`/`Row` — the backend-agnostic types every other module now type-hints against), `fact_store.py` (`FactStore` — the DI seam `research/`/`context/`/`indicators/` call through instead of importing `repositories.py` directly), `company_repository.py` (companies/stock-actions SQL), `indicator_repository.py` (indicator config + audit-trail SQL), `investigation_repository.py` (the `investigation_companies` join table). Together, the only place in the codebase that knows SQLite exists — see [Storage layer and database portability](#storage-layer-and-database-portability-storagedb_typespy) below. |
 | `schemas/` | `sqlite_schema.sql` — the full DDL. |
 | `scripts/` | One-off bulk-import scripts for the various data workbooks (`scripts/import_*.py`). |
+
+### Storage layer and database portability (`storage/db_types.py`)
+
+`storage/repositories.py` was already "the only place that touches SQL" for
+most of the app; this pass makes that literally true for the *type system*
+too, not just for which function runs a query. `storage/db_types.py` defines
+two backend-agnostic aliases — `DBConnection` (a `Protocol` matching DB-API
+2.0's `execute`/`executemany`/`executescript`/`commit`/`cursor`/`close`) and
+`Row` (a `Mapping[str, Any]` alias) — and every function outside `storage/`
+that takes a `conn` parameter, or reads back a row, is now typed against
+these instead of `sqlite3.Connection`/`sqlite3.Row` directly (a mechanical,
+non-behavioral change across roughly 40 files in `research/`, `context/`,
+`web/`, `retrieval/`, `sources/`, `financials/`, `ingestion/`, `analytics/`,
+`charts/`, `llm/`). sqlite3's own connection/row objects already satisfy
+both shapes structurally, so nothing here changes behavior; what it buys is
+that none of those modules needs `import sqlite3` just to type-hint a
+parameter, and it's the same "interface, not concrete implementation"
+principle `storage/fact_store.py`'s `FactStore` already applies one level up
+(*which function* runs a query) — taken one level further down (*what
+connection/row shape* a function is even allowed to assume).
+
+Two new repository modules absorb raw SQL that used to live inline in
+business-logic modules, following the discipline `storage/repositories.py`
+already set for everything else:
+
+- **`storage/company_repository.py`** — every statement
+  `companies/registry.py`, `companies/lifecycle.py`, and
+  `companies/stock_actions.py` need, plus the one-off backfill/batch scripts
+  under `scripts/` (website and sector/industry backfills, daily-price
+  fetch, price-history backfill, the NSE batch-fetch script, the
+  equity-analysis-workbook importer) — those callers now hold
+  validation/business rules only and never call `conn.execute(...)`
+  themselves.
+- A handful of new functions on **`storage/repositories.py`** itself
+  (`get_document`, `get_metric_dictionary_entry`, `get_metric_key_for_alias`,
+  `seed_metric_vocabulary`), absorbing SQL that used to live inline in
+  `ingestion/coordinator.py`, `ingestion/workers/*.py`, `financials/ratios.py`,
+  and `normalization/financials.py`.
+
+Net effect: `storage/*.py` and `schemas/sqlite_schema.sql` are now the only
+places in the codebase that know SQLite exists — swapping the backend means
+replacing `storage/`'s implementations, not touching business logic
+anywhere else. `scripts/db_shard.py`/`db_unshard.py` are a deliberate
+exception, not a gap: they're SQLite-file-splitting utilities with no
+portability story of their own, and stay that way on purpose.
 
 ### Data ingestion flow
 
@@ -323,6 +370,124 @@ retrieval/document_search.py::search_documents()  — FTS5 MATCH, ranked by
   capability today, not (yet) a fourth evidence source alongside
   Financials/Docs/Macro in `research/assistant.py`'s `SYSTEM_PROMPT`.
 
+### Configurable Indicator Framework (`indicators/`)
+
+A package, peer to `financials/`/`analytics/`/`research/`, for
+deterministic, rule-based **indicators** — factual patterns worth noticing
+("promoter holding fell 2.1pp over the last two quarters", "net profit grew
+22% year over year") — explicitly NOT an LLM-generated insight, conclusion,
+prediction, or recommendation. An indicator is a *computed fact* in this
+app's Fact → Evidence → Inference → Hypothesis → Conclusion separation, so
+no LLM call exists anywhere on this path, by construction.
+
+```
+canonical facts (canonical_financials, shareholding_observations, ...)
+      │
+      ▼
+indicators/rules.py             — IndicatorRule.evaluate(conn, company_id,
+      │  RULE_REGISTRY             thresholds, fact_store) -> RuleOutcome |
+      │                            None, via the same FactStore seam
+      │                            research/ already uses
+      ▼
+indicators/config.py            — resolve_effective_config(): system
+      │  resolve_effective_config() default, then Global → Sector → Company
+      │                            overrides, resolved per FIELD, not
+      │                            whole-row
+      ▼
+indicators/evaluation.py        — evaluate_company_indicators(): run every
+      │  evaluate_company_indicators() enabled rule with per-rule failure
+      │                            isolation, append a deduped audit row
+      │                            per newly-triggered/changed indicator
+      ▼
+storage/indicator_repository.py — indicator_rule_config (mutable, user-
+                                   owned), indicator_evaluations
+                                   (append-only audit trail)
+```
+
+- **Rules are Python code, not database rows.** Each `IndicatorRule`
+  (`indicators/framework.py`, a frozen dataclass) declares a stable
+  `rule_id`, `name`, `family`, `description`, `version`, `required_facts`, a
+  `default_classification` — one of a fixed three-value vocabulary,
+  `positive`/`observation`/`warning` (`red` is a defined-but-unused
+  constant, reserved for a future "critical" classification), a
+  `default_severity`, one or more `ThresholdSpec`s (each declaring its own
+  key/label/unit/min/max, so the Settings form doesn't have to guess a
+  range), and an `evaluate(conn, company_id, thresholds, fact_store)`
+  callable. Rules register into `RULE_REGISTRY` (a plain `dict[rule_id,
+  IndicatorRule]`) via `register_rule()` — the same "registry of named,
+  versioned, pluggable things" pattern `ingestion/detector.py`'s
+  `ADAPTER_CLASSES` and `ingestion/event_bus.py`'s worker registry already
+  establish. Adding a rule is a `register_rule(...)` call in
+  `indicators/rules.py`, never a framework change. A user's configuration
+  never modifies or duplicates the rule object itself — only thresholds,
+  classification, and enabled/disabled are configurable, and those live
+  entirely in `indicator_rule_config`.
+- **Two seeded families as of this session**: `shareholding` (promoter
+  holding decline/increase between the two most recent quarters on file,
+  read via `fact_store.list_shareholding_history`) and
+  `financial_trajectory` (YoY moves in `net_profit`/`total_assets` from
+  `canonical_financials`, computed by
+  `financials/calculations.py::yoy_growth_for_metric`). That computation,
+  and its default threshold (`analytics.patterns.DEFAULT_YOY_THRESHOLD_PERCENT`),
+  are deliberately shared with `analytics/patterns.py`'s pre-existing
+  `detect_yoy_spikes()` — so there is exactly one definition of "a
+  significant YoY move" in the codebase even though the two surfaces render
+  it differently. `detect_yoy_spikes()` itself is unchanged: it remains the
+  Tools tab's cross-company, no-per-user-configuration scan it always was,
+  not migrated into the rule engine.
+- **Configuration is separate from rules, at Global → Sector → Company
+  scope, resolved most-specific-wins, per FIELD (not whole-row)** — a new
+  `indicator_rule_config` table keyed `(user_id, rule_id, scope_type,
+  scope_value)`, where a NULL field means "inherit" (never "off"), resolved
+  by the pure function `resolve_effective_config()` in `indicators/config.py`.
+  Per-field resolution means a user who overrides *classification* for one
+  company still inherits whatever *threshold* they configured globally,
+  rather than that company override silently freezing today's global
+  threshold too. `EffectiveConfig.sources` records which scope supplied
+  each field — exactly what the Settings UI shows as "overridden" and what
+  the audit trail stores as `scope_applied`.
+- **Evaluation engine** —
+  `indicators/evaluation.py::evaluate_company_indicators(conn, company_id,
+  user_id, fact_store, persist)`: resolves each rule's effective
+  configuration, skips disabled rules, runs each enabled rule's `evaluate()`
+  with per-rule failure isolation (a raising rule is logged and skipped,
+  never allowed to blank the whole section — the same discipline
+  `ingestion/event_bus.py` applies to workers), and persists one audit row
+  to the new `indicator_evaluations` table per *newly-triggered or changed*
+  indicator — deduped by a `result_hash` fingerprint against that rule's
+  most recent stored row for the same (company, user), so viewing a company
+  page repeatedly doesn't inflate the trail; rules that don't trigger are
+  never recorded. Append-only, same discipline `reconciliation_log` already
+  follows. No LLM call exists anywhere on this path.
+- **UI surfaces**: a new "Indicator Rules" section on the user Settings page
+  (browse/search the rule catalog, see the system default alongside the
+  user's effective configuration, enable/disable a rule, change its
+  classification, adjust its thresholds, apply an override at a chosen
+  scope, see what's overridden, and reset it back to inherited) — routes
+  `POST /settings/indicators` and `/settings/indicators/reset` in
+  `web/app.py`, built on `indicators/settings.py`'s read/write model. And a
+  new "Indicators" section on every company page: three `<details>`-
+  disclosure columns (Positive / Observations / Warnings, via
+  `group_by_classification()`) — only the Warnings column auto-opens, and
+  only when it's non-empty, this app's established real-estate-efficient
+  disclosure convention.
+- **Deliberately deferred** (not built in this pass): the Critical/red
+  classification; most of the other indicator families the design
+  anticipates (pledging, debt, valuation, governance, cash flow, capital
+  allocation, ...); a user feedback loop (Agree/Disagree/Not Sure) and any
+  adaptive personalization on top of it (`indicators/evaluation.py`'s
+  module docstring records the intended shape — an `indicator_feedback`
+  table keyed off the `evaluation_id` every triggered indicator already
+  carries, *suggesting* a configuration change for approval rather than
+  applying one — as an extension point, not something built here); and an
+  audit-trail browsing UI (`indicator_evaluations` is real, queryable data,
+  but nothing renders it yet — see [Known gaps → Configurable Indicator
+  Framework](#configurable-indicator-framework)). Feeding indicators into
+  the hypothesis/investigation workflow — the other item the framework's
+  own spec named as future work — was partially built in this same
+  session; see [Golden Research Loop validation](#golden-research-loop-validation)
+  below.
+
 ### Research / AI layer (Context Optimization + Model Routing + Fallback)
 
 This is the layer added to control LLM cost and add resilience. The three
@@ -408,6 +573,102 @@ today's quality bar for those two features; only `research/assistant.py`
 auto-routes across tiers by default. All three get the fallback-on-failure
 and observability logging regardless of whether they're pinned or auto-routed.
 
+### Golden Research Loop validation
+
+[`SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md`](SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md)
+(repo root) is the benchmark document for this: a validation exercise that
+ran the Steps 2E-2H pipeline above end-to-end against five real research
+questions, on the live database and a live Anthropic API — a re-runnable
+score meant to be compared against after future changes, not a one-off
+spot-check. Score: **8/10** — 4 of 5 investigations passed outright, 1
+partial (blocked by a real, non-architectural data-coverage gap: IndusInd
+Bank's ingested annual data ends at FY2013, years before the deterioration
+the test question asks about — not a capability gap in the pipeline itself).
+The exercise surfaced, and this session fixed, five genuine, generic
+architecture gaps — changes that benefit every future investigation, not
+one-off patches for the five test questions:
+
+1. **Cross-company investigation persistence** — `investigations.company_ids`
+   was a JSON blob with no real relational association, and company pages
+   had no Investigations section at all. Fixed with a new
+   `investigation_companies` join table (`storage/investigation_repository.py`):
+   every investigation gets one row per associated company (a single-company
+   investigation gets one row, a cross-company one gets several), plus
+   `select_investigations_for_company()` to list a company's investigations
+   through that join. One investigation record now genuinely appears under
+   every relevant company's Investigations section without duplicating the
+   record — `research/investigation.py`'s persistence path writes the join
+   rows alongside the investigation itself, and the company page
+   (`web/app.py`, `web/templates/company.html`'s new Investigations section)
+   reads through it, showing a cross-company investigation's other companies
+   as an "also ..." kicker linking to the one shared `/investigate/<id>`
+   view rather than a per-company copy.
+2. **Point-in-time (`as_of`) evidence scoping** (`research/temporal.py`) —
+   previously no retrieval path had any temporal-cutoff concept at all, so a
+   "no look-ahead bias" historical investigation ("could Signal have
+   detected X before it became obvious?") was architecturally impossible to
+   do correctly: evidence retrieval always pulled the full history up to
+   today regardless of the question's framing. `as_of` is a plain ISO date,
+   threaded generically through
+   `research/capabilities.py::default_capabilities(as_of=...)` and applied
+   uniformly across every evidence-gathering capability rather than as a
+   one-off filter for a single investigation — fiscal periods visible only
+   if their end date is on or before the cutoff, macro observations by
+   period, documents/passages/knowledge claims by publication date, with an
+   undated item excluded under a cutoff (fails closed: it cannot be shown to
+   predate it). Enforced in retrieval, not asked for in a prompt, because an
+   "as of 2013" question whose evidence block contains 2024 figures has
+   already leaked the answer. The cutoff is recorded on `investigations.as_of`
+   so a historical conclusion states the information set it was reached
+   under.
+3. **Deterministic indicators as investigation input**
+   (`research/indicator_evidence.py`, plus a new `IndicatorEvidenceCapability`
+   in `research/capabilities.py`) — the piece connecting the Configurable
+   Indicator Framework above to the existing investigation pipeline: a
+   company's currently-triggered indicators (via `indicators/evaluation.py`,
+   read-only — `persist=False`, since an investigation reading a company's
+   indicators must never write to the same audit trail a company-page view
+   writes to) are now available both as hypothesis-generation context (Step
+   2E, alongside a company's sector and known knowledge-graph entities) and
+   as per-hypothesis CALCULATION evidence (Step 2F, citing the rule id,
+   version, and provenance so the line is reproducible) — closing the loop
+   the indicator framework's own spec described ("indicators may later
+   become inputs to Signal's hypothesis/investigation workflow") but
+   explicitly left unbuilt when that framework shipped. Disabled entirely
+   under an `as_of` cutoff rather than leaking post-cutoff findings, since
+   indicator rules evaluate only against the latest facts on file and have
+   no historical mode.
+4. **Hypothesis-generation robustness fixes**
+   (`research/hypothesis_generator.py`) — two defects real load was silently
+   hitting: `MAX_TOKENS` was raised from 3072 to 8192 (a 6-hypothesis
+   response is a genuinely large JSON object; real golden-loop runs measured
+   2155-2221 output tokens even before a multi-clause question truncated
+   outright and failed the whole investigation), and the JSON parser now
+   decodes with `strict=False` so a literal control character inside a
+   quoted string (an unescaped newline inside one response's "mechanism"
+   field, observed in a real run) no longer fails an entire investigation —
+   the same tolerance `research/knowledge_builder.py`'s parser already had.
+   Both are generation-failure fixes: hypothesis generation failing is the
+   one failure `run_investigation()` cannot degrade past, since there is
+   then nothing left to investigate.
+5. **Neo4j sync de-duplication** (`context/graph_neo4j.py`,
+   `context/knowledge_graph.py`) — the knowledge-graph read path was
+   re-running a full, idempotent resync of the whole knowledge-claim graph
+   to Neo4j on nearly every call (`research/investigation_planner.py` calls
+   the knowledge-graph capability up to 6 times per hypothesis, so a real
+   6-hypothesis investigation triggered ~36 full resyncs and spent most of
+   its wall clock on them — risking lock contention when investigations run
+   concurrently). Fixed with an in-process fingerprint of the SQLite
+   knowledge tables (row counts plus the highest claim id — the
+   `knowledge_*` tables are append-only, so this is a sufficient change
+   signal) cached between calls: a sync is skipped when the fingerprint is
+   unchanged since the last one, and a fresh process always syncs at least
+   once, so this can never serve another process's stale idea of the data.
+   `find_claims_about_entity()` also gained the same `as_of` filtering as
+   every other capability (point 2 above), on both the SQLite and Neo4j
+   paths, so switching `GRAPH_BACKEND` cannot change what a point-in-time
+   investigation is allowed to see.
+
 ### Web layer (`web/app.py`)
 
 Single-file Flask app (`create_app()` factory), organized by feature area:
@@ -417,10 +678,15 @@ Single-file Flask app (`create_app()` factory), organized by feature area:
   `before_request`. One seeded admin account (`admin`/`admin`) so the app is
   usable with zero setup. Admin-only routes gate on `g.user["is_admin"]`.
 - **Company pages** (`/companies/<id>`): multi-tab company view (Overview,
-  Financials, Valuation, Charts, Docs, Notes, Threads) — most tabs are
-  server-rendered on page load; Financials/Valuation/Charts/Docs fetch their
-  data from `*.json` feed endpoints (`valuation_feed.py`, `charts_feed.py`,
-  `docs_feed.py`) and render client-side.
+  Key Insights, Indicators, Charts, Financials, Valuation Model, Docs,
+  Notes, Shareholding Pattern, Investigations, Threads, Commentary, News) —
+  most tabs are server-rendered on page load; Financials/Valuation/Charts/Docs
+  fetch their data from `*.json` feed endpoints (`valuation_feed.py`,
+  `charts_feed.py`, `docs_feed.py`) and render client-side. Indicators
+  (`indicators/*.py`, see [Configurable Indicator
+  Framework](#configurable-indicator-framework-indicators)) and
+  Investigations (Steps 2E-2H, see [Golden Research Loop
+  validation](#golden-research-loop-validation)) are the two newest tabs.
 - **Research** (`/`, `/research/ask`, `/research/thread/generate`,
   `/research/thread/<id>`): the Ask-AI and Signals-investigation entry
   points, calling `research/assistant.py` / `research/signals_report.py`.
@@ -491,7 +757,7 @@ file's header comment.
 
 ## Data model (SQLite, `schemas/sqlite_schema.sql`)
 
-32 tables, grouped by concern:
+46 tables, grouped by concern:
 
 - **Reference data**: `sources` (trust-ranked data providers), `metrics_dictionary`, `metric_aliases`.
 - **Companies**: `companies` (per-company `country`/`currency`/`fiscal_year_end_month`, not global), `company_identifier_history`, `company_index_membership`, `company_list_column_settings`, `stock_actions` (discrete corporate events — splits/bonus/rights issues — recorded as raw events only; no split-adjustment of historical shares/EPS/price series yet), `sectors`/`industries`/`index_definitions` (Admin-editable lookup vocabularies backing the sector/industry/index-tag dropdowns, seeded from whatever's already in use).
@@ -499,7 +765,8 @@ file's header comment.
 - **Ingestion tracking**: `ingestion_queue_items` — the Admin → Ingest panel's discovery/status tracking for financial/macro files under `data/raw/` (content-hash keyed); orchestration metadata only, never the source of truth for parsed data itself.
 - **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` + `document_chunks_fts` (Step 2D — page-scoped chunks, FTS5-indexed by `research/document_chunker.py`; `embedding` stays `NULL` on every row, keyword search only, no vector layer — see [Document Retrieval](#document-retrieval-retrievaldocument_searchpy-step-2d)).
 - **Knowledge Builder**: `knowledge_entities` (deduped named things — Company/Product/Risk/ManagementPerson/...), `knowledge_claims` (one extracted statement per row, with its own provenance — document, fiscal period, speaker, `claim_type`, confidence — additive, never overwritten), `knowledge_relationships` (typed edges between two entities, optionally traced to the claim that asserted them), `knowledge_evidence` (the supporting quote for one claim). SQLite is the source of truth for all four; `context/knowledge_graph.py`/`context/graph_neo4j.py` (Step 2B) project them into the same Neo4j graph the sector-peer traversal uses, sharing `Company` nodes rather than duplicating them — see [Research Knowledge Graph](#research-knowledge-graph-contextknowledge_graphpy-step-2b).
-- **Research/investigations**: `generated_reports` (persisted Signals reports), `research_thread_evidence`, `research_thread_followups`, `company_insights` (Key Insights history).
+- **Research/investigations**: `generated_reports` (persisted Signals reports), `research_thread_evidence`, `research_thread_followups`, `company_insights` (Key Insights history); Steps 2E-2H's `investigations` (one row per structured investigation, including `as_of` — the point-in-time cutoff it ran under, if any — see [Golden Research Loop validation](#golden-research-loop-validation)), `investigation_hypotheses`, `investigation_hypothesis_evidence`; and `investigation_companies` — the investigation↔company join table a company page's Investigations section queries through (`storage/investigation_repository.py`), so a cross-company investigation is one row, listed under every company it covers, never duplicated.
+- **Configurable Indicator Framework**: `indicator_rule_config` (per-user Global/Sector/Company overrides, keyed `(user_id, rule_id, scope_type, scope_value)`, a NULL field meaning "inherit"), `indicator_evaluations` (append-only audit trail of triggered indicators, deduped by `result_hash`). The rules themselves are Python (`indicators/rules.py`), not rows — see [Configurable Indicator Framework](#configurable-indicator-framework-indicators) above.
 - **LLM observability**: `llm_call_log` — one row per `llm/router.py` call or `context/reuse.py` reuse hit (model/provider, fallback, tokens, cost, context-optimization accounting) — covers all four LLM call sites, including `research/knowledge_builder.py` (`task_name="knowledge_extraction"`).
 - **User content**: `company_notes`, `company_note_attachments`, `watchlist_items`.
 - **Auth**: `users`.
@@ -652,6 +919,36 @@ pre-existing test failure.
   neither Q&A/Signals reports nor the Research Knowledge Graph query it;
   it's reachable today only by calling `search_documents()` directly (CLI/
   Python), not from any Flask route or research call site.
+
+### Configurable Indicator Framework
+
+- **Only two rule families exist** — `shareholding` and
+  `financial_trajectory` (`indicators/rules.py`) prove the registry shape;
+  the design's other anticipated families (pledging, debt, valuation,
+  governance, cash flow, capital allocation, ...) are unregistered. Adding
+  one is a `register_rule(...)` call, not a framework change.
+- **No Critical/red classification** — `CLASSIFICATIONS` is fixed at
+  `positive`/`observation`/`warning`; `red` is a defined-but-unused constant
+  reserved for a future fourth tier.
+- **No user feedback loop, and no adaptive personalization built on one** —
+  no Agree/Disagree/Not Sure verdict on a triggered indicator.
+  `indicators/evaluation.py`'s module docstring records the intended shape
+  (an `indicator_feedback` table keyed off `evaluation_id`, *suggesting* a
+  configuration change for approval rather than applying one silently) as
+  an extension point, not something built here.
+- **No UI to browse the indicator audit trail** — `indicator_evaluations`
+  is real, queryable data
+  (`storage/indicator_repository.py::select_indicator_evaluations()`), but
+  nothing renders it; a company page shows only the currently-triggered
+  set, not its history. Same shape as "No UI to browse extracted claims"
+  above.
+- **Feeding indicators into the investigation workflow was partially
+  built**, not left as a pure gap — see [Golden Research Loop
+  validation](#golden-research-loop-validation)'s "Deterministic indicators
+  as investigation input": a company's currently-triggered indicators are
+  now available to hypothesis generation/planning as evidence, but nothing
+  else the framework's own spec anticipated on top of that (e.g. no
+  push/alerting on a newly-triggered warning) is built.
 
 ### Research / AI layer (Context Optimizer + Model Router)
 

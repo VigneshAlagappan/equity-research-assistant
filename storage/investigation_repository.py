@@ -78,6 +78,16 @@ def select_investigations_for_company(conn: DBConnection, company_id: str) -> li
     ).fetchall()
 
 
+def count_investigation_hypotheses(conn: DBConnection, investigation_id: str) -> int:
+    """How many hypotheses this investigation produced — the one number the
+    company-page card needs, so the page doesn't fetch every hypothesis row
+    of every investigation just to call len() on them."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM investigation_hypotheses WHERE investigation_id = ?", (investigation_id,)
+    ).fetchone()
+    return int(row["n"]) if row else 0
+
+
 def select_investigations_missing_company_rows(conn: DBConnection) -> list[Row]:
     """Investigations with no `investigation_companies` rows yet — the input
     to the one-time backfill in storage/database.py. An investigation that

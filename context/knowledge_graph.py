@@ -52,7 +52,8 @@ class KnowledgeClaimView:
 
 
 def find_claims_about_entity(
-    conn: DBConnection, entity_type: str, entity_name: str, *, fact_store: FactStore | None = None
+    conn: DBConnection, entity_type: str, entity_name: str, *, fact_store: FactStore | None = None,
+    as_of: str | None = None,
 ) -> list[KnowledgeClaimView]:
     """Every claim, from any company, whose extracted relationships touch
     this entity — e.g. entity_type="Risk", entity_name="Interest Rate
@@ -60,18 +61,35 @@ def find_claims_about_entity(
     just one company's own. Dispatches to Neo4j when GRAPH_BACKEND=neo4j and
     reachable, falling back to the SQLite join-based traversal otherwise —
     same graceful-degradation pattern as context/graph.py's
-    find_related_investigations()."""
+    find_related_investigations().
+
+    `as_of` (ISO date) keeps only claims whose fiscal period had already
+    ended by the cutoff — research/temporal.py. A claim with no fiscal period
+    on record is dropped under a cutoff (fail closed): an undated management
+    statement cannot be shown to predate the date being reasoned as-of. Both
+    backends go through the same filter, so switching GRAPH_BACKEND cannot
+    change what a point-in-time investigation is allowed to see."""
     fs = fact_store or default_fact_store()
+    claims: list[KnowledgeClaimView]
     if GRAPH_BACKEND == "neo4j":
         try:
             from context import graph_neo4j
 
             driver = graph_neo4j.get_driver()
             graph_neo4j.sync_knowledge_graph(conn, driver, fact_store=fs)
-            return graph_neo4j.find_claims_about_entity(driver, entity_type, entity_name)
+            return _apply_as_of(graph_neo4j.find_claims_about_entity(driver, entity_type, entity_name), as_of)
         except Exception:
             logger.warning("Neo4j graph backend unavailable, falling back to SQLite traversal", exc_info=True)
-    return _find_claims_about_entity_sqlite(conn, entity_type, entity_name, fs)
+    claims = _find_claims_about_entity_sqlite(conn, entity_type, entity_name, fs)
+    return _apply_as_of(claims, as_of)
+
+
+def _apply_as_of(claims: list[KnowledgeClaimView], as_of: str | None) -> list[KnowledgeClaimView]:
+    if not as_of:
+        return claims
+    from research.temporal import fiscal_year_visible
+
+    return [c for c in claims if fiscal_year_visible(c.fiscal_year, as_of, quarter=c.quarter)]
 
 
 def _find_claims_about_entity_sqlite(

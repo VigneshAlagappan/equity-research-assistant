@@ -45,6 +45,7 @@ from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
 from research.evidence import Evidence
+from research.temporal import period_visible
 from storage.fact_store import FactStore, default_fact_store
 
 logger = logging.getLogger(__name__)
@@ -236,7 +237,7 @@ def _plan_retrieval(conn: DBConnection, question: str, fact_store: FactStore) ->
 
 
 def get_macro_evidence(
-    conn: DBConnection, question: str, *, fact_store: FactStore | None = None
+    conn: DBConnection, question: str, *, fact_store: FactStore | None = None, as_of: str | None = None
 ) -> list[Evidence]:
     """Gather Evidence for the (at most MAX_SERIES) national macro series
     the LLM planner (_plan_retrieval) picks as relevant to this question,
@@ -244,7 +245,11 @@ def get_macro_evidence(
     regex heuristic (_matching_series/_year_range) only if that call fails
     or doesn't parse. Returns [] if nothing applies — most company-financials
     questions won't match any macro series, and that's the expected common
-    case, decided by the LLM itself (SERIES: NONE) rather than assumed."""
+    case, decided by the LLM itself (SERIES: NONE) rather than assumed.
+
+    `as_of` (ISO date) drops every observation whose period falls after the
+    cutoff — research/temporal.py — so a point-in-time investigation is
+    grounded only in macro data that had actually been published by then."""
     fs = fact_store or default_fact_store()
     planned = _plan_retrieval(conn, question, fs)
     if planned is not None:
@@ -269,6 +274,8 @@ def get_macro_evidence(
         for row in rows:
             year = int(row["period"][:4])
             if year < start_year or year > end_year:
+                continue
+            if not period_visible(row["period"], as_of):
                 continue
             by_year[year] = row
 

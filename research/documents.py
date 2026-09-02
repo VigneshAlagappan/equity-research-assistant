@@ -34,6 +34,7 @@ from config.settings import from_repo_relative
 from pypdf.errors import DependencyError, PyPdfError
 
 from research.evidence import Evidence
+from research.temporal import date_visible
 from storage.fact_store import FactStore, default_fact_store
 
 # Bounds a single link-only document fetch — avoids hanging on a slow host or
@@ -188,15 +189,24 @@ def document_pages(row: Row) -> list[str] | None:
 
 
 def get_document_evidence(
-    conn: DBConnection, company_id: str, question: str, *, fact_store: FactStore | None = None
+    conn: DBConnection, company_id: str, question: str, *, fact_store: FactStore | None = None,
+    as_of: str | None = None,
 ) -> list[Evidence]:
     """MANAGEMENT_STATEMENT evidence extracted from this company's Docs-tab
     documents — uploaded files and fetched links alike (README: Evidence &
     Citations). Company-specific only — there's
     no per-company attribution story yet for a multi-company comparison, so
-    callers should only use this for single-company investigations."""
+    callers should only use this for single-company investigations.
+
+    `as_of` (ISO date) keeps only documents published on or before the cutoff
+    — research/temporal.py, which fails closed: a document with no
+    published_at at all is dropped under a cutoff rather than assumed old
+    enough."""
     fs = fact_store or default_fact_store()
-    docs = _select_documents(fs.list_company_documents(conn, company_id), question)
+    docs = list(fs.list_company_documents(conn, company_id))
+    if as_of:
+        docs = [d for d in docs if date_visible(d["published_at"], as_of)]
+    docs = _select_documents(docs, question)
 
     evidence = []
     for row in docs:

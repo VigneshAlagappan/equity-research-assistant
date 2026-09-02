@@ -1589,3 +1589,85 @@ def test_admin_stock_actions_panel_requires_login(client) -> None:
     assert response.status_code in (302, 401, 403)
     if response.status_code == 302:
         assert "/login" in response.headers["Location"]
+
+
+def _save_investigation(db_path: Path, investigation_id: str, company_ids: list[str], **kwargs) -> None:
+    from storage.repositories import save_investigation
+
+    conn = init_db(db_path=db_path)
+    save_investigation(
+        conn, investigation_id=investigation_id,
+        question=f"Why do {' and '.join(company_ids)} differ?", company_ids=company_ids,
+        statement_type="consolidated", strongest_explanation="Because of X.",
+        unanswered_questions=[], additional_evidence_needed=[], **kwargs,
+    )
+    conn.close()
+
+
+def test_company_page_lists_its_structured_investigations(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "web_test.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    conn.close()
+    _save_investigation(db_path, "inv_solo", ["HDFCBANK"])
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as client:
+        body = client.get("/companies/HDFCBANK").data.decode()
+
+    assert 'id="sec-investigations"' in body
+    assert "/investigate/inv_solo" in body
+    assert "Why do HDFCBANK differ?" in body
+
+
+def test_a_cross_company_investigation_appears_under_every_company_it_covers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The spec's rule for investigations #4 and #5: one shared record, listed
+    under each associated company, never duplicated per company."""
+    db_path = tmp_path / "web_test.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    conn.close()
+    _save_investigation(db_path, "inv_pair", ["HDFCBANK", "ICICIBANK"])
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as client:
+        hdfc = client.get("/companies/HDFCBANK").data.decode()
+        icici = client.get("/companies/ICICIBANK").data.decode()
+
+    for body, other in ((hdfc, "ICICIBANK"), (icici, "HDFCBANK")):
+        assert "/investigate/inv_pair" in body
+        assert f"Deep Dive · also {other}" in body  # named as a shared, not duplicated, record
+
+    conn = init_db(db_path=db_path)
+    assert conn.execute("SELECT COUNT(*) FROM investigations").fetchone()[0] == 1
+    conn.close()
+
+
+def test_company_page_shows_an_empty_state_when_it_has_no_investigations(client) -> None:
+    body = client.get("/companies/HDFCBANK").data.decode()
+    assert 'id="company-investigations-empty"' in body
+
+
+def test_a_point_in_time_investigation_is_labelled_as_of_on_both_surfaces(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A historical conclusion must state the information set it was reached
+    under, or it can't be audited."""
+    db_path = tmp_path / "web_test.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    conn.close()
+    _save_investigation(db_path, "inv_hist", ["HDFCBANK"], as_of="2013-03-31")
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as client:
+        company_page = client.get("/companies/HDFCBANK").data.decode()
+        investigation_page = client.get("/investigate/inv_hist").data.decode()
+
+    assert "as of 2013-03-31" in company_page
+    assert "evidence as of 2013-03-31" in investigation_page

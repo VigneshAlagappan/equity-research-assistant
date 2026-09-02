@@ -151,3 +151,92 @@ def test_company_context_includes_sector_and_known_entities(company_conn: sqlite
     assert "HDFCBANK" in user_message
     assert "Financial Services" in user_message  # HDFCBANK's seeded sector
     assert "Input cost inflation" in user_message
+
+
+def test_a_raw_newline_inside_a_string_field_still_parses(
+    company_conn: sqlite3.Connection, monkeypatch
+) -> None:
+    """A real golden-loop run failed an entire investigation on "Invalid
+    control character at line 20 column 361" — the model had emitted an
+    unescaped newline inside one "mechanism" field. Structurally the JSON was
+    fine, so `strict=False` accepts it (the same fix
+    research/knowledge_builder.py already applies). Generation is the one
+    step run_investigation() cannot degrade past, so this must not be fatal."""
+    response = (
+        '[{"statement": "Funding costs rose.",'
+        ' "mechanism": "Deposit repricing lagged,\nso spreads compressed.",'
+        ' "category": "financial", "rationale": "r",'
+        ' "known_relationships": [], "unknowns": []}]'
+    )
+    _install_fake_client(monkeypatch, response)
+
+    hypotheses = generate_hypotheses(company_conn, "inv1", "Why?", ["HDFCBANK"])
+
+    assert len(hypotheses) == 1
+    assert "so spreads compressed" in hypotheses[0].mechanism
+
+
+def test_structural_validation_survives_the_lenient_parse(
+    company_conn: sqlite3.Connection, monkeypatch
+) -> None:
+    """strict=False relaxes control characters only — a hallucinated category
+    is still dropped, so a lenient parse cannot smuggle in an invalid
+    hypothesis."""
+    response = (
+        '[{"statement": "s", "mechanism": "m\nm", "category": "vibes",'
+        ' "rationale": "r", "known_relationships": [], "unknowns": []}]'
+    )
+    _install_fake_client(monkeypatch, response)
+
+    with pytest.raises(HypothesisGenerationError):
+        generate_hypotheses(company_conn, "inv1", "Why?", ["HDFCBANK"])
+
+
+def test_token_budget_has_headroom_for_the_full_hypothesis_set() -> None:
+    """Real runs produced 2155-3495 output tokens for one generation call;
+    the old 3072 cap truncated a multi-clause question outright. Guards
+    against a future edit quietly lowering it back under that observed range."""
+    from research.hypothesis_generator import MAX_TOKENS
+
+    assert MAX_TOKENS >= 4096
+
+
+def test_triggered_indicators_reach_the_generation_prompt(
+    company_conn: sqlite3.Connection, monkeypatch
+) -> None:
+    """The spec's flow starts at "Trusted Facts / Indicators / Question" — a
+    deterministic rule that has already fired is context Step 2E should see,
+    supplied through the capability seam rather than a direct import."""
+    from research.capabilities import PlannerCapabilities
+    from research.evidence import Evidence
+
+    caps = PlannerCapabilities(
+        financial_evidence=lambda conn, company_id: [],
+        document_evidence=lambda conn, company_id, question: [],
+        macro_evidence=lambda conn, question: [],
+        document_search=lambda conn, query, *, company_id, limit: [],
+        knowledge_graph=lambda conn, entity_type, entity_name: [],
+        indicator_evidence=lambda conn, company_id: [
+            Evidence(
+                kind="CALCULATION", company_id=company_id,
+                label="Indicator: Promoter holding declined [Q2 FY2025]",
+                value="Promoter holding declined from 26.00% to 23.50%.", citation="rule v1",
+            )
+        ],
+    )
+    captured = _install_fake_client(monkeypatch, _VALID_RESPONSE)
+
+    generate_hypotheses(company_conn, "inv1", "Why?", ["HDFCBANK"], capabilities=caps)
+
+    user_message = captured[0]["messages"][0]["content"]
+    assert "Triggered indicator — Indicator: Promoter holding declined" in user_message
+
+
+def test_generation_without_a_capability_bundle_is_unchanged(
+    company_conn: sqlite3.Connection, monkeypatch
+) -> None:
+    """Indicators are additive context, never a dependency — generation must
+    not require an indicator to have fired."""
+    captured = _install_fake_client(monkeypatch, _VALID_RESPONSE)
+    assert generate_hypotheses(company_conn, "inv1", "Why?", ["HDFCBANK"])
+    assert "Triggered indicator" not in captured[0]["messages"][0]["content"]

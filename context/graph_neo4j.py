@@ -352,6 +352,11 @@ def _sync_knowledge_relationships(tx, relationships: list[Row], entity_by_id: di
         )
 
 
+#: Fingerprint of the SQLite knowledge graph as of the last completed sync,
+#: so an unchanged graph is not re-pushed to Neo4j. See sync_knowledge_graph.
+_last_knowledge_sync: tuple | None = None
+
+
 def sync_knowledge_graph(conn: DBConnection, driver: Driver, *, fact_store: FactStore) -> None:
     """Full, idempotent rebuild of the knowledge-claim graph from SQLite —
     same "SQLite stays the source of truth, resync before every query"
@@ -360,18 +365,42 @@ def sync_knowledge_graph(conn: DBConnection, driver: Driver, *, fact_store: Fact
     nodes are MERGEd either way, so whichever sync runs first creates them
     and the other just adds properties/relationships onto the same node.
     fact_store is always passed explicitly by find_claims_about_entity's
-    caller in context/knowledge_graph.py — no default here."""
+    caller in context/knowledge_graph.py — no default here.
+
+    **Skipped when SQLite hasn't changed since the last sync.** "Resync before
+    every query" is the right invariant, but it was being paid per *capability
+    call*, and research/investigation_planner.py calls the knowledge-graph
+    capability up to 6 times per hypothesis: a real 6-hypothesis investigation
+    pushed the entire graph to Neo4j ~36 times and spent most of its wall
+    clock doing it. The knowledge_* tables are append-only (nothing in
+    storage/repositories.py ever UPDATEs or DELETEs them), so row counts plus
+    the highest claim id are a sufficient change signal — a new extraction run
+    changes the fingerprint and re-syncs, a repeated read does not. The
+    fingerprint is per-process and in-memory: a fresh process always syncs
+    once, so this can never serve a graph built by some other process's
+    stale idea of the data.
+    """
+    global _last_knowledge_sync
+
     entities = fact_store.list_all_knowledge_entities(conn)
     claims = fact_store.list_all_knowledge_claims(conn)
     relationships = fact_store.list_all_knowledge_relationships(conn)
     evidence = fact_store.list_all_knowledge_evidence(conn)
-    entity_by_id = {e["entity_id"]: e for e in entities}
 
+    fingerprint = (
+        id(driver), len(entities), len(claims), len(relationships), len(evidence),
+        max((c["claim_id"] for c in claims), default=0),
+    )
+    if fingerprint == _last_knowledge_sync:
+        return
+
+    entity_by_id = {e["entity_id"]: e for e in entities}
     with driver.session() as session:
         session.execute_write(_sync_knowledge_entities, entities)
         session.execute_write(_sync_knowledge_claims, claims)
         session.execute_write(_sync_knowledge_evidence, evidence)
         session.execute_write(_sync_knowledge_relationships, relationships, entity_by_id)
+    _last_knowledge_sync = fingerprint
 
 
 def _query_claims_about_entity(tx, entity_key: str):

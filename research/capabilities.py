@@ -48,45 +48,89 @@ class KnowledgeGraphCapability(Protocol):
     def __call__(self, conn: DBConnection, entity_type: str, entity_name: str) -> list[KnowledgeClaimView]: ...
 
 
+class IndicatorEvidenceCapability(Protocol):
+    def __call__(self, conn: DBConnection, company_id: str) -> list[Evidence]: ...
+
+
+def _no_indicator_evidence(conn: DBConnection, company_id: str) -> list[Evidence]:
+    """The neutral IndicatorEvidenceCapability — see PlannerCapabilities."""
+    return []
+
+
 @dataclass(frozen=True)
 class PlannerCapabilities:
-    """Bundles the Planner's five capability dependencies behind one seam.
+    """Bundles the Planner's capability dependencies behind one seam.
     default_capabilities() below binds the real in-process implementations —
     swap one field to point at a remote/alternate backend without changing
-    plan_and_gather()'s routing logic."""
+    plan_and_gather()'s routing logic.
+
+    `indicator_evidence` is the deterministic-indicator source
+    (research/indicator_evidence.py -> indicators/): rule-based, versioned,
+    provenanced findings over canonical facts, consumed both as
+    hypothesis-generation context (Step 2E) and as per-hypothesis evidence
+    (Step 2F). It is a capability rather than a direct import for the same
+    reason the other five are — the Planner and the Hypothesis Generator must
+    not depend on how indicators happen to be computed today."""
 
     financial_evidence: FinancialEvidenceCapability
     document_evidence: DocumentEvidenceCapability
     macro_evidence: MacroEvidenceCapability
     document_search: DocumentSearchCapability
     knowledge_graph: KnowledgeGraphCapability
+    #: Defaults to "no indicator source configured" (contributes nothing)
+    #: rather than being required, so an alternate/partial capability bundle
+    #: — a test double, a backend that has no indicator engine — stays valid.
+    #: default_capabilities() always binds it explicitly.
+    indicator_evidence: IndicatorEvidenceCapability = _no_indicator_evidence
 
 
-def default_capabilities(*, fact_store: FactStore | None = None) -> PlannerCapabilities:
-    """The only place that imports the 5 concrete implementations directly —
+def default_capabilities(
+    *, fact_store: FactStore | None = None, as_of: str | None = None
+) -> PlannerCapabilities:
+    """The only place that imports the concrete implementations directly —
     everywhere else routes through the PlannerCapabilities seam instead.
     `fact_store` (storage/fact_store.py — a separate, lower-level seam) is
     threaded into each binding via a thin wrapper, so a single injected
-    FactStore reaches every one of the 5 capabilities without changing
-    PlannerCapabilities' own outward signatures."""
+    FactStore reaches every capability without changing PlannerCapabilities'
+    own outward signatures.
+
+    `as_of` (ISO date, research/temporal.py) is bound in exactly the same
+    way, and for the same reason: a point-in-time investigation restricts
+    what retrieval is *allowed to see*, and binding the cutoff here means the
+    Planner's Protocol signatures never change and no caller can forget to
+    pass it. Every capability that can honour a cutoff does; the one that
+    cannot — indicator rules evaluate against the latest facts on file and
+    have no historical mode — is disabled entirely under a cutoff rather than
+    allowed to leak post-cutoff findings into a historical investigation.
+    """
     from context.knowledge_graph import find_claims_about_entity
     from research.documents import get_document_evidence
+    from research.indicator_evidence import get_indicator_evidence
     from research.macro_evidence import get_macro_evidence
+    from research.temporal import normalize_as_of
     from retrieval.document_search import search_documents
     from retrieval.structured_search import get_company_evidence
 
     fs = fact_store or default_fact_store()
+    cutoff = normalize_as_of(as_of)
     return PlannerCapabilities(
-        financial_evidence=lambda conn, company_id: get_company_evidence(conn, company_id, fact_store=fs),
-        document_evidence=lambda conn, company_id, question: get_document_evidence(
-            conn, company_id, question, fact_store=fs
+        financial_evidence=lambda conn, company_id: get_company_evidence(
+            conn, company_id, fact_store=fs, as_of=cutoff
         ),
-        macro_evidence=lambda conn, question: get_macro_evidence(conn, question, fact_store=fs),
+        document_evidence=lambda conn, company_id, question: get_document_evidence(
+            conn, company_id, question, fact_store=fs, as_of=cutoff
+        ),
+        macro_evidence=lambda conn, question: get_macro_evidence(conn, question, fact_store=fs, as_of=cutoff),
         document_search=lambda conn, query, *, company_id, limit: search_documents(
-            conn, query, company_id=company_id, limit=limit, fact_store=fs
+            conn, query, company_id=company_id, limit=limit, fact_store=fs, as_of=cutoff
         ),
         knowledge_graph=lambda conn, entity_type, entity_name: find_claims_about_entity(
-            conn, entity_type, entity_name, fact_store=fs
+            conn, entity_type, entity_name, fact_store=fs, as_of=cutoff
+        ),
+        indicator_evidence=(
+            (lambda conn, company_id: [])
+            if cutoff
+            else (lambda conn, company_id: get_indicator_evidence(conn, company_id, fact_store=fs))
         ),
     )
 

@@ -970,6 +970,7 @@
       <a href="#sec-docs" data-target="sec-docs" class="{{ 'active' if tab == 'docs' else '' }}">Docs</a>
       <a href="#sec-notes" data-target="sec-notes" class="{{ 'active' if tab == 'notes' else '' }}">Notes</a>
       <a href="#sec-shareholding" data-target="sec-shareholding" class="{{ 'active' if tab == 'shareholding' else '' }}">Shareholding Pattern</a>
+      <a href="#sec-investigations" data-target="sec-investigations" class="{{ 'active' if tab == 'investigations' else '' }}">Investigations</a>
       <a href="#sec-threads" data-target="sec-threads" class="{{ 'active' if tab == 'threads' else '' }}">Threads</a>
       <a href="#sec-commentary" data-target="sec-commentary" class="{{ 'active' if tab == 'commentary' else '' }}">Commentary</a>
       <a href="#sec-news" data-target="sec-news" class="{{ 'active' if tab == 'news' else '' }}">News</a>
@@ -1219,6 +1220,43 @@
          web/shareholding_feed.py's real data — see that JS file's header
          comment for the empty-company fallback message. -->
     <div id="shp-root" data-url="{{ shareholding_data_url }}" data-company-id="{{ company_id }}"></div>
+  </section>
+
+  {#- Structured 2E-2H investigations (research/investigation.py) covering this
+      company, resolved through the investigation_companies join table
+      (storage/investigation_repository.py). A cross-company investigation is a
+      SINGLE record listed under each of its companies — the "also ..." kicker
+      names the others, and the link goes to the one shared /investigate/<id>
+      view, not a per-company copy. Distinct from the Threads section below,
+      which lists single-narrative Signals reports. -#}
+  <section class="merged-section" id="sec-investigations">
+    <h2>Investigations</h2>
+    {% if company_investigations %}
+    <div class="investigations-list" id="company-investigations-list">
+      {% for iv in company_investigations %}
+      <div class="card elev-sm investigation-card" data-investigation-id="{{ iv.investigation_id }}">
+        <a class="investigation-row" href="{{ url_for('investigate_view', investigation_id=iv.investigation_id) }}">
+          <div class="investigation-top-row">
+            <div class="card-kicker">{{ iv.kicker }}</div>
+            <span class="tag tag-outline">{{ iv.hypothesis_count }} hypotheses</span>
+          </div>
+          <div class="card-title">{{ iv.question }}</div>
+        </a>
+        <div class="investigation-meta-row">
+          <span class="muted investigation-timestamp local-time" data-utc="{{ iv.generated_at }}" data-utc-format="date">{{ iv.generated_at[:10] }}</span>
+          {% if iv.as_of %}<span class="tag tag-outline">as of {{ iv.as_of }}</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state" id="company-investigations-empty">
+      No structured investigations yet for {{ company['display_name'] }}. Run one from the
+      Research page ("Run structured investigation") — it generates competing hypotheses,
+      gathers evidence for each, evaluates them independently and synthesizes a ranked
+      conclusion, and appears here (and under every other company it covers) automatically.
+    </div>
+    {% endif %}
   </section>
 
   <section class="merged-section" id="sec-threads">

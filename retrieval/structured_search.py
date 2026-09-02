@@ -16,6 +16,7 @@ from financials.calculations import CalculationError, CalculationResult, cagr_fo
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company, vendor_reported
 from financials.report import TREND_METRICS, VENDOR_RATIO_METRICS
 from research.evidence import Evidence
+from research.temporal import fiscal_year_visible
 from storage.fact_store import FactStore, default_fact_store
 
 
@@ -33,24 +34,54 @@ def _result_to_evidence(company_id: str, result: CalculationResult) -> Evidence:
     )
 
 
+def _company_fiscal_year_end(conn: DBConnection, company_id: str, fact_store: FactStore) -> str | None:
+    """`companies.fiscal_year_end` (MM-DD) if this company has one on record —
+    research/temporal.py falls back to the Indian 31-March default otherwise.
+    Only looked up when a cutoff is actually in force."""
+    company = fact_store.get_company(conn, company_id)
+    if company is None:
+        return None
+    try:
+        return company["fiscal_year_end"]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
 def get_company_evidence(
     conn: DBConnection, company_id: str, statement_type: str | None = "consolidated",
-    *, fact_store: FactStore | None = None,
+    *, fact_store: FactStore | None = None, as_of: str | None = None,
 ) -> list[Evidence]:
     """Gather deterministic Evidence for one company: reported metric trends
     (as FACT lines) plus their YoY/CAGR growth, ROA/ROE, and vendor-reported
     ratios (as CALCULATION/FACT lines) — the same data financials/report.py's
     text report is built from. Returns [] if nothing has been ingested yet.
+
+    `as_of` (ISO date) restricts every series to fiscal periods that had
+    already ENDED by that date — research/temporal.py — so a historical
+    "could this have been detected at the time?" investigation never sees a
+    later year's numbers. The derived YoY/CAGR/ROA/ROE lines are computed
+    from the truncated series, not truncated afterwards, so the "latest year"
+    they describe is the latest year visible at the cutoff.
     """
     fs = fact_store or default_fact_store()
     evidence: list[Evidence] = []
+    fiscal_year_end = _company_fiscal_year_end(conn, company_id, fs) if as_of else None
+
+    def _visible(rows: list) -> list:
+        if not as_of:
+            return rows
+        return [
+            r for r in rows
+            if fiscal_year_visible(r["fiscal_year"], as_of, fiscal_year_end=fiscal_year_end)
+        ]
 
     net_profit_fiscal_years = [
-        row["fiscal_year"] for row in fs.get_canonical_series(conn, company_id, "net_profit", "annual", statement_type)
+        row["fiscal_year"]
+        for row in _visible(fs.get_canonical_series(conn, company_id, "net_profit", "annual", statement_type))
     ]
 
     for metric_key, title in TREND_METRICS:
-        series = fs.get_canonical_series(conn, company_id, metric_key, "annual", statement_type)
+        series = _visible(fs.get_canonical_series(conn, company_id, metric_key, "annual", statement_type))
         for row in series:
             evidence.append(
                 Evidence(

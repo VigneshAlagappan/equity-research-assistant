@@ -97,7 +97,7 @@ def _parse_response(text: str) -> dict:
     if match is None:
         raise ResearchSynthesisError(f"model response contained no JSON object: {text[:200]!r}")
     try:
-        parsed = json.loads(match.group(0))
+        parsed = json.loads(match.group(0), strict=False)
     except json.JSONDecodeError as exc:
         raise ResearchSynthesisError(f"model response wasn't valid JSON: {exc}") from None
     if not isinstance(parsed, dict) or "strongest_explanation" not in parsed:

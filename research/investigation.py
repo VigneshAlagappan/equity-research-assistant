@@ -57,6 +57,7 @@ from research.hypothesis_evaluator import HypothesisEvaluation, HypothesisEvalua
 from research.hypothesis_generator import Hypothesis, HypothesisGenerationError, generate_hypotheses
 from research.investigation_planner import InvestigationPlan, plan_and_gather
 from research.research_synthesis import ResearchSynthesis, ResearchSynthesisError, synthesize
+from research.temporal import normalize_as_of
 from storage.fact_store import FactStore, default_fact_store
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,10 @@ class Investigation:
     evaluations: dict[str, HypothesisEvaluation] = field(default_factory=dict)
     synthesis: ResearchSynthesis | None = None
     failed_hypothesis_ids: list[str] = field(default_factory=list)
+    #: ISO date the evidence was restricted to, or None for "everything known
+    #: now" — persisted on the investigation row so a historical conclusion
+    #: states the information set it was reached under.
+    as_of: str | None = None
 
 
 def _persist_evidence_item(hypothesis_id: str, stance: str, item) -> dict:
@@ -174,17 +179,31 @@ def _investigate_hypothesis(
 def run_investigation(
     conn: DBConnection, question: str, company_ids: list[str], *, statement_type: str = "consolidated",
     model: str | None = None, capabilities: PlannerCapabilities | None = None, fact_store: FactStore | None = None,
+    as_of: str | None = None,
 ) -> Investigation:
+    """`as_of` (ISO date) runs the whole investigation point-in-time: every
+    evidence capability is bound to that cutoff (research/temporal.py via
+    default_capabilities), so hypothesis generation, evidence gathering,
+    evaluation and synthesis all see only what was on file then. It is
+    enforced in retrieval, not asked for in a prompt — an "as of 2013"
+    question whose evidence block contains 2024 figures has already leaked
+    the answer. Explicitly-passed `capabilities` are used as given, on the
+    assumption the caller has already bound whatever scope it wants."""
     investigation_id = uuid.uuid4().hex[:12]
     fs = fact_store or default_fact_store()
-    caps = capabilities or default_capabilities(fact_store=fs)
+    cutoff = normalize_as_of(as_of)
+    caps = capabilities or default_capabilities(fact_store=fs, as_of=cutoff)
 
     try:
-        hypotheses = generate_hypotheses(conn, investigation_id, question, company_ids, model=model, fact_store=fs)
+        hypotheses = generate_hypotheses(
+            conn, investigation_id, question, company_ids, model=model, fact_store=fs, capabilities=caps,
+        )
     except HypothesisGenerationError as exc:
         raise InvestigationError(f"could not generate hypotheses: {exc}") from exc
 
-    investigation = Investigation(investigation_id=investigation_id, question=question, company_ids=company_ids)
+    investigation = Investigation(
+        investigation_id=investigation_id, question=question, company_ids=company_ids, as_of=cutoff
+    )
     investigation.hypotheses = hypotheses
     deadline = time.monotonic() + INVESTIGATION_TIMEOUT_SECONDS
 
@@ -219,6 +238,7 @@ def _persist(conn: DBConnection, investigation: Investigation, statement_type: s
         strongest_explanation=synthesis.strongest_explanation if synthesis else None,
         unanswered_questions=synthesis.unanswered_questions if synthesis else [],
         additional_evidence_needed=synthesis.additional_evidence_needed if synthesis else [],
+        as_of=investigation.as_of,
     )
 
     rank_by_id = (

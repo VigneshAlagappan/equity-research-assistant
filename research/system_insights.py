@@ -100,7 +100,7 @@ def _parse_response(text: str) -> list[dict]:
     if match is None:
         raise SystemInsightGenerationError(f"model response contained no JSON array: {text[:200]!r}")
     try:
-        parsed = json.loads(match.group(0))
+        parsed = json.loads(match.group(0), strict=False)
     except json.JSONDecodeError as exc:
         raise SystemInsightGenerationError(f"model response wasn't valid JSON: {exc}") from None
     if not isinstance(parsed, list):

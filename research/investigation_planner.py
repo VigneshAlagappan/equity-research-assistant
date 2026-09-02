@@ -94,6 +94,16 @@ def plan_and_gather(
         plan.evidence.extend(caps.financial_evidence(conn, company_id))
         plan.sources_queried.append(f"financial_engine:{company_id}")
 
+        # Deterministic, rule-based, versioned findings over the same
+        # canonical facts (indicators/, via research/indicator_evidence.py).
+        # Retrieved per company like every other evidence source, so a
+        # comparison hypothesis sees each company's own triggered indicators
+        # and Step 2G can cite the rule rather than re-deriving it.
+        indicator_evidence = caps.indicator_evidence(conn, company_id)
+        if indicator_evidence:
+            plan.evidence.extend(indicator_evidence)
+            plan.sources_queried.append(f"indicators:{company_id}")
+
         if len(hypothesis.companies) == 1:
             # Single-company attribution only, same constraint
             # research/documents.py's own evidence path already has.

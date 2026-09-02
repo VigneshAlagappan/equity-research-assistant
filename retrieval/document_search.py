@@ -19,6 +19,7 @@ from __future__ import annotations
 from storage.db_types import DBConnection
 from dataclasses import dataclass
 
+from research.temporal import date_visible
 from storage.fact_store import FactStore, default_fact_store
 
 
@@ -41,14 +42,22 @@ class DocumentPassage:
 
 def search_documents(
     conn: DBConnection, query: str, *, company_id: str | None = None, limit: int = 10,
-    fact_store: FactStore | None = None,
+    fact_store: FactStore | None = None, as_of: str | None = None,
 ) -> list[DocumentPassage]:
     """Keyword search over every indexed document chunk (optionally scoped
     to one company), ranked by FTS5 relevance. Returns [] for a query with
     no usable search tokens or no match — never raises over "nothing found."
+
+    `as_of` (ISO date) drops passages from documents published after the
+    cutoff — research/temporal.py. Applied after ranking rather than inside
+    the FTS query so relevance ordering is unchanged; the cost is that a
+    cutoff can return fewer than `limit` passages, which is the honest
+    outcome (there were fewer available at the time).
     """
     fs = fact_store or default_fact_store()
     rows = fs.search_document_chunks(conn, query, company_id=company_id, limit=limit)
+    if as_of:
+        rows = [r for r in rows if date_visible(r["published_at"], as_of)]
     return [
         DocumentPassage(
             chunk_id=row["chunk_id"], document_id=row["document_id"], company_id=row["company_id"],

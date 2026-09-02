@@ -52,6 +52,9 @@
     {{ investigation.company_ids|join(', ') if investigation.company_ids else 'Macro/regulatory' }} &middot;
     {{ investigation.statement_type }} &middot;
     {{ hypotheses|length }} hypothes{{ 'is' if hypotheses|length == 1 else 'es' }}
+    {%- if investigation.as_of %} &middot;
+    <span class="tag tag-outline" title="Point-in-time investigation: every evidence source was restricted to what was on file on this date (research/temporal.py). No later data was retrievable.">evidence as of {{ investigation.as_of }}</span>
+    {%- endif %}
   </div>
 
   {% if investigation.strongest_explanation %}

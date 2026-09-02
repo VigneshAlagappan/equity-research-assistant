@@ -140,7 +140,7 @@ def _parse_response(text: str) -> dict:
     if match is None:
         raise HypothesisEvaluationError(f"model response contained no JSON object: {text[:200]!r}")
     try:
-        parsed = json.loads(match.group(0))
+        parsed = json.loads(match.group(0), strict=False)
     except json.JSONDecodeError as exc:
         raise HypothesisEvaluationError(f"model response wasn't valid JSON: {exc}") from None
     if not isinstance(parsed, dict) or "verdict" not in parsed:

@@ -83,6 +83,10 @@ from research.investigation import InvestigationError, run_investigation
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
 from storage.database import init_db
+from storage.investigation_repository import (
+    count_investigation_hypotheses,
+    select_investigations_for_company,
+)
 from storage.price_database import init_price_db
 from storage.price_repository import (
     get_price_history,
@@ -1354,6 +1358,25 @@ def create_app() -> Flask:
                 }
             )
 
+        # Structured 2E-2H investigations (research/investigation.py) that
+        # cover this company — looked up through the investigation_companies
+        # join table (storage/investigation_repository.py), so a cross-company
+        # investigation ("HDFC Bank vs ICICI Bank") appears under EVERY company
+        # it names, from one shared record rather than a copy per company.
+        company_investigations = []
+        for inv in select_investigations_for_company(db, company_id):
+            other_companies = [c for c in json.loads(inv["company_ids"] or "[]") if c != company_id]
+            company_investigations.append(
+                {
+                    "investigation_id": inv["investigation_id"],
+                    "question": inv["question"],
+                    "kicker": "Deep Dive · also " + ", ".join(other_companies) if other_companies else "Deep Dive",
+                    "hypothesis_count": count_investigation_hypotheses(db, inv["investigation_id"]),
+                    "as_of": inv["as_of"] if "as_of" in inv.keys() else None,
+                    "generated_at": inv["generated_at"],
+                }
+            )
+
         insights = None
         insights_preview = None
         insights_history = []
@@ -1486,6 +1509,7 @@ def create_app() -> Flask:
             insights_history=insights_history,
             notes=notes,
             company_threads=company_threads,
+            company_investigations=company_investigations,
             indicator_columns=indicator_columns,
             indicator_total=indicator_total,
             api_key_set=ANTHROPIC_API_KEY_SET,
@@ -2146,6 +2170,10 @@ def create_app() -> Flask:
         question = (payload.get("question") or "").strip()
         company_ids = payload.get("company_ids") or []
         statement_type = payload.get("statement_type", "consolidated")
+        # Optional point-in-time cutoff (research/temporal.py) — a "could this
+        # have been detected at the time?" question runs with every evidence
+        # capability restricted to what was on file on that date.
+        as_of = (payload.get("as_of") or "").strip() or None
 
         if not ANTHROPIC_API_KEY_SET:
             return jsonify(error="ANTHROPIC_API_KEY is not set on the server — the assistant can't run."), 503
@@ -2160,7 +2188,9 @@ def create_app() -> Flask:
                 return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
 
         try:
-            investigation = run_investigation(db, question, company_ids, statement_type=statement_type)
+            investigation = run_investigation(
+                db, question, company_ids, statement_type=statement_type, as_of=as_of
+            )
         except InvestigationError as exc:
             return jsonify(error=f"The investigation couldn't complete: {exc}"), 502
         except anthropic.APIError as exc:
