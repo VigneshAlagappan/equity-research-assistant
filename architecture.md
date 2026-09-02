@@ -62,41 +62,87 @@ tags fetching JSON from Flask routes.
 
 ## High-level architecture
 
-```
-                         ┌─────────────────────────┐
-                         │   Browser (Jinja2 HTML   │
-                         │   + vanilla JS islands)  │
-                         └────────────┬─────────────┘
-                                      │ HTTP
-                         ┌────────────▼─────────────┐
-                         │   web/app.py (Flask)      │
-                         │   routes, auth, sessions  │
-                         └──────┬──────────────┬─────┘
-                                │              │
-              ┌─────────────────┘              └────────────────┐
-              ▼                                                  ▼
-  ┌───────────────────────┐                        ┌───────────────────────────┐
-  │  Deterministic layer   │                        │   Research / AI layer      │
-  │  companies/, ingestion/│                        │   research/, retrieval/    │
-  │  normalization/,       │                        │   context/, llm/           │
-  │  financials/, charts/, │                        │                            │
-  │  indicators/           │                        │                            │
-  └───────────┬────────────┘                        └──────────────┬─────────────┘
-              │                                                    │
-              ▼                                                    ▼
-  ┌────────────────────────────────────────────────────────────────────────┐
-  │                    storage/ (sqlite3, schemas/sqlite_schema.sql)        │
-  │                    data/equity_research.db                              │
-  └────────────────────────────────────────────────────────────────────────┘
+The consolidated view below is the single source of truth for how every
+subsystem in this document fits together — every box and label names a real
+module/table/table-group already described elsewhere in this file; nothing
+here is aspirational. The more detailed pipeline diagrams further down (data
+ingestion, the Ingestion Coordinator, Document Retrieval, the Configurable
+Indicator Framework, evidence retrieval → LLM routing, the Golden Research
+Loop's 2E-2H investigation flow) each zoom into one box below.
 
-  main.py — CLI entry point, calls the same modules as web/app.py
-
-  context/graph.py / graph_neo4j.py — knowledge-graph traversal, called from
-  the Research / AI layer (Signals reports only, see the pipeline diagram
-  below). Backed by SQLite (the same data/equity_research.db above) by
-  default; optionally a separate real Neo4j graph instead when
-  GRAPH_BACKEND=neo4j, with automatic fallback to SQLite if unreachable.
 ```
+                           ┌──────────────────────────────────────────────────────────────┐
+                           │ Browser — Jinja2 server-rendered HTML + vanilla JS "islands" │
+                           │ (no SPA framework, no build step)                            │
+                           └──────────────────────────────────────────────────────────────┘
+                                                           │ HTTP
+                                                           │
+             ┌─────────────────────────────────────────────┐      ┌────────────────────────────────────┐
+             │ web/app.py (Flask)                          │      │ main.py (CLI)                      │
+             │ routes . auth/session . JSON feed endpoints │      │ same modules, terminal entry point │
+             └─────────────────────────────────────────────┘      └────────────────────────────────────┘
+                                    │                                                │
+                                    ▼                                                ▼
+ ┌────────────────────────────────────────────────────┐    ┌───────────────────────────────────────────────────────┐
+ │ DETERMINISTIC LAYER (never calls an LLM)           │    │ RESEARCH / AI LAYER (evidence-grounded reasoning)     │
+ │                                                    │    │                                                       │
+ │ ingestion/   detect -> sources/ -> normalization/  │    │ retrieval/  structured_search.py, document_search.py  │
+ │ companies/   registry, lifecycle, stock_actions    │    │ context/    optimizer, reuse, graph.py/graph_neo4j.py │
+ │ financials/  YoY/CAGR, ratios, text report         │    │ research/   assistant, insights, signals_report,      │
+ │ indicators/  rules, Global->Sector->Company config │    │             knowledge_builder, investigation.py       │
+ │ analytics/   cross-company pattern scans (Tools)   │    │ llm/        hardness -> router -> providers -> obs.   │
+ │ charts/      matplotlib PNG charts                 │    │                                                       │
+ └────────────────────────────────────────────────────┘    └───────────────────────────────────────────────────────┘
+                            │                                                          │
+                            ▼                                                          ▼
+                     ┌──────────────────────────────────────────────────────────────────────────┐
+                     │ storage/  —  db_types . repositories . fact_store . company_repository . │
+                     │              indicator_repository . investigation_repository             │
+                     │ the only layer in the codebase that knows SQLite exists                  │
+                     └──────────────────────────────────────────────────────────────────────────┘
+                                                           │
+                                                           ▼
+                     ┌─────────────────────────────────────────────────────────────────────────┐
+                     │ data/equity_research.db  (SQLite, 46 tables, schemas/sqlite_schema.sql) │
+                     │ the one source of truth every other layer reads and writes through      │
+                     └─────────────────────────────────────────────────────────────────────────┘
+                                                          │
+                                                          ▼
+                     ┌──────────────────────────────────────────────────────────────────────────┐
+                     │ Knowledge Graph — projected from SQLite, never a 2nd source of truth     │
+                     │ SQLite traversal by default (context/graph.py); optionally a real Neo4j  │
+                     │ graph (GRAPH_BACKEND=neo4j), automatic fallback to SQLite if unreachable │
+                     └──────────────────────────────────────────────────────────────────────────┘
+
+
+                         ↑ fetched by ingestion/sources/            ↑ called by llm/providers/
+                      ┌─────────────────────────────┐        ┌─────────────────────────────────┐
+                      │ EXTERNAL DATA SOURCES       │        │ EXTERNAL LLM PROVIDERS          │
+                      │ NSE/BSE XBRL, Screener.in,  │        │ Anthropic Claude API (primary), │
+                      │ Yahoo Finance, RBI/IMD/FRED │        │ local Ollama (fallback)         │
+                      └─────────────────────────────┘        └─────────────────────────────────┘
+```
+
+Notes on what the diagram compresses for readability (each is exact
+elsewhere in this document, not simplified away here):
+
+- **`indicators/`** sits in the Deterministic layer because it is, by
+  design, pure rule evaluation with zero LLM calls — see [Configurable
+  Indicator Framework](#configurable-indicator-framework-indicators).
+- **`research/investigation.py`** (the 2E-2H hypothesis-driven pipeline) is
+  the one module that spans both layers in practice: it's LLM-orchestrated
+  (Research/AI layer) but, per [Golden Research Loop
+  validation](#golden-research-loop-validation), now also reads
+  `indicators/`'s deterministic output as evidence — shown here under
+  `research/` since the orchestration and every LLM call live there.
+- **The Knowledge Graph** is drawn once, fed from SQLite — in reality both
+  `context/graph.py` (sector-peer traversal) and `context/knowledge_graph.py`
+  (Step 2B, cross-entity claim traversal) maintain it, and both are called
+  from the Research/AI layer, not from storage directly; the arrow from
+  `data/equity_research.db` represents "projected from," not a literal
+  runtime call path.
+- **`main.py`** and **`web/app.py`** are peers calling the same two layers,
+  not a hierarchy — the CLI is not routed through the Flask app.
 
 The guiding split (see `research/assistant.py`'s module docstring): **retrieval
 never calls the LLM**. Everything under `companies/`, `ingestion/`,
