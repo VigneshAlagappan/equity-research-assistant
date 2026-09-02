@@ -629,13 +629,30 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_evidence_claim ON knowledge_evidence(cl
 CREATE TABLE IF NOT EXISTS investigations (
   investigation_id TEXT PRIMARY KEY,
   question TEXT NOT NULL,
-  company_ids TEXT NOT NULL,        -- JSON array of company_id
+  company_ids TEXT NOT NULL,        -- JSON array of company_id (display order, as asked)
   statement_type TEXT NOT NULL,
   strongest_explanation TEXT,       -- Step 2H's synthesis narrative
   unanswered_questions TEXT,        -- JSON array
   additional_evidence_needed TEXT,  -- JSON array
-  generated_at TEXT NOT NULL
+  generated_at TEXT NOT NULL,
+  as_of TEXT                        -- ISO date: point-in-time evidence cutoff, NULL = "everything known today"
 );
+
+-- One investigation <-> many companies. `investigations.company_ids` above
+-- stays the ordered, as-asked list (it is what the investigation view
+-- renders); this join table is the *queryable* association, so
+-- "every investigation that touches company X" is an indexed lookup rather
+-- than a JSON LIKE scan over every row. A cross-company investigation
+-- (e.g. "HDFC Bank vs ICICI Bank") gets one row per company and is still a
+-- single investigation record — it appears under each company's
+-- Investigations section without the underlying record being duplicated.
+CREATE TABLE IF NOT EXISTS investigation_companies (
+  investigation_id TEXT NOT NULL REFERENCES investigations(investigation_id),
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  position INTEGER NOT NULL DEFAULT 0,  -- the company's index in company_ids, so ordering survives the join
+  PRIMARY KEY (investigation_id, company_id)
+);
+CREATE INDEX IF NOT EXISTS idx_investigation_companies_company ON investigation_companies(company_id);
 
 CREATE TABLE IF NOT EXISTS investigation_hypotheses (
   hypothesis_id TEXT PRIMARY KEY,
@@ -877,3 +894,70 @@ CREATE TABLE IF NOT EXISTS worker_processing_log (
 );
 CREATE INDEX IF NOT EXISTS idx_worker_log_event ON worker_processing_log(event_id);
 CREATE INDEX IF NOT EXISTS idx_worker_log_worker ON worker_processing_log(worker_name, status);
+
+-- ============================================================
+-- Configurable Indicator Framework (indicators/*.py)
+--
+-- Indicators are deterministic, rule-based factual patterns ("promoter
+-- holding declined more than X pp"), NOT LLM output and NOT inferences --
+-- they sit next to Evidence in this app's Fact -> Evidence -> Inference ->
+-- Hypothesis -> Conclusion separation. The rules themselves are Python
+-- (indicators/rules.py: trigger logic, required facts, explanation
+-- template, version) and deliberately are NOT rows here -- same reasoning
+-- as company_list_column_settings/overview_ratio_settings above, where the
+-- catalog lives in code and only the toggles live in the database.
+--
+-- indicator_rule_config -- the ONLY user-editable layer. One row per
+--   (user, rule, scope) override; a NULL column means "inherit", so an
+--   override of just `classification` never freezes the threshold it
+--   didn't touch. Resolution is per-field most-specific-wins
+--   (company > sector > global-user-default > the Python rule's own
+--   default) -- indicators/config.py::resolve_effective_config. A user
+--   changing anything here never modifies or duplicates the system rule.
+-- indicator_evaluations -- append-only audit trail, same spirit as
+--   reconciliation_log: what fired, on which facts, under which effective
+--   configuration, at which version, when. Never updated in place. A
+--   re-evaluation whose result_hash matches that rule's most recent row
+--   for the same (user, company) appends nothing -- refreshing a company
+--   page is not a new auditable event, a *changed* result is.
+--
+-- A future indicator_feedback table (Agree | Disagree | Not Sure, spec
+-- section 11) would hang off indicator_evaluations(evaluation_id); it is
+-- deliberately not built in this increment.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS indicator_rule_config (
+  config_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(user_id),
+  rule_id TEXT NOT NULL,             -- indicators/rules.py registry key, not an FK
+  scope_type TEXT NOT NULL,          -- global | sector | company
+  scope_value TEXT NOT NULL DEFAULT '',  -- '' for global; a sectors.name; a companies.company_id
+  enabled INTEGER,                   -- NULL = inherit; 0/1 otherwise
+  classification TEXT,               -- NULL = inherit; positive | observation | warning
+  thresholds_json TEXT,              -- NULL = inherit; JSON object of per-threshold overrides
+  updated_at TEXT NOT NULL,
+  CHECK (scope_type IN ('global', 'sector', 'company')),
+  CHECK (classification IS NULL OR classification IN ('positive', 'observation', 'warning')),
+  UNIQUE(user_id, rule_id, scope_type, scope_value)
+);
+CREATE INDEX IF NOT EXISTS idx_indicator_rule_config_user ON indicator_rule_config(user_id, rule_id);
+
+CREATE TABLE IF NOT EXISTS indicator_evaluations (
+  evaluation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  user_id INTEGER,                   -- NULL = evaluated with system defaults only (signed-out view)
+  rule_id TEXT NOT NULL,
+  rule_version TEXT NOT NULL,        -- bumped in code whenever trigger logic changes
+  classification TEXT NOT NULL,      -- the EFFECTIVE classification, after user config
+  severity TEXT NOT NULL,            -- low | medium | high
+  explanation TEXT NOT NULL,         -- rendered from the rule's own factual template
+  facts_json TEXT NOT NULL,          -- the input fact values the rule actually fired on
+  effective_config_json TEXT NOT NULL,  -- resolved enabled/classification/thresholds + per-field source
+  scope_applied TEXT NOT NULL,       -- most specific scope that contributed, e.g. "company:HDFCBANK"
+  period_label TEXT,                 -- e.g. "Q2 FY2026", "FY2024" -- NULL when not period-shaped
+  provenance TEXT,                   -- source table/url the facts came from
+  result_hash TEXT NOT NULL,         -- rule + version + facts + effective config -> dedupe key
+  evaluated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_indicator_evaluations_company
+  ON indicator_evaluations(company_id, evaluated_at);

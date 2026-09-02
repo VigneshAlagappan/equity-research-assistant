@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
+from storage.db_types import DBConnection, Row
 import uuid
 from dataclasses import dataclass, field
 
@@ -84,7 +84,7 @@ Respond with ONLY a JSON array, no other text, in exactly this shape:
 ]"""
 
 
-def _render_candidates(claims: list[sqlite3.Row]) -> str:
+def _render_candidates(claims: list[Row]) -> str:
     lines = []
     for claim in claims:
         period = f"{claim['quarter']} {claim['fiscal_year']}" if claim["quarter"] else (claim["fiscal_year"] or "period unknown")
@@ -109,7 +109,7 @@ def _parse_response(text: str) -> list[dict]:
 
 
 def generate_system_insights(
-    conn: sqlite3.Connection, *, model: str | None = None, fact_store: FactStore | None = None,
+    conn: DBConnection, *, model: str | None = None, fact_store: FactStore | None = None,
     limit: int = MAX_CANDIDATE_CLAIMS,
 ) -> list[SystemInsight]:
     fs = fact_store or default_fact_store()

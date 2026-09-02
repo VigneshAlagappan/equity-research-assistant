@@ -46,7 +46,7 @@ XBRL's context/tag structure at all.
 from __future__ import annotations
 
 import logging
-import sqlite3
+from storage.db_types import DBConnection
 from datetime import date
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -150,7 +150,7 @@ _DERIVED_SHARES_OUTSTANDING_LABEL = "DerivedSharesOutstanding"
 class NSEXbrlAdapter(SourceAdapter):
     source_id = "nse"
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: DBConnection):
         self._conn = conn
 
     def parse(

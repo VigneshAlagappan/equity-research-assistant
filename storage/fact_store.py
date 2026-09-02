@@ -74,6 +74,11 @@ class FactStore:
     # Analytics (Tools tab, analytics/patterns.py)
     list_company_ids_with_financial_data: Callable[..., list[str]]
 
+    # Shareholding (Shareholding tab via web/shareholding_feed.py, and the
+    # shareholding indicator rules in indicators/rules.py) -- read-only, one
+    # company's quarterly summaries oldest-first.
+    list_shareholding_history: Callable[..., list[dict]]
+
 
 def default_fact_store() -> FactStore:
     """The only place that imports the real SQLite-backed implementations
@@ -99,6 +104,7 @@ def default_fact_store() -> FactStore:
         list_recent_high_confidence_claims,
         list_report_evidence,
         list_report_followups,
+        list_shareholding_history,
         save_investigation,
         save_investigation_hypothesis,
         save_investigation_hypothesis_evidence,
@@ -134,4 +140,5 @@ def default_fact_store() -> FactStore:
         list_recent_high_confidence_claims=list_recent_high_confidence_claims,
         save_system_insight=save_system_insight,
         list_company_ids_with_financial_data=list_company_ids_with_financial_data,
+        list_shareholding_history=list_shareholding_history,
     )

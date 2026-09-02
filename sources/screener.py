@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import sqlite3
+from storage.db_types import DBConnection
 from pathlib import Path
 
 import openpyxl
@@ -71,7 +71,7 @@ def _normalize_label(value: object) -> str | None:
 class ScreenerAdapter(SourceAdapter):
     source_id = "screener"
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: DBConnection):
         self._conn = conn
 
     def parse(

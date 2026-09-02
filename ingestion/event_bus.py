@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
+from storage.db_types import DBConnection, Row
 import uuid
 from dataclasses import dataclass, field, replace
 from typing import Callable
@@ -49,7 +49,7 @@ from storage.repositories import (
 
 logger = logging.getLogger(__name__)
 
-WorkerHandler = Callable[[sqlite3.Connection, DatasetIngestedEvent], "WorkerResult"]
+WorkerHandler = Callable[[DBConnection, DatasetIngestedEvent], "WorkerResult"]
 
 
 @dataclass(frozen=True)
@@ -96,7 +96,7 @@ def registered_workers() -> list[_Registration]:
     return list(_REGISTRY.values())
 
 
-def _run_one(conn: sqlite3.Connection, registration: _Registration, event: DatasetIngestedEvent) -> WorkerOutcome:
+def _run_one(conn: DBConnection, registration: _Registration, event: DatasetIngestedEvent) -> WorkerOutcome:
     log_id = start_worker_log(
         conn, event_id=event.event_id, ingestion_id=event.ingestion_id,
         worker_name=registration.name, worker_version=registration.version,
@@ -117,7 +117,7 @@ def _run_one(conn: sqlite3.Connection, registration: _Registration, event: Datas
     return WorkerOutcome(registration.name, registration.version, result)
 
 
-def publish(conn: sqlite3.Connection, event: DatasetIngestedEvent) -> list[WorkerOutcome]:
+def publish(conn: DBConnection, event: DatasetIngestedEvent) -> list[WorkerOutcome]:
     """Persist `event` to the Event Store, then dispatch it to every
     registered worker exactly once. Fills event_id/ingested_at if the
     caller left them blank."""
@@ -130,7 +130,7 @@ def publish(conn: sqlite3.Connection, event: DatasetIngestedEvent) -> list[Worke
     return [_run_one(conn, registration, event) for registration in registered_workers()]
 
 
-def _event_from_row(row: sqlite3.Row) -> DatasetIngestedEvent:
+def _event_from_row(row: Row) -> DatasetIngestedEvent:
     return DatasetIngestedEvent(
         dataset_id=row["dataset_id"],
         dataset_type=row["dataset_type"],
@@ -147,7 +147,7 @@ def _event_from_row(row: sqlite3.Row) -> DatasetIngestedEvent:
 
 
 def replay(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     *,
     event_id: str | None = None,
     dataset_type: str | None = None,

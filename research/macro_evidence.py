@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
+from storage.db_types import DBConnection, Row
 from datetime import date
 from pathlib import Path
 
@@ -160,7 +160,7 @@ def _year_range(question: str) -> tuple[int, int]:
     return current_year - DEFAULT_YEAR_WINDOW, current_year
 
 
-def _candidate_series(conn: sqlite3.Connection, fact_store: FactStore) -> list[tuple[str, str, str, str]]:
+def _candidate_series(conn: DBConnection, fact_store: FactStore) -> list[tuple[str, str, str, str]]:
     """Every distinct (series_key, source, earliest_period, latest_period) at
     the national level, minus the IITM per-month/season series (see
     _IITM_NON_ANNUAL_SUFFIX_RE above)."""
@@ -171,7 +171,7 @@ def _candidate_series(conn: sqlite3.Connection, fact_store: FactStore) -> list[t
     ]
 
 
-def _matching_series(conn: sqlite3.Connection, question: str, fact_store: FactStore) -> list[str]:
+def _matching_series(conn: DBConnection, question: str, fact_store: FactStore) -> list[str]:
     """Keyword-overlap fallback — see _plan_retrieval, which is tried first."""
     question_words = _words(question)
     if not question_words:
@@ -189,7 +189,7 @@ def _render_catalog(candidates: list[tuple[str, str, str, str]]) -> str:
     return "\n".join(f"{key} ({source}, {earliest}-{latest})" for key, source, earliest, latest in candidates)
 
 
-def _plan_retrieval(conn: sqlite3.Connection, question: str, fact_store: FactStore) -> tuple[list[str], int, int] | None:
+def _plan_retrieval(conn: DBConnection, question: str, fact_store: FactStore) -> tuple[list[str], int, int] | None:
     """Ask the LLM which catalog series (if any) and what year range apply to
     this question. Returns None — the caller falls back to _matching_series/
     _year_range — if there's no catalog to choose from, the call fails, or
@@ -236,7 +236,7 @@ def _plan_retrieval(conn: sqlite3.Connection, question: str, fact_store: FactSto
 
 
 def get_macro_evidence(
-    conn: sqlite3.Connection, question: str, *, fact_store: FactStore | None = None
+    conn: DBConnection, question: str, *, fact_store: FactStore | None = None
 ) -> list[Evidence]:
     """Gather Evidence for the (at most MAX_SERIES) national macro series
     the LLM planner (_plan_retrieval) picks as relevant to this question,
@@ -265,7 +265,7 @@ def get_macro_evidence(
         # hundreds-to-thousands of near-duplicate lines for one matched
         # series — get_macro_series returns oldest-to-newest, so keeping the
         # last row seen per year keeps that year's most recent observation.
-        by_year: dict[int, sqlite3.Row] = {}
+        by_year: dict[int, Row] = {}
         for row in rows:
             year = int(row["period"][:4])
             if year < start_year or year > end_year:

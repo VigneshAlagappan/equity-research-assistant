@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
+from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
 from config.settings import ANTHROPIC_MODEL
@@ -89,7 +89,7 @@ def _build_system_prompt() -> str:
     )
 
 
-def _company_context(conn: sqlite3.Connection, company_ids: list[str], fact_store: FactStore) -> str:
+def _company_context(conn: DBConnection, company_ids: list[str], fact_store: FactStore) -> str:
     lines = []
     for company_id in company_ids:
         company = fact_store.get_company(conn, company_id)
@@ -120,7 +120,7 @@ def _parse_response(text: str) -> list[dict]:
 
 
 def generate_hypotheses(
-    conn: sqlite3.Connection, investigation_id: str, question: str, company_ids: list[str], *, model: str | None = None,
+    conn: DBConnection, investigation_id: str, question: str, company_ids: list[str], *, model: str | None = None,
     fact_store: FactStore | None = None,
 ) -> list[Hypothesis]:
     """Generate competing hypotheses for `question`. Raises

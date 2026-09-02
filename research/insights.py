@@ -8,7 +8,7 @@ never regenerated just from loading the page.
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 
 from config.settings import ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL
 from financials.report import build_analysis_report
@@ -45,7 +45,7 @@ class NoDataToSummarizeError(Exception):
 
 
 def generate_key_insights(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     statement_type: str = "consolidated",
     model: str = ANTHROPIC_MODEL or DEFAULT_ANTHROPIC_MODEL,

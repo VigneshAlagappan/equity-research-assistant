@@ -15,10 +15,8 @@ Usage:
 
 --companies-file / --index are alternate ways to supply the company list --
 exactly one of --companies/--companies-file/--index is required. --index
-reads company_index_membership directly (companies/registry.py has no
-by-index lookup today, so this is the one place that touches the table
-directly rather than going through a repository function -- narrow enough
-not to warrant a new one yet).
+resolves via storage.company_repository.select_company_ids_by_index()
+rather than querying company_index_membership directly.
 """
 
 from __future__ import annotations
@@ -34,6 +32,7 @@ from ingestion.events import DatasetIngestedEvent
 from ingestion.pipeline import ingest_file
 from sources.nse_fetch import NSEFetchError, refresh_company_filings
 from sources.nse_shareholding import fetch_shareholding_detail, fetch_shareholding_master
+from storage.company_repository import select_company_ids_by_index
 from storage.database import init_db
 from storage.repositories import (
     insert_shareholding_holders,
@@ -128,10 +127,7 @@ def _resolve_companies(conn, args: argparse.Namespace) -> list[str]:
         with open(args.companies_file) as f:
             return [line.strip().upper() for line in f if line.strip() and not line.startswith("#")]
     if args.index:
-        rows = conn.execute(
-            "SELECT company_id FROM company_index_membership WHERE index_name = ? ORDER BY company_id",
-            (args.index,),
-        ).fetchall()
+        rows = select_company_ids_by_index(conn, args.index)
         return [r["company_id"] for r in rows]
     raise SystemExit("one of --companies / --companies-file / --index is required")
 

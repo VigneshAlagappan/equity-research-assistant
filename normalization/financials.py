@@ -364,7 +364,7 @@ def _default_unit_for_metric(conn: DBConnection, metric_key: str, currency: str 
 
 
 def build_observations_from_periods(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     *,
     company_id: str,
     source: str,
@@ -438,7 +438,7 @@ def build_observations_from_periods(
 
 
 def build_observations(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     *,
     company_id: str,
     source: str,

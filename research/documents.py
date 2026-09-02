@@ -21,7 +21,7 @@ to extract, so they're silently skipped rather than erroring.
 from __future__ import annotations
 
 import re
-import sqlite3
+from storage.db_types import DBConnection, Row
 import time
 from io import BytesIO
 from pathlib import Path
@@ -75,7 +75,7 @@ def _extract_period_hint(question: str) -> tuple[str | None, str | None]:
     return fiscal_year, quarter
 
 
-def _select_documents(docs: list[sqlite3.Row], question: str) -> list[sqlite3.Row]:
+def _select_documents(docs: list[Row], question: str) -> list[Row]:
     """Filter to the fiscal year/quarter mentioned in the question, if any —
     falls back to every document on file when nothing is mentioned, or when
     the mentioned period matches nothing (an unfiltered answer beats a
@@ -151,7 +151,7 @@ def _extract_pdf_text_from_url(url: str) -> str | None:
         return None
 
 
-def document_text(row: sqlite3.Row) -> str | None:
+def document_text(row: Row) -> str | None:
     if row["raw_file_path"]:
         if Path(row["raw_file_path"]).suffix.lower() != ".pdf":
             return None
@@ -161,7 +161,7 @@ def document_text(row: sqlite3.Row) -> str | None:
     return None
 
 
-def document_pages(row: sqlite3.Row) -> list[str] | None:
+def document_pages(row: Row) -> list[str] | None:
     """Same source resolution as document_text() (uploaded file vs. a
     fetched PDF-looking link), but preserving page boundaries —
     research/document_chunker.py (Step 2D) uses this to attach a real
@@ -188,7 +188,7 @@ def document_pages(row: sqlite3.Row) -> list[str] | None:
 
 
 def get_document_evidence(
-    conn: sqlite3.Connection, company_id: str, question: str, *, fact_store: FactStore | None = None
+    conn: DBConnection, company_id: str, question: str, *, fact_store: FactStore | None = None
 ) -> list[Evidence]:
     """MANAGEMENT_STATEMENT evidence extracted from this company's Docs-tab
     documents — uploaded files and fetched links alike (README: Evidence &

@@ -15,7 +15,7 @@ deterministic tools and retrieval is sufficient").
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 
 from config.settings import ANTHROPIC_MODEL
 from context.optimizer import optimize
@@ -72,7 +72,7 @@ def _select_model(question: str, company_ids: list[str], evidence_count: int) ->
 
 
 def answer_question(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     question: str,
     company_ids: list[str],
     statement_type: str | None = "consolidated",

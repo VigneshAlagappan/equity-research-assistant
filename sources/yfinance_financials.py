@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 import math
-import sqlite3
+from storage.db_types import DBConnection
 
 import yfinance as yf
 
@@ -62,7 +62,7 @@ _PER_UNIT_ROW_LABELS = {"Diluted EPS"}
 class YFinanceAdapter:
     source_id = "yfinance"
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: DBConnection):
         self._conn = conn
 
     def fetch(

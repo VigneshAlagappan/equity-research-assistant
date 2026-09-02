@@ -36,7 +36,7 @@ unaffected (always disclosed, every quarter).
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 from collections import defaultdict
 
 from sources.nse_shareholding import classify_public_category
@@ -78,7 +78,7 @@ def _bucket_percents(obs: dict) -> dict[str, float | None]:
     }
 
 
-def build_shareholding_feed(conn: sqlite3.Connection, company_id: str) -> dict:
+def build_shareholding_feed(conn: DBConnection, company_id: str) -> dict:
     """Every quarter on file, each carrying that quarter's own bucket
     percentages and named holders -- shareholding_panel.js reshapes this
     into a holder x quarter matrix itself (it already has every quarter's

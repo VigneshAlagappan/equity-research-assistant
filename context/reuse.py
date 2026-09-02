@@ -16,7 +16,7 @@ call, but a false hit would hand back a wrong-shaped answer.
 from __future__ import annotations
 
 import re
-import sqlite3
+from storage.db_types import DBConnection
 from dataclasses import dataclass
 
 from storage.fact_store import FactStore, default_fact_store
@@ -51,7 +51,7 @@ class ReuseCandidate:
 
 
 def find_reusable_report(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     question: str,
     company_ids: list[str],
     statement_type: str | None,

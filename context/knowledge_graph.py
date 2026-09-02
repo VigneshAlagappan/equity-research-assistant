@@ -21,7 +21,7 @@ already has with context/graph.py's sector-peer data.
 from __future__ import annotations
 
 import logging
-import sqlite3
+from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
 from config.settings import GRAPH_BACKEND
@@ -52,7 +52,7 @@ class KnowledgeClaimView:
 
 
 def find_claims_about_entity(
-    conn: sqlite3.Connection, entity_type: str, entity_name: str, *, fact_store: FactStore | None = None
+    conn: DBConnection, entity_type: str, entity_name: str, *, fact_store: FactStore | None = None
 ) -> list[KnowledgeClaimView]:
     """Every claim, from any company, whose extracted relationships touch
     this entity — e.g. entity_type="Risk", entity_name="Interest Rate
@@ -75,7 +75,7 @@ def find_claims_about_entity(
 
 
 def _find_claims_about_entity_sqlite(
-    conn: sqlite3.Connection, entity_type: str, entity_name: str, fact_store: FactStore
+    conn: DBConnection, entity_type: str, entity_name: str, fact_store: FactStore
 ) -> list[KnowledgeClaimView]:
     claims = fact_store.find_knowledge_claims_about_entity(conn, entity_type, entity_name)
     views: list[KnowledgeClaimView] = []

@@ -26,7 +26,7 @@ itself."""
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -48,7 +48,7 @@ class _Item:
 
 
 class BatchRun:
-    def __init__(self, conn: sqlite3.Connection, job_name: str, scope_label: str | None = None) -> None:
+    def __init__(self, conn: DBConnection, job_name: str, scope_label: str | None = None) -> None:
         self._conn = conn
         self._job_name = job_name
         self._scope_label = scope_label

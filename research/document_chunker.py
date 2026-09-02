@@ -31,7 +31,7 @@ Knowledge Builder pipeline already follows.
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection, Row
 
 from research.documents import document_pages
 from storage.repositories import replace_document_chunks
@@ -61,7 +61,7 @@ def _split_into_chunks(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = C
     return pieces
 
 
-def chunk_and_index_document(conn: sqlite3.Connection, document_row: sqlite3.Row) -> int:
+def chunk_and_index_document(conn: DBConnection, document_row: Row) -> int:
     """Chunk one document's text (page by page, so each chunk carries a
     real page_number) and (re)index it for search. Returns the number of
     chunks written — 0 if the document has no extractable text, not an

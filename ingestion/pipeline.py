@@ -8,7 +8,7 @@ normalization/financials.py; this module owns validate -> store -> reconcile.)
 from __future__ import annotations
 
 import logging
-import sqlite3
+from storage.db_types import DBConnection
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 def _publish_financial_ingestion(
-    conn: sqlite3.Connection, *, company_id: str, source_id: str, statement_type: str,
+    conn: DBConnection, *, company_id: str, source_id: str, statement_type: str,
     valid: list[NormalizedObservation],
 ) -> int:
     """Compute the touched reconciliation keys, publish a
@@ -70,7 +70,7 @@ def _publish_financial_ingestion(
 
 
 def _publish_dataset_ingested(
-    conn: sqlite3.Connection, *, dataset_id: str, dataset_type: str, source: str,
+    conn: DBConnection, *, dataset_id: str, dataset_type: str, source: str,
     storage_reference: dict, scope: dict, period: str | None = None, metadata: dict | None = None,
 ) -> None:
     """Publish a DATASET_INGESTED event for a dataset type with no
@@ -120,7 +120,7 @@ class BankInfrastructureIngestionResult:
 
 
 def ingest_file(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     file_path: Path,
     *,
     company_id: str | None = None,
@@ -183,7 +183,7 @@ def ingest_file(
 
 
 def ingest_yfinance_company(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     ticker: str,
     *,
@@ -232,7 +232,7 @@ def ingest_yfinance_company(
 
 
 def ingest_macro_file(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     file_path: Path,
     *,
     source_id: str | None = None,
@@ -311,7 +311,7 @@ def ingest_macro_file(
 
 
 def ingest_fred_series(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     series_id: str,
     *,
     unit: str,
@@ -368,7 +368,7 @@ def ingest_fred_series(
 
 
 def ingest_bank_infrastructure_file(
-    conn: sqlite3.Connection, file_path: Path, *, source_id: str | None = None
+    conn: DBConnection, file_path: Path, *, source_id: str | None = None
 ) -> BankInfrastructureIngestionResult:
     """Run one RBI monthly bank-infrastructure bulletin (ATM/NEFT/RTGS,
     sources/rbi_bank_infrastructure.py) through parse -> store.

@@ -29,7 +29,7 @@ the looping decision belongs to the Orchestrator, not this module.
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
 from context.knowledge_graph import KnowledgeClaimView
@@ -60,7 +60,7 @@ class InvestigationPlan:
 
 
 def _mentioned_entities(
-    conn: sqlite3.Connection, company_ids: list[str], text: str, fact_store: FactStore
+    conn: DBConnection, company_ids: list[str], text: str, fact_store: FactStore
 ) -> list[tuple[str, str]]:
     """Which already-extracted entities (any type) this hypothesis's own
     text names — simple case-insensitive substring match against
@@ -75,7 +75,7 @@ def _mentioned_entities(
 
 
 def plan_and_gather(
-    conn: sqlite3.Connection, hypothesis: Hypothesis, question: str, *, capabilities: PlannerCapabilities | None = None,
+    conn: DBConnection, hypothesis: Hypothesis, question: str, *, capabilities: PlannerCapabilities | None = None,
     fact_store: FactStore | None = None,
 ) -> InvestigationPlan:
     """capabilities defaults to the real in-process implementations

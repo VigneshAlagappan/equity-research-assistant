@@ -20,6 +20,7 @@ from sources.base import NormalizedObservation
 from sources.macro import MacroNormalizedObservation
 from sources.rbi_bank_infrastructure import BankInfrastructureObservation
 from storage.database import utcnow_iso
+from storage.investigation_repository import insert_investigation_companies
 
 NORMALIZATION_VERSION = "v1"
 
@@ -1157,14 +1158,23 @@ def save_investigation(
     strongest_explanation: str | None,
     unanswered_questions: list[str],
     additional_evidence_needed: list[str],
+    as_of: str | None = None,
 ) -> None:
+    """Writes the investigation row AND its `investigation_companies`
+    associations in one transaction — the JSON `company_ids` column stays the
+    ordered as-asked list the investigation view renders, while the join table
+    is what "Company -> Investigations" queries (see
+    storage/investigation_repository.py for why both exist). A cross-company
+    investigation is one record here, associated with several companies, never
+    duplicated per company."""
     conn.execute(
         "INSERT INTO investigations (investigation_id, question, company_ids, statement_type, "
-        "strongest_explanation, unanswered_questions, additional_evidence_needed, generated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "strongest_explanation, unanswered_questions, additional_evidence_needed, generated_at, as_of) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (investigation_id, question, json.dumps(company_ids), statement_type, strongest_explanation,
-         json.dumps(unanswered_questions), json.dumps(additional_evidence_needed), utcnow_iso()),
+         json.dumps(unanswered_questions), json.dumps(additional_evidence_needed), utcnow_iso(), as_of),
     )
+    insert_investigation_companies(conn, investigation_id, company_ids)
     conn.commit()
 
 

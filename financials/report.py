@@ -11,7 +11,7 @@ report would see, not a separately-curated list.
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 
 from companies.registry import get_company
 from financials.calculations import CalculationError, cagr_for_metric, yoy_growth_for_metric
@@ -36,7 +36,7 @@ VENDOR_RATIO_METRICS = [
 
 
 def _format_trend_section(
-    conn: sqlite3.Connection, company_id: str, metric_key: str, title: str, statement_type: str
+    conn: DBConnection, company_id: str, metric_key: str, title: str, statement_type: str
 ) -> list[str]:
     """One metric's full annual series, with YoY per year and CAGR end-to-end."""
     series = get_canonical_series(conn, company_id, metric_key, "annual", statement_type)
@@ -71,7 +71,7 @@ def _format_trend_section(
 
 
 def _format_profitability_ratio_section(
-    conn: sqlite3.Connection, company_id: str, fiscal_years: list[str], statement_type: str
+    conn: DBConnection, company_id: str, fiscal_years: list[str], statement_type: str
 ) -> list[str]:
     """ROA/ROE per fiscal year, wherever a prior-year balance sheet figure makes the average computable."""
     lines: list[str] = []
@@ -91,7 +91,7 @@ def _format_profitability_ratio_section(
 
 
 def _format_vendor_ratio_section(
-    conn: sqlite3.Connection, company_id: str, latest_fiscal_year: str, statement_type: str
+    conn: DBConnection, company_id: str, latest_fiscal_year: str, statement_type: str
 ) -> list[str]:
     """Vendor-reported ratios (Gross NPA %, NIM, ...) for the latest year — labeled FACT, not computed."""
     lines: list[str] = []
@@ -106,7 +106,7 @@ def _format_vendor_ratio_section(
     return lines
 
 
-def build_analysis_report(conn: sqlite3.Connection, company_id: str, statement_type: str = "consolidated") -> str:
+def build_analysis_report(conn: DBConnection, company_id: str, statement_type: str = "consolidated") -> str:
     """Text report: annual trends, YoY/CAGR growth, ROA/ROE, and vendor-reported ratios."""
     company = get_company(conn, company_id)
     if company is None:

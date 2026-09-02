@@ -41,7 +41,7 @@ Two categories of gap are left deliberately unfilled, not overlooked:
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 
 from companies.registry import get_company
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
@@ -69,7 +69,7 @@ _RAW_METRIC_KEYS = (
 )
 
 
-def _series_by_year(conn: sqlite3.Connection, company_id: str, metric_key: str, statement_type: str) -> dict[int, float]:
+def _series_by_year(conn: DBConnection, company_id: str, metric_key: str, statement_type: str) -> dict[int, float]:
     """fiscal_year (int) -> value in the company's currency's "big" display
     unit (crore for INR, million for USD), for one metric/company/statement_type."""
     out: dict[int, float] = {}
@@ -95,7 +95,7 @@ def _row(
     return {"key": key, "label": label, "unit": unit, "values": _values_for(years, series), "type": row_type}
 
 
-def build_valuation_feed(conn: sqlite3.Connection, company_id: str, statement_type: str = "consolidated") -> dict:
+def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: str = "consolidated") -> dict:
     raw = {key: _series_by_year(conn, company_id, key, statement_type) for key in _RAW_METRIC_KEYS}
     years = sorted({year for series in raw.values() for year in series})
 

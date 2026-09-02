@@ -10,7 +10,7 @@ reading `analyze` would see — never the full company archive.
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 
 from financials.calculations import CalculationError, CalculationResult, cagr_for_metric, yoy_growth_for_metric
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company, vendor_reported
@@ -34,7 +34,7 @@ def _result_to_evidence(company_id: str, result: CalculationResult) -> Evidence:
 
 
 def get_company_evidence(
-    conn: sqlite3.Connection, company_id: str, statement_type: str | None = "consolidated",
+    conn: DBConnection, company_id: str, statement_type: str | None = "consolidated",
     *, fact_store: FactStore | None = None,
 ) -> list[Evidence]:
     """Gather deterministic Evidence for one company: reported metric trends
@@ -106,7 +106,7 @@ def get_company_evidence(
 
 
 def get_comparison_evidence(
-    conn: sqlite3.Connection, company_ids: list[str], statement_type: str | None = "consolidated"
+    conn: DBConnection, company_ids: list[str], statement_type: str | None = "consolidated"
 ) -> list[Evidence]:
     """Evidence for multiple companies, concatenated — for peer-comparison
     questions (README: POC Success Criteria, Question 2). A company with

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
+from storage.db_types import DBConnection, Row
 from dataclasses import dataclass, field
 
 from config.knowledge_ontology import CLAIM_TYPES, ENTITY_TYPES, RELATIONSHIP_TYPES
@@ -135,7 +135,7 @@ def _parse_response(text: str) -> dict:
 
 
 def _persist(
-    conn: sqlite3.Connection, *, document_id: int, company_id: str | None,
+    conn: DBConnection, *, document_id: int, company_id: str | None,
     fiscal_year: str | None, quarter: str | None, parsed: dict,
 ) -> KnowledgeExtractionResult:
     result = KnowledgeExtractionResult()
@@ -146,7 +146,7 @@ def _persist(
     if company_id is not None:
         company_entity = get_or_create_knowledge_entity(conn, "Company", company_id, company_id)
 
-    named_entities: dict[str, sqlite3.Row] = {}
+    named_entities: dict[str, Row] = {}
     for raw_entity in parsed.get("entities") or []:
         entity_type = raw_entity.get("type")
         name = (raw_entity.get("name") or "").strip()
@@ -156,7 +156,7 @@ def _persist(
         named_entities[name] = row
         result.entities_created += 1
 
-    def _resolve_entity(name: str) -> sqlite3.Row | None:
+    def _resolve_entity(name: str) -> Row | None:
         if name == _COMPANY_PLACEHOLDER:
             return company_entity
         return named_entities.get(name)
@@ -202,7 +202,7 @@ def _persist(
 
 
 def extract_document_knowledge(
-    conn: sqlite3.Connection, document_row: sqlite3.Row, *, model: str | None = None
+    conn: DBConnection, document_row: Row, *, model: str | None = None
 ) -> KnowledgeExtractionResult:
     """Extract and persist structured knowledge from one document row
     (the same shape `documents` table rows have). Returns an empty result

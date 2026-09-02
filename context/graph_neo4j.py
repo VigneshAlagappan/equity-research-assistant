@@ -38,7 +38,7 @@ Browse the graph at http://localhost:7474.
 from __future__ import annotations
 
 import logging
-import sqlite3
+from storage.db_types import DBConnection, Row
 
 from neo4j import Driver, GraphDatabase
 
@@ -68,7 +68,7 @@ def get_driver() -> Driver:
     return _driver
 
 
-def _sync_companies(tx, companies: list[sqlite3.Row]) -> None:
+def _sync_companies(tx, companies: list[Row]) -> None:
     tx.run(
         "UNWIND $rows AS row "
         "MERGE (c:Company {id: row.company_id}) "
@@ -77,7 +77,7 @@ def _sync_companies(tx, companies: list[sqlite3.Row]) -> None:
     )
 
 
-def _sync_sector_edges(tx, companies: list[sqlite3.Row]) -> None:
+def _sync_sector_edges(tx, companies: list[Row]) -> None:
     """One SAME_SECTOR_AS edge per pair sharing a non-null sector — a
     materialized relationship (rather than just matching on the shared
     `sector` property at query time) so it's actually visible as a graph
@@ -138,7 +138,7 @@ def _sync_investigation(
         )
 
 
-def sync_graph(conn: sqlite3.Connection, driver: Driver, *, fact_store: FactStore) -> None:
+def sync_graph(conn: DBConnection, driver: Driver, *, fact_store: FactStore) -> None:
     """Full, idempotent rebuild of the Neo4j graph from SQLite + the seed
     edge list. Safe to call before every traversal — MERGE never duplicates
     a node/relationship that already exists. fact_store is always passed
@@ -226,7 +226,7 @@ def find_related_investigations(driver: Driver, question: str, company_ids: list
 # ============================================================
 
 
-def _sync_knowledge_entities(tx, entities: list[sqlite3.Row]) -> None:
+def _sync_knowledge_entities(tx, entities: list[Row]) -> None:
     companies = [
         {"company_id": e["company_id"]} for e in entities if e["entity_type"] == "Company" and e["company_id"]
     ]
@@ -250,7 +250,7 @@ def _sync_knowledge_entities(tx, entities: list[sqlite3.Row]) -> None:
         )
 
 
-def _sync_knowledge_claims(tx, claims: list[sqlite3.Row]) -> None:
+def _sync_knowledge_claims(tx, claims: list[Row]) -> None:
     tx.run(
         "UNWIND $rows AS row "
         "MERGE (cl:Claim {id: row.claim_id}) "
@@ -293,7 +293,7 @@ def _sync_knowledge_claims(tx, claims: list[sqlite3.Row]) -> None:
         )
 
 
-def _sync_knowledge_evidence(tx, evidence: list[sqlite3.Row]) -> None:
+def _sync_knowledge_evidence(tx, evidence: list[Row]) -> None:
     if not evidence:
         return
     tx.run(
@@ -307,7 +307,7 @@ def _sync_knowledge_evidence(tx, evidence: list[sqlite3.Row]) -> None:
     )
 
 
-def _entity_kg_key(entity_by_id: dict[int, sqlite3.Row], entity_id: int) -> str | None:
+def _entity_kg_key(entity_by_id: dict[int, Row], entity_id: int) -> str | None:
     entity = entity_by_id.get(entity_id)
     if entity is None:
         return None
@@ -316,7 +316,7 @@ def _entity_kg_key(entity_by_id: dict[int, sqlite3.Row], entity_id: int) -> str 
     return f"entity:{entity_id}"
 
 
-def _sync_knowledge_relationships(tx, relationships: list[sqlite3.Row], entity_by_id: dict[int, sqlite3.Row]) -> None:
+def _sync_knowledge_relationships(tx, relationships: list[Row], entity_by_id: dict[int, Row]) -> None:
     # ABOUT: every entity a claim's relationships touch, so a claim is
     # findable from any entity it's connected to, not just via the
     # relationship's own (source, type, target) triple.
@@ -352,7 +352,7 @@ def _sync_knowledge_relationships(tx, relationships: list[sqlite3.Row], entity_b
         )
 
 
-def sync_knowledge_graph(conn: sqlite3.Connection, driver: Driver, *, fact_store: FactStore) -> None:
+def sync_knowledge_graph(conn: DBConnection, driver: Driver, *, fact_store: FactStore) -> None:
     """Full, idempotent rebuild of the knowledge-claim graph from SQLite —
     same "SQLite stays the source of truth, resync before every query"
     philosophy sync_graph() above already uses, not incremental sync/
@@ -454,20 +454,20 @@ def find_claims_about_entity(driver: Driver, entity_type: str, entity_name: str)
 # ============================================================
 
 
-def _observation_id(row: sqlite3.Row) -> str:
+def _observation_id(row: Row) -> str:
     return "|".join(str(x) for x in (
         row["company_id"], row["metric_key"], row["period_type"],
         row["fiscal_year"], row["quarter"] or "", row["statement_type"] or "",
     ))
 
 
-def _period_key(row: sqlite3.Row) -> str | None:
+def _period_key(row: Row) -> str | None:
     if not row["fiscal_year"]:
         return None
     return f"{row['fiscal_year']}-{row['quarter']}" if row["quarter"] else row["fiscal_year"]
 
 
-def _sync_metrics(tx, rows: list[sqlite3.Row]) -> None:
+def _sync_metrics(tx, rows: list[Row]) -> None:
     by_key = {
         r["metric_key"]: {"key": r["metric_key"], "display_name": r["display_name"], "category": r["category"]}
         for r in rows
@@ -480,7 +480,7 @@ def _sync_metrics(tx, rows: list[sqlite3.Row]) -> None:
     )
 
 
-def _sync_observations(tx, rows: list[sqlite3.Row]) -> None:
+def _sync_observations(tx, rows: list[Row]) -> None:
     tx.run(
         "UNWIND $rows AS row "
         "MATCH (c:Company {id: row.company_id}), (m:Metric {key: row.metric_key}) "
@@ -510,7 +510,7 @@ def _sync_observations(tx, rows: list[sqlite3.Row]) -> None:
         )
 
 
-def sync_financials(conn: sqlite3.Connection, driver: Driver, *, fact_store: FactStore, company_ids: list[str]) -> int:
+def sync_financials(conn: DBConnection, driver: Driver, *, fact_store: FactStore, company_ids: list[str]) -> int:
     """TRIAL. Full, idempotent (re)sync of canonical_financials for exactly
     these companies -- see the module comment above for the graph shape and
     why this isn't wired into the automatic resync path yet. Returns the

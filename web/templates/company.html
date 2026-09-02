@@ -151,6 +151,60 @@
     margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px solid var(--color-divider);
   }
 
+  /* — Indicators section (indicators/*.py). Three columns, each a native
+     <details> so the collapse needs no JS, matching .insights-history /
+     .chart-overlay-hint above. Color is carried on the summary dot, the
+     column's left border and the classification pill only — the pill always
+     spells the classification out in words, so nothing here depends on
+     color alone. Hues come from base.html's --indicator-* tokens, which are
+     redeclared per data-theme rather than hardcoded here. */
+  .ind-section-intro { font-size: 13px; color: var(--ink-muted); max-width: 78ch; margin: 0 0 var(--space-4); }
+  .ind-columns {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-3);
+    align-items: start;
+  }
+  .ind-column { border: 1px solid var(--color-divider); border-radius: var(--radius-lg); background: var(--surface); }
+  .ind-column-positive { border-left: 3px solid var(--indicator-positive); }
+  .ind-column-observation { border-left: 3px solid var(--indicator-observation); }
+  .ind-column-warning { border-left: 3px solid var(--indicator-warning); }
+  .ind-column > summary {
+    cursor: pointer; list-style: none; padding: var(--space-2) var(--space-3);
+    display: flex; align-items: center; gap: var(--space-2); user-select: none;
+  }
+  .ind-column > summary::-webkit-details-marker { display: none; }
+  .ind-column > summary::after {
+    content: "▸"; margin-left: auto; font-size: 10px; color: var(--ink-muted); transition: transform .15s ease;
+  }
+  .ind-column[open] > summary::after { transform: rotate(90deg); }
+  .ind-column-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .ind-column-positive .ind-column-dot { background: var(--indicator-positive); }
+  .ind-column-observation .ind-column-dot { background: var(--indicator-observation); }
+  .ind-column-warning .ind-column-dot { background: var(--indicator-warning); }
+  .ind-column-label { font-size: 12px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+  .ind-column-count {
+    font-size: 11px; font-weight: 600; border-radius: 999px; padding: 0 6px; line-height: 1.6;
+    background: color-mix(in srgb, var(--color-text) 8%, transparent); color: var(--ink-muted);
+  }
+  .ind-column-body { padding: 0 var(--space-3) var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+  .ind-column-empty { font-size: 12px; margin: 0; }
+  .ind-card { padding: var(--space-3); gap: var(--space-2); }
+  .ind-card-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .ind-card-name { font-weight: 600; font-size: 13px; }
+  .ind-card-explanation { font-size: 13px; margin: 0; }
+  .ind-card-facts, .ind-card-values dl {
+    display: grid; grid-template-columns: auto 1fr; gap: 2px var(--space-2);
+    margin: 0; font-size: 11px;
+  }
+  .ind-card-facts dt, .ind-card-values dt { color: var(--ink-muted); }
+  .ind-card-facts dd, .ind-card-values dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .ind-card-values > summary {
+    cursor: pointer; list-style: none; font-size: 11px; color: var(--ink-muted); margin-top: 2px;
+  }
+  .ind-card-values > summary::-webkit-details-marker { display: none; }
+  .ind-card-values > summary::before { content: "▸ "; font-size: 9px; }
+  .ind-card-values[open] > summary::before { content: "▾ "; }
+  .ind-card-values > summary:hover { color: var(--ink); }
+
   .statement-toggle {
     display: inline-flex;
     border: 1px solid var(--color-divider);
@@ -909,6 +963,7 @@
     <nav class="company-tabs" id="company-tab-nav">
       <a href="#sec-overview" data-target="sec-overview" class="{{ 'active' if tab == 'overview' else '' }}">Overview</a>
       <a href="#sec-key-insights" data-target="sec-key-insights" class="{{ 'active' if tab == 'key_insights' else '' }}">Key Insights</a>
+      <a href="#sec-indicators" data-target="sec-indicators" class="{{ 'active' if tab == 'indicators' else '' }}">Indicators</a>
       <a href="#sec-charts" data-target="sec-charts" class="{{ 'active' if tab == 'charts' else '' }}">Charts</a>
       <a href="#sec-financials" data-target="sec-financials" class="{{ 'active' if tab == 'financials' else '' }}">Financials</a>
       <a href="#sec-valuation-model" data-target="sec-valuation-model" class="{{ 'active' if tab == 'valuation_model' else '' }}">Valuation Model</a>
@@ -969,6 +1024,78 @@
       </div>
       {% endfor %}
     </details>
+    {% endif %}
+  </section>
+
+  {# ——— Indicators ————————————————————————————————————————————————
+     Deterministic, rule-based factual patterns (indicators/*.py), computed
+     fresh on every view from already-ingested facts under the signed-in
+     user's own rule configuration. No LLM anywhere on this path.
+     Three columns, each a <details> disclosure (this app's real-estate
+     convention): only Warnings auto-open, and only when something fired. #}
+  <section class="merged-section" id="sec-indicators">
+    <h2>Indicators</h2>
+    <p class="ind-section-intro">
+      Deterministic patterns computed from this company's ingested facts by configurable rules —
+      factual observations worth noticing, not predictions, conclusions or AI-generated insights.
+      <a href="{{ url_for('settings') }}#indicator-rules">Configure rules</a>.
+    </p>
+    {% if indicator_total == 0 %}
+    <div class="empty-state">
+      No indicators are currently triggered for {{ company['display_name'] }}. Either no rule's
+      threshold was crossed, or the facts those rules need (shareholding quarters, consolidated
+      annual financials) haven't been ingested for this company yet.
+    </div>
+    {% else %}
+    <div class="ind-columns">
+      {% for column in indicator_columns %}
+      <details class="ind-column ind-column-{{ column.key }}" {{ 'open' if column.open else '' }}>
+        <summary>
+          <span class="ind-column-dot" aria-hidden="true"></span>
+          <span class="ind-column-label">{{ column.label }}{{ 's' if column.key != 'positive' else '' }}</span>
+          <span class="ind-column-count">{{ column['items']|length }}</span>
+        </summary>
+        <div class="ind-column-body">
+          {% for indicator in column['items'] %}
+          <article class="card elev-sm ind-card">
+            <div class="ind-card-top">
+              <span class="ind-card-name">{{ indicator.rule_name }}</span>
+              {# Text label always accompanies the color — accessibility. #}
+              <span class="tag tag-{{ indicator.classification }}">{{ indicator.classification_label }}</span>
+              <span class="tag tag-neutral">{{ indicator.severity }} severity</span>
+            </div>
+            <p class="ind-card-explanation">{{ indicator.explanation }}</p>
+            <dl class="ind-card-facts">
+              {% if indicator.period_label %}<dt>Period</dt><dd>{{ indicator.period_label }}</dd>{% endif %}
+              {% if indicator.threshold_summary %}<dt>Threshold</dt><dd>{{ indicator.threshold_summary }}</dd>{% endif %}
+              <dt>Rule</dt><dd><code>{{ indicator.rule_id }}</code> v{{ indicator.rule_version }}</dd>
+              <dt>Configuration</dt>
+              <dd>{{ 'System default' if indicator.scope_applied == 'system' else indicator.scope_applied }}</dd>
+              {% if indicator.provenance %}
+              <dt>Source</dt>
+              <dd>
+                {% if indicator.provenance.startswith('http') %}
+                <a href="{{ indicator.provenance }}" rel="noopener" target="_blank">Filing</a>
+                {% else %}{{ indicator.provenance }}{% endif %}
+              </dd>
+              {% endif %}
+            </dl>
+            <details class="ind-card-values">
+              <summary>Values it fired on</summary>
+              <dl>
+                {% for key, value in indicator.facts.items() %}
+                <dt>{{ key.replace('_', ' ') }}</dt><dd>{{ value if value is not none else '—' }}</dd>
+                {% endfor %}
+              </dl>
+            </details>
+          </article>
+          {% else %}
+          <p class="muted ind-column-empty">None currently triggered.</p>
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
+    </div>
     {% endif %}
   </section>
 

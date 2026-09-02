@@ -50,6 +50,8 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_company_notes_updated_at(conn)
     _migrate_llm_call_log_columns(conn)
     _migrate_shareholding_observations_columns(conn)
+    _migrate_investigations_as_of_column(conn)
+    _migrate_investigation_companies(conn)
     _seed_sources(conn)
     _migrate_source_trust_ranks(conn)
     _seed_sectors_and_industries(conn)
@@ -177,6 +179,29 @@ def _migrate_shareholding_observations_columns(conn: sqlite3.Connection) -> None
             conn.execute(f"ALTER TABLE shareholding_observations ADD COLUMN {column} REAL")
     if "num_shareholders" not in columns:
         conn.execute("ALTER TABLE shareholding_observations ADD COLUMN num_shareholders INTEGER")
+
+
+def _migrate_investigations_as_of_column(conn: sqlite3.Connection) -> None:
+    """`as_of` (the point-in-time evidence cutoff an investigation was run
+    under — research/temporal.py) was added after `investigations` shipped;
+    ALTER TABLE backfills it as NULL, which is exactly the right value for
+    every pre-existing investigation ("no cutoff, everything known at the
+    time"). Same pattern as _migrate_companies_website_column."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(investigations)")}
+    if columns and "as_of" not in columns:
+        conn.execute("ALTER TABLE investigations ADD COLUMN as_of TEXT")
+
+
+def _migrate_investigation_companies(conn: sqlite3.Connection) -> None:
+    """`investigation_companies` (storage/investigation_repository.py) is
+    created by the schema above, but an investigation saved before it existed
+    has no rows in it and would silently vanish from its companies'
+    Investigations sections. Backfill from the JSON `company_ids` column that
+    has always been written. Idempotent (an anti-join finds nothing on the
+    second run), so it can stay in init_db()'s unconditional migration list."""
+    from storage.investigation_repository import backfill_investigation_companies
+
+    backfill_investigation_companies(conn)
 
 
 def _migrate_users_theme_column(conn: sqlite3.Connection) -> None:

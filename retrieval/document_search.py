@@ -16,7 +16,7 @@ structured SQL retrieval with vector search").
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 from dataclasses import dataclass
 
 from storage.fact_store import FactStore, default_fact_store
@@ -40,7 +40,7 @@ class DocumentPassage:
 
 
 def search_documents(
-    conn: sqlite3.Connection, query: str, *, company_id: str | None = None, limit: int = 10,
+    conn: DBConnection, query: str, *, company_id: str | None = None, limit: int = 10,
     fact_store: FactStore | None = None,
 ) -> list[DocumentPassage]:
     """Keyword search over every indexed document chunk (optionally scoped

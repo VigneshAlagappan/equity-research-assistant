@@ -68,7 +68,7 @@ def net_profit_margin(net_profit: float, total_income: float) -> float:
 # ------------------------------------------------------------------
 
 
-def _company_sector_tags(company_row: sqlite3.Row) -> set[str]:
+def _company_sector_tags(company_row: Row) -> set[str]:
     """Derive metrics_dictionary-style sector tags from a company's industry text.
 
     A POC-level heuristic (companies has free-text sector/industry, not a tag
@@ -119,7 +119,7 @@ def get_required_metric(
 
 
 def roa_for_company(
-    conn: sqlite3.Connection, company_id: str, fiscal_year: str, statement_type: str | None = "consolidated"
+    conn: DBConnection, company_id: str, fiscal_year: str, statement_type: str | None = "consolidated"
 ) -> CalculationResult:
     prior_fy = f"FY{fiscal_year_number(fiscal_year) - 1}"
     net_profit = get_required_metric(conn, company_id, "net_profit", fiscal_year, statement_type=statement_type)
@@ -141,7 +141,7 @@ def roa_for_company(
 
 
 def _shareholders_funds(
-    conn: sqlite3.Connection, company_id: str, fiscal_year: str, statement_type: str | None
+    conn: DBConnection, company_id: str, fiscal_year: str, statement_type: str | None
 ) -> tuple[float, str, bool]:
     """total_shareholders_funds if reported directly, else the exact identity
     equity_share_capital + reserves. Not an estimate — every balance sheet
@@ -166,7 +166,7 @@ def _shareholders_funds(
 
 
 def roe_for_company(
-    conn: sqlite3.Connection, company_id: str, fiscal_year: str, statement_type: str | None = "consolidated"
+    conn: DBConnection, company_id: str, fiscal_year: str, statement_type: str | None = "consolidated"
 ) -> CalculationResult:
     prior_fy = f"FY{fiscal_year_number(fiscal_year) - 1}"
     net_profit = get_required_metric(conn, company_id, "net_profit", fiscal_year, statement_type=statement_type)
@@ -189,7 +189,7 @@ def roe_for_company(
 
 
 def vendor_reported(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     metric_key: str,
     fiscal_year: str,

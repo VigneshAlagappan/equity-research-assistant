@@ -25,7 +25,6 @@ the same function — those columns are read defensively, not assumed present.
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,6 +32,7 @@ import openpyxl
 
 from companies.registry import get_company, register_company
 from normalization.companies import InvalidCompanyIdError, normalize_company_id
+from storage.db_types import DBConnection
 from storage.repositories import set_company_index_tags
 
 _ID_STRIP_RE = re.compile(r"[^A-Za-z0-9&]")
@@ -85,7 +85,7 @@ def _cell(row: tuple, col: dict[str, int], header: str) -> str | None:
     return value.strip() or None if isinstance(value, str) else value
 
 
-def import_nse_companies(conn: sqlite3.Connection, file_path: Path) -> NSEImportResult:
+def import_nse_companies(conn: DBConnection, file_path: Path) -> NSEImportResult:
     """Register every row in the workbook's "Companies" sheet, tag its NIFTY
     index membership, and return counts. Idempotent — safe to re-run against
     a refreshed export; company_id is derived from NSE Symbol (stripped of

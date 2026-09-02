@@ -21,6 +21,7 @@ import argparse
 import time
 
 from sources.yfinance_prices import fetch_daily_bars
+from storage.company_repository import select_index_members_with_nse_symbol
 from storage.database import init_db
 from storage.price_database import init_price_db
 from storage.price_repository import upsert_daily_bars
@@ -37,18 +38,7 @@ def main() -> None:
     args = parser.parse_args()
 
     main_conn = init_db()
-    query = """
-        SELECT c.company_id, c.nse_symbol
-        FROM companies c
-        JOIN company_index_membership m ON m.company_id = c.company_id
-        WHERE m.index_name = 'Nifty 500' AND c.nse_symbol IS NOT NULL
-    """
-    params: tuple = ()
-    if args.company_id:
-        query += " AND c.company_id = ?"
-        params = (args.company_id,)
-    query += " ORDER BY c.company_id"
-    rows = main_conn.execute(query, params).fetchall()
+    rows = select_index_members_with_nse_symbol(main_conn, "Nifty 500", company_id=args.company_id)
     main_conn.close()
 
     total = len(rows)

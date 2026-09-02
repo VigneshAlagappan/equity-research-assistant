@@ -40,7 +40,7 @@ reflects its own true reporting periods, e.g. Apple's September year-end).
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection, Row
 from datetime import datetime, timezone
 
 from companies.registry import get_company
@@ -129,7 +129,7 @@ def _quarter_period_options(country: str) -> list[dict]:
     return opts
 
 
-def _doc_json(company_id: str, row: sqlite3.Row | None) -> dict | None:
+def _doc_json(company_id: str, row: Row | None) -> dict | None:
     if row is None:
         return None
     return {
@@ -141,7 +141,7 @@ def _doc_json(company_id: str, row: sqlite3.Row | None) -> dict | None:
     }
 
 
-def build_docs_feed(conn: sqlite3.Connection, company_id: str) -> dict:
+def build_docs_feed(conn: DBConnection, company_id: str) -> dict:
     company = get_company(conn, company_id)
     country = company["country"] if company else _DEFAULT_CALENDAR_COUNTRY
     calendar = _quarter_calendar(country)
@@ -150,7 +150,7 @@ def build_docs_feed(conn: sqlite3.Connection, company_id: str) -> dict:
     annual_years = list_company_annual_years(conn, company_id)
     docs = list_company_documents(conn, company_id)
 
-    doc_index: dict[tuple[str, str | None, str], sqlite3.Row] = {}
+    doc_index: dict[tuple[str, str | None, str], Row] = {}
     doc_fys: set[str] = set()
     for d in docs:
         doc_index[(d["fiscal_year"], d["quarter"], d["document_type"])] = d

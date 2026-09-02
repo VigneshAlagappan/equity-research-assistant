@@ -14,7 +14,7 @@ model providers.
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -27,25 +27,25 @@ from storage.fact_store import FactStore, default_fact_store
 
 
 class FinancialEvidenceCapability(Protocol):
-    def __call__(self, conn: sqlite3.Connection, company_id: str) -> list[Evidence]: ...
+    def __call__(self, conn: DBConnection, company_id: str) -> list[Evidence]: ...
 
 
 class DocumentEvidenceCapability(Protocol):
-    def __call__(self, conn: sqlite3.Connection, company_id: str, question: str) -> list[Evidence]: ...
+    def __call__(self, conn: DBConnection, company_id: str, question: str) -> list[Evidence]: ...
 
 
 class MacroEvidenceCapability(Protocol):
-    def __call__(self, conn: sqlite3.Connection, question: str) -> list[Evidence]: ...
+    def __call__(self, conn: DBConnection, question: str) -> list[Evidence]: ...
 
 
 class DocumentSearchCapability(Protocol):
     def __call__(
-        self, conn: sqlite3.Connection, query: str, *, company_id: str | None, limit: int
+        self, conn: DBConnection, query: str, *, company_id: str | None, limit: int
     ) -> list[DocumentPassage]: ...
 
 
 class KnowledgeGraphCapability(Protocol):
-    def __call__(self, conn: sqlite3.Connection, entity_type: str, entity_name: str) -> list[KnowledgeClaimView]: ...
+    def __call__(self, conn: DBConnection, entity_type: str, entity_name: str) -> list[KnowledgeClaimView]: ...
 
 
 @dataclass(frozen=True)
@@ -93,12 +93,12 @@ def default_capabilities(*, fact_store: FactStore | None = None) -> PlannerCapab
 
 class ReusableReportCapability(Protocol):
     def __call__(
-        self, conn: sqlite3.Connection, question: str, company_ids: list[str], statement_type: str | None
+        self, conn: DBConnection, question: str, company_ids: list[str], statement_type: str | None
     ) -> ReuseCandidate | None: ...
 
 
 class RelatedInvestigationsCapability(Protocol):
-    def __call__(self, conn: sqlite3.Connection, question: str, company_ids: list[str]) -> list[GraphCandidate]: ...
+    def __call__(self, conn: DBConnection, question: str, company_ids: list[str]) -> list[GraphCandidate]: ...
 
 
 @dataclass(frozen=True)

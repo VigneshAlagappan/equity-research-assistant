@@ -47,7 +47,7 @@ or every single hypothesis's evaluation fails (nothing to synthesize).
 from __future__ import annotations
 
 import logging
-import sqlite3
+from storage.db_types import DBConnection
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -134,7 +134,7 @@ def _merge_plans(base: InvestigationPlan, addition: InvestigationPlan) -> Invest
 
 
 def _investigate_hypothesis(
-    conn: sqlite3.Connection, hypothesis: Hypothesis, question: str, *, model: str | None,
+    conn: DBConnection, hypothesis: Hypothesis, question: str, *, model: str | None,
     capabilities: PlannerCapabilities, fact_store: FactStore, deadline: float,
 ) -> tuple[InvestigationPlan, HypothesisEvaluation | None]:
     """Runs the Step 2F -> 2G evidence-sufficiency loop for one hypothesis,
@@ -172,7 +172,7 @@ def _investigate_hypothesis(
 
 
 def run_investigation(
-    conn: sqlite3.Connection, question: str, company_ids: list[str], *, statement_type: str = "consolidated",
+    conn: DBConnection, question: str, company_ids: list[str], *, statement_type: str = "consolidated",
     model: str | None = None, capabilities: PlannerCapabilities | None = None, fact_store: FactStore | None = None,
 ) -> Investigation:
     investigation_id = uuid.uuid4().hex[:12]
@@ -211,7 +211,7 @@ def run_investigation(
     return investigation
 
 
-def _persist(conn: sqlite3.Connection, investigation: Investigation, statement_type: str, fact_store: FactStore) -> None:
+def _persist(conn: DBConnection, investigation: Investigation, statement_type: str, fact_store: FactStore) -> None:
     synthesis = investigation.synthesis
     fact_store.save_investigation(
         conn, investigation_id=investigation.investigation_id, question=investigation.question,

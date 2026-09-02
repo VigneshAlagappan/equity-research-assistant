@@ -244,3 +244,21 @@ def select_index_members_with_nse_symbol(
         params += (company_id,)
     query += " ORDER BY c.company_id"
     return conn.execute(query, params).fetchall()
+
+
+def select_company_ids_by_index(conn: DBConnection, index_name: str) -> list[Row]:
+    """company_id for every company tagged with `index_name` in
+    company_index_membership -- scripts/batch_fetch_nse.py's `--index`
+    company-list source."""
+    return conn.execute(
+        "SELECT company_id FROM company_index_membership WHERE index_name = ? ORDER BY company_id",
+        (index_name,),
+    ).fetchall()
+
+
+def update_company_valuation_model_file(conn: DBConnection, company_id: str, valuation_model_file: str) -> None:
+    conn.execute(
+        "UPDATE companies SET valuation_model_file = ? WHERE company_id = ?",
+        (valuation_model_file, company_id),
+    )
+    conn.commit()

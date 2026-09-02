@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
+from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
 from config.settings import ANTHROPIC_MODEL
@@ -106,7 +106,7 @@ def _parse_response(text: str) -> dict:
 
 
 def synthesize(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     question: str,
     hypotheses: list[Hypothesis],
     evaluations: dict[str, HypothesisEvaluation],

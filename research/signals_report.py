@@ -16,7 +16,7 @@ already applies to any question the evidence block doesn't cover.
 from __future__ import annotations
 
 import re
-import sqlite3
+from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
 from config.settings import ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL
@@ -142,7 +142,7 @@ def _split_followups(text: str) -> tuple[str, list[str]]:
 
 
 def generate_signals_report(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     question: str,
     company_ids: list[str],
     statement_type: str | None = "consolidated",

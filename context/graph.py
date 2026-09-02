@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
+from storage.db_types import DBConnection
 from dataclasses import dataclass
 
 from config.knowledge_graph_seed import KNOWLEDGE_GRAPH_SEED_EDGES
@@ -97,7 +97,7 @@ def _expand_via_seed_edges(metric_keys: set[str]) -> dict[str, float]:
     return expanded
 
 
-def _sector_peers(conn: sqlite3.Connection, company_id: str, fact_store: FactStore) -> tuple[list[str], str | None]:
+def _sector_peers(conn: DBConnection, company_id: str, fact_store: FactStore) -> tuple[list[str], str | None]:
     """Other companies sharing this company's sector — basic_industry
     preferred (more specific, e.g. "Private Sector Bank") over
     macro_economic_sector (broader, e.g. "Financial Services") when both are
@@ -126,7 +126,7 @@ class GraphCandidate:
 
 
 def find_related_investigations(
-    conn: sqlite3.Connection, question: str, company_ids: list[str], *, fact_store: FactStore | None = None
+    conn: DBConnection, question: str, company_ids: list[str], *, fact_store: FactStore | None = None
 ) -> list[GraphCandidate]:
     """Prior investigations about a DIFFERENT (sector-peer) company, relevant
     to this question through a direct or seed-edge-bridged metric match.
@@ -149,7 +149,7 @@ def find_related_investigations(
 
 
 def _find_related_investigations_sqlite(
-    conn: sqlite3.Connection, question: str, company_ids: list[str], fact_store: FactStore
+    conn: DBConnection, question: str, company_ids: list[str], fact_store: FactStore
 ) -> list[GraphCandidate]:
     """Pure-Python/SQLite traversal — the default backend, and the fallback
     when GRAPH_BACKEND="neo4j" but no server is reachable. Returns [] if

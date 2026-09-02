@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
+from storage.db_types import DBConnection
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -60,6 +60,20 @@ from ingestion.coordinator import (
     unarchive_financial_items,
 )
 from analytics.patterns import detect_yoy_spikes
+from indicators.evaluation import evaluate_company_indicators, group_by_classification
+from indicators.framework import (
+    CLASSIFICATIONS,
+    CLASSIFICATION_LABELS,
+    InvalidIndicatorConfigError,
+    get_rule,
+    list_families,
+)
+from indicators.settings import (
+    build_rules_settings,
+    parse_override_form,
+    reset_rule_override,
+    save_rule_override,
+)
 from ingestion.detector import ADAPTER_CLASSES
 from ingestion.pipeline import ingest_file
 from sources.nse_fetch import NSEFetchError, refresh_company_filings
@@ -349,19 +363,19 @@ def create_app() -> Flask:
 
     @app.teardown_appcontext
     def _close_db(_exception: BaseException | None) -> None:
-        conn: sqlite3.Connection | None = g.pop("db_conn", None)
+        conn: DBConnection | None = g.pop("db_conn", None)
         if conn is not None:
             conn.close()
-        price_conn: sqlite3.Connection | None = g.pop("price_db_conn", None)
+        price_conn: DBConnection | None = g.pop("price_db_conn", None)
         if price_conn is not None:
             price_conn.close()
 
-    def get_db() -> sqlite3.Connection:
+    def get_db() -> DBConnection:
         if "db_conn" not in g:
             g.db_conn = init_db()
         return g.db_conn
 
-    def get_price_db() -> sqlite3.Connection:
+    def get_price_db() -> DBConnection:
         if "price_db_conn" not in g:
             g.price_db_conn = init_price_db()
         return g.price_db_conn
@@ -1260,7 +1274,7 @@ def create_app() -> Flask:
             abort(400, "statement_type must be 'consolidated' or 'standalone'")
         tab = request.args.get("tab", "overview")
         valid_tabs = (
-            "overview", "key_insights", "charts", "financials", "valuation_model",
+            "overview", "key_insights", "indicators", "charts", "financials", "valuation_model",
             "shareholding", "commentary", "news", "notes", "docs", "threads",
         )
         if tab not in valid_tabs:
@@ -1419,6 +1433,30 @@ def create_app() -> Flask:
         ratio_settings = get_overview_ratio_settings(db)
         enabled_ratio_keys = [r["key"] for r in OVERVIEW_RATIO_CATALOG if ratio_settings[r["key"]]]
 
+        # Indicators (indicators/*.py) — deterministic, rule-based factual
+        # patterns, recomputed on every view from already-normalized facts
+        # (no LLM call on this path at all) under this user's own rule
+        # configuration. Persists an audit row per newly-triggered/changed
+        # indicator; see indicators/evaluation.py's persistence policy.
+        indicators_by_class = group_by_classification(
+            evaluate_company_indicators(
+                db, company_id, user_id=g.user["user_id"] if g.user is not None else None
+            )
+        )
+        indicator_columns = [
+            {
+                "key": key,
+                "label": CLASSIFICATION_LABELS[key],
+                "items": indicators_by_class.get(key, []),
+                # Real-estate convention (collapse into <details>, auto-open
+                # only on active state): only Warnings force themselves open,
+                # and only when something actually fired.
+                "open": key == "warning" and bool(indicators_by_class.get(key)),
+            }
+            for key in CLASSIFICATIONS
+        ]
+        indicator_total = sum(len(c["items"]) for c in indicator_columns)
+
         return render_template(
             "company.html",
             company=company,
@@ -1448,6 +1486,8 @@ def create_app() -> Flask:
             insights_history=insights_history,
             notes=notes,
             company_threads=company_threads,
+            indicator_columns=indicator_columns,
+            indicator_total=indicator_total,
             api_key_set=ANTHROPIC_API_KEY_SET,
         )
 
@@ -1796,7 +1836,79 @@ def create_app() -> Flask:
                 # signed-in path above.
                 session["theme"] = theme
             return redirect(url_for("settings"))
-        return render_template("settings.html", themes=_THEME_LABELS)
+        return render_template("settings.html", themes=_THEME_LABELS, **_indicator_settings_context())
+
+    def _indicator_settings_context() -> dict:
+        """Indicator-rule configuration is per-user by construction (user_id
+        is part of every override's key), so a signed-out visitor sees the
+        rule catalog with system defaults and no editing controls rather
+        than someone else's configuration."""
+        db = get_db()
+        if g.user is None:
+            return {
+                "indicator_rules": [],
+                "indicator_signed_out": True,
+                "indicator_classifications": [],
+                "indicator_families": list_families(),
+                "indicator_sectors": [],
+            }
+        return {
+            "indicator_rules": build_rules_settings(db, g.user["user_id"]),
+            "indicator_signed_out": False,
+            "indicator_classifications": [(c, CLASSIFICATION_LABELS[c]) for c in CLASSIFICATIONS],
+            "indicator_families": list_families(),
+            # Sectors only in the datalist: the sector vocabulary is a short,
+            # closed list, while the company universe is ~2,500 rows and would
+            # bloat every Settings render for a field that's typed, not browsed.
+            "indicator_sectors": list_sectors(db),
+        }
+
+    def _require_signed_in_user():
+        if g.user is None:
+            abort(403, "Sign in to configure indicator rules")
+        return g.user
+
+    @app.route("/settings/indicators", methods=["POST"])
+    def settings_save_indicator_rule():
+        """Save one (rule, scope) override. The system rule itself is never
+        touched — only this user's indicator_rule_config row."""
+        user = _require_signed_in_user()
+        rule = get_rule(request.form.get("rule_id", ""))
+        if rule is None:
+            abort(404, f"No indicator rule with rule_id={request.form.get('rule_id')!r}")
+        try:
+            save_rule_override(get_db(), user_id=user["user_id"], **parse_override_form(rule, request.form))
+        except InvalidIndicatorConfigError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("settings") + "#indicator-rules")
+        flash(f"Saved configuration for “{rule.name}”.", "success")
+        return redirect(url_for("settings") + "#indicator-rules")
+
+    @app.route("/settings/indicators/reset", methods=["POST"])
+    def settings_reset_indicator_rule():
+        """Reset an override back to whatever it inherits — a DELETE of the
+        override row, not a write of today's defaults."""
+        user = _require_signed_in_user()
+        rule = get_rule(request.form.get("rule_id", ""))
+        if rule is None:
+            abort(404, f"No indicator rule with rule_id={request.form.get('rule_id')!r}")
+        try:
+            removed = reset_rule_override(
+                get_db(),
+                user_id=user["user_id"],
+                rule_id=rule.rule_id,
+                scope_type=(request.form.get("scope_type") or "global").strip(),
+                scope_value=(request.form.get("scope_value") or "").strip(),
+            )
+        except InvalidIndicatorConfigError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("settings") + "#indicator-rules")
+        flash(
+            f"Reset “{rule.name}” to its inherited configuration." if removed
+            else f"“{rule.name}” had no override at that scope.",
+            "success" if removed else "error",
+        )
+        return redirect(url_for("settings") + "#indicator-rules")
 
     _DOCS_SECTIONS = ("sources", "xbrl")
 

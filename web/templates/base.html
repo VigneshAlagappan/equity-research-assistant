@@ -30,6 +30,29 @@
     --statement: #a9752e;
     --statement-bg: rgba(169, 117, 46, 0.14);
     --row-hover: color-mix(in srgb, var(--color-text) 4%, transparent);
+    /* Indicator classifications (indicators/framework.py: positive /
+       observation / warning). Green / blue / amber, deliberately in the
+       same muted register as --fact/--calc/--inference above rather than
+       saturated status colors — indicators are factual patterns, not
+       alerts. Red is reserved for a future "critical" classification and
+       has no token here yet. The text label always ships alongside the
+       color (see the .tag-* markup), so color is never the only signal. */
+    --indicator-positive: #2e7d32;
+    --indicator-positive-bg: #e6f4ea;
+    --indicator-observation: #23558f;
+    --indicator-observation-bg: #e6edf6;
+    --indicator-warning: #a9752e;
+    --indicator-warning-bg: rgba(169, 117, 46, 0.14);
+  }
+  /* Dark grounds need the lighter end of each hue to keep contrast; same
+     per-theme redeclaration the --fact/--calc block below uses. */
+  :root[data-theme="dark"], :root[data-theme="signals"] {
+    --indicator-positive: #7cc98a;
+    --indicator-positive-bg: rgba(124, 201, 138, 0.16);
+    --indicator-observation: #8fb8e8;
+    --indicator-observation-bg: rgba(143, 184, 232, 0.16);
+    --indicator-warning: #d6a35f;
+    --indicator-warning-bg: rgba(214, 163, 95, 0.18);
   }
   /* Fact/calc/statement/inference/success are page-authored tokens (inline
      styles across several templates reference them directly), not
@@ -134,6 +157,14 @@
      somewhere correct to land, matching the other three now rather than
      needing a second design pass later. */
   .tag-statement { background: var(--statement-bg); color: var(--statement); }
+  /* Indicator classification pills — same .tag shape/scale as the tags
+     above (so the per-theme .tag border-radius overrides in
+     classical/styles.css apply unchanged), just carrying the three
+     indicator hues. Used on the company page's Indicators section and in
+     Settings -> Indicator Rules. */
+  .tag-positive { background: var(--indicator-positive-bg); color: var(--indicator-positive); }
+  .tag-observation { background: var(--indicator-observation-bg); color: var(--indicator-observation); }
+  .tag-warning { background: var(--indicator-warning-bg); color: var(--indicator-warning); }
 
   {% block extra_style %}{% endblock %}
 </style>

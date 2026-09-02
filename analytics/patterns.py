@@ -10,15 +10,28 @@ V1 ships exactly one pattern type: a significant year-over-year move in one
 of financials/report.py's TREND_METRICS, for the latest fiscal year each
 company with ingested financials has. More pattern types (sector-peer
 outliers, macro/company correlation) are natural follow-ups, not built here.
+
+Relationship to the Configurable Indicator Framework (indicators/*.py):
+this module is the Tools tab's CROSS-COMPANY scan -- every company at once,
+one threshold passed by the caller, no per-user configuration and no audit
+trail. indicators/rules.py registers the same pattern PER COMPANY, with a
+user-configurable threshold/classification and a persisted audit row
+(`financial_trajectory.*_yoy_move`). Both sit on the single shared YoY
+computation (financials/calculations.py::yoy_growth_for_metric) and share
+DEFAULT_YOY_THRESHOLD_PERCENT below as the one definition of "significant",
+so there is no second, drifting implementation -- only two very different
+presentations of it. Routing the Tools tab through the rule engine was
+deliberately not done: a cross-company scan has no company scope to resolve
+configuration against, and no UI for one.
 """
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 
 from financials.calculations import CalculationError, yoy_growth_for_metric
 from financials.report import TREND_METRICS
+from storage.db_types import DBConnection
 from storage.fact_store import FactStore, default_fact_store
 
 DEFAULT_YOY_THRESHOLD_PERCENT = 25.0
@@ -34,7 +47,7 @@ class Pattern:
 
 
 def detect_yoy_spikes(
-    conn: sqlite3.Connection, *, threshold_percent: float = DEFAULT_YOY_THRESHOLD_PERCENT,
+    conn: DBConnection, *, threshold_percent: float = DEFAULT_YOY_THRESHOLD_PERCENT,
     statement_type: str | None = "consolidated", fact_store: FactStore | None = None,
 ) -> list[Pattern]:
     """Every (company, TREND_METRICS metric) whose latest-fiscal-year YoY

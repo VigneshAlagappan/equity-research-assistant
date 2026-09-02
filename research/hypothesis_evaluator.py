@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
+from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
 from config.knowledge_ontology import CLAIM_TYPES
@@ -162,7 +162,7 @@ def _parse_evidence_items(raw_items: object) -> list[EvidenceItem]:
 
 
 def evaluate_hypothesis(
-    conn: sqlite3.Connection, hypothesis: Hypothesis, plan: InvestigationPlan, *, model: str | None = None
+    conn: DBConnection, hypothesis: Hypothesis, plan: InvestigationPlan, *, model: str | None = None
 ) -> HypothesisEvaluation:
     hardness = fixed(Tier.DEEP, "hypothesis evaluation")
     # No DEFAULT_ANTHROPIC_MODEL fallback — see research/knowledge_builder.py's

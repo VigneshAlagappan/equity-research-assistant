@@ -63,6 +63,57 @@
   .theme-swatch-signals-light { background: #f7f8f9; border-color: #1f8f84; }
   .theme-swatch-signals-light::after { content: "Aa"; font-family: 'Sora', system-ui, sans-serif; color: #1f8f84; }
   .theme-option-label { font-size: 0.85rem; font-weight: 600; }
+
+  /* — Indicator Rules ——————————————————————————————————————
+     Wider than the theme column above (each rule carries a small form), so
+     this section opts out of .settings-wrap's 560px cap rather than the
+     page growing a second layout. */
+  .ind-wrap { max-width: 1000px; margin-top: var(--space-8); }
+  .ind-intro { font-size: 0.85rem; color: var(--ink-muted); max-width: 68ch; margin: 0.2rem 0 1rem; }
+  .ind-search { margin-bottom: var(--space-3); }
+  .ind-search input {
+    width: 100%; max-width: 340px; padding: var(--space-1) var(--space-2); font: inherit; font-size: 13px;
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: var(--bg); color: var(--ink);
+  }
+  .ind-rule {
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    margin-bottom: var(--space-3); background: var(--surface);
+  }
+  .ind-rule > summary {
+    cursor: pointer; list-style: none; padding: var(--space-3);
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  }
+  .ind-rule > summary::-webkit-details-marker { display: none; }
+  .ind-rule > summary::before { content: "▸"; font-size: 10px; color: var(--ink-muted); transition: transform .15s ease; }
+  .ind-rule[open] > summary::before { transform: rotate(90deg); }
+  .ind-rule-name { font-weight: 600; font-size: 14px; }
+  .ind-rule-body { padding: 0 var(--space-3) var(--space-3); border-top: 1px solid var(--border); }
+  .ind-desc { font-size: 13px; color: var(--ink-muted); margin: var(--space-3) 0; max-width: 70ch; }
+  .ind-meta { font-size: 11px; color: var(--ink-muted); margin: 0 0 var(--space-3); }
+  .ind-meta code { font-size: 11px; }
+  .ind-compare { display: flex; gap: var(--space-6); flex-wrap: wrap; margin-bottom: var(--space-4); font-size: 12px; }
+  .ind-compare h4 { margin: 0 0 4px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+  .ind-compare dl { margin: 0; display: grid; grid-template-columns: auto auto; gap: 2px var(--space-2); }
+  .ind-compare dt { color: var(--ink-muted); }
+  .ind-compare dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .ind-form { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: flex-end; }
+  .ind-field { display: flex; flex-direction: column; gap: 3px; }
+  .ind-field label { font-size: 11px; color: var(--ink-muted); }
+  .ind-field select, .ind-field input {
+    font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid var(--border);
+    border-radius: var(--radius-md); background: var(--bg); color: var(--ink); min-width: 120px;
+  }
+  .ind-overrides { margin-top: var(--space-4); }
+  .ind-overrides h4 { margin: 0 0 var(--space-2); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+  .ind-override-row {
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+    font-size: 12px; padding: var(--space-1) 0; border-top: 1px dashed var(--border);
+  }
+  .ind-override-scope { font-weight: 600; }
+  .ind-flash { font-size: 13px; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); margin-bottom: var(--space-3); }
+  .ind-flash-success { background: var(--success-bg); color: var(--success); }
+  .ind-flash-error { background: var(--indicator-warning-bg); color: var(--indicator-warning); }
 {% endblock %}
 
 {% block content %}
@@ -89,5 +140,194 @@
       </div>
     </div>
   </form>
+</div>
+
+{# ——— Indicator Rules ————————————————————————————————————————
+   Configuration only. The rules themselves are deterministic Python
+   (indicators/rules.py) and nothing on this page can change their trigger
+   logic, id or version — a save here writes one indicator_rule_config row
+   scoped to this user, and a reset deletes it. See indicators/config.py for
+   the Company > Sector > Global > System resolution order shown below. #}
+<div class="ind-wrap" id="indicator-rules">
+  <h2>Indicator Rules</h2>
+  <p class="ind-intro">
+    Indicators are deterministic, rule-based factual patterns computed from already-ingested
+    data — not predictions, conclusions or AI-generated insights. Adjust a rule's threshold or
+    classification, or turn it off, globally or for one sector or company. The most specific
+    setting wins: <b>company → sector → your global default → the system default</b>. Your
+    changes never modify the underlying system rule.
+  </p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+    <div class="ind-flash ind-flash-{{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+  {% endwith %}
+
+  {% if indicator_signed_out %}
+  <p class="muted" style="font-size: 13px;">
+    <a href="{{ url_for('login') }}">Log in</a> to configure indicator rules — rule configuration
+    is stored per account, so there's nowhere to save it for a signed-out visitor.
+  </p>
+  {% else %}
+  <div class="ind-search">
+    <input type="search" id="ind-search-input" placeholder="Search rules by name, id or description…"
+           aria-label="Search indicator rules" autocomplete="off">
+  </div>
+
+  {% for entry in indicator_rules %}
+  <details class="ind-rule" data-search="{{ (entry.name ~ ' ' ~ entry.rule_id ~ ' ' ~ entry.description ~ ' ' ~ entry.family)|lower }}">
+    <summary>
+      <span class="ind-rule-name">{{ entry.name }}</span>
+      <span class="tag tag-neutral">{{ entry.family.replace('_', ' ') }}</span>
+      <span class="tag tag-{{ entry.effective.classification }}">{{ entry.effective.classification_label }}</span>
+      {% if not entry.effective.enabled %}<span class="tag tag-outline">Disabled</span>{% endif %}
+      {% if entry.effective.overridden or entry.overrides %}<span class="tag tag-accent">Overridden</span>{% endif %}
+    </summary>
+    <div class="ind-rule-body">
+      <p class="ind-desc">{{ entry.description }}</p>
+      <p class="ind-meta">
+        <code>{{ entry.rule_id }}</code> · version {{ entry.version }} · default severity
+        {{ entry.system.severity }} · requires {{ entry.required_facts|join(', ') }}
+      </p>
+
+      <div class="ind-compare">
+        <div>
+          <h4>System default</h4>
+          <dl>
+            <dt>Classification</dt><dd>{{ entry.system.classification_label }}</dd>
+            <dt>Enabled</dt><dd>{{ 'Yes' if entry.system.enabled else 'No' }}</dd>
+            {% for t in entry.system.thresholds %}
+            <dt>{{ t.label }}</dt><dd>{{ '%g'|format(t.default) }}{{ t.unit }}</dd>
+            {% endfor %}
+          </dl>
+        </div>
+        <div>
+          <h4>Your effective configuration (global)</h4>
+          <dl>
+            <dt>Classification</dt>
+            <dd>{{ entry.effective.classification_label }}</dd>
+            <dt>Enabled</dt><dd>{{ 'Yes' if entry.effective.enabled else 'No' }}</dd>
+            {% for t in entry.effective.thresholds %}
+            <dt>{{ t.label }}</dt>
+            <dd>{{ '%g'|format(t.effective) }}{{ t.unit }}{% if t.overridden %} <span class="tag tag-accent">overridden</span>{% endif %}</dd>
+            {% endfor %}
+          </dl>
+        </div>
+      </div>
+
+      <form method="post" action="{{ url_for('settings_save_indicator_rule') }}" class="ind-form">
+        <input type="hidden" name="rule_id" value="{{ entry.rule_id }}">
+        <div class="ind-field">
+          <label for="scope-type-{{ loop.index }}">Apply to</label>
+          <select name="scope_type" id="scope-type-{{ loop.index }}" data-ind-scope-type>
+            {% for scope in entry.rule.applicable_scopes %}
+            <option value="{{ scope }}">{{ 'Globally' if scope == 'global' else ('By sector' if scope == 'sector' else 'By company') }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="ind-field">
+          <label for="scope-value-{{ loop.index }}">Sector / company</label>
+          <input type="text" name="scope_value" id="scope-value-{{ loop.index }}" data-ind-scope-value
+                 list="ind-scope-values" placeholder="(global)" disabled>
+        </div>
+        <div class="ind-field">
+          <label for="enabled-{{ loop.index }}">Enabled</label>
+          <select name="enabled" id="enabled-{{ loop.index }}">
+            <option value="inherit">(inherit)</option>
+            <option value="1">Enabled</option>
+            <option value="0">Disabled</option>
+          </select>
+        </div>
+        <div class="ind-field">
+          <label for="classification-{{ loop.index }}">Classification</label>
+          <select name="classification" id="classification-{{ loop.index }}">
+            <option value="">(inherit)</option>
+            {% for value, label in indicator_classifications %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% for t in entry.effective.thresholds %}
+        <div class="ind-field">
+          <label for="th-{{ loop.index0 }}-{{ entry.rule_id }}">{{ t.label }} ({{ t.unit }})</label>
+          <input type="number" step="any" min="{{ t.minimum }}" max="{{ t.maximum }}"
+                 id="th-{{ loop.index0 }}-{{ entry.rule_id }}"
+                 name="threshold__{{ t.key }}" placeholder="{{ '%g'|format(t.effective) }}">
+        </div>
+        {% endfor %}
+        <button type="submit" class="btn btn-primary">Save</button>
+      </form>
+
+      <div class="ind-overrides">
+        <h4>Your overrides for this rule</h4>
+        {% if entry.effective.overridden %}
+        <div class="ind-override-row">
+          <span class="ind-override-scope">Global</span>
+          <span class="tag tag-{{ entry.effective.classification }}">{{ entry.effective.classification_label }}</span>
+          <span>{{ 'Enabled' if entry.effective.enabled else 'Disabled' }}</span>
+          {% for t in entry.effective.thresholds %}<span>{{ t.label }} {{ '%g'|format(t.effective) }}{{ t.unit }}</span>{% endfor %}
+          <form method="post" action="{{ url_for('settings_reset_indicator_rule') }}">
+            <input type="hidden" name="rule_id" value="{{ entry.rule_id }}">
+            <input type="hidden" name="scope_type" value="global">
+            <input type="hidden" name="scope_value" value="">
+            <button type="submit" class="btn btn-ghost">Reset to default</button>
+          </form>
+        </div>
+        {% endif %}
+        {% for o in entry.overrides %}
+        <div class="ind-override-row">
+          <span class="ind-override-scope">{{ o.scope_type|capitalize }}: {{ o.scope_value }}</span>
+          <span class="tag tag-{{ o.classification }}">{{ o.classification_label }}</span>
+          <span>{{ 'Enabled' if o.enabled else 'Disabled' }}</span>
+          {% for t in o.thresholds %}<span>{{ t.label }} {{ '%g'|format(t.effective) }}{{ t.unit }}</span>{% endfor %}
+          <form method="post" action="{{ url_for('settings_reset_indicator_rule') }}">
+            <input type="hidden" name="rule_id" value="{{ entry.rule_id }}">
+            <input type="hidden" name="scope_type" value="{{ o.scope_type }}">
+            <input type="hidden" name="scope_value" value="{{ o.scope_value }}">
+            <button type="submit" class="btn btn-ghost">Reset</button>
+          </form>
+        </div>
+        {% endfor %}
+        {% if not entry.effective.overridden and not entry.overrides %}
+        <p class="muted" style="font-size: 12px; margin: 0;">None — this rule runs on its system defaults.</p>
+        {% endif %}
+      </div>
+    </div>
+  </details>
+  {% endfor %}
+
+  <datalist id="ind-scope-values">
+    {% for s in indicator_sectors %}<option value="{{ s }}"></option>{% endfor %}
+  </datalist>
+
+  <script>
+    // Two small conveniences only — every value here is still validated
+    // server-side (indicators/config.py's validate_override).
+    document.querySelectorAll('[data-ind-scope-type]').forEach(function (select) {
+      var input = select.closest('form').querySelector('[data-ind-scope-value]');
+      function sync() {
+        var isGlobal = select.value === 'global';
+        input.disabled = isGlobal;
+        input.required = !isGlobal;
+        input.placeholder = isGlobal ? '(global)' : (select.value === 'sector' ? 'Sector name' : 'Company id');
+        if (isGlobal) { input.value = ''; }
+      }
+      select.addEventListener('change', sync);
+      sync();
+    });
+    var search = document.getElementById('ind-search-input');
+    if (search) {
+      search.addEventListener('input', function () {
+        var needle = search.value.trim().toLowerCase();
+        document.querySelectorAll('.ind-rule').forEach(function (card) {
+          card.hidden = needle !== '' && card.dataset.search.indexOf(needle) === -1;
+        });
+      });
+    }
+  </script>
+  {% endif %}
 </div>
 {% endblock %}

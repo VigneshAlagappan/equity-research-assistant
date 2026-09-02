@@ -37,7 +37,7 @@ is backfilled even for periods that already have every other metric.
 from __future__ import annotations
 
 import calendar
-import sqlite3
+from storage.db_types import DBConnection
 from datetime import date
 
 from companies.registry import get_company
@@ -106,7 +106,7 @@ def _period_label(fiscal_year: str, quarter: str | None) -> str:
 
 
 def _series_by_period(
-    conn: sqlite3.Connection, company_id: str, metric_key: str, period_type: str, statement_type: str
+    conn: DBConnection, company_id: str, metric_key: str, period_type: str, statement_type: str
 ) -> dict[tuple[int, int], float]:
     out: dict[tuple[int, int], float] = {}
     for row in get_canonical_series(conn, company_id, metric_key, period_type, statement_type):
@@ -116,7 +116,7 @@ def _series_by_period(
 
 
 def _annual_book_value_and_shares(
-    conn: sqlite3.Connection, company_id: str, statement_type: str
+    conn: DBConnection, company_id: str, statement_type: str
 ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], float]]:
     """Book value per share and shares outstanding, forced to
     period_type="annual" regardless of the page's own period_type — the
@@ -163,11 +163,11 @@ def _row(
 
 
 def build_charts_feed(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     statement_type: str = "consolidated",
     period_type: str = "annual",
-    price_conn: sqlite3.Connection | None = None,
+    price_conn: DBConnection | None = None,
 ) -> dict:
     company = get_company(conn, company_id)
     raw = {key: _series_by_period(conn, company_id, key, period_type, statement_type) for key in _RAW_METRIC_KEYS}
