@@ -84,10 +84,13 @@ scheduling policy and gap analysis only.
   (`ingestion/coordinator.py`'s `discover_pending_documents` /
   `process_all_pending_documents`) is strictly button-driven from the
   Admin Ingest queue's Documents tab — nothing scans or fires on a
-  schedule. And what "processing" does today is limited: the Knowledge
-  Builder extraction step (Step 2A) isn't built yet, so a processed
-  document just gets its `file_hash` refreshed and a `processed` mark, not
-  real content extraction.
+  schedule. What "processing" does today is real, though: the Knowledge
+  Builder extraction step (Step 2A, `research/knowledge_builder.py`) makes
+  one LLM call per document, extracting structured entities/claims/
+  relationships validated against `config/knowledge_ontology.py` — not just
+  a `file_hash` refresh. It's capped at a document's first ~40,000
+  characters (no multi-pass/chunked extraction yet for a longer document) —
+  see [architecture.md's Known gaps](architecture.md#ingestion-coordinator-knowledge-builder-research-knowledge-graph--document-retrieval).
 - **No automated source for new PDFs.** There's no NSE/BSE
   corporate-announcements scraper anywhere in `sources/` — only
   `nse_fetch.py` for XBRL financial filings. "Quarterly ingestion" here
@@ -95,7 +98,7 @@ scheduling policy and gap analysis only.
   then*, not an automated fetch of new transcripts/presentations from
   their original source.
 
-**Verdict — gap on three fronts: (i) an "annual report presentation" type decision, (ii) a scheduled trigger for the existing process-all action, (iii) real content extraction (Knowledge Builder) isn't built — and there's no fetch source at all, so this can only ever process manually-uploaded files, never auto-discover new ones.**
+**Verdict — gap on two fronts now: (i) an "annual report presentation" type decision, (ii) a scheduled trigger for the existing process-all action (the Knowledge Builder extraction itself is real, see above) — and there's no fetch source at all, so this can only ever process manually-uploaded files, never auto-discover new ones.**
 
 ## 5. Analytics + insights — monthly (Nifty 50, USA, and Macro — India and USA)
 
@@ -186,7 +189,7 @@ scheduling policy and gap analysis only.
 | Financials | Quarterly | Ready | Gap (fiscal-quarter mapping) |
 | Shareholding pattern | Quarterly | Ready | N/A (SEBI LODR Reg 31 — India-only regulation) |
 | Price history | Weekly | Ready (already daily) | Gap (no US-scoped script) |
-| Doc analysis (transcripts/concalls) | Quarterly | Partial (typing exists, no trigger, no extraction, no fetch source) | Same |
+| Doc analysis (transcripts/concalls) | Quarterly | Partial (typing exists, extraction is real, no trigger, no fetch source) | Same |
 | Analytics/insights — companies | Monthly | Gap (no batch script; generation fn reusable) | Same |
 | Analytics/insights — macro | Monthly | Gap (generation fn doesn't exist yet) | Same |
 | Macro data | Weekly | FRED ready; RBI/IITM/DBIE gap | N/A (US macro not in scope here) |

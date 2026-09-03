@@ -60,7 +60,6 @@
         <div class="profile-email">{{ g.user['email'] or g.user['username'] }}</div>
         <a href="{{ url_for('settings') }}">Settings</a>
         {% if g.user['is_admin'] %}
-        <a href="{{ url_for('admin') }}">Admin Settings</a>
         <a href="{{ url_for('admin_usage') }}">Usage</a>
         {% endif %}
         <form action="{{ url_for('logout') }}" method="post">

@@ -918,7 +918,7 @@
         </button>
       </form>
       {% if g.user and g.user['is_admin'] %}
-      <a class="import-link-btn" href="{{ url_for('admin', panel='import', company_id=company_id) }}">&#8593; Import raw file</a>
+      <a class="import-link-btn" href="{{ url_for('settings', panel='admin-import', company_id=company_id) }}">&#8593; Import raw file</a>
       <form action="{{ url_for('admin_reconcile_company', company_id=company_id) }}" method="post" style="display:inline">
         <button type="submit" class="import-link-btn">&#8635; Reconcile</button>
       </form>

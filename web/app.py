@@ -751,12 +751,30 @@ def create_app() -> Flask:
 
     @app.route("/admin")
     def admin():
+        """Retired as a standalone page — its 8 panels now live under
+        Settings' Administration group (web/templates/settings.html), built
+        from the same context this endpoint used to render admin.html with
+        (see _build_admin_settings_context). Kept as a redirect, not removed
+        outright, so old links/bookmarks to /admin?panel=... still land
+        somewhere correct instead of 404ing."""
+        args = request.args.to_dict(flat=True)
+        panel = args.pop("panel", "companies")
+        return redirect(url_for("settings", panel=f"admin-{panel}", **args))
+
+    def _build_admin_settings_context(admin_sub: str) -> dict:
+        """Everything the migrated Administration panels in settings.html
+        need to render — this is the body of the old admin() view, just
+        returning a dict instead of calling render_template, and taking the
+        active admin sub-panel ("companies", "ingest", ...) as a parameter
+        rather than re-reading request.args["panel"] itself, since by the
+        time this runs that query param holds "admin-<sub>" (settings()'s
+        own active_panel), not the bare sub-panel name."""
         db = get_db()
         # ~2,600 companies today — the edit panel renders one <form> per row
         # (not just a display row), so materializing and index-tag-querying
-        # all of them on every /admin load was both an N+1 query storm (one
-        # SELECT per company for get_company_index_tags) and a multi-thousand-
-        # form page that made the browser hang. Only the current page (after
+        # all of them on every load was both an N+1 query storm (one SELECT
+        # per company for get_company_index_tags) and a multi-thousand-form
+        # page that made the browser hang. Only the current page (after
         # search/filtering below) ever gets rendered; tags for every company
         # come from one batched query (get_all_company_index_tags), not one
         # query per row, so filtering by tag doesn't reintroduce the N+1.
@@ -827,42 +845,41 @@ def create_app() -> Flask:
             if match:
                 import_selected_company_label = f"{match['display_name']} ({match['company_id']})"
 
-        return render_template(
-            "admin.html",
-            companies=page_companies,
-            companies_page=page,
-            companies_total_pages=total_pages,
-            companies_total=total_companies,
-            companies_page_size=ADMIN_COMPANIES_PAGE_SIZE,
-            companies_query=query,
-            companies_sector_filter=sector_filter,
-            companies_industry_filter=industry_filter,
-            companies_tag_filter=tag_filter,
-            companies_status_filter=status_filter,
-            companies_filters_active=bool(query or sector_filter or industry_filter or tag_filter or status_filter),
-            active_companies=[c for c in all_companies if c["status"] == "active"],
-            archive_reasons=sorted(ARCHIVE_REASONS),
-            sectors=sectors,
-            industries=industries,
-            index_names=index_tag_names,
-            taxonomy=taxonomy,
-            list_columns=COMPANY_LIST_COLUMNS,
-            column_settings=column_settings,
-            ratio_catalog=OVERVIEW_RATIO_CATALOG,
-            ratio_settings=ratio_settings,
-            import_sources=sorted(ADAPTER_CLASSES),
-            active_panel=request.args.get("panel", "companies"),
-            import_selected_company=import_selected_company,
-            import_selected_company_label=import_selected_company_label,
-            stock_action_types=sorted(ACTION_TYPES),
-            stock_action_selected_company=request.args.get("sa_company_id", ""),
-            stock_actions=(
+        return {
+            "companies": page_companies,
+            "companies_page": page,
+            "companies_total_pages": total_pages,
+            "companies_total": total_companies,
+            "companies_page_size": ADMIN_COMPANIES_PAGE_SIZE,
+            "companies_query": query,
+            "companies_sector_filter": sector_filter,
+            "companies_industry_filter": industry_filter,
+            "companies_tag_filter": tag_filter,
+            "companies_status_filter": status_filter,
+            "companies_filters_active": bool(query or sector_filter or industry_filter or tag_filter or status_filter),
+            "active_companies": [c for c in all_companies if c["status"] == "active"],
+            "archive_reasons": sorted(ARCHIVE_REASONS),
+            "sectors": sectors,
+            "industries": industries,
+            "index_names": index_tag_names,
+            "taxonomy": taxonomy,
+            "list_columns": COMPANY_LIST_COLUMNS,
+            "column_settings": column_settings,
+            "ratio_catalog": OVERVIEW_RATIO_CATALOG,
+            "ratio_settings": ratio_settings,
+            "import_sources": sorted(ADAPTER_CLASSES),
+            "active_admin_panel": admin_sub,
+            "import_selected_company": import_selected_company,
+            "import_selected_company_label": import_selected_company_label,
+            "stock_action_types": sorted(ACTION_TYPES),
+            "stock_action_selected_company": request.args.get("sa_company_id", ""),
+            "stock_actions": (
                 list_stock_actions(db, request.args["sa_company_id"])
                 if request.args.get("sa_company_id") else []
             ),
-            **(_ingest_panel_context(db) if request.args.get("panel") == "ingest" else {}),
-            **(_audit_panel_context(db) if request.args.get("panel") == "audit" else {}),
-        )
+            **(_ingest_panel_context(db) if admin_sub == "ingest" else {}),
+            **(_audit_panel_context(db) if admin_sub == "audit" else {}),
+        }
 
     @app.route("/admin/usage")
     def admin_usage():
@@ -884,13 +901,13 @@ def create_app() -> Flask:
     def admin_update_columns():
         db = get_db()
         set_company_list_column_settings(db, request.form.getlist("columns"))
-        return redirect(url_for("admin"))
+        return redirect(url_for("settings", panel="admin-companies"))
 
     @app.route("/admin/overview-ratios", methods=["POST"])
     def admin_update_overview_ratios():
         db = get_db()
         set_overview_ratio_settings(db, request.form.getlist("ratios"))
-        return redirect(url_for("admin", panel="overview_ratios"))
+        return redirect(url_for("settings", panel="admin-overview_ratios"))
 
     # One route family for all three vocabularies (Sector/Industry/Index tag)
     # — structurally identical (a name-keyed lookup table an admin can add/
@@ -911,7 +928,7 @@ def create_app() -> Flask:
         name = (request.form.get("name") or "").strip()
         if name:
             add_fn(get_db(), name)
-        return redirect(url_for("admin", panel="taxonomy"))
+        return redirect(url_for("settings", panel="admin-taxonomy"))
 
     @app.route("/admin/vocabulary/<kind>/rename", methods=["POST"])
     def admin_vocabulary_rename(kind: str):
@@ -922,7 +939,7 @@ def create_app() -> Flask:
         new_name = (request.form.get("new_name") or "").strip()
         if old_name and new_name and old_name != new_name:
             rename_fn(get_db(), old_name, new_name)
-        return redirect(url_for("admin", panel="taxonomy"))
+        return redirect(url_for("settings", panel="admin-taxonomy"))
 
     @app.route("/admin/vocabulary/<kind>/delete", methods=["POST"])
     def admin_vocabulary_delete(kind: str):
@@ -932,7 +949,7 @@ def create_app() -> Flask:
         name = (request.form.get("name") or "").strip()
         if name:
             delete_fn(get_db(), name)
-        return redirect(url_for("admin", panel="taxonomy"))
+        return redirect(url_for("settings", panel="admin-taxonomy"))
 
     @app.route("/admin/import", methods=["POST"])
     def admin_import_raw_file():
@@ -954,11 +971,11 @@ def create_app() -> Flask:
             abort(400, "statement_type must be 'consolidated' or 'standalone'")
         if upload is None or not upload.filename:
             flash("Choose a file to import.", "error")
-            return redirect(url_for("admin", panel="import"))
+            return redirect(url_for("settings", panel="admin-import"))
         filename = secure_filename(upload.filename)
         if not filename:
             flash("That filename isn't valid.", "error")
-            return redirect(url_for("admin", panel="import"))
+            return redirect(url_for("settings", panel="admin-import"))
 
         # data/raw/<COMPANY>/<source>/<file> — the same convention the CLI's
         # own path-based detection expects, so a file uploaded here is
@@ -992,7 +1009,7 @@ def create_app() -> Flask:
             for reason in result.skip_reasons[:20]:
                 flash(reason, "warning")
 
-        return redirect(url_for("admin", panel="import"))
+        return redirect(url_for("settings", panel="admin-import"))
 
     @app.route("/companies/<company_id>/reconcile", methods=["POST"])
     def admin_reconcile_company(company_id: str):
@@ -1068,7 +1085,7 @@ def create_app() -> Flask:
         db = get_db()
         touched = discover_pending_financial_items(db)
         flash(f"Rescanned data/raw/ — {touched} item(s) added or updated.", "success")
-        return redirect(url_for("admin", panel="ingest"))
+        return redirect(url_for("settings", panel="admin-ingest"))
 
     @app.route("/admin/ingest/process", methods=["POST"])
     def admin_ingest_process():
@@ -1078,7 +1095,7 @@ def create_app() -> Flask:
         item_ids = [int(v) for v in request.form.getlist("item_id")]
         summary = process_financial_items(db, item_ids)
         flash(f"Processed {summary.attempted}: {summary.succeeded} succeeded, {summary.failed} failed.", "success")
-        return redirect(url_for("admin", panel="ingest"))
+        return redirect(url_for("settings", panel="admin-ingest"))
 
     @app.route("/admin/ingest/process-all", methods=["POST"])
     def admin_ingest_process_all():
@@ -1086,7 +1103,7 @@ def create_app() -> Flask:
         db = get_db()
         summary = process_all_pending_financial_items(db)
         flash(f"Processed {summary.attempted}: {summary.succeeded} succeeded, {summary.failed} failed.", "success")
-        return redirect(url_for("admin", panel="ingest"))
+        return redirect(url_for("settings", panel="admin-ingest"))
 
     @app.route("/admin/ingest/retry-failed", methods=["POST"])
     def admin_ingest_retry_failed():
@@ -1094,7 +1111,7 @@ def create_app() -> Flask:
         db = get_db()
         summary = retry_failed_financial_items(db)
         flash(f"Retried {summary.attempted}: {summary.succeeded} succeeded, {summary.failed} still failed.", "success")
-        return redirect(url_for("admin", panel="ingest"))
+        return redirect(url_for("settings", panel="admin-ingest"))
 
     @app.route("/admin/ingest/archive", methods=["POST"])
     def admin_ingest_archive():
@@ -1106,7 +1123,7 @@ def create_app() -> Flask:
         item_ids = [int(v) for v in request.form.getlist("item_id")]
         count = archive_financial_items(db, item_ids)
         flash(f"Archived {count} item(s).", "success")
-        return redirect(url_for("admin", panel="ingest", ingest_tab="financial"))
+        return redirect(url_for("settings", panel="admin-ingest", ingest_tab="financial"))
 
     @app.route("/admin/ingest/unarchive", methods=["POST"])
     def admin_ingest_unarchive():
@@ -1115,7 +1132,7 @@ def create_app() -> Flask:
         item_ids = [int(v) for v in request.form.getlist("item_id")]
         count = unarchive_financial_items(db, item_ids)
         flash(f"Unarchived {count} item(s).", "success")
-        return redirect(url_for("admin", panel="ingest", ingest_tab="financial"))
+        return redirect(url_for("settings", panel="admin-ingest", ingest_tab="financial"))
 
     @app.route("/admin/ingest/documents/process", methods=["POST"])
     def admin_ingest_process_documents():
@@ -1126,21 +1143,21 @@ def create_app() -> Flask:
         document_ids = [int(v) for v in request.form.getlist("document_id")]
         summary = process_documents(db, document_ids)
         flash(f"Registered {summary.succeeded} document(s), {summary.failed} failed.", "success")
-        return redirect(url_for("admin", panel="ingest"))
+        return redirect(url_for("settings", panel="admin-ingest"))
 
     @app.route("/admin/ingest/documents/process-all", methods=["POST"])
     def admin_ingest_process_all_documents():
         db = get_db()
         summary = process_all_pending_documents(db)
         flash(f"Registered {summary.succeeded} document(s), {summary.failed} failed.", "success")
-        return redirect(url_for("admin", panel="ingest"))
+        return redirect(url_for("settings", panel="admin-ingest"))
 
     @app.route("/admin/ingest/documents/retry-failed", methods=["POST"])
     def admin_ingest_retry_failed_documents():
         db = get_db()
         summary = retry_failed_documents(db)
         flash(f"Retried {summary.attempted}: {summary.succeeded} succeeded, {summary.failed} still failed.", "success")
-        return redirect(url_for("admin", panel="ingest"))
+        return redirect(url_for("settings", panel="admin-ingest"))
 
     @app.route("/admin/ingest/documents/archive", methods=["POST"])
     def admin_ingest_archive_documents():
@@ -1151,7 +1168,7 @@ def create_app() -> Flask:
         document_ids = [int(v) for v in request.form.getlist("document_id")]
         count = archive_documents(db, document_ids)
         flash(f"Archived {count} document(s).", "success")
-        return redirect(url_for("admin", panel="ingest", ingest_tab="documents"))
+        return redirect(url_for("settings", panel="admin-ingest", ingest_tab="documents"))
 
     @app.route("/admin/ingest/documents/unarchive", methods=["POST"])
     def admin_ingest_unarchive_documents():
@@ -1160,7 +1177,7 @@ def create_app() -> Flask:
         document_ids = [int(v) for v in request.form.getlist("document_id")]
         count = unarchive_documents(db, document_ids)
         flash(f"Unarchived {count} document(s).", "success")
-        return redirect(url_for("admin", panel="ingest", ingest_tab="documents"))
+        return redirect(url_for("settings", panel="admin-ingest", ingest_tab="documents"))
 
     @app.route("/admin/<company_id>/stock-actions", methods=["POST"])
     def admin_add_stock_action(company_id: str):
@@ -1186,7 +1203,7 @@ def create_app() -> Flask:
             flash(str(exc), "error")
         else:
             flash(f"Recorded {request.form.get('action_type')} for {company_id}.", "success")
-        return redirect(url_for("admin", panel="stock_actions", sa_company_id=company_id))
+        return redirect(url_for("settings", panel="admin-stock_actions", sa_company_id=company_id))
 
     @app.route("/admin/<company_id>/stock-actions/<int:action_id>/delete", methods=["POST"])
     def admin_delete_stock_action(company_id: str, action_id: int):
@@ -1195,7 +1212,7 @@ def create_app() -> Flask:
             delete_stock_action(db, company_id, action_id)
         except StockActionNotFoundError as exc:
             abort(404, str(exc))
-        return redirect(url_for("admin", panel="stock_actions", sa_company_id=company_id))
+        return redirect(url_for("settings", panel="admin-stock_actions", sa_company_id=company_id))
 
     @app.route("/admin/<company_id>", methods=["POST"])
     def admin_update_company(company_id: str):
@@ -1269,7 +1286,7 @@ def create_app() -> Flask:
         else:
             abort(400, f"Unknown action: {action!r}")
 
-        return redirect(url_for("admin"))
+        return redirect(url_for("settings", panel="admin-companies"))
 
     @app.route("/companies/<company_id>")
     def company_report(company_id: str):
@@ -1845,6 +1862,22 @@ def create_app() -> Flask:
 
     _THEME_LABELS = [("signals", "Signals"), ("signals-light", "Signals Light"), ("schwab", "Schwab"), ("white", "White"), ("light", "Light"), ("green", "Green"), ("dark", "Dark")]
 
+    # One entry per leaf page in the Settings left nav (web/templates/settings.html),
+    # grouped there under Profile & Preferences / Research Configuration / Indicators & Data.
+    _SETTINGS_PANELS = (
+        "profile", "appearance", "notifications", "personal-defaults",
+        "methodology", "research-defaults", "indicators",
+    )
+    # The Administration group's items are "admin-<this>" — kept as a
+    # separate, admin-gated namespace rather than folded into
+    # _SETTINGS_PANELS above, since these also need the is_admin check
+    # _require_login() used to do for them via the old /admin route's
+    # endpoint-name prefix (see settings() below).
+    _ADMIN_SETTINGS_PANELS = (
+        "companies", "taxonomy", "columns", "overview_ratios",
+        "import", "stock_actions", "ingest", "audit",
+    )
+
     @app.route("/settings", methods=["GET", "POST"])
     def settings():
         if request.method == "POST":
@@ -1859,8 +1892,29 @@ def create_app() -> Flask:
                 # another device or outlive clearing cookies, unlike the
                 # signed-in path above.
                 session["theme"] = theme
-            return redirect(url_for("settings"))
-        return render_template("settings.html", themes=_THEME_LABELS, **_indicator_settings_context())
+            return redirect(url_for("settings", panel="appearance"))
+
+        active_panel = request.args.get("panel", "profile")
+        admin_sub = active_panel[len("admin-"):] if active_panel.startswith("admin-") else None
+        if admin_sub is not None and admin_sub not in _ADMIN_SETTINGS_PANELS:
+            admin_sub, active_panel = None, "profile"
+        elif admin_sub is None and active_panel not in _SETTINGS_PANELS:
+            active_panel = "profile"
+
+        context = {"themes": _THEME_LABELS, **_indicator_settings_context()}
+        if admin_sub is not None:
+            # Mirrors the is_admin gate _require_login() applies to every
+            # endpoint whose name starts with "admin" — these panels used to
+            # be admin()'s own view (endpoint "admin"), but now render
+            # through "settings", so that name-prefix check no longer
+            # reaches them and this has to stand in for it.
+            if g.user is None:
+                return redirect(url_for("login", next=request.full_path if request.query_string else request.path))
+            if not g.user["is_admin"]:
+                abort(403, "Admin access required")
+            context.update(_build_admin_settings_context(admin_sub))
+
+        return render_template("settings.html", active_panel=active_panel, **context)
 
     def _indicator_settings_context() -> dict:
         """Indicator-rule configuration is per-user by construction (user_id
@@ -1904,9 +1958,9 @@ def create_app() -> Flask:
             save_rule_override(get_db(), user_id=user["user_id"], **parse_override_form(rule, request.form))
         except InvalidIndicatorConfigError as exc:
             flash(str(exc), "error")
-            return redirect(url_for("settings") + "#indicator-rules")
+            return redirect(url_for("settings", panel="indicators") + "#indicator-rules")
         flash(f"Saved configuration for “{rule.name}”.", "success")
-        return redirect(url_for("settings") + "#indicator-rules")
+        return redirect(url_for("settings", panel="indicators") + "#indicator-rules")
 
     @app.route("/settings/indicators/reset", methods=["POST"])
     def settings_reset_indicator_rule():
@@ -1926,13 +1980,13 @@ def create_app() -> Flask:
             )
         except InvalidIndicatorConfigError as exc:
             flash(str(exc), "error")
-            return redirect(url_for("settings") + "#indicator-rules")
+            return redirect(url_for("settings", panel="indicators") + "#indicator-rules")
         flash(
             f"Reset “{rule.name}” to its inherited configuration." if removed
             else f"“{rule.name}” had no override at that scope.",
             "success" if removed else "error",
         )
-        return redirect(url_for("settings") + "#indicator-rules")
+        return redirect(url_for("settings", panel="indicators") + "#indicator-rules")
 
     _DOCS_SECTIONS = ("sources", "xbrl")
 

@@ -1347,13 +1347,13 @@ def test_admin_companies_panel_is_paginated(client) -> None:
 
     _admin_session(client)
 
-    page1 = client.get("/admin?panel=companies").data.decode()
+    page1 = client.get("/settings?panel=admin-companies").data.decode()
     assert page1.count("admin-row") <= 100  # ~50 rows worth of open+close markers, not 62
     assert "Page 1 of 2" in page1
     assert "Next &rarr;" in page1
     assert "&larr; Previous" not in page1
 
-    page2 = client.get("/admin?panel=companies&page=2").data.decode()
+    page2 = client.get("/settings?panel=admin-companies&page=2").data.decode()
     assert "Page 2 of 2" in page2
     assert "&larr; Previous" in page2
     assert "Next &rarr;" not in page2
@@ -1361,13 +1361,13 @@ def test_admin_companies_panel_is_paginated(client) -> None:
 
 def test_admin_companies_panel_page_out_of_range_clamps(client) -> None:
     _admin_session(client)
-    response = client.get("/admin?panel=companies&page=999")
+    response = client.get("/settings?panel=admin-companies&page=999")
     assert response.status_code == 200  # clamped to the last real page, not a 404/500
 
 
 def test_admin_companies_panel_no_pagination_ui_when_it_all_fits(client) -> None:
     _admin_session(client)
-    body = client.get("/admin?panel=companies").data.decode()
+    body = client.get("/settings?panel=admin-companies").data.decode()
     assert 'class="admin-pagination"' not in body  # only 2 seeded companies — well under one page
 
 
@@ -1389,7 +1389,7 @@ def test_admin_companies_search_finds_a_match_on_a_later_page(client) -> None:
 
     _admin_session(client)
 
-    body = client.get("/admin?panel=companies&q=needle").data.decode()
+    body = client.get("/settings?panel=admin-companies&q=needle").data.decode()
     assert "Needle Co" in body
     assert 'class="admin-pagination"' not in body  # one match — no pagination needed
     assert 'value="Test Co 0"' not in body  # the other 60 companies are filtered out (Import dropdown lists all, ignore that)
@@ -1404,7 +1404,7 @@ def test_admin_companies_sector_filter(client) -> None:
 
     _admin_session(client)
 
-    body = client.get("/admin?panel=companies&sector=Energy").data.decode()
+    body = client.get("/settings?panel=admin-companies&sector=Energy").data.decode()
     assert "Energy Co" in body
     assert 'value="HDFC Bank"' not in body  # seeded HDFCBANK is Financial Services, not Energy (Import dropdown lists all, ignore that)
 
@@ -1412,26 +1412,26 @@ def test_admin_companies_sector_filter(client) -> None:
 def test_admin_companies_status_filter(client) -> None:
     _admin_session(client)
 
-    archived = client.get("/admin?panel=companies&status=archived").data.decode()
+    archived = client.get("/settings?panel=admin-companies&status=archived").data.decode()
     assert 'value="HDFC Bank"' not in archived  # seeded companies are active, not archived (Import dropdown lists all, ignore that)
 
-    active = client.get("/admin?panel=companies&status=active").data.decode()
+    active = client.get("/settings?panel=admin-companies&status=active").data.decode()
     assert 'value="HDFC Bank"' in active
 
 
 def test_admin_companies_no_matches_shows_filtered_empty_state(client) -> None:
     _admin_session(client)
-    body = client.get("/admin?panel=companies&q=zzz-not-a-real-company-zzz").data.decode()
+    body = client.get("/settings?panel=admin-companies&q=zzz-not-a-real-company-zzz").data.decode()
     assert "No companies match these filters." in body
     assert "No companies registered yet" not in body  # wrong empty-state message for this case
 
 
 def test_admin_companies_clear_link_only_shown_when_filters_active(client) -> None:
     _admin_session(client)
-    unfiltered = client.get("/admin?panel=companies").data.decode()
+    unfiltered = client.get("/settings?panel=admin-companies").data.decode()
     assert ">Clear</a>" not in unfiltered
 
-    filtered = client.get("/admin?panel=companies&q=hdfc").data.decode()
+    filtered = client.get("/settings?panel=admin-companies&q=hdfc").data.decode()
     assert ">Clear</a>" in filtered
 
 
@@ -1443,7 +1443,7 @@ def test_admin_companies_clear_link_only_shown_when_filters_active(client) -> No
 
 
 def test_admin_taxonomy_panel_requires_admin(client) -> None:
-    response = client.get("/admin?panel=taxonomy")
+    response = client.get("/settings?panel=admin-taxonomy")
     assert response.status_code == 302  # not logged in -> redirect to login
 
 
@@ -1457,7 +1457,7 @@ def test_admin_taxonomy_panel_lists_existing_values_with_counts(client) -> None:
     conn.close()
 
     _admin_session(client)
-    body = client.get("/admin?panel=taxonomy").data.decode()
+    body = client.get("/settings?panel=admin-taxonomy").data.decode()
     assert "Energy" in body
     assert "Financial Services" in body  # HDFCBANK's seeded sector
 
@@ -1468,20 +1468,20 @@ def test_admin_vocabulary_add_rename_delete_round_trip(client, kind: str, label:
 
     add = client.post(f"/admin/vocabulary/{kind}/add", data={"name": f"Test {label} A"})
     assert add.status_code == 302
-    body = client.get("/admin?panel=taxonomy").data.decode()
+    body = client.get("/settings?panel=admin-taxonomy").data.decode()
     assert f"Test {label} A" in body
 
     rename = client.post(
         f"/admin/vocabulary/{kind}/rename", data={"old_name": f"Test {label} A", "new_name": f"Test {label} B"}
     )
     assert rename.status_code == 302
-    body = client.get("/admin?panel=taxonomy").data.decode()
+    body = client.get("/settings?panel=admin-taxonomy").data.decode()
     assert f"Test {label} B" in body
     assert f"Test {label} A" not in body
 
     delete = client.post(f"/admin/vocabulary/{kind}/delete", data={"name": f"Test {label} B"})
     assert delete.status_code == 302
-    body = client.get("/admin?panel=taxonomy").data.decode()
+    body = client.get("/settings?panel=admin-taxonomy").data.decode()
     assert f"Test {label} B" not in body
 
 

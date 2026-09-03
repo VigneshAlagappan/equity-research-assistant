@@ -248,7 +248,10 @@ had before NSE/BSE (step 6).
 **Narrative files (PDF circulars, policy reports) aren't wired up yet** —
 they'd reuse the existing `documents`/`document_chunks` pipeline as-is
 (`documents.company_id` is already nullable, so `company_id = NULL` needs no
-schema change), but that pipeline itself isn't built yet either (step 7).
+schema change). That pipeline itself now exists (page-scoped chunking + FTS5
+keyword search, see [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy-step-2d)),
+but nothing in `sources/` fetches a macro narrative file in the first place —
+this is a missing source, not a missing pipeline.
 
 **Worked example:**
 
@@ -386,10 +389,15 @@ document_search.py     FTS5 keyword search + metadata filtering today;
 hybrid_search.py        combines both → typed Evidence objects with full provenance
 ```
 
-Built as named for structured data (`retrieval/structured_search.py`); document
-evidence took a leaner shape than proposed here (`research/documents.py` does
-direct PDF extraction per question, no FTS5/chunking/`hybrid_search.py` yet —
-see [architecture.md's Known gaps](architecture.md#documents--docs-tab)).
+Built as named for structured data (`retrieval/structured_search.py`).
+Document evidence *for Q&A/Signals reports* took a leaner shape than proposed
+here — `research/documents.py` does direct PDF extraction per question, no
+caching (see [architecture.md's Known gaps](architecture.md#documents--docs-tab)).
+Page-scoped chunking + FTS5 keyword search were since built as their own
+standalone capability (`research/document_chunker.py`, `retrieval/document_search.py`,
+Step 2D — see [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy-step-2d))
+but are deliberately not wired into that evidence path yet; no `hybrid_search.py`
+module exists.
 
 Retrieval never calls the LLM. Full company archives are never sent to the model —
 only retrieved, filtered evidence. The LLM client is a thin, swappable interface, so
