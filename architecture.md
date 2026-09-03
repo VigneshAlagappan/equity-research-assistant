@@ -1,9 +1,9 @@
 # Architecture
 
-This document describes the current architecture of the Global Equity Research
-Assistant — a self-use, local-first Flask + SQLite application for researching
-listed companies, with a primary focus on the US and India markets, with an
-LLM research assistant grounded in deterministically retrieved evidence.
+This document describes the current architecture of **Signals**, an Equity AI
+Research Assistant — a self-use, local-first Flask + SQLite application for
+researching listed companies, with a primary focus on the US and India markets,
+with an LLM research assistant grounded in deterministically retrieved evidence.
 
 For product/feature scope, see [README.md](README.md) and
 [FeatureList.md](FeatureList.md). For running the app, see
@@ -721,7 +721,7 @@ one-off patches for the five test questions:
    view rather than a per-company copy.
 2. **Point-in-time (`as_of`) evidence scoping** (`research/temporal.py`) —
    previously no retrieval path had any temporal-cutoff concept at all, so a
-   "no look-ahead bias" historical investigation ("could Signal have
+   "no look-ahead bias" historical investigation ("could Signals have
    detected X before it became obvious?") was architecturally impossible to
    do correctly: evidence retrieval always pulled the full history up to
    today regardless of the question's framing. `as_of` is a plain ISO date,
@@ -749,7 +749,7 @@ one-off patches for the five test questions:
    as per-hypothesis CALCULATION evidence (Step 2F, citing the rule id,
    version, and provenance so the line is reproducible) — closing the loop
    the indicator framework's own spec described ("indicators may later
-   become inputs to Signal's hypothesis/investigation workflow") but
+   become inputs to Signals' hypothesis/investigation workflow") but
    explicitly left unbuilt when that framework shipped. Disabled entirely
    under an `as_of` cutoff rather than leaking post-cutoff findings, since
    indicator rules evaluate only against the latest facts on file and have
@@ -971,7 +971,7 @@ data feeds — noted in each file's header comment.
 
 - **Reference data**: `sources` (trust-ranked data providers), `metrics_dictionary`, `metric_aliases`.
 - **Companies**: `companies` (per-company `country`/`currency`/`fiscal_year_end_month`, not global), `company_identifier_history`, `company_index_membership`, `company_list_column_settings`, `overview_ratio_settings` (global `ratio_key` → `enabled` toggle — which ratios the company page's Overview tab shows, Admin-configurable, same shape/spirit as `company_list_column_settings` but for the Overview tab instead of the company list), `stock_actions` (discrete corporate events — splits/bonus/rights issues — recorded as raw events only; no split-adjustment of historical shares/EPS/price series yet), `sectors`/`industries`/`index_definitions` (Admin-editable lookup vocabularies backing the sector/industry/index-tag dropdowns, seeded from whatever's already in use).
-- **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — ~53K rows; MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet), `bank_infrastructure_observations` (RBI's monthly bank×metric ATM/NEFT/RTGS bulletins — a separate shape from `macro_observations`' flat series). Daily OHLCV price/volume history lives separately, in its own db file — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below.
+- **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — 158,759 rows (IITM 116,187 + RBI 42,572); MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet), `bank_infrastructure_observations` (RBI's monthly bank×metric ATM/NEFT/RTGS bulletins — a separate shape from `macro_observations`' flat series). Daily OHLCV price/volume history lives separately, in its own db file — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below.
 - **Ingestion tracking**: `ingestion_queue_items` — the Admin → Ingest panel's discovery/status tracking for financial/macro files under `data/raw/` (content-hash keyed); orchestration metadata only, never the source of truth for parsed data itself.
 - **Event bus & batch audit**: `dataset_events`, `worker_processing_log`, `batch_job_runs`, `batch_job_items` — the Event Store, per-worker processing log, and bulk-script audit trail behind ingestion's event-driven layer; see [Dataset-centric ingestion: the event bus](#dataset-centric-ingestion-the-event-bus-ingestionevent_buspy) for the full shape of each.
 - **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` + `document_chunks_fts` (Step 2D — page-scoped chunks, FTS5-indexed by `research/document_chunker.py`; `embedding` stays `NULL` on every row, keyword search only, no vector layer — see [Document Retrieval](#document-retrieval-retrievaldocument_searchpy-step-2d)).

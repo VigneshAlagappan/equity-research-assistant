@@ -1,7 +1,7 @@
-# Equity AI Research Assistant — User Guide
+# Signals — User Guide
 
-This is a guide for **using** the Global Equity Research Assistant (US + India
-focus) as an analyst — what each feature does and the exact commands to run it.
+This is a guide for **using Signals**, an Equity AI Research Assistant (US + India
+focus), as an analyst — what each feature does and the exact commands to run it.
 For how the system is built internally, see [README.md](README.md).
 
 All commands are run from the project root, with the virtual environment active:
@@ -23,6 +23,13 @@ python main.py init
 This creates the SQLite database, the folders under `data/`, and seeds the metric
 vocabulary (net profit, ROA/ROE inputs, GNPA %, etc.). Safe to re-run — it never
 deletes existing data.
+
+**A ready-to-use admin account is seeded automatically** — username `admin`,
+password `admin` — so the web viewer (feature 7) is usable with zero signup.
+Log in with it to reach admin-gated features (Admin → Import Data, the Ingest
+queue, the Usage/cost page) instead of signing up for a new account. There's no
+in-app way to change this password today — worth keeping in mind if this
+instance is ever reachable by anyone else.
 
 **If you plan to use the AI research assistant** (`ask`, or the chat page in the web
 viewer — features 8 and 9 below), create a `.env` file at the project root with your

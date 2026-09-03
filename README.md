@@ -1,15 +1,16 @@
-# Equity AI Research Assistant
+# Signals — Equity AI Research Assistant
 
-An AI-assisted research system for listed companies that combines structured
-financial data, company filings, management commentary, historical data, macro data,
-deterministic calculations, charts, and LLM reasoning to answer investment-research
-questions — with every material claim traceable back to its source.
+**Signals** is an AI-assisted research system for listed companies that combines
+structured financial data, company filings, management commentary, historical data,
+macro data, deterministic calculations, charts, and LLM reasoning to answer
+investment-research questions — with every material claim traceable back to its
+source.
 
 **This is not a trading system.** It does not produce buy/sell recommendations.
 
 ## Project Ownership & Development Approach
 
-The **product concept, product strategy, system architecture, user experience, research approach, data/source strategy, design decisions, and overall technical direction of Signal are my original work**.
+The **product concept, product strategy, system architecture, user experience, research approach, data/source strategy, design decisions, and overall technical direction of Signals are my original work**.
 
 AI coding tools, primarily **Claude Code**, are used as a **vibe-coding and implementation assistant** to help translate these designs into working software, accelerate prototyping, generate and refactor code, and explore implementation alternatives.
 
@@ -32,7 +33,7 @@ The differentiating skill is therefore not simply the ability to write code manu
 
 The primary skills being exercised in this project are **product thinking, product management, deep technical judgment, system/software architecture, analytical reasoning, and sound software-engineering principles**.
 
-AI-assisted coding is used to accelerate implementation; **it does not replace technical expertise or define the product vision, product decisions, system architecture, research methodology, or overall technical intent of Signal**.
+AI-assisted coding is used to accelerate implementation; **it does not replace technical expertise or define the product vision, product decisions, system architecture, research methodology, or overall technical intent of Signals**.
 
 ## License
 
