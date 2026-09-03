@@ -1,7 +1,7 @@
-# Signal — Golden Research Loop Validation
+# Signals — Golden Research Loop Validation
 
-**This is a permanent, re-runnable benchmark.** It records whether Signal's existing
-hypothesis-driven investigation architecture (Steps 2E–2H) can execute five real research
+**This is a permanent, re-runnable benchmark.** It records whether Signals' existing
+hypothesis-driven investigation architecture can execute five real research
 questions end-to-end through the product's own investigation mechanism. Future runs should
 update or version this file rather than replacing it, so improvements can be compared over
 time.
@@ -13,7 +13,7 @@ time.
 | Field | Value |
 |---|---|
 | Validation date | 2026-09-02 (UTC) |
-| Repository | `equity-research-assistant` ("Signal") |
+| Repository | `equity-research-assistant` ("Signals") |
 | Branch | `feature-v1` |
 | Baseline commit at start of validation | `0c8b0e0ef15e3390d6472c7a2c6469954416640d` |
 | Commit during validation | `b0a0157274bf3c598b2eea9eeb9d80ae6f8b708a` ("todays all requests" — a user-initiated commit that swept in some in-progress files from this validation; no commit was created by the validation itself) |
@@ -22,7 +22,7 @@ time.
 | LLM | live Anthropic API, `claude-sonnet-5` at the `deep` tier for generation/evaluation/synthesis, `claude-haiku-4-5` for macro series selection. Real API calls; nothing simulated. |
 | Graph backend | `GRAPH_BACKEND=sqlite` (the documented default). See §6.5 for why the optional Neo4j backend was not used. |
 | Execution path | `research.investigation.run_investigation(...)` — the identical function `POST /investigate/generate` calls, writing to the identical tables the UI reads. The route is a thin wrapper (auth/validation + `jsonify`); no orchestration logic lives in it. |
-| Test suite after changes | **729 passed, 9 failed** — the same 9 pre-existing, unrelated failures as the baseline (3 × `test_assistant.py` model-tier routing, 1 × `test_llm_router.py`, 5 × `test_web.py` HTML-content assertions). Baseline was 695 passed / 9 failed; the +34 are this validation's new tests. |
+| Test suite after changes | **729 passed, 9 failed** as of this validation run — the same 9 pre-existing, unrelated failures as the baseline (3 × `test_assistant.py` model-tier routing, 1 × `test_llm_router.py`, 5 × `test_web.py` HTML-content assertions). Baseline was 695 passed / 9 failed; the +34 are this validation's new tests. *(Since fixed — as of 2026-09-02's later architecture.md accuracy pass, the full suite is 738 passed / 0 failed. This row is a frozen snapshot of this run, not a claim about the suite's current state — see architecture.md's Testing/CI section for the current number.)* |
 
 ### Prerequisite checks performed before any run
 
@@ -56,7 +56,7 @@ ending at **FY2013**, with **no** `net_profit`, `advances`, `gross_npa_percent`,
 `net_npa_percent` or `interest_earned` at all, **no** quarterly data, **no** documents, **no**
 shareholding history and **no** knowledge-graph claims. The IndusInd deterioration the test
 question is about occurred in 2024–25. Investigation #3 therefore cannot be answered from
-Signal's data, and this document reports that rather than working around it.
+Signals' data, and this document reports that rather than working around it.
 
 ---
 
@@ -70,7 +70,7 @@ Signal's data, and this document reports that rather than working around it.
    into sustainable profitability, or are credit costs, funding characteristics, asset quality,
    or other factors creating risks beneath the growth?"* → `company_ids=["IDFCFIRSTB"]`
 3. **IndusInd Bank — Historical Early Warning.** *"Using only information available at each
-   historical point in time, could Signal have detected meaningful deterioration at IndusInd
+   historical point in time, could Signals have detected meaningful deterioration at IndusInd
    Bank before it became obvious? Identify which indicators/facts changed and evaluate competing
    explanations. No look-ahead bias."* → `company_ids=["INDUSINDBK"]`, `as_of="2013-03-31"`
 4. **HDFC Bank vs. ICICI Bank — Performance Divergence.** *"Why have HDFC Bank and ICICI Bank
@@ -140,7 +140,7 @@ category-driven routing decision, not a uniform fetch.
 ### 3.3 Real disconfirming evidence (a required acceptance criterion)
 
 Two hypotheses in `a78909363298` were **REFUTED outright** by retrieved data, both proposing
-that ICICI was structurally better and both killed by Signal's own numbers:
+that ICICI was structurally better and both killed by Signals' own numbers:
 
 > **h2 — "ICICI Bank has structurally superior deposit franchise momentum."** Verdict: **REFUTED**.
 > Contradicting evidence: HDFC deposits YoY FY2026 = **14.34 %** vs ICICI **11.48 %**; HDFC
@@ -226,7 +226,7 @@ so plainly rather than inventing an answer:
 > FY2004–FY2013)… The deposit-growth data available actually contradicts (rather than supports)
 > the funding-pressure mechanism in h4, but this is too thin and too dated (a decade before the
 > deterioration period in question) to establish any leading-indicator signal. As a result, the
-> investigation cannot yet say whether Signal could have detected deterioration early."*
+> investigation cannot yet say whether Signals could have detected deterioration early."*
 
 That is the correct behaviour under the spec's "do not manufacture evidence" rule. The failure is
 a **dataset** failure (§6.1), not an architectural one — and it is worth noting that the *same*
@@ -371,7 +371,7 @@ deterioration (e.g. `2024-03-31`) — the point-in-time machinery is already in 
 ### 6.2 Point-in-time / temporal reasoning *(FIXED — new generic capability)*
 
 **Category: temporal/point-in-time reasoning.** Before this validation, **no** retrieval path in
-Signal had any notion of an "as of" date. Every capability returned everything on file, so any
+Signals had any notion of an "as of" date. Every capability returned everything on file, so any
 historically-framed question was answered with post-hoc data and the look-ahead bias was invisible
 — it lived in the evidence block itself, where no prompt wording could remove it.
 
@@ -410,8 +410,8 @@ triggered rule, so an investigation re-derived from raw series what a frozen, ve
 already established — and could not cite the rule.
 
 Fixed generically via a new `IndicatorEvidenceCapability` on `PlannerCapabilities`
-(`research/indicator_evidence.py`), consumed in **both** Step 2E (as hypothesis-generation context)
-and Step 2F (as per-hypothesis `CALCULATION` evidence carrying `rule_id`, `rule_version`,
+(`research/indicator_evidence.py`), consumed in **both** hypothesis generation (as context)
+and evidence gathering (as per-hypothesis `CALCULATION` evidence carrying `rule_id`, `rule_version`,
 classification, severity, threshold summary and the rule's own provenance). It runs with
 `persist=False` and `user_id=None`: an investigation must not append to the user-facing
 `indicator_evaluations` audit trail as a side effect of reading it, and a conclusion must not
@@ -419,7 +419,7 @@ silently depend on whose thresholds happened to be configured.
 
 **Verified working, but it contributed nothing to these five investigations — and that is a
 finding, not a bug.** Zero rules fire for HDFCBANK / ICICIBANK / IDFCFIRSTB / INDUSINDBK /
-KOTAKBANK. Signal's V1 rule library has **five rules in two families** (promoter-holding
+KOTAKBANK. Signals' V1 rule library has **five rules in two families** (promoter-holding
 up/down; net-profit growth; net-profit and total-assets YoY moves ≥ 25 %). These banks are
 professionally managed (no promoter stake to move) and their profit moves are single-digit
 (HDFC FY2026 +7.4 %, IDFC +8.1 %), so nothing triggers. The capability was proven end-to-end
@@ -462,7 +462,7 @@ capability", and the spec asks for charts only "where they materially help".
 
 **Category: investigation persistence/UI.** `investigations.company_ids` was a JSON blob, and the
 company page had a "Threads" section listing single-narrative Signals reports but **no
-Investigations section at all** — a structured 2E–2H investigation was reachable only from the
+Investigations section at all** — a structured hypothesis-driven investigation was reachable only from the
 global feed or its direct URL. Answering "which investigations touch this company?" would have
 needed a full-table `LIKE` scan that also matches substrings (`HDFCBANK` inside `HDFCBANKX`).
 Fixed with a real many-to-many join table (§7.1). This is what makes golden investigations #4 and
@@ -569,7 +569,7 @@ hypothesis, answer or workflow was added anywhere.
 
 ## 8. Remaining gaps, score and recommendations
 
-### Signal Golden Research Loop Score: **8 / 10**
+### Signals Golden Research Loop Score: **8 / 10**
 
 **What earns the 8.** The loop the spec asks for — *Trusted Facts / Indicators / Question →
 multiple testable hypotheses → investigation plan → evidence gathering → evaluation → synthesis →
@@ -577,7 +577,7 @@ auditable conclusion* — executed end-to-end, for real, on all five questions, 
 product's own mechanism, and produced work that would survive review. Four of five reached a
 defensible, evidence-grounded conclusion. Hypotheses are genuinely competing rather than
 rationalisations; planning visibly varies per hypothesis; evidence is retrieved deterministically
-and cited at 100 %; **three hypotheses across two investigations were REFUTED by Signal's own
+and cited at 100 %; **three hypotheses across two investigations were REFUTED by Signals' own
 data**, including one killed by 11 disconfirming facts; calculations are real deterministic
 numbers, not model arithmetic; syntheses weigh explanations against each other and state their
 limits; and everything is persisted, queryable, auditable and rendered under each associated
@@ -588,7 +588,7 @@ company.
 * **−1, dataset coverage.** Investigation #3 could not be answered at all, and every investigation
   hit the same wall from the other side: the single most common `missing_evidence` item across all
   five runs is **NIM, cost of funds, CASA and segment-level credit cost** — the metrics banking
-  analysis actually turns on. Signal's canonical schema has `interest_earned`/`interest_expended`
+  analysis actually turns on. Signals' canonical schema has `interest_earned`/`interest_expended`
   but no NIM, no CASA, no segment breakdown. Every "PARTIALLY_SUPPORTED rather than SUPPORTED"
   verdict in runs #1, #4 and #5 traces to this. Note the contrast with #2, where IDFC's nine
   ingested documents produced 107–124 knowledge-graph claims and the richest result of the five —

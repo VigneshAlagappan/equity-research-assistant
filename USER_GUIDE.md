@@ -1,7 +1,7 @@
-# User Guide
+# Signals — User Guide
 
-This is a guide for **using** the Global Equity Research Assistant (US + India
-focus) as an analyst — what each feature does and the exact commands to run it.
+This is a guide for **using Signals**, an Equity AI Research Assistant (US + India
+focus), as an analyst — what each feature does and the exact commands to run it.
 For how the system is built internally, see [README.md](README.md).
 
 All commands are run from the project root, with the virtual environment active:
@@ -14,29 +14,9 @@ source .venv/bin/activate
 
 ## One-time setup
 
-Before using any feature, initialize the database once:
-
-```bash
-python main.py init
-```
-
-This creates the SQLite database, the folders under `data/`, and seeds the metric
-vocabulary (net profit, ROA/ROE inputs, GNPA %, etc.). Safe to re-run — it never
-deletes existing data.
-
-**If you plan to use the AI research assistant** (`ask`, or the chat page in the web
-viewer — features 8 and 9 below), create a `.env` file at the project root with your
-Anthropic API key:
-
-```
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-`.env` is git-ignored and loaded automatically by every `python main.py ...` command —
-you don't need to `export` or `source` anything yourself.
-
-**After cloning this repo** (or pulling a change to `data/db_shards/`), reassemble the
-real database from its git-tracked shard parts before running `init` or anything else:
+**Step 1 — after cloning this repo** (or pulling a change to `data/db_shards/`),
+reassemble the real, already-populated database from its git-tracked shard parts
+**before running `init` or anything else**:
 
 ```bash
 python scripts/db_unshard.py
@@ -53,7 +33,39 @@ python scripts/db_shard.py
 
 Both scripts verify a SHA-256 checksum on reassembly and refuse to overwrite an
 existing `data/equity_research.db` unless you pass `--force` — see each script's
-`--help` for options (chunk size, etc.).
+`--help` for options (chunk size, etc.). **If you skip this step**, the next
+command (`init`) will happily create a new, empty database instead of failing —
+there's nothing stopping you from starting work against the wrong (empty) db, and
+`db_unshard.py` will then refuse to fix it without `--force` since a file already
+exists at that path.
+
+**Step 2 — initialize the database** (safe to re-run even against the real,
+unsharded database — it never deletes existing data, only adds anything missing):
+
+```bash
+python main.py init
+```
+
+This creates the SQLite database if step 1 was skipped, the folders under `data/`,
+and seeds the metric vocabulary (net profit, ROA/ROE inputs, GNPA %, etc.).
+
+**A ready-to-use admin account is seeded automatically** — username `admin`,
+password `admin` — so the web viewer (feature 7) is usable with zero signup.
+Log in with it to reach admin-gated features (Admin → Import Data, the Ingest
+queue, the Usage/cost page) instead of signing up for a new account. There's no
+in-app way to change this password today — worth keeping in mind if this
+instance is ever reachable by anyone else.
+
+**If you plan to use the AI research assistant** (`ask`, or the chat page in the web
+viewer — features 8 and 9 below), create a `.env` file at the project root with your
+Anthropic API key:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+`.env` is git-ignored and loaded automatically by every `python main.py ...` command —
+you don't need to `export` or `source` anything yourself.
 
 ---
 
@@ -106,7 +118,7 @@ python main.py add-company HDFCBANK \
 - Running this again for the same `company_id` updates the record — it doesn't create
   a duplicate.
 
-**Or register the two POC demo companies (HDFC Bank + ICICI Bank) in one step:**
+**Or register the two seed demo companies (HDFC Bank + ICICI Bank) in one step:**
 
 ```bash
 python main.py seed-companies
@@ -471,6 +483,13 @@ what's in git to reflect what's actually in the live db.
 
 ```bash
 source .venv/bin/activate
+
+# First time only, after cloning (see One-time setup above) — reassembles the
+# real, already-populated database from its git-tracked shard parts. Skipping
+# this and running `init` first creates an empty database instead, and
+# db_unshard.py will then refuse to overwrite it without --force.
+python scripts/db_unshard.py
+
 python main.py init
 
 # 1. Register the company
@@ -509,3 +528,13 @@ python main.py ask "What stands out about HDFC Bank's last 10 years?" --company 
   a given company, or the report/assistant will report "no data" for the other view.
 - **Nothing shows in `analyze` or `ask` after ingesting** — double check the
   `--statement-type` you ingested with matches the one you're viewing/asking with.
+
+---
+
+## Related documentation
+
+- **[README.md](README.md)** — the original design proposal and scoping
+  rationale: why the system is shaped the way it is.
+- **[architecture.md](architecture.md)** — the current, accurate technical
+  picture of what's actually built.
+- **[FeatureList.md](FeatureList.md)** — what's shipped vs. still open.

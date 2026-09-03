@@ -9,7 +9,13 @@ scheduling policy and gap analysis only.
 
 - **India**: ready. `scripts/fetch_nse_xbrl.py` + `sources/nse_xbrl.py` —
   the pipeline already running for Nifty 50 (41 of 51 constituents on file
-  done as of this writing) and planned for Nifty 500. Re-running per company is idempotent
+  done as of this writing — genuinely 51 rows tagged `index_name='Nifty 50'`
+  in `company_index_membership`, not a typo; this traces to a real
+  duplicate-company data bug, not reconstitution overlap: `MUTHOOTFINANCE`
+  (no `nse_symbol` set) and `MUTHOOTFIN` (correct NSE symbol `MUTHOOTFIN`)
+  are both registered as "Muthoot Finance" and both got tagged into the
+  index — worth deduping the company record, not something a schedule
+  fixes) and planned for Nifty 500. Re-running per company is idempotent
   (already-downloaded files skipped, already-ingested observations not
   reprocessed).
 - **USA**: gap. `sources/yfinance_financials.py` is annual-only by its own
@@ -85,7 +91,7 @@ scheduling policy and gap analysis only.
   `process_all_pending_documents`) is strictly button-driven from the
   Admin Ingest queue's Documents tab — nothing scans or fires on a
   schedule. What "processing" does today is real, though: the Knowledge
-  Builder extraction step (Step 2A, `research/knowledge_builder.py`) makes
+  Builder extraction step (`research/knowledge_builder.py`) makes
   one LLM call per document, extracting structured entities/claims/
   relationships validated against `config/knowledge_ontology.py` — not just
   a `file_hash` refresh. It's capped at a document's first ~40,000

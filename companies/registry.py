@@ -12,7 +12,7 @@ from storage import company_repository as repo
 from storage.database import utcnow_iso
 from storage.db_types import DBConnection, Row
 
-# The two POC companies named in the README's Implementation Sequence step 2.
+# The two seed companies named in the README's Implementation Sequence step 2.
 # Convenience seed data only — register_company() works for any company.
 SEED_COMPANIES: list[dict[str, str]] = [
     {
@@ -161,5 +161,5 @@ def list_companies(conn: DBConnection, *, include_archived: bool = False) -> lis
 
 
 def seed_companies(conn: DBConnection) -> list[str]:
-    """Register the POC seed companies (HDFCBANK, ICICIBANK). Returns their company_ids."""
+    """Register the seed companies (HDFCBANK, ICICIBANK). Returns their company_ids."""
     return [register_company(conn, **company) for company in SEED_COMPANIES]

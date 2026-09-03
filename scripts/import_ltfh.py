@@ -32,6 +32,7 @@ Not filed, and why:
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -42,7 +43,7 @@ from companies.registry import get_company
 from storage.database import init_db
 from storage.repositories import save_company_document
 
-ARCHIVE_ROOT = Path("/Users/radhamurugesan/work/AnnualReports/Finance/L&TFinance Holding")
+ARCHIVE_ROOT = Path(os.environ.get("EQUITY_RESEARCH_ARCHIVE_ROOT", Path.home() / "work" / "AnnualReports")) / "Finance" / "L&TFinance Holding"
 COMPANY_ID = "LTF"
 
 

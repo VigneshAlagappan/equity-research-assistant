@@ -93,7 +93,7 @@ def cmd_status(_args: argparse.Namespace) -> None:
 
 
 def cmd_seed_companies(_args: argparse.Namespace) -> None:
-    """Register the POC seed companies (HDFCBANK, ICICIBANK)."""
+    """Register the seed companies (HDFCBANK, ICICIBANK)."""
     setup_logging()
     conn = init_db()
     company_ids = seed_companies(conn)
@@ -499,7 +499,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="main.py",
-        description="Global Equity Research Assistant (POC) CLI — US + India focus",
+        description="Global Equity Research Assistant CLI — US + India focus",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -514,7 +514,7 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.set_defaults(func=cmd_status)
 
     seed_companies_parser = subparsers.add_parser(
-        "seed-companies", help="Register the POC seed companies (HDFCBANK, ICICIBANK)"
+        "seed-companies", help="Register the seed companies (HDFCBANK, ICICIBANK)"
     )
     seed_companies_parser.set_defaults(func=cmd_seed_companies)
 

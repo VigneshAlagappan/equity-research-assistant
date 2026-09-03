@@ -160,11 +160,14 @@ AAPL, AMZN, BRKB, GOOGL, LYFT, META, MSFT, NFLX, NVDA, SBUX, UBER, WMT
 - **Price history**: mechanically ready (`sources/yfinance_prices.py` is
   ticker-agnostic) once `scripts/fetch_daily_prices.py`'s NSE-500-specific
   universe query is generalized or a US-scoped sibling script is written —
-  see "Other Planned Scheduled Jobs" above. No NSE XBRL involved here at
-  all (US companies aren't NSE-listed) — this is a yfinance-only job.
+  see [`SCHEDULED_JOBS.md`'s "3. Historical price data — weekly (India +
+  USA)"](SCHEDULED_JOBS.md#3-historical-price-data--weekly-india--usa). No
+  NSE XBRL involved here at all (US companies aren't NSE-listed) — this is a
+  yfinance-only job.
 - **Quarterly financials**: blocked on the same fiscal-quarter-mapping gap
-  already documented above (`sources/yfinance_financials.py` is annual-only
-  today). Batching these 12 tickers doesn't change that — the gap is a
-  mapping-logic problem per company, not a matter of running more tickers
-  through the existing pilot.
+  documented in [`SCHEDULED_JOBS.md`'s "1. Financials — quarterly (India +
+  USA)"](SCHEDULED_JOBS.md#1-financials--quarterly-india--usa)
+  (`sources/yfinance_financials.py` is annual-only today). Batching these 12
+  tickers doesn't change that — the gap is a mapping-logic problem per
+  company, not a matter of running more tickers through the existing pilot.
 

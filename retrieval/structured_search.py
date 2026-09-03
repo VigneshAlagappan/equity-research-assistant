@@ -140,8 +140,8 @@ def get_comparison_evidence(
     conn: DBConnection, company_ids: list[str], statement_type: str | None = "consolidated"
 ) -> list[Evidence]:
     """Evidence for multiple companies, concatenated — for peer-comparison
-    questions (README: POC Success Criteria, Question 2). A company with
-    nothing ingested simply contributes no evidence, rather than erroring."""
+    questions. A company with nothing ingested simply contributes no evidence,
+    rather than erroring."""
     evidence: list[Evidence] = []
     for company_id in company_ids:
         evidence.extend(get_company_evidence(conn, company_id, statement_type))
