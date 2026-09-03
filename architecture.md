@@ -27,7 +27,7 @@ answering a different question and never doing another layer's job:
   text, not two different truths** — `document_chunks`/`documents` (SQLite)
   hold the authoritative textual evidence (annual reports, transcripts,
   investor presentations, regulatory filings, macro/research reports —
-  anything eligible under [Document Retrieval](#document-retrieval-retrievaldocument_searchpy-step-2d));
+  anything eligible under [Document Retrieval](#document-retrieval-retrievaldocument_searchpy));
   `document_chunks_fts` (FTS5/BM25) is the exact/lexical retrieval index over
   it, and the `VectorStore` (`retrieval/vector_store.py`, Qdrant by default)
   is the semantic retrieval index over it — see

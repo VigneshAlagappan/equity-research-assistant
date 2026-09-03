@@ -639,11 +639,14 @@ status list. Check there (plus `git log`/`git status`) for current state.
 
 Two calls made while drafting this architecture, both since settled:
 
-- **Embeddings sequencing** — decided: FTS5 keyword search first, no vector
-  embeddings. This shipped as `retrieval/document_search.py` (real, page-scoped
-  chunking + FTS5) — still keyword-only today, no semantic/embedding layer added
-  since. See [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy)
-  for the current implementation and why FTS5 was kept over embeddings.
+- **Embeddings sequencing** — decided: FTS5 keyword search first, vector
+  embeddings later once the keyword-only path proved out. This shipped as
+  `retrieval/document_search.py` (real, page-scoped chunking + FTS5), and the
+  semantic layer has since followed: `retrieval/hybrid_search.py` combines
+  FTS5 with Qdrant-backed vector search (RRF-fused), wired into both Q&A and
+  the Investigation Planner. See [architecture.md's Hybrid Document
+  Retrieval](architecture.md#hybrid-document-retrieval-retrievalhybrid_searchpy)
+  for the current implementation.
 - **NSE/BSE trust-rank tie** — decided: both sit at the same priority tier (both are
   official exchange filings). Matching values → BSE recorded as a confirming
   cross-check. Differing values → both kept, conflict surfaced, no auto-resolution.
