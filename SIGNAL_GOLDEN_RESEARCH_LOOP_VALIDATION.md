@@ -1,7 +1,7 @@
 # Signals — Golden Research Loop Validation
 
 **This is a permanent, re-runnable benchmark.** It records whether Signals' existing
-hypothesis-driven investigation architecture (Steps 2E–2H) can execute five real research
+hypothesis-driven investigation architecture can execute five real research
 questions end-to-end through the product's own investigation mechanism. Future runs should
 update or version this file rather than replacing it, so improvements can be compared over
 time.
@@ -22,7 +22,7 @@ time.
 | LLM | live Anthropic API, `claude-sonnet-5` at the `deep` tier for generation/evaluation/synthesis, `claude-haiku-4-5` for macro series selection. Real API calls; nothing simulated. |
 | Graph backend | `GRAPH_BACKEND=sqlite` (the documented default). See §6.5 for why the optional Neo4j backend was not used. |
 | Execution path | `research.investigation.run_investigation(...)` — the identical function `POST /investigate/generate` calls, writing to the identical tables the UI reads. The route is a thin wrapper (auth/validation + `jsonify`); no orchestration logic lives in it. |
-| Test suite after changes | **729 passed, 9 failed** — the same 9 pre-existing, unrelated failures as the baseline (3 × `test_assistant.py` model-tier routing, 1 × `test_llm_router.py`, 5 × `test_web.py` HTML-content assertions). Baseline was 695 passed / 9 failed; the +34 are this validation's new tests. |
+| Test suite after changes | **729 passed, 9 failed** as of this validation run — the same 9 pre-existing, unrelated failures as the baseline (3 × `test_assistant.py` model-tier routing, 1 × `test_llm_router.py`, 5 × `test_web.py` HTML-content assertions). Baseline was 695 passed / 9 failed; the +34 are this validation's new tests. *(Since fixed — as of 2026-09-02's later architecture.md accuracy pass, the full suite is 738 passed / 0 failed. This row is a frozen snapshot of this run, not a claim about the suite's current state — see architecture.md's Testing/CI section for the current number.)* |
 
 ### Prerequisite checks performed before any run
 
@@ -410,8 +410,8 @@ triggered rule, so an investigation re-derived from raw series what a frozen, ve
 already established — and could not cite the rule.
 
 Fixed generically via a new `IndicatorEvidenceCapability` on `PlannerCapabilities`
-(`research/indicator_evidence.py`), consumed in **both** Step 2E (as hypothesis-generation context)
-and Step 2F (as per-hypothesis `CALCULATION` evidence carrying `rule_id`, `rule_version`,
+(`research/indicator_evidence.py`), consumed in **both** hypothesis generation (as context)
+and evidence gathering (as per-hypothesis `CALCULATION` evidence carrying `rule_id`, `rule_version`,
 classification, severity, threshold summary and the rule's own provenance). It runs with
 `persist=False` and `user_id=None`: an investigation must not append to the user-facing
 `indicator_evaluations` audit trail as a side effect of reading it, and a conclusion must not
@@ -462,7 +462,7 @@ capability", and the spec asks for charts only "where they materially help".
 
 **Category: investigation persistence/UI.** `investigations.company_ids` was a JSON blob, and the
 company page had a "Threads" section listing single-narrative Signals reports but **no
-Investigations section at all** — a structured 2E–2H investigation was reachable only from the
+Investigations section at all** — a structured hypothesis-driven investigation was reachable only from the
 global feed or its direct URL. Answering "which investigations touch this company?" would have
 needed a full-table `LIKE` scan that also matches substrings (`HDFCBANK` inside `HDFCBANKX`).
 Fixed with a real many-to-many join table (§7.1). This is what makes golden investigations #4 and

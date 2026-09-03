@@ -57,6 +57,7 @@ Not filed, and why:
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -68,7 +69,7 @@ from ingestion.pipeline import ingest_file
 from storage.database import init_db
 from storage.repositories import save_company_document
 
-ARCHIVE_ROOT = Path("/Users/radhamurugesan/work/AnnualReports")
+ARCHIVE_ROOT = Path(os.environ.get("EQUITY_RESEARCH_ARCHIVE_ROOT", Path.home() / "work" / "AnnualReports"))
 
 XLSX_PLAN: dict[str, list[str]] = {
     "CRISIL": [

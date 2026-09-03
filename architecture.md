@@ -29,16 +29,18 @@ answering a different question and never doing another layer's job:
   and asked to interpret/narrate it, never to fetch or calculate a number
   itself (see [Key design principles](#key-design-principles) #1 and #3).
 - **The Planner decides what to investigate next** — `research/investigation.py`
-  (Steps 2E-2H: `research/hypothesis_generator.py`, `research/investigation_planner.py`,
-  `research/hypothesis_evaluator.py`, `research/research_synthesis.py`),
+  (the hypothesis-driven investigation pipeline: `research/hypothesis_generator.py`
+  generates hypotheses, `research/investigation_planner.py` gathers evidence per
+  hypothesis, `research/hypothesis_evaluator.py` evaluates each one, and
+  `research/research_synthesis.py` ranks and synthesizes the findings),
   reachable from the Research tab's "Run structured investigation" button
   (`/investigate/generate`, `/investigate/<id>`). For a question, it generates
-  several competing hypotheses (2E), then per hypothesis runs an
-  Orchestrator-controlled evidence-sufficiency loop (2F/2G) — an
+  several competing hypotheses, then per hypothesis runs an
+  Orchestrator-controlled evidence-sufficiency loop — an
   `INSUFFICIENT_EVIDENCE` verdict triggers one more gap-targeted retrieval
   pass and re-evaluation, bounded by 4 termination controls (evidence
   sufficiency, `MAX_EVIDENCE_ITERATIONS`, a wall-clock deadline, and a
-  no-new-evidence check) — before ranking and synthesizing (2H). See
+  no-new-evidence check) — before ranking and synthesizing the findings. See
   [Golden Research Loop validation](#golden-research-loop-validation) for
   what this closed (cross-company association, point-in-time `as_of`
   scoping, indicator evidence) and [Known gaps](#ingestion-coordinator-knowledge-builder-research-knowledge-graph--document-retrieval)
@@ -74,7 +76,7 @@ module/table/table-group already described elsewhere in this file; nothing
 here is aspirational. The more detailed pipeline diagrams further down (data
 ingestion, the Ingestion Coordinator, Document Retrieval, the Configurable
 Indicator Framework, evidence retrieval → LLM routing, the Golden Research
-Loop's 2E-2H investigation flow) each zoom into one box below.
+Loop's hypothesis-driven investigation flow) each zoom into one box below.
 
 ```
                            ┌──────────────────────────────────────────────────────────────┐
@@ -135,15 +137,15 @@ elsewhere in this document, not simplified away here):
 - **`indicators/`** sits in the Deterministic layer because it is, by
   design, pure rule evaluation with zero LLM calls — see [Configurable
   Indicator Framework](#configurable-indicator-framework-indicators).
-- **`research/investigation.py`** (the 2E-2H hypothesis-driven pipeline) is
-  the one module that spans both layers in practice: it's LLM-orchestrated
-  (Research/AI layer) but, per [Golden Research Loop
+- **`research/investigation.py`** (the hypothesis-driven investigation
+  pipeline) is the one module that spans both layers in practice: it's
+  LLM-orchestrated (Research/AI layer) but, per [Golden Research Loop
   validation](#golden-research-loop-validation), now also reads
   `indicators/`'s deterministic output as evidence — shown here under
   `research/` since the orchestration and every LLM call live there.
 - **The Knowledge Graph** is drawn once, fed from SQLite — in reality both
   `context/graph.py` (sector-peer traversal) and `context/knowledge_graph.py`
-  (Step 2B, cross-entity claim traversal) maintain it, and both are called
+  (cross-entity claim traversal) maintain it, and both are called
   from the Research/AI layer, not from storage directly; the arrow from
   `data/equity_research.db` represents "projected from," not a literal
   runtime call path.
@@ -171,12 +173,12 @@ to reason over it, never to fetch or calculate numbers itself.
 | `financials/` | Deterministic math over `canonical_financials`: YoY/CAGR (`calculations.py`), ROA/ROE/vendor-reported ratios (`ratios.py`), and the human-readable text report (`report.py`) both the CLI's `analyze` command and the LLM evidence retrieval are built from. |
 | `analytics/` | Cross-company pattern scans for the Tools tab (`patterns.py` — e.g. `detect_yoy_spikes()`, the same "significant YoY move" definition the Configurable Indicator Framework's `financial_trajectory` rule family reuses). No per-user configuration, no LLM call — a scan, not a rule engine. |
 | `indicators/` | The **Configurable Indicator Framework** — deterministic, rule-based factual patterns over existing facts (never an LLM-generated insight). `framework.py` (`IndicatorRule`/`RULE_REGISTRY`/`TriggeredIndicator` shapes), `rules.py` (the seeded `shareholding` and `financial_trajectory` rule families), `config.py` (pure Global→Sector→Company override resolution), `evaluation.py` (`evaluate_company_indicators()`, the engine), `settings.py` (the Settings page's read/write model). See [Configurable Indicator Framework](#configurable-indicator-framework-indicators) below. |
-| `retrieval/` | `structured_search.py` — turns `financials/`'s calculations into typed `Evidence` for the LLM. `document_search.py` (Step 2D) — FTS5 keyword search over `research/document_chunker.py`'s indexed chunks, returning typed `DocumentPassage` results. Retrieval only, no LLM calls, in both. |
-| `research/` | Four LLM call sites: `assistant.py` (Q&A), `insights.py` (Key Insights summaries), `signals_report.py` (full Signals investigation reports), and `knowledge_builder.py` (structured knowledge extraction from a document — its own section below) — plus `evidence.py` (the `Evidence`/citation model), `documents.py` (extracts `MANAGEMENT_STATEMENT` evidence from uploaded/linked Docs-tab PDFs, and exposes `document_text()`/`document_pages()`, shared with `knowledge_builder.py`/`document_chunker.py`), `document_chunker.py` (Step 2D — no LLM call, purely mechanical page-scoped chunking + FTS5 indexing), and `macro_evidence.py` (the third evidence source — macro/regulatory data spanning both India and US sources, attributed per-series to `"INDIA"` or `"USA"`; a narrow, deliberate exception to "retrieval never calls the LLM," since an LLM call picks which macro series/date-range apply before the deterministic fetch runs). |
-| `context/` | The **Context Optimizer** — `optimizer.py` (dedup, value-scoring, token-budget compression of an `Evidence` list), `reuse.py` (reuse-before-recompute: returns a fresh, near-duplicate prior investigation instead of a new LLM call — now used by both `research/assistant.py`'s Q&A path and `research/signals_report.py`'s full reports), `graph.py`/`graph_neo4j.py` (sector-peer knowledge-graph traversal: surfaces a *different* company's relevant prior investigation, via `config/knowledge_graph_seed.py`'s curated domain relationships), and `knowledge_graph.py` (Step 2B's Research Knowledge Graph — a distinct, cross-*entity* traversal over the Knowledge Builder's `knowledge_claims`/`knowledge_relationships`, its own section below). Both graphs are pure Python/SQLite by default, or the same real Neo4j instance when `GRAPH_BACKEND=neo4j` (sharing `Company` nodes between the two), with automatic fallback to SQLite if Neo4j isn't reachable. |
+| `retrieval/` | `structured_search.py` — turns `financials/`'s calculations into typed `Evidence` for the LLM. `document_search.py` — FTS5 keyword search over `research/document_chunker.py`'s indexed chunks, returning typed `DocumentPassage` results. Retrieval only, no LLM calls, in both. |
+| `research/` | Four LLM call sites: `assistant.py` (Q&A), `insights.py` (Key Insights summaries), `signals_report.py` (full Signals investigation reports), and `knowledge_builder.py` (structured knowledge extraction from a document — its own section below) — plus `evidence.py` (the `Evidence`/citation model), `documents.py` (extracts `MANAGEMENT_STATEMENT` evidence from uploaded/linked Docs-tab PDFs, and exposes `document_text()`/`document_pages()`, shared with `knowledge_builder.py`/`document_chunker.py`), `document_chunker.py` (no LLM call, purely mechanical page-scoped chunking + FTS5 indexing), and `macro_evidence.py` (the third evidence source — macro/regulatory data spanning both India and US sources, attributed per-series to `"INDIA"` or `"USA"`; a narrow, deliberate exception to "retrieval never calls the LLM," since an LLM call picks which macro series/date-range apply before the deterministic fetch runs). |
+| `context/` | The **Context Optimizer** — `optimizer.py` (dedup, value-scoring, token-budget compression of an `Evidence` list), `reuse.py` (reuse-before-recompute: returns a fresh, near-duplicate prior investigation instead of a new LLM call — now used by both `research/assistant.py`'s Q&A path and `research/signals_report.py`'s full reports), `graph.py`/`graph_neo4j.py` (sector-peer knowledge-graph traversal: surfaces a *different* company's relevant prior investigation, via `config/knowledge_graph_seed.py`'s curated domain relationships), and `knowledge_graph.py` (the Research Knowledge Graph — a distinct, cross-*entity* traversal over the Knowledge Builder's `knowledge_claims`/`knowledge_relationships`, its own section below). Both graphs are pure Python/SQLite by default, or the same real Neo4j instance when `GRAPH_BACKEND=neo4j` (sharing `Company` nodes between the two), with automatic fallback to SQLite if Neo4j isn't reachable. |
 | `llm/` | The **Model Router + Fallback layer** — `hardness.py` (task-complexity classifier), `router.py` (fallback chain across models/providers), `capability_registry.py` (static model metadata; which models are policy-disabled is read from `config/settings.py`'s `DISABLED_MODELS`), `providers/` (Anthropic + local Ollama), `observability.py` (per-call logging/cost tracking). The tier→model policy itself (`TIER_PREFERRED_MODEL`, `TIER_MIN_REASONING_STRENGTH`, `DISABLED_MODELS`) lives in `config/settings.py`, not scattered across these modules — edit that one file to change routing. |
 | `charts/` | matplotlib chart generation for legacy server-rendered PNGs (`financial_charts.py`). |
-| `config/` | `settings.py` (paths, source trust order, LLM/model-tiering policy, repo-relative path helpers), `knowledge_graph_seed.py` (curated sector-peer causal edges — `context/graph.py`'s vocabulary), `knowledge_ontology.py` (Step 2C — the fixed `ENTITY_TYPES`/`RELATIONSHIP_TYPES`/`CLAIM_TYPES` vocabulary `research/knowledge_builder.py`'s extraction validates against, kept distinct from `STRUCTURAL_NODE_TYPES` — Claim/Evidence/Document/TimePeriod, never something the model extracts by name — plus `CANONICAL_HOME`, an explicit map of which subsystem owns each concept's real value). |
+| `config/` | `settings.py` (paths, source trust order, LLM/model-tiering policy, repo-relative path helpers), `knowledge_graph_seed.py` (curated sector-peer causal edges — `context/graph.py`'s vocabulary), `knowledge_ontology.py` (the fixed `ENTITY_TYPES`/`RELATIONSHIP_TYPES`/`CLAIM_TYPES` vocabulary `research/knowledge_builder.py`'s extraction validates against, kept distinct from `STRUCTURAL_NODE_TYPES` — Claim/Evidence/Document/TimePeriod, never something the model extracts by name — plus `CANONICAL_HOME`, an explicit map of which subsystem owns each concept's real value). |
 | `storage/` | `database.py` (connection + schema init/migrations), `repositories.py` (general-purpose SQL — reference data, financials, documents, Knowledge Builder, generated reports, LLM observability, the event store), `db_types.py` (`DBConnection`/`Row` — the backend-agnostic types every other module now type-hints against), `fact_store.py` (`FactStore` — the DI seam `research/`/`context/`/`indicators/` call through instead of importing `repositories.py` directly), `company_repository.py` (companies/stock-actions SQL), `indicator_repository.py` (indicator config + audit-trail SQL), `investigation_repository.py` (the `investigation_companies` join table). Together with `price_database.py`/`price_repository.py`/`price_store.py` below, the only place in the codebase that knows SQLite exists — see [Storage layer and database portability](#storage-layer-and-database-portability-storagedb_typespy) below. |
 | `storage/price_database.py`, `price_repository.py`, `price_store.py` | A second, parallel storage stack for daily OHLCV price history (`daily_prices`, `schemas/price_schema.sql`), deliberately kept in its own file (`data/price_history.db`, `config/settings.py`'s `PRICE_DB_PATH`) rather than `equity_research.db` — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below. |
 | `schemas/` | `sqlite_schema.sql` — the main DDL (46 tables). `price_schema.sql` — the separate `daily_prices` price-history DDL (its own db file, not part of the 46). |
@@ -397,7 +399,7 @@ ingestion/coordinator.py         ┴──▶  event_bus.publish(DatasetIngested
   log, `scripts/batch_fetch_nse.py` and similar — logged via
   `ingestion/batch_log.py`, not itself a worker/event-bus concept).
 
-### Research Knowledge Graph (`context/knowledge_graph.py`, Step 2B)
+### Research Knowledge Graph (`context/knowledge_graph.py`)
 
 Answers a cross-entity, cross-*company* question plain per-company SQL
 doesn't do well: "which claims, from ANY company, are connected to this
@@ -432,7 +434,7 @@ with automatic fallback to SQLite if unreachable.
   Claim` (a `speaker` string like "CEO" is stored on the `Claim` node
   itself, not resolved to a specific `ManagementPerson` entity node).
 
-### Document Retrieval (`retrieval/document_search.py`, Step 2D)
+### Document Retrieval (`retrieval/document_search.py`)
 
 Answers a different question from the Knowledge Builder/Research Knowledge
 Graph above: not "what structured claim did this document make" but "where
@@ -478,8 +480,8 @@ retrieval/document_search.py::search_documents()  — FTS5 MATCH, ranked by
   nothing; sanitizing keeps every token literal while still ANDing across
   them (FTS5's default multi-term behavior).
 - **Chunking runs as part of "processing" a document** (Ingest queue →
-  `ingestion/coordinator.py::process_documents()`, alongside Step 2A's
-  extraction) — best-effort: a chunking failure is logged but never undoes
+  `ingestion/coordinator.py::process_documents()`, alongside the Knowledge
+  Builder's extraction) — best-effort: a chunking failure is logged but never undoes
   an already-successful knowledge extraction, same graceful-degradation
   spirit as the Neo4j/Ollama fallbacks elsewhere. Re-processing a document
   *replaces* its chunks rather than accumulating duplicates — unlike
@@ -488,7 +490,7 @@ retrieval/document_search.py::search_documents()  — FTS5 MATCH, ranked by
   to keep a stale chunk set around.
 - **Deliberately not wired into Q&A or Signals reports** — same
   "don't replace structured SQL retrieval, and don't attempt later phases
-  prematurely" restraint as Step 2B's graph: a standalone retrieval
+  prematurely" restraint as the Research Knowledge Graph above: a standalone retrieval
   capability today, not (yet) a fourth evidence source alongside
   Financials/Docs/Macro in `research/assistant.py`'s `SYSTEM_PROMPT`.
 
@@ -699,7 +701,7 @@ and observability logging regardless of whether they're pinned or auto-routed.
 
 [`SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md`](SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md)
 (repo root) is the benchmark document for this: a validation exercise that
-ran the Steps 2E-2H pipeline above end-to-end against five real research
+ran the hypothesis-driven investigation pipeline above end-to-end against five real research
 questions, on the live database and a live Anthropic API — a re-runnable
 score meant to be compared against after future changes, not a one-off
 spot-check. Score: **8/10** — 4 of 5 investigations passed outright, 1
@@ -750,10 +752,10 @@ one-off patches for the five test questions:
    company's currently-triggered indicators (via `indicators/evaluation.py`,
    read-only — `persist=False`, since an investigation reading a company's
    indicators must never write to the same audit trail a company-page view
-   writes to) are now available both as hypothesis-generation context (Step
-   2E, alongside a company's sector and known knowledge-graph entities) and
-   as per-hypothesis CALCULATION evidence (Step 2F, citing the rule id,
-   version, and provenance so the line is reproducible) — closing the loop
+   writes to) are now available both as hypothesis-generation context
+   (alongside a company's sector and known knowledge-graph entities) and
+   as per-hypothesis CALCULATION evidence during evidence gathering (citing
+   the rule id, version, and provenance so the line is reproducible) — closing the loop
    the indicator framework's own spec described ("indicators may later
    become inputs to Signals' hypothesis/investigation workflow") but
    explicitly left unbuilt when that framework shipped. Disabled entirely
@@ -807,8 +809,9 @@ Single-file Flask app (`create_app()` factory), organized by feature area:
   `charts_feed.py`, `docs_feed.py`) and render client-side. Indicators
   (`indicators/*.py`, see [Configurable Indicator
   Framework](#configurable-indicator-framework-indicators)) and
-  Investigations (Steps 2E-2H, see [Golden Research Loop
-  validation](#golden-research-loop-validation)) are the two newest tabs.
+  Investigations (the hypothesis-driven investigation pipeline, see [Golden
+  Research Loop validation](#golden-research-loop-validation)) are the two
+  newest tabs.
 - **Research** (`/`, `/research/ask`, `/research/thread/generate`,
   `/research/thread/<id>`): the Ask-AI and Signals-investigation entry
   points, calling `research/assistant.py` / `research/signals_report.py`.
@@ -931,7 +934,7 @@ endpoints and render/update the DOM directly.
 | `index.html` / `research.html` | Home page — the Research/Ask-AI entry point (`/`). |
 | `company.html` | The multi-tab company page (Overview, Financials, Valuation, Charts, Docs, Notes, Threads). |
 | `research_thread.html` | A single generated Signals report/thread view. |
-| `investigations.html` | List of all generated reports (Steps 2E-2H). |
+| `investigations.html` | List of all generated reports (the hypothesis-driven investigation pipeline). |
 | `investigation.html` | A single investigation's detail view (`/investigate/<id>`) — distinct from `investigations.html`'s list. |
 | `watchlist.html` | Pinned companies/threads. |
 | `chat.html` | Freeform chat entry point (`/chat`). |
@@ -980,10 +983,10 @@ data feeds — noted in each file's header comment.
 - **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — 158,759 rows (IITM 116,187 + RBI 42,572); MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet), `bank_infrastructure_observations` (RBI's monthly bank×metric ATM/NEFT/RTGS bulletins — a separate shape from `macro_observations`' flat series). Daily OHLCV price/volume history lives separately, in its own db file — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below.
 - **Ingestion tracking**: `ingestion_queue_items` — the Admin → Ingest panel's discovery/status tracking for financial/macro files under `data/raw/` (content-hash keyed); orchestration metadata only, never the source of truth for parsed data itself.
 - **Event bus & batch audit**: `dataset_events`, `worker_processing_log`, `batch_job_runs`, `batch_job_items` — the Event Store, per-worker processing log, and bulk-script audit trail behind ingestion's event-driven layer; see [Dataset-centric ingestion: the event bus](#dataset-centric-ingestion-the-event-bus-ingestionevent_buspy) for the full shape of each.
-- **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` + `document_chunks_fts` (Step 2D — page-scoped chunks, FTS5-indexed by `research/document_chunker.py`; `embedding` stays `NULL` on every row, keyword search only, no vector layer — see [Document Retrieval](#document-retrieval-retrievaldocument_searchpy-step-2d)).
+- **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` + `document_chunks_fts` (page-scoped chunks, FTS5-indexed by `research/document_chunker.py`; `embedding` stays `NULL` on every row, keyword search only, no vector layer — see [Document Retrieval](#document-retrieval-retrievaldocument_searchpy)).
 - **Shareholding Pattern**: `shareholding_observations` (one row per company/fiscal_year/quarter — promoter/public/employee-trust holding percentages, plus an FII/DII/Government/public-non-institutional breakdown read off the SHP XBRL's own category-rollup contexts rather than hand-aggregated), `shareholding_holders` (one row per named holder within a category — `side` promoter/public, `category`, `holder_name`, `num_shares`/`percent_of_shares`, sourced from NSE filings). Backs the company page's Shareholding Pattern tab, rendered by `web/static/js/shareholding_panel.js` against `web/shareholding_feed.py`'s `/companies/<id>/shareholding-feed.json` — not otherwise described elsewhere in this doc.
-- **Knowledge Builder**: `knowledge_entities` (deduped named things — Company/Product/Risk/ManagementPerson/...), `knowledge_claims` (one extracted statement per row, with its own provenance — document, fiscal period, speaker, `claim_type`, confidence — additive, never overwritten), `knowledge_relationships` (typed edges between two entities, optionally traced to the claim that asserted them), `knowledge_evidence` (the supporting quote for one claim). SQLite is the source of truth for all four; `context/knowledge_graph.py`/`context/graph_neo4j.py` (Step 2B) project them into the same Neo4j graph the sector-peer traversal uses, sharing `Company` nodes rather than duplicating them — see [Research Knowledge Graph](#research-knowledge-graph-contextknowledge_graphpy-step-2b).
-- **Research/investigations**: `generated_reports` (persisted Signals reports), `research_thread_evidence`, `research_thread_followups`, `company_insights` (Key Insights history, per-company); `system_insights` (the site-level counterpart — one row per cross-company insight, `company_ids` a JSON array, `source_claim_ids` tracing provenance back into `knowledge_claims`, `status` new/retained/archived — generated from the [`/tools` Insights panel](#web-layer-webapppy), not a single company page); Steps 2E-2H's `investigations` (one row per structured investigation, including `as_of` — the point-in-time cutoff it ran under, if any — see [Golden Research Loop validation](#golden-research-loop-validation)), `investigation_hypotheses`, `investigation_hypothesis_evidence`; and `investigation_companies` — the investigation↔company join table a company page's Investigations section queries through (`storage/investigation_repository.py`), so a cross-company investigation is one row, listed under every company it covers, never duplicated.
+- **Knowledge Builder**: `knowledge_entities` (deduped named things — Company/Product/Risk/ManagementPerson/...), `knowledge_claims` (one extracted statement per row, with its own provenance — document, fiscal period, speaker, `claim_type`, confidence — additive, never overwritten), `knowledge_relationships` (typed edges between two entities, optionally traced to the claim that asserted them), `knowledge_evidence` (the supporting quote for one claim). SQLite is the source of truth for all four; `context/knowledge_graph.py`/`context/graph_neo4j.py` project them into the same Neo4j graph the sector-peer traversal uses, sharing `Company` nodes rather than duplicating them — see [Research Knowledge Graph](#research-knowledge-graph-contextknowledge_graphpy).
+- **Research/investigations**: `generated_reports` (persisted Signals reports), `research_thread_evidence`, `research_thread_followups`, `company_insights` (Key Insights history, per-company); `system_insights` (the site-level counterpart — one row per cross-company insight, `company_ids` a JSON array, `source_claim_ids` tracing provenance back into `knowledge_claims`, `status` new/retained/archived — generated from the [`/tools` Insights panel](#web-layer-webapppy), not a single company page); The hypothesis-driven investigation pipeline's `investigations` (one row per structured investigation, including `as_of` — the point-in-time cutoff it ran under, if any — see [Golden Research Loop validation](#golden-research-loop-validation)), `investigation_hypotheses`, `investigation_hypothesis_evidence`; and `investigation_companies` — the investigation↔company join table a company page's Investigations section queries through (`storage/investigation_repository.py`), so a cross-company investigation is one row, listed under every company it covers, never duplicated.
 - **Configurable Indicator Framework**: `indicator_rule_config` (per-user Global/Sector/Company overrides, keyed `(user_id, rule_id, scope_type, scope_value)`, a NULL field meaning "inherit"), `indicator_evaluations` (append-only audit trail of triggered indicators, deduped by `result_hash`). The rules themselves are Python (`indicators/rules.py`), not rows — see [Configurable Indicator Framework](#configurable-indicator-framework-indicators) above.
 - **LLM observability**: `llm_call_log` — one row per `llm/router.py` call or `context/reuse.py` reuse hit (model/provider, fallback, tokens, cost, context-optimization accounting) — covers all four LLM call sites, including `research/knowledge_builder.py` (`task_name="knowledge_extraction"`).
 - **User content**: `company_notes`, `company_note_attachments`, `watchlist_items`.
@@ -1049,11 +1052,11 @@ pre-existing test failure.
 ### Documents / Docs tab
 
 - **Q&A still doesn't use chunking/full-text search** — `document_chunks`/
-  `document_chunks_fts` are populated now (`research/document_chunker.py`,
-  Step 2D), but `research/documents.py::get_document_evidence()` (the Q&A
+  `document_chunks_fts` are populated now (`research/document_chunker.py`),
+  but `research/documents.py::get_document_evidence()` (the Q&A
   evidence path) still extracts a document's full text straight into the
   prompt on every call, not a retrieved/ranked subset of chunks. Distinct
-  from the Knowledge Builder (`research/knowledge_builder.py`, Step 2A),
+  from the Knowledge Builder (`research/knowledge_builder.py`),
   too — that extracts *structured claims* once, persisted to
   `knowledge_claims`, not a general-purpose searchable index of the raw
   text; chunking, claim extraction, and the Q&A evidence path are three
@@ -1072,7 +1075,7 @@ pre-existing test failure.
   document's text is capped at `MAX_CHARS_FOR_EXTRACTION` (40,000
   characters) before `research/knowledge_builder.py` sends it to the model;
   a longer annual report gets its first ~40K characters extracted, not the
-  whole thing. `research/document_chunker.py` (Step 2D) *does* chunk the
+  whole thing. `research/document_chunker.py` *does* chunk the
   full document for search — the two gaps are different: extraction is
   still single-pass and length-capped, search indexes everything.
 - **Entity resolution is name-string matching, not identity resolution** — a
@@ -1095,14 +1098,15 @@ pre-existing test failure.
   built; `find_claims_about_entity()` returns one entity's directly-connected
   claims and their immediate neighbors, not a chain across several hops.
   Genuinely graph-shaped multi-hop traversal is future work, not attempted
-  here — `research/investigation_planner.py` (Step 2F) queries the graph the
+  here — `research/investigation_planner.py` queries the graph the
   same single-hop way everything else does.
 - **Not wired into Q&A or Signals reports yet** — `research/assistant.py`/
   `signals_report.py` don't query the Research Knowledge Graph at all; a
   question can't yet be answered from a cross-company claim connection the
   way it can from `canonical_financials` or a sector-peer investigation.
-  Building that integration point is a later step, not attempted in 2B.
-- **Investigation Orchestrator (`research/investigation.py`, Steps 2E-2H) has
+  Building that integration point is a later step, not attempted when the
+  Research Knowledge Graph itself shipped.
+- **Investigation Orchestrator (`research/investigation.py`) has
   the iterative evidence-sufficiency loop the guardrails call for, but it's
   narrower than a full Planner-controlled loop** — an `INSUFFICIENT_EVIDENCE`
   verdict does trigger one gap-targeted retry (bounded by 4 termination

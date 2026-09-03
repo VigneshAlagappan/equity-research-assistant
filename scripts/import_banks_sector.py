@@ -42,6 +42,7 @@ document rows — this is a one-shot script, not a sync job.
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -53,7 +54,7 @@ from ingestion.pipeline import ingest_file
 from storage.database import init_db
 from storage.repositories import save_company_document
 
-ARCHIVE_ROOT = Path("/Users/radhamurugesan/work/AnnualReports/Banks")
+ARCHIVE_ROOT = Path(os.environ.get("EQUITY_RESEARCH_ARCHIVE_ROOT", Path.home() / "work" / "AnnualReports")) / "Banks"
 
 # ------------------------------------------------------------------
 # 1. Proprietary xlsx workbooks -> data/raw/<company_id>/proprietary/

@@ -113,6 +113,15 @@ chatbot that only looks numbers up.
 
 ## High-Level Architecture
 
+**This is the *original* proposed pipeline, kept as-is for historical context — not
+current state.** The system has since grown well past this single linear flow (a
+Flask web app alongside the CLI, a knowledge graph, a real Planner/Orchestrator with
+an iterative evidence-sufficiency loop, a Model Router/Fallback layer, an event bus,
+price history, and more) — so read "No multi-agent framework, no orchestrator/planner
+agents" below as *this proposal's original scope*, not a claim about what's built
+today. See [architecture.md's High-level architecture](architecture.md#high-level-architecture)
+for the current, accurate diagram.
+
 ```
 Sources (manually obtained files or periodic ingestion)
       │
@@ -137,13 +146,6 @@ one research assistant backed by deterministic tools and retrieval is
 sufficient. Components are shaped so they *can* later be registered as callable tools
 (`get_company_financials`, `calculate_ratio`, `compare_companies`, `generate_chart`, …)
 without building that registry now.
-
-This is the *original* proposed pipeline, kept as-is for historical context — the
-system has since grown well past this single linear flow (a Flask web app alongside
-the CLI, a knowledge graph, a Model Router/Fallback layer, an event bus, price
-history, and more). See [architecture.md's High-level
-architecture](architecture.md#high-level-architecture) for the current, accurate
-diagram.
 
 ## Folder Structure
 
@@ -259,7 +261,7 @@ had before NSE/BSE (step 6).
 they'd reuse the existing `documents`/`document_chunks` pipeline as-is
 (`documents.company_id` is already nullable, so `company_id = NULL` needs no
 schema change). That pipeline itself now exists (page-scoped chunking + FTS5
-keyword search, see [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy-step-2d)),
+keyword search, see [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy)),
 but nothing in `sources/` fetches a macro narrative file in the first place —
 this is a missing source, not a missing pipeline.
 
@@ -404,8 +406,8 @@ Document evidence *for Q&A/Signals reports* took a leaner shape than proposed
 here — `research/documents.py` does direct PDF extraction per question, no
 caching (see [architecture.md's Known gaps](architecture.md#documents--docs-tab)).
 Page-scoped chunking + FTS5 keyword search were since built as their own
-standalone capability (`research/document_chunker.py`, `retrieval/document_search.py`,
-Step 2D — see [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy-step-2d))
+standalone capability (`research/document_chunker.py`, `retrieval/document_search.py`
+— see [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy))
 but are deliberately not wired into that evidence path yet; no `hybrid_search.py`
 module exists.
 
@@ -638,9 +640,9 @@ status list. Check there (plus `git log`/`git status`) for current state.
 Two calls made while drafting this architecture, both since settled:
 
 - **Embeddings sequencing** — decided: FTS5 keyword search first, no vector
-  embeddings. This shipped as Step 2D's `document_search.py` (real, page-scoped
+  embeddings. This shipped as `retrieval/document_search.py` (real, page-scoped
   chunking + FTS5) — still keyword-only today, no semantic/embedding layer added
-  since. See [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy-step-2d)
+  since. See [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy)
   for the current implementation and why FTS5 was kept over embeddings.
 - **NSE/BSE trust-rank tie** — decided: both sit at the same priority tier (both are
   official exchange filings). Matching values → BSE recorded as a confirming
