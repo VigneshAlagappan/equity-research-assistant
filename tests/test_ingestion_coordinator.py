@@ -237,10 +237,17 @@ def test_processing_a_document_also_chunks_and_indexes_it(
 ) -> None:
     """Step 2D wiring: processing a document (Step 1's action, now also
     running Step 2A's extraction) also runs the chunker — "processed"
-    means registered + hashed + knowledge-extracted + indexed."""
+    means registered + hashed + knowledge-extracted + indexed.
+
+    VECTOR_STORE_BACKEND is forced to "none" so the Embedding Indexer
+    Worker's outcome (added alongside chunk_indexer/knowledge_builder once
+    hybrid retrieval shipped) is deterministic regardless of whether a real
+    Qdrant happens to be reachable wherever this test runs — section 10's
+    graceful degradation means "skipped", not "failed" or "ok", either way."""
     from tests.test_documents import _make_minimal_pdf
     from tests.test_knowledge_builder import _VALID_RESPONSE, _install_fake_client
 
+    monkeypatch.setattr("config.settings.VECTOR_STORE_BACKEND", "none")
     pdf_path = tmp_path / "report.pdf"
     _make_minimal_pdf(pdf_path, "Revenue grew twelve percent this quarter")
     doc = save_company_document(
@@ -271,7 +278,10 @@ def test_processing_a_document_also_chunks_and_indexes_it(
             "SELECT worker_name, status FROM worker_processing_log WHERE event_id = ?", (event_row["event_id"],)
         ).fetchall()
     }
-    assert worker_logs == {"knowledge_builder": "ok", "chunk_indexer": "ok", "financial_derivation": "skipped"}
+    assert worker_logs == {
+        "knowledge_builder": "ok", "chunk_indexer": "ok", "financial_derivation": "skipped",
+        "embedding_indexer": "skipped",  # VECTOR_STORE_BACKEND=none for this test — FTS5/knowledge extraction unaffected
+    }
 
 
 def test_extraction_failure_via_the_event_bus_marks_the_document_failed(

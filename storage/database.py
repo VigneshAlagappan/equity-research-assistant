@@ -52,6 +52,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_shareholding_observations_columns(conn)
     _migrate_investigations_as_of_column(conn)
     _migrate_investigation_companies(conn)
+    _migrate_document_chunks_embedding_columns(conn)
     _seed_sources(conn)
     _migrate_source_trust_ranks(conn)
     _seed_sectors_and_industries(conn)
@@ -202,6 +203,25 @@ def _migrate_investigation_companies(conn: sqlite3.Connection) -> None:
     from storage.investigation_repository import backfill_investigation_companies
 
     backfill_investigation_companies(conn)
+
+
+def _migrate_document_chunks_embedding_columns(conn: sqlite3.Connection) -> None:
+    """`CREATE TABLE IF NOT EXISTS` is a no-op on a document_chunks table
+    that already existed before the semantic-indexing status columns
+    (retrieval/semantic_indexer.py) were added — ALTER TABLE backfills every
+    existing chunk to embedding_status='pending' (embedding_model/embedded_at
+    NULL), which is exactly right: every chunk indexed before the semantic
+    layer existed has, correctly, never been embedded yet. Same pattern as
+    _migrate_shareholding_observations_columns."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(document_chunks)")}
+    if not columns:
+        return
+    if "embedding_status" not in columns:
+        conn.execute("ALTER TABLE document_chunks ADD COLUMN embedding_status TEXT NOT NULL DEFAULT 'pending'")
+    if "embedding_model" not in columns:
+        conn.execute("ALTER TABLE document_chunks ADD COLUMN embedding_model TEXT")
+    if "embedded_at" not in columns:
+        conn.execute("ALTER TABLE document_chunks ADD COLUMN embedded_at TEXT")
 
 
 def _migrate_users_theme_column(conn: sqlite3.Connection) -> None:

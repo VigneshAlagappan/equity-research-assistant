@@ -108,7 +108,7 @@ def default_capabilities(
     from research.indicator_evidence import get_indicator_evidence
     from research.macro_evidence import get_macro_evidence
     from research.temporal import normalize_as_of
-    from retrieval.document_search import search_documents
+    from retrieval.hybrid_search import hybrid_search_documents
     from retrieval.structured_search import get_company_evidence
 
     fs = fact_store or default_fact_store()
@@ -121,7 +121,14 @@ def default_capabilities(
             conn, company_id, question, fact_store=fs, as_of=cutoff
         ),
         macro_evidence=lambda conn, question: get_macro_evidence(conn, question, fact_store=fs, as_of=cutoff),
-        document_search=lambda conn, query, *, company_id, limit: search_documents(
+        # Hybrid (FTS5/BM25 keyword + embedding/vector semantic) retrieval,
+        # not FTS5 alone (section 8) — retrieval/hybrid_search.py degrades to
+        # FTS5-only by itself (section 10) whenever the vector layer is
+        # unavailable, so this binding needs no fallback logic of its own.
+        # retrieval/document_search.py's search_documents() (FTS5-only) is
+        # still directly importable/callable/tested — this only changes what
+        # the Planner's document_search capability is bound to.
+        document_search=lambda conn, query, *, company_id, limit: hybrid_search_documents(
             conn, query, company_id=company_id, limit=limit, fact_store=fs, as_of=cutoff
         ),
         knowledge_graph=lambda conn, entity_type, entity_name: find_claims_about_entity(

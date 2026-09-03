@@ -23,6 +23,21 @@ answering a different question and never doing another layer's job:
   true, and what evidence supports that relationship," projected from
   SQLite, never a second source of truth for the facts themselves (see
   [Ingestion Coordinator & Knowledge Builder](#ingestion-coordinator--knowledge-builder-admin--ingest)).
+- **FTS5 and the Vector DB are retrieval indexes over the same authoritative
+  text, not two different truths** — `document_chunks`/`documents` (SQLite)
+  hold the authoritative textual evidence (annual reports, transcripts,
+  investor presentations, regulatory filings, macro/research reports —
+  anything eligible under [Document Retrieval](#document-retrieval-retrievaldocument_searchpy));
+  `document_chunks_fts` (FTS5/BM25) is the exact/lexical retrieval index over
+  it, and the `VectorStore` (`retrieval/vector_store.py`, Qdrant by default)
+  is the semantic retrieval index over it — see
+  [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy).
+  **Invariant: FTS5, the Vector DB, and Neo4j are retrieval/projection
+  structures. They must never silently become competing sources of truth.**
+  Every one of them is fully rebuildable from SQLite's `documents`/
+  `document_chunks` at any time (`python main.py vector-backfill`,
+  `python main.py replay-events --worker chunk_indexer`) — losing any of
+  them loses a retrieval path, never a fact.
 - **The LLM reasons about what they mean** — every call site
   (`research/assistant.py`, `insights.py`, `signals_report.py`,
   `knowledge_builder.py`) is handed a compact, pre-computed evidence block
@@ -59,6 +74,7 @@ answering a different question and never doing another layer's job:
 | Web framework | Flask (server-rendered Jinja2, no SPA framework) |
 | Database | SQLite (single file, `data/equity_research.db`) |
 | Knowledge graph | SQLite by default (`context/graph.py`, pure Python traversal over existing tables) — optionally a real Neo4j graph instead (`context/graph_neo4j.py`, `GRAPH_BACKEND=neo4j`), with automatic fallback to SQLite if Neo4j isn't reachable. Not managed by this app (no Docker lifecycle code) — start/stop it yourself, same as the Ollama fallback. |
+| Document retrieval | FTS5/BM25 (SQLite, always on) + semantic/vector search — Qdrant by default (`retrieval/vector_store_qdrant.py`, `VECTOR_STORE_BACKEND=qdrant`), not managed by this app (same as Neo4j/Ollama), with automatic fallback to FTS5-only if unreachable. Embeddings: `sentence-transformers` on-device by default (`EMBEDDING_PROVIDER=local`, zero API cost), Voyage AI optional (`EMBEDDING_PROVIDER=voyage`, needs `VOYAGE_API_KEY`). |
 | LLM provider | Anthropic Claude (sonnet/haiku — Opus is registered but policy-disabled, `config/settings.py`'s `DISABLED_MODELS`), with a local Ollama fallback |
 | Frontend | Server-rendered HTML + vanilla JS "islands" (no build step, no bundler, no npm) |
 | Charts | matplotlib (server-rendered PNG) for legacy charts; client-side JS + JSON feeds for the interactive dashboards |
@@ -173,7 +189,7 @@ to reason over it, never to fetch or calculate numbers itself.
 | `financials/` | Deterministic math over `canonical_financials`: YoY/CAGR (`calculations.py`), ROA/ROE/vendor-reported ratios (`ratios.py`), and the human-readable text report (`report.py`) both the CLI's `analyze` command and the LLM evidence retrieval are built from. |
 | `analytics/` | Cross-company pattern scans for the Tools tab (`patterns.py` — e.g. `detect_yoy_spikes()`, the same "significant YoY move" definition the Configurable Indicator Framework's `financial_trajectory` rule family reuses). No per-user configuration, no LLM call — a scan, not a rule engine. |
 | `indicators/` | The **Configurable Indicator Framework** — deterministic, rule-based factual patterns over existing facts (never an LLM-generated insight). `framework.py` (`IndicatorRule`/`RULE_REGISTRY`/`TriggeredIndicator` shapes), `rules.py` (the seeded `shareholding` and `financial_trajectory` rule families), `config.py` (pure Global→Sector→Company override resolution), `evaluation.py` (`evaluate_company_indicators()`, the engine), `settings.py` (the Settings page's read/write model). See [Configurable Indicator Framework](#configurable-indicator-framework-indicators) below. |
-| `retrieval/` | `structured_search.py` — turns `financials/`'s calculations into typed `Evidence` for the LLM. `document_search.py` — FTS5 keyword search over `research/document_chunker.py`'s indexed chunks, returning typed `DocumentPassage` results. Retrieval only, no LLM calls, in both. |
+| `retrieval/` | `structured_search.py` — turns `financials/`'s calculations into typed `Evidence` for the LLM. `document_search.py` — FTS5 keyword search over `research/document_chunker.py`'s indexed chunks, returning typed `DocumentPassage` results. `embedding_provider.py`/`embedding_provider_local.py`/`embedding_provider_voyage.py` — the `EmbeddingProvider` abstraction (local sentence-transformers default, Voyage AI opt-in), independent of the vector store. `vector_store.py`/`vector_store_qdrant.py` — the `VectorStore` abstraction (Qdrant the only concrete backend; the sole module allowed to import `qdrant_client`). `semantic_search.py` — embeds a query, searches the VectorStore, hydrates hits into `DocumentPassage`. `hybrid_search.py` — Reciprocal-Rank-Fusion combination of FTS5 + semantic results, with graceful degradation and retrieval diagnostics. `observability.py` — logs each hybrid retrieval call. Retrieval only, no LLM calls, in any of them. |
 | `research/` | Four LLM call sites: `assistant.py` (Q&A), `insights.py` (Key Insights summaries), `signals_report.py` (full Signals investigation reports), and `knowledge_builder.py` (structured knowledge extraction from a document — its own section below) — plus `evidence.py` (the `Evidence`/citation model), `documents.py` (extracts `MANAGEMENT_STATEMENT` evidence from uploaded/linked Docs-tab PDFs, and exposes `document_text()`/`document_pages()`, shared with `knowledge_builder.py`/`document_chunker.py`), `document_chunker.py` (no LLM call, purely mechanical page-scoped chunking + FTS5 indexing), and `macro_evidence.py` (the third evidence source — macro/regulatory data spanning both India and US sources, attributed per-series to `"INDIA"` or `"USA"`; a narrow, deliberate exception to "retrieval never calls the LLM," since an LLM call picks which macro series/date-range apply before the deterministic fetch runs). |
 | `context/` | The **Context Optimizer** — `optimizer.py` (dedup, value-scoring, token-budget compression of an `Evidence` list), `reuse.py` (reuse-before-recompute: returns a fresh, near-duplicate prior investigation instead of a new LLM call — now used by both `research/assistant.py`'s Q&A path and `research/signals_report.py`'s full reports), `graph.py`/`graph_neo4j.py` (sector-peer knowledge-graph traversal: surfaces a *different* company's relevant prior investigation, via `config/knowledge_graph_seed.py`'s curated domain relationships), and `knowledge_graph.py` (the Research Knowledge Graph — a distinct, cross-*entity* traversal over the Knowledge Builder's `knowledge_claims`/`knowledge_relationships`, its own section below). Both graphs are pure Python/SQLite by default, or the same real Neo4j instance when `GRAPH_BACKEND=neo4j` (sharing `Company` nodes between the two), with automatic fallback to SQLite if Neo4j isn't reachable. |
 | `llm/` | The **Model Router + Fallback layer** — `hardness.py` (task-complexity classifier), `router.py` (fallback chain across models/providers), `capability_registry.py` (static model metadata; which models are policy-disabled is read from `config/settings.py`'s `DISABLED_MODELS`), `providers/` (Anthropic + local Ollama), `observability.py` (per-call logging/cost tracking). The tier→model policy itself (`TIER_PREFERRED_MODEL`, `TIER_MIN_REASONING_STRENGTH`, `DISABLED_MODELS`) lives in `config/settings.py`, not scattered across these modules — edit that one file to change routing. |
@@ -465,13 +481,12 @@ retrieval/document_search.py::search_documents()  — FTS5 MATCH, ranked by
                                                      one company
 ```
 
-- **FTS5 keyword search, not embeddings/vector search** — the spec allows
-  either "FTS/vector representation"; `document_chunks_fts` had sat in the
-  schema unpopulated since it was first written (`document_chunks.embedding`
-  stays `NULL` on every row), and FTS5 needs no new dependency or paid
-  embeddings API, matching [Key design principles](#key-design-principles)
-  #5 (local-first, no external services beyond the LLM API). A real semantic
-  layer, if ever added, would be additive on top of this, not a rewrite.
+- **FTS5 keyword search** — `document_chunks_fts` was unpopulated for a
+  while after it was first written; this is now the exact/lexical half of
+  [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy)
+  below, never replaced by the semantic/vector half added alongside it
+  (feature spec section 1: "Vector search is additive. Do not replace
+  FTS5.").
 - **Query sanitization**: raw user input is tokenized to plain alphanumeric
   words and each one individually double-quoted before hitting FTS5's
   `MATCH` (`storage/repositories.py::_sanitize_fts_query()`) — FTS5 treats
@@ -488,11 +503,91 @@ retrieval/document_search.py::search_documents()  — FTS5 MATCH, ranked by
   `knowledge_claims`, a chunk is a mechanical index over the document's
   *current* text, not a historical claim, so there's no provenance reason
   to keep a stale chunk set around.
-- **Deliberately not wired into Q&A or Signals reports** — same
-  "don't replace structured SQL retrieval, and don't attempt later phases
-  prematurely" restraint as the Research Knowledge Graph above: a standalone retrieval
-  capability today, not (yet) a fourth evidence source alongside
-  Financials/Docs/Macro in `research/assistant.py`'s `SYSTEM_PROMPT`.
+- **Wired into both Q&A and the Investigation Planner** — see
+  [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy):
+  `research/investigation_planner.py`'s `document_search` capability, and
+  `research/assistant.py`'s `answer_question()` (additively, alongside the
+  existing whole-document evidence), both now route through the Hybrid
+  Retriever rather than FTS5 alone.
+
+### Hybrid Document Retrieval (`retrieval/hybrid_search.py`)
+
+Additive semantic/vector layer over the FTS5 index above — same evidence
+(`document_chunks`), a second, independent way to find it:
+
+```
+Research Document -> Text Extraction -> Document Chunking (research/document_chunker.py)
+      |
+      +-- FTS5 / BM25 Index (document_chunks_fts, unchanged)
+      |
+      +-- Embedding Generation -> VectorStore -> Semantic Search
+             (retrieval/embedding_provider.py)   (retrieval/vector_store.py)
+
+FTS5 Results + Vector Results -> retrieval/hybrid_search.py (Reciprocal Rank
+Fusion) -> Ranked Top-K Evidence -> Planner / research/assistant.py
+```
+
+- **`EmbeddingProvider`** (`retrieval/embedding_provider.py`) — `embed_text`/
+  `embed_batch`, config-selected (`EMBEDDING_PROVIDER`): `"local"` (default)
+  is `sentence-transformers/all-MiniLM-L6-v2` running on-device
+  (`retrieval/embedding_provider_local.py`) — zero API cost, no key, so the
+  test suite and CI never need one; `"voyage"` is Voyage AI's hosted API
+  (`retrieval/embedding_provider_voyage.py`, Anthropic's commonly-recommended
+  embeddings partner — Claude has no first-party embeddings endpoint), gated
+  on `VOYAGE_API_KEY` and never the default. Independent of the vector
+  store: it doesn't import or know about one.
+- **`VectorStore`** (`retrieval/vector_store.py`) — `upsert`/`delete_document`/
+  `search`/`health_check`, backend-independent by the same
+  interface-plus-concrete-implementation pattern `storage/` uses for SQLite
+  and `context/graph.py`/`context/graph_neo4j.py` use for the knowledge
+  graph. `VECTOR_STORE_BACKEND="qdrant"` (default) is the only concrete
+  implementation shipped (`retrieval/vector_store_qdrant.py`, the ONE module
+  in this codebase allowed to import `qdrant_client` — enforced by
+  `tests/test_vector_store_architecture.py`), talking to a local/Dockerized
+  Qdrant instance not started/stopped by this app (same optional-infra
+  pattern as `GRAPH_BACKEND=neo4j`); `"none"` disables the layer entirely.
+  Never a source of truth — every vector is rebuildable from
+  `documents`/`document_chunks` at any time.
+- **Graceful degradation (section 10)**: `retrieval/hybrid_search.py`
+  catches `VectorStoreUnavailable`/`EmbeddingProviderUnavailable`, logs the
+  degradation (`retrieval_diagnostics`, below), and returns FTS5-only
+  results — research keeps working with zero vector infrastructure running.
+  A failed embedding attempt for one chunk marks that chunk's
+  `document_chunks.embedding_status='failed'` and never touches its
+  already-indexed FTS5 row.
+- **Ranking**: Reciprocal Rank Fusion (`k=60` default,
+  `HYBRID_RETRIEVAL_RRF_K`) over both legs' ranked results — deterministic,
+  no LLM judgment call. A passage found by both methods is deduplicated to
+  one entry (`retrieval_source="both"`) with a naturally higher fused score
+  than a single-method match — the "confidence boost" of independent
+  agreement, not a hand-tuned weight.
+- **Automatic maintenance going forward**: `ingestion/workers/
+  embedding_indexer_worker.py` subscribes to the same `document`
+  `DATASET_INGESTED` event `chunk_indexer_worker` does (registered right
+  after it, so it always sees that event's freshly-written chunks) — every
+  future document ingestion embeds and upserts automatically, through the
+  existing ingestion pipeline, not a parallel one.
+- **One-time backfill**: `python main.py vector-backfill [--company-id ...]
+  [--limit N] [--force]` — idempotent (a chunk already indexed under the
+  current embedding model is skipped; re-running costs nothing extra),
+  reusing the exact same `retrieval/semantic_indexer.py::
+  embed_and_index_document_chunks()` the worker calls, not a second
+  implementation.
+- **Observability**: `retrieval_diagnostics` (one row per hybrid retrieval
+  call) — candidate counts per method, embedding/vector-store/keyword
+  latency, degradation flag+reason, and a compact per-passage summary
+  (ids/ranks/scores, never raw text) — the retrieval-layer counterpart to
+  `llm_call_log`.
+- **What never gets embedded**: structured facts (`financial_observations`,
+  `macro_observations`, `bank_infrastructure_observations`, shareholding/
+  indicator data) have no path into `document_chunks` at all — they're
+  ingested through an entirely separate pipeline
+  (`ingestion/pipeline.py::ingest_file()`/`ingest_macro_file()`) that never
+  touches the `documents` table, so the embedding indexer structurally never
+  sees them (proved in `tests/test_embedding_indexer_worker.py`).
+- See [SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md](SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md)
+  for a worked comparison of FTS5-only vs semantic-only vs hybrid retrieval
+  against Signal's real documents.
 
 ### Configurable Indicator Framework (`indicators/`)
 
@@ -844,7 +939,10 @@ from FRED, e.g. `FEDFUNDS`/`DGS10`), `list-companies`, `archive-company`,
 `restore-company`, `add-stock-action`/`list-stock-actions` (record/list a
 split, bonus, or rights issue), `analyze`, `ask`, `watchlist-add/remove`,
 `list-watchlist`, `list-batch-runs`/`show-batch-run` (audit log for
-`scripts/`'s bulk-fetch batch jobs) and `replay-events` (re-dispatch stored
+`scripts/`'s bulk-fetch batch jobs), `vector-backfill` (one-time/idempotent
+embedding backfill over already-processed documents — section 11; the same
+`retrieval/semantic_indexer.py` function every future document ingestion
+also calls), and `replay-events` (re-dispatch stored
 `DatasetIngestedEvent`s to registered workers) — both tied to the event bus,
 see [Dataset-centric ingestion: the event
 bus](#dataset-centric-ingestion-the-event-bus-ingestionevent_buspy) — and
@@ -983,7 +1081,7 @@ data feeds — noted in each file's header comment.
 - **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — 158,759 rows (IITM 116,187 + RBI 42,572); MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet), `bank_infrastructure_observations` (RBI's monthly bank×metric ATM/NEFT/RTGS bulletins — a separate shape from `macro_observations`' flat series). Daily OHLCV price/volume history lives separately, in its own db file — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below.
 - **Ingestion tracking**: `ingestion_queue_items` — the Admin → Ingest panel's discovery/status tracking for financial/macro files under `data/raw/` (content-hash keyed); orchestration metadata only, never the source of truth for parsed data itself.
 - **Event bus & batch audit**: `dataset_events`, `worker_processing_log`, `batch_job_runs`, `batch_job_items` — the Event Store, per-worker processing log, and bulk-script audit trail behind ingestion's event-driven layer; see [Dataset-centric ingestion: the event bus](#dataset-centric-ingestion-the-event-bus-ingestionevent_buspy) for the full shape of each.
-- **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` + `document_chunks_fts` (page-scoped chunks, FTS5-indexed by `research/document_chunker.py`; `embedding` stays `NULL` on every row, keyword search only, no vector layer — see [Document Retrieval](#document-retrieval-retrievaldocument_searchpy)).
+- **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` + `document_chunks_fts` (page-scoped chunks, FTS5-indexed by `research/document_chunker.py`; `embedding_status`/`embedding_model`/`embedded_at` track semantic-indexing state per chunk — the actual vectors live in the VectorStore, not this table, which stays the rebuildable authoritative source — see [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy)).
 - **Shareholding Pattern**: `shareholding_observations` (one row per company/fiscal_year/quarter — promoter/public/employee-trust holding percentages, plus an FII/DII/Government/public-non-institutional breakdown read off the SHP XBRL's own category-rollup contexts rather than hand-aggregated), `shareholding_holders` (one row per named holder within a category — `side` promoter/public, `category`, `holder_name`, `num_shares`/`percent_of_shares`, sourced from NSE filings). Backs the company page's Shareholding Pattern tab, rendered by `web/static/js/shareholding_panel.js` against `web/shareholding_feed.py`'s `/companies/<id>/shareholding-feed.json` — not otherwise described elsewhere in this doc.
 - **Knowledge Builder**: `knowledge_entities` (deduped named things — Company/Product/Risk/ManagementPerson/...), `knowledge_claims` (one extracted statement per row, with its own provenance — document, fiscal period, speaker, `claim_type`, confidence — additive, never overwritten), `knowledge_relationships` (typed edges between two entities, optionally traced to the claim that asserted them), `knowledge_evidence` (the supporting quote for one claim). SQLite is the source of truth for all four; `context/knowledge_graph.py`/`context/graph_neo4j.py` project them into the same Neo4j graph the sector-peer traversal uses, sharing `Company` nodes rather than duplicating them — see [Research Knowledge Graph](#research-knowledge-graph-contextknowledge_graphpy).
 - **Research/investigations**: `generated_reports` (persisted Signals reports), `research_thread_evidence`, `research_thread_followups`, `company_insights` (Key Insights history, per-company); `system_insights` (the site-level counterpart — one row per cross-company insight, `company_ids` a JSON array, `source_claim_ids` tracing provenance back into `knowledge_claims`, `status` new/retained/archived — generated from the [`/tools` Insights panel](#web-layer-webapppy), not a single company page); The hypothesis-driven investigation pipeline's `investigations` (one row per structured investigation, including `as_of` — the point-in-time cutoff it ran under, if any — see [Golden Research Loop validation](#golden-research-loop-validation)), `investigation_hypotheses`, `investigation_hypothesis_evidence`; and `investigation_companies` — the investigation↔company join table a company page's Investigations section queries through (`storage/investigation_repository.py`), so a cross-company investigation is one row, listed under every company it covers, never duplicated.
@@ -1131,21 +1229,27 @@ pre-existing test failure.
   so `/admin/usage`'s task breakdown already includes it, but there's no
   Ingest-queue-specific cost view (e.g. "$X spent processing these N pending
   documents").
-- **Document search is keyword (FTS5/bm25), not semantic** — a query has to
-  share actual words with a chunk to match it; a synonym or a paraphrase
-  ("interest rate cuts" vs. "repo rate transmission") won't necessarily
-  connect. `document_chunks.embedding` exists in the schema specifically
-  for this — every row's value stays `NULL` until a real embedding layer is
-  added, which isn't attempted here (see the Document Retrieval section's
-  own rationale for choosing FTS5 first).
+- **~~Document search is keyword-only, not semantic~~ — resolved.**
+  `retrieval/hybrid_search.py` now runs FTS5 AND embedding/vector semantic
+  search together (RRF-fused) for both the Investigation Planner's
+  `document_search` capability and `research/assistant.py`'s Q&A path — see
+  [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy).
+  What remains genuinely unbuilt: `retrieval/vector_store_qdrant.py` has only
+  been exercised against a mocked `qdrant_client` in this environment, not a
+  live Qdrant server (the Docker container available here has no published
+  host port) — see
+  [SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md](SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md)'s
+  disclosure for exactly what that gap is and how to close it.
 - **Chunking is fixed-size, not paragraph/section-aware** — 1500 characters
   with 150 overlap, page-scoped; a chunk boundary can land mid-paragraph or
   mid-table. `document_chunks.section_heading` exists in the schema but is
-  never populated — no heading-detection logic exists.
-- **`retrieval/document_search.py` isn't wired into any evidence path** —
-  neither Q&A/Signals reports nor the Research Knowledge Graph query it;
-  it's reachable today only by calling `search_documents()` directly (CLI/
-  Python), not from any Flask route or research call site.
+  never populated — no heading-detection logic exists. This limits both
+  FTS5 and semantic chunk quality equally; not specific to the vector layer.
+- **~~`retrieval/document_search.py` isn't wired into any evidence path~~ —
+  resolved** — see [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy)
+  above. `search_documents()` (FTS5-only) itself is still directly callable
+  and tested; what changed is that the Planner's/Q&A's evidence paths are
+  now bound to the hybrid composition rather than nothing.
 
 ### Configurable Indicator Framework
 

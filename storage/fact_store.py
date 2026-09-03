@@ -45,6 +45,14 @@ class FactStore:
     # Document search (retrieval/document_search.py)
     search_document_chunks: Callable[..., list[sqlite3.Row]]
 
+    # Semantic/hybrid document search (retrieval/semantic_indexer.py,
+    # retrieval/semantic_search.py) — same document_chunks/documents tables
+    # search_document_chunks reads, plus the write path that records each
+    # chunk's semantic-indexing status.
+    list_document_chunks: Callable[..., list[sqlite3.Row]]
+    get_document_chunks_by_ids: Callable[..., list[sqlite3.Row]]
+    set_document_chunks_embedding_status: Callable[..., None]
+
     # Macro (research/macro_evidence.py)
     get_macro_series: Callable[..., list[sqlite3.Row]]
     list_macro_series_summary: Callable[..., list[sqlite3.Row]]
@@ -110,6 +118,9 @@ def default_fact_store() -> FactStore:
         save_investigation_hypothesis_evidence,
         save_system_insight,
         search_document_chunks,
+        get_document_chunks_by_ids,
+        list_document_chunks,
+        set_document_chunks_embedding_status,
     )
 
     return FactStore(
@@ -125,6 +136,9 @@ def default_fact_store() -> FactStore:
         list_all_knowledge_evidence=list_all_knowledge_evidence,
         list_company_documents=list_company_documents,
         search_document_chunks=search_document_chunks,
+        list_document_chunks=list_document_chunks,
+        get_document_chunks_by_ids=get_document_chunks_by_ids,
+        set_document_chunks_embedding_status=set_document_chunks_embedding_status,
         get_macro_series=get_macro_series,
         list_macro_series_summary=list_macro_series_summary,
         list_generated_reports=list_generated_reports,

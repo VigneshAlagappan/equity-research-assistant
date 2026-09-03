@@ -26,7 +26,27 @@ from storage.fact_store import FactStore, default_fact_store
 @dataclass
 class DocumentPassage:
     """One matched chunk, with everything Step 2D asks a passage to retain:
-    document, company, fiscal period, page, and source."""
+    document, company, fiscal period, page, and source.
+
+    The last four fields are retrieval/hybrid_search.py's contribution
+    (section 7) — every passage still round-trips through this exact type
+    whether it came from FTS5, semantic search, or both, so nothing
+    downstream (research/investigation_planner.py's plan.passages) needs to
+    know which retrieval method produced it. Defaulted so this dataclass
+    stays backward compatible with every existing keyword-only
+    construction/test (retrieval/document_search.py's own search_documents(),
+    tests/test_document_chunker.py) that never sets them:
+
+      retrieval_source  "keyword" | "semantic" | "both" — "both" (a
+                         confidence boost, section 7) means the same chunk
+                         was found independently by FTS5 AND vector search.
+      fts_rank           1-based BM25 rank if found by keyword search, else None.
+      semantic_score      cosine similarity if found by semantic search, else None.
+      hybrid_score        the final fused ranking score (retrieval/hybrid_search.py's
+                         Reciprocal Rank Fusion) — None for a passage returned
+                         by search_documents()/search_documents_semantic() alone,
+                         outside the hybrid retriever.
+    """
 
     chunk_id: int
     document_id: int
@@ -38,6 +58,10 @@ class DocumentPassage:
     quarter: str | None
     source: str | None
     published_at: str | None
+    retrieval_source: str = "keyword"
+    fts_rank: int | None = None
+    semantic_score: float | None = None
+    hybrid_score: float | None = None
 
 
 def search_documents(
@@ -63,7 +87,7 @@ def search_documents(
             chunk_id=row["chunk_id"], document_id=row["document_id"], company_id=row["company_id"],
             text=row["text"], page_number=row["page_number"], document_type=row["document_type"],
             fiscal_year=row["fiscal_year"], quarter=row["quarter"], source=row["source"],
-            published_at=row["published_at"],
+            published_at=row["published_at"], retrieval_source="keyword", fts_rank=rank,
         )
-        for row in rows
+        for rank, row in enumerate(rows, start=1)
     ]
