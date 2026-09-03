@@ -27,7 +27,9 @@ def test_neo4j_backend_is_used_when_configured(monkeypatch, db_conn: sqlite3.Con
     monkeypatch.setattr(graph_module, "GRAPH_BACKEND", "neo4j")
     called = {}
     monkeypatch.setattr(graph_neo4j, "get_driver", lambda: called.setdefault("get_driver", True) and object())
-    monkeypatch.setattr(graph_neo4j, "sync_graph", lambda conn, driver: called.setdefault("sync_graph", True))
+    monkeypatch.setattr(
+        graph_neo4j, "sync_graph", lambda conn, driver, *, fact_store: called.setdefault("sync_graph", True)
+    )
     monkeypatch.setattr(
         graph_neo4j, "find_related_investigations",
         lambda driver, question, company_ids: (

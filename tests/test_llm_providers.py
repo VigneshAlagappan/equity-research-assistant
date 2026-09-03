@@ -60,6 +60,25 @@ def test_anthropic_provider_raises_provider_unavailable_on_rate_limit(monkeypatc
         anthropic_provider.generate(system="s", user_message="u", model="claude-sonnet-5", max_tokens=100)
 
 
+def test_anthropic_provider_raises_provider_unavailable_when_no_api_key_configured(monkeypatch) -> None:
+    """No ANTHROPIC_API_KEY at all: the SDK never gets far enough to make a
+    request — it raises a bare TypeError from header-building, not
+    anthropic.APIError. That must still convert to ProviderUnavailable so
+    llm/router.py falls back to the next model instead of crashing."""
+    def _raise(*a, **kw):
+        raise TypeError(
+            "Could not resolve authentication method. Expected one of api_key, auth_token, or credentials to be set."
+        )
+
+    monkeypatch.setattr(
+        "llm.providers.anthropic_provider.anthropic.Anthropic",
+        lambda *a, **kw: SimpleNamespace(messages=SimpleNamespace(create=_raise)),
+    )
+
+    with pytest.raises(ProviderUnavailable):
+        anthropic_provider.generate(system="s", user_message="u", model="claude-sonnet-5", max_tokens=100)
+
+
 def test_local_provider_returns_text_and_usage(monkeypatch) -> None:
     class _FakeResponse:
         def raise_for_status(self):

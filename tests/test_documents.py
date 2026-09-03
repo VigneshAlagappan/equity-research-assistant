@@ -87,6 +87,26 @@ def test_extract_pdf_text_returns_none_for_a_corrupt_file(tmp_path: Path) -> Non
     assert _extract_pdf_text(str(bad_path)) is None
 
 
+def test_extract_pdf_text_returns_none_for_an_encrypted_pdf_missing_crypto_dependency(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An AES-encrypted PDF pypdf can't open without the optional
+    `cryptography` package raises pypdf.errors.DependencyError — a
+    PyPdfError sibling of PdfReadError, not a subclass of it. Must degrade
+    to None like every other unreadable-PDF case, not crash the whole
+    ingestion batch (real incident: killed a running bulk-ingestion worker)."""
+    import pypdf.errors
+
+    def _raise(*args, **kwargs):
+        raise pypdf.errors.DependencyError("cryptography>=3.1 is required for AES algorithm")
+
+    monkeypatch.setattr("research.documents.PdfReader", _raise)
+    path = tmp_path / "encrypted.pdf"
+    path.write_bytes(b"%PDF-1.7 fake encrypted content")
+
+    assert _extract_pdf_text(str(path)) is None
+
+
 @pytest.mark.parametrize(
     "question,expected",
     [

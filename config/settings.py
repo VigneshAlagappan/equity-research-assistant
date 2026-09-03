@@ -27,11 +27,32 @@ LOG_DIR = BASE_DIR / "logs"
 SCHEMA_PATH = BASE_DIR / "schemas" / "sqlite_schema.sql"
 DB_PATH = DATA_DIR / "equity_research.db"
 
+# Daily OHLCV price history lives in its own db file, deliberately separate
+# from DB_PATH: cheaply regenerable from yfinance at any time (unlike
+# DB_PATH's LLM-extracted knowledge graph), gitignored via the existing
+# blanket "*.db" rule, and never git-shard-committed (scripts/db_shard.py
+# stays equity_research.db-only) -- regenerate on a fresh clone via
+# scripts/backfill_price_history.py instead.
+PRICE_SCHEMA_PATH = BASE_DIR / "schemas" / "price_schema.sql"
+PRICE_DB_PATH = DATA_DIR / "price_history.db"
+
 # ------------------------------------------------------------------
 # Source trust order (default reconciliation priority)
 #
-# "official company filing -> NSE/BSE filing -> licensed data provider ->
-#  secondary financial source" (README: Source / Provenance & Reconciliation)
+# For STRUCTURED FINANCIAL FACTS specifically, NSE XBRL is now the target
+# source of truth (trust_rank 0, ahead of everything else) — once a
+# reporting period has a validated NSE observation on file, storage/
+# repositories.py's reconcile() both prefers it over every other source for
+# metrics NSE reported AND refuses to backfill metrics NSE didn't report
+# for that same period from legacy data (blank instead of mixed). This
+# supersedes the older "official company filing -> NSE/BSE filing ->
+# licensed data provider -> secondary financial source" default order
+# below investor_relations/proprietary — "proprietary" is a hand-curated
+# spreadsheet of numbers, i.e. exactly the "Existing Manual/Legacy data"
+# this policy demotes, not a genuine official filing; investor_relations
+# itself feeds no financial_observations today (no adapter uses that
+# source_id — it's narrative documents only), so this reordering has no
+# other practical effect yet.
 #
 # NSE and BSE sit at the same trust_rank: filings submitted to both
 # exchanges are often identical, so they're a confirming cross-check
@@ -48,13 +69,16 @@ DEFAULT_SOURCES: list[dict[str, object]] = [
     {
         "source_id": "nse",
         "name": "National Stock Exchange",
-        "trust_rank": 2,
-        "description": "Exchange filing. Tied with BSE — see Open Decisions.",
+        "trust_rank": 0,
+        "description": (
+            "Exchange XBRL filing — target source of truth for structured financial facts, "
+            "ahead of every other source once a period is validated. Tied with BSE — see Open Decisions."
+        ),
     },
     {
         "source_id": "bse",
         "name": "Bombay Stock Exchange",
-        "trust_rank": 2,
+        "trust_rank": 0,
         "description": "Exchange filing. Tied with NSE — see Open Decisions.",
     },
     {
@@ -67,7 +91,7 @@ DEFAULT_SOURCES: list[dict[str, object]] = [
         "source_id": "proprietary",
         "name": "Proprietary (hand-prepared/verified workbook)",
         "trust_rank": 1,
-        "description": "Own curated numbers, same trust tier as an official filing — tied with Investor Relations rather than ranked below it.",
+        "description": "Own curated numbers, same trust tier as an official filing — tied with Investor Relations rather than ranked below it. Ranked below NSE XBRL (trust_rank 0) once a period is validated there.",
     },
     {
         "source_id": "yfinance",
@@ -125,6 +149,16 @@ DEFAULT_SOURCES: list[dict[str, object]] = [
             "MicroScape bulletins. Reference PDFs archived under data/raw/_macro/mfin/, not "
             "numeric time-series — sources/macro.py's MacroDataAdapter (period,value,unit CSV) "
             "doesn't apply to this source, so it produces no macro_observations rows."
+        ),
+    },
+    {
+        "source_id": "fred",
+        "name": "Federal Reserve Economic Data (FRED)",
+        "trust_rank": None,
+        "description": (
+            "US macro/regulatory data — the Fed funds rate, Treasury yields, CPI, unemployment, "
+            "GDP, and other economy-wide indicators. The US counterpart to rbi/imd/iitm/mospi "
+            "above; live-fetched per series (sources/fred.py), not an uploaded file."
         ),
     },
 ]
@@ -273,6 +307,15 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 LOCAL_MODEL_ENABLED = os.environ.get("LOCAL_MODEL_ENABLED", "true").lower() != "false"
 LOCAL_MODEL_ID = os.environ.get("LOCAL_MODEL_ID", "llama3.1:8b")
 
+# research/knowledge_builder.py truncates a document's text to this many
+# characters before sending it to the model — env-configurable because
+# local-model inference speed is roughly linear in input length, and a slow
+# local model benefits from a smaller cap far more than a cloud model does
+# (Anthropic handles the full 40k comfortably). Lower this per-run (not the
+# default) when running a local-model bulk ingestion and speed matters more
+# than the extra document coverage the last ~20k characters would add.
+KNOWLEDGE_EXTRACTION_MAX_CHARS = int(os.environ.get("KNOWLEDGE_EXTRACTION_MAX_CHARS", "40000"))
+
 # ------------------------------------------------------------------
 # Knowledge graph backend (context/graph.py, context/graph_neo4j.py)
 #
@@ -290,6 +333,51 @@ GRAPH_BACKEND = os.environ.get("GRAPH_BACKEND", "sqlite")
 NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "")
+
+# ------------------------------------------------------------------
+# Hybrid document retrieval — Vector Store + Embedding Provider (optional
+# infra, additive to FTS5/BM25 — retrieval/hybrid_search.py, architecture.md
+# "Hybrid Document Retrieval")
+#
+# Same optional-infra shape as GRAPH_BACKEND/Neo4j above: VECTOR_STORE_BACKEND
+# selects which concrete VectorStore (retrieval/vector_store.py) backs
+# semantic search. "qdrant" (default) talks to a local/Dockerized Qdrant
+# instance — not started/stopped by this app (README §20, local-first: start
+# it yourself, same as Neo4j/Ollama):
+#     docker run -d --name qdrant -p 6333:6333 -p 6334:6334 qdrant/qdrant
+# "none" disables the vector layer entirely (e.g. no Docker available) — every
+# capability that calls into retrieval/hybrid_search.py falls back to FTS5/
+# BM25-only automatically (section 10, graceful degradation), same as
+# GRAPH_BACKEND falling back to the SQLite traversal when Neo4j isn't
+# reachable. A running Qdrant that becomes unreachable mid-session degrades
+# the exact same way — retrieval/vector_store.py never lets a connectivity
+# failure raise past the Hybrid Retriever.
+VECTOR_STORE_BACKEND = os.environ.get("VECTOR_STORE_BACKEND", "qdrant")
+QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "signal_document_chunks")
+QDRANT_TIMEOUT_SECONDS = float(os.environ.get("QDRANT_TIMEOUT_SECONDS", "3"))
+
+# EMBEDDING_PROVIDER selects which concrete EmbeddingProvider
+# (retrieval/embedding_provider.py) computes chunk/query vectors. "local"
+# (default) runs sentence-transformers entirely on-device — zero API cost,
+# no key required, so the test suite and CI never need a paid embeddings
+# key. "voyage" opts into Voyage AI's hosted embeddings API (Anthropic's
+# commonly-recommended embeddings partner — Claude itself has no first-party
+# embeddings endpoint) for better retrieval quality in production, gated on
+# VOYAGE_API_KEY being set. Swapping this value is the only code-free way to
+# change which embeddings power semantic search — no call site outside
+# retrieval/embedding_provider_*.py imports a specific embeddings SDK.
+EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "local")
+EMBEDDING_MODEL_LOCAL = os.environ.get("EMBEDDING_MODEL_LOCAL", "sentence-transformers/all-MiniLM-L6-v2")
+EMBEDDING_MODEL_VOYAGE = os.environ.get("EMBEDDING_MODEL_VOYAGE", "voyage-3-lite")
+VOYAGE_API_KEY = os.environ.get("VOYAGE_API_KEY", "")
+
+# Reciprocal Rank Fusion constant (retrieval/hybrid_search.py) — the standard
+# RRF default (Cormack et al.); higher values flatten the influence of exact
+# rank position, lower values reward a top-1 hit more heavily. Deterministic
+# and explainable on purpose (architecture.md: retrieval ranking is never an
+# LLM's call to make).
+HYBRID_RETRIEVAL_RRF_K = int(os.environ.get("HYBRID_RETRIEVAL_RRF_K", "60"))
 
 # ------------------------------------------------------------------
 # Web session secret (signs the login cookie — web/app.py)
@@ -350,3 +438,36 @@ def ensure_data_dirs() -> None:
     """Create the raw/normalized/documents/charts/logs directories if missing."""
     for path in (RAW_DIR, NORMALIZED_DIR, DOCUMENTS_DIR, CHARTS_DIR, LOG_DIR):
         path.mkdir(parents=True, exist_ok=True)
+
+
+# ------------------------------------------------------------------
+# Repo-relative path storage — any path persisted to the database (an
+# uploaded document, a note attachment, a discovered ingestion-queue file)
+# must be stored relative to BASE_DIR, not as an absolute path. An absolute
+# path bakes in the repo folder's current name/location; renaming or moving
+# the repo (as this one already has, "indian-equity-research-assistant" ->
+# "equity-research-assistant") silently breaks every previously-stored
+# absolute reference, since BASE_DIR itself is derived fresh from
+# Path(__file__) on every process start (see BASE_DIR above) and no longer
+# matches what was baked into the database.
+# ------------------------------------------------------------------
+
+
+def to_repo_relative(path: Path | str) -> str:
+    """Convert an absolute (or already-relative) path into one relative to
+    BASE_DIR, for storage. Falls back to the absolute string if the path
+    genuinely isn't under BASE_DIR (shouldn't normally happen for anything
+    this app itself writes, but never raises over it)."""
+    resolved = Path(path).resolve()
+    try:
+        return str(resolved.relative_to(BASE_DIR))
+    except ValueError:
+        return str(resolved)
+
+
+def from_repo_relative(path: str) -> Path:
+    """Inverse of to_repo_relative() — resolve a stored path against the
+    CURRENT BASE_DIR. A path that's already absolute (an old, pre-fix row,
+    or the to_repo_relative() fallback above) is returned as-is."""
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else BASE_DIR / candidate

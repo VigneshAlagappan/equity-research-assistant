@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config.settings import DOCUMENTS_DIR
+from config.settings import DOCUMENTS_DIR, to_repo_relative
 from companies.registry import get_company
 from storage.database import init_db
 from storage.repositories import save_company_document
@@ -136,7 +136,7 @@ def main() -> None:
             fiscal_year=doc.fiscal_year,
             quarter=doc.quarter,
             added_by_user=ADDED_BY,
-            raw_file_path=str(dest),
+            raw_file_path=to_repo_relative(dest),
         )
         print(
             f"OK  document_id={row['document_id']:4d} {doc.document_type:22s} "

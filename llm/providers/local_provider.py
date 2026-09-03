@@ -16,7 +16,13 @@ from config.settings import OLLAMA_BASE_URL
 from llm.providers.base import ProviderResponse, ProviderUnavailable
 
 PROVIDER_NAME = "ollama"
-_REQUEST_TIMEOUT_SECONDS = 120
+# 120s was too short in practice for an 8B local model on CPU against a
+# full-length document extraction prompt (MAX_CHARS_FOR_EXTRACTION-sized
+# input) — most real attempts were timing out well before finishing, not
+# failing on model quality. 600s gives a genuinely slow response room to
+# finish instead of being counted as ProviderUnavailable and falling
+# through to the next model in the chain.
+_REQUEST_TIMEOUT_SECONDS = 600
 
 
 def generate(*, system: str, user_message: str, model: str, max_tokens: int) -> ProviderResponse:

@@ -67,6 +67,96 @@ def test_schema_file_exists() -> None:
     assert SCHEMA_PATH.exists()
 
 
+def test_migrate_document_chunks_fk_reference(tmp_path: Path) -> None:
+    """A database whose document_chunks table still has the stale
+    `REFERENCES documents_old(...)` (left over from the historical
+    documents-table rebuild — see _migrate_documents_old_fk_references)
+    gets it rebuilt to reference `documents` correctly, so an INSERT into
+    document_chunks doesn't raise "no such table: main.documents_old"."""
+    db_path = tmp_path / "test.db"
+    conn = init_db(db_path=db_path)
+    conn.execute(
+        "INSERT INTO companies (company_id, legal_name, display_name, status, created_at, updated_at) "
+        "VALUES ('HDFCBANK', 'HDFC Bank Limited', 'HDFC Bank', 'active', '2024-01-01', '2024-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO documents (company_id, document_type, retrieved_at) VALUES ('HDFCBANK', 'annual_report', '2024-01-01')"
+    )
+    document_id = conn.execute("SELECT document_id FROM documents").fetchone()["document_id"]
+    conn.commit()
+
+    # Simulate the historical bug directly — rebuild document_chunks with
+    # the same stale FK a real pre-fix database has, bypassing the app's
+    # own (now-correct) schema/migrations to reproduce the exact prior state.
+    conn.execute("ALTER TABLE document_chunks RENAME TO document_chunks_old")
+    conn.execute(
+        """
+        CREATE TABLE document_chunks (
+          chunk_id INTEGER PRIMARY KEY,
+          document_id INTEGER REFERENCES documents_old(document_id),
+          company_id TEXT, section_heading TEXT, page_number INTEGER,
+          chunk_index INTEGER, text TEXT NOT NULL, embedding BLOB, created_at TEXT
+        )
+        """
+    )
+    conn.execute("DROP TABLE document_chunks_old")
+    conn.commit()
+    conn.close()
+
+    conn = init_db(db_path=db_path)  # re-running init_db is what triggers the migration
+    sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='document_chunks'"
+    ).fetchone()["sql"]
+    assert "documents_old" not in sql
+
+    # The real regression: this INSERT used to raise "no such table: main.documents_old".
+    conn.execute(
+        "INSERT INTO document_chunks (document_id, company_id, page_number, chunk_index, text, created_at) "
+        "VALUES (?, 'HDFCBANK', 1, 0, 'some text', '2024-01-01')",
+        (document_id,),
+    )
+    conn.commit()
+    row = conn.execute("SELECT text FROM document_chunks WHERE document_id = ?", (document_id,)).fetchone()
+    assert row["text"] == "some text"
+    conn.close()
+
+
+def test_migrate_raw_file_paths_to_repo_relative(tmp_path: Path) -> None:
+    """A pre-fix row stored with an absolute raw_file_path (any historical
+    repo folder name — the migration doesn't special-case which one) is
+    rewritten to the same repo-relative form new writes use, on the very
+    next init_db() call, not just at insert time."""
+    db_path = tmp_path / "test.db"
+    conn = init_db(db_path=db_path)
+    conn.execute(
+        "INSERT INTO companies (company_id, legal_name, display_name, status, created_at, updated_at) "
+        "VALUES ('HDFCBANK', 'HDFC Bank Limited', 'HDFC Bank', 'active', '2024-01-01', '2024-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO documents (company_id, document_type, raw_file_path, retrieved_at) VALUES "
+        "('HDFCBANK', 'annual_report', "
+        "'/Users/someone/old-repo-name/data/documents/HDFCBANK/report.pdf', '2024-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO company_notes (company_id, note_text, created_at) VALUES ('HDFCBANK', 'x', '2024-01-01')"
+    )
+    note_id = conn.execute("SELECT note_id FROM company_notes").fetchone()["note_id"]
+    conn.execute(
+        "INSERT INTO company_note_attachments (note_id, filename, raw_file_path, size_bytes, uploaded_at) VALUES "
+        "(?, 'memo.txt', '/Users/someone/old-repo-name/data/documents/HDFCBANK/note_attachments/memo.txt', 11, '2024-01-01')",
+        (note_id,),
+    )
+    conn.commit()
+    conn.close()
+
+    conn = init_db(db_path=db_path)  # re-running init_db is what triggers the migration
+    doc = conn.execute("SELECT raw_file_path FROM documents").fetchone()
+    assert doc["raw_file_path"] == "data/documents/HDFCBANK/report.pdf"
+    attachment = conn.execute("SELECT raw_file_path FROM company_note_attachments").fetchone()
+    assert attachment["raw_file_path"] == "data/documents/HDFCBANK/note_attachments/memo.txt"
+    conn.close()
+
+
 def test_init_db_default_path_resolves_settings_dynamically(tmp_path: Path, monkeypatch) -> None:
     """Regression test: init_db()/get_connection() used to bind DB_PATH as a
     default-parameter value at import time, so monkeypatching config.settings.DB_PATH

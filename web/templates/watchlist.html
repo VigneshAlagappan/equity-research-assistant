@@ -2,7 +2,26 @@
 
 {% block title %}Watchlist — Signals{% endblock %}
 
+{% block page_class %}page-wide{% endblock %}
+
 {% block extra_style %}
+  /* Same filter/pagination pattern as the Admin Ingest panel (web/templates/admin.html) */
+  .admin-companies-filters {
+    display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;
+    margin-top: var(--space-3);
+  }
+  .admin-companies-filters .field { width: auto; flex: 1 1 180px; max-width: 280px; }
+  .admin-companies-filters .field label {
+    display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--ink-muted); margin-bottom: 4px;
+  }
+  .admin-companies-filters select.input, .admin-companies-filters input.input { min-height: 36px; }
+  .admin-pagination {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+    gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-3);
+    border-top: 1px solid var(--color-divider); font-size: 13px;
+  }
+  .admin-pagination-links { display: flex; align-items: center; gap: var(--space-2); }
   .watchlist-list { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-4); }
   .watchlist-row {
     border: 1px solid var(--color-divider); border-radius: var(--radius-md);
@@ -83,7 +102,27 @@
 {% endblock %}
 
 {% block content %}
-  <p class="muted">One shared watchlist — companies and research threads worth tracking, in one place.</p>
+  <p class="muted">One shared watchlist — companies and research threads worth tracking, in one place. ({{ entries_total }} total)</p>
+
+  <form class="admin-companies-filters" method="get" action="{{ url_for('watchlist') }}">
+    <div class="field">
+      <label for="wl-search">Search</label>
+      <input class="input" type="text" id="wl-search" name="wl_q" value="{{ entries_query }}"
+             placeholder="Title, subtitle&hellip;" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="wl-type">Type</label>
+      <select class="input" id="wl-type" name="wl_type" onchange="this.form.requestSubmit()">
+        <option value="">All types</option>
+        <option value="company" {{ 'selected' if entries_type_filter == 'company' }}>Company</option>
+        <option value="thread" {{ 'selected' if entries_type_filter == 'thread' }}>Thread</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Search</button>
+    {% if entries_query or entries_type_filter %}
+    <a class="btn btn-ghost" href="{{ url_for('watchlist') }}">Clear</a>
+    {% endif %}
+  </form>
 
   {% if entries %}
   <div class="watchlist-list">
@@ -98,7 +137,7 @@
         </a>
         <div class="watchlist-actions">
           <span class="tag {{ 'tag-neutral' if entry.item_type == 'company' else 'tag-outline' }}">{{ entry.item_type }}</span>
-          <span class="watchlist-pinned-at">Pinned {{ entry.pinned_at[:10] }}</span>
+          <span class="watchlist-pinned-at">Pinned <span class="local-time" data-utc="{{ entry.pinned_at }}" data-utc-format="date">{{ entry.pinned_at[:10] }}</span></span>
           <form method="post" action="{{ url_for('watchlist_remove') }}">
             <input type="hidden" name="item_type" value="{{ entry.item_type }}">
             <input type="hidden" name="item_ref" value="{{ entry.item_ref }}">
@@ -118,6 +157,22 @@
     </div>
     {% endfor %}
   </div>
+  {% if entries_total_pages > 1 %}
+  <div class="admin-pagination">
+    <span class="muted">Page {{ entries_page }} of {{ entries_total_pages }}</span>
+    <div class="admin-pagination-links">
+      {% set wl_pagination_args = {'wl_q': entries_query, 'wl_type': entries_type_filter} %}
+      {% if entries_page > 1 %}
+      <a class="btn btn-ghost" href="{{ url_for('watchlist', wl_page=entries_page - 1, **wl_pagination_args) }}">&larr; Previous</a>
+      {% endif %}
+      {% if entries_page < entries_total_pages %}
+      <a class="btn btn-ghost" href="{{ url_for('watchlist', wl_page=entries_page + 1, **wl_pagination_args) }}">Next &rarr;</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% elif entries_query or entries_type_filter %}
+  <div class="empty-state">No watchlist items match the current filters.</div>
   {% else %}
   <div class="empty-state">
     Nothing pinned yet. Use the "Add to watchlist" button on a Company page

@@ -9,15 +9,30 @@
 (function () {
   "use strict";
 
+  // "big"/"perShare"/"sharesCount" are the currency-agnostic category names
+  // web/valuation_feed.py's _row()/projectMetric() actually use for every
+  // Balance Sheet/Income Statement/Per-Share row (verified: every one of
+  // those sections' rows carries one of these three) — this fmt() predates
+  // that vocabulary and only ever had the older "crore"/"rupee"/"crShares"
+  // names, so those rows fell through to `default: return String(val)`,
+  // shipping a raw JS float's full precision straight to the page (e.g.
+  // "90674.0499999999" for a Networth cell) instead of a formatted ₹ value.
+  // INR-only, matching this file's existing "crore"/"rupee" cases — unlike
+  // web/static/js/valuation_dashboard.js's fmt(), this feed/dashboard has
+  // never threaded a `currency` argument through, and valuation_feed.py's
+  // module docstring is India-specific throughout.
   function fmt(val, unit) {
     if (val === null || val === undefined || Number.isNaN(val) || !Number.isFinite(val)) return "—";
     switch (unit) {
-      case "crore": return "₹" + Math.round(val).toLocaleString("en-IN") + " Cr";
-      case "rupee": return "₹" + val.toFixed(2);
+      case "crore":
+      case "big": return "₹" + Math.round(val).toLocaleString("en-IN") + " Cr";
+      case "rupee":
+      case "perShare": return "₹" + val.toFixed(2);
       case "pct": return (val * 100).toFixed(1) + "%";
       case "pctAbs": return (Math.abs(val) * 100).toFixed(1) + "%";
       case "x": return val.toFixed(2) + "x";
-      case "crShares": return val.toFixed(1) + " Cr";
+      case "crShares":
+      case "sharesCount": return val.toFixed(1) + " Cr";
       default: return String(val);
     }
   }
@@ -318,6 +333,7 @@
         : years10.map(() => null);
       return {
         label: metric.label,
+        type: metric.type || "fact",
         unit: metric.unit,
         historical: metric.values.map((v) => fmt(v, metric.unit)),
         rawHistorical: metric.values,
@@ -348,9 +364,9 @@
     const projPeByYear = projPriceByYear.map((p, i) => (projEpsByYear[i] ? p / projEpsByYear[i] : null));
 
     const valuationRows = [
-      { label: priceMetric.label, unit: "rupee", historical: priceMetric.values.map((v) => fmt(v, "rupee")), rawHistorical: priceMetric.values,
+      { label: priceMetric.label, type: priceMetric.type || "fact", unit: "rupee", historical: priceMetric.values.map((v) => fmt(v, "rupee")), rawHistorical: priceMetric.values,
         cagr: cagrOfHistorical(priceMetric.values), forecast: projPriceByYear.map((v) => fmt(v, "rupee")), rawForecast: projPriceByYear },
-      { label: peMetric.label, unit: "x", historical: peMetric.values.map((v) => fmt(v, "x")), rawHistorical: peMetric.values,
+      { label: peMetric.label, type: peMetric.type || "calc", unit: "x", historical: peMetric.values.map((v) => fmt(v, "x")), rawHistorical: peMetric.values,
         cagr: cagrOfHistorical(peMetric.values),
         forecast: projPeByYear.map((v) => fmt(v, "x")), rawForecast: projPeByYear },
       projectMetric(pbvMetric),
@@ -360,8 +376,8 @@
     const historicalHeaderCells = YEARS.map((y) => '<th class="vm-num">FY' + y + "</th>").join("");
     const forecastHeaderCells = years10.map((y) => '<th class="vm-num vm-forecast-col">FY' + y + "</th>").join("");
     function sectionRow(label) {
-      // +2 for the Parameter and Trend columns ahead of the year/CAGR columns.
-      return '<tr class="vm-growth-section"><td colspan="' + (totalCols + 2) + '">' + escapeHtml(label) + "</td></tr>";
+      // +3 for the Parameter, Type and Trend columns ahead of the year/CAGR columns.
+      return '<tr class="vm-growth-section"><td colspan="' + (totalCols + 3) + '">' + escapeHtml(label) + "</td></tr>";
     }
     // Small sparkline by default; click to swap in a bigger chart with
     // year labels and a hover tooltip per point — same actual-vs-forecast
@@ -391,6 +407,8 @@
         .map(
           (r) =>
             "<tr><td>" + escapeHtml(r.label) + "</td>" +
+            '<td><span class="tag ' + (r.type === "calc" ? "tag-calculation" : "tag-fact") + '">' +
+            (r.type === "calc" ? "CALC" : "FACT") + "</span></td>" +
             trendCell(r) +
             r.historical.map((v) => '<td class="vm-num">' + v + "</td>").join("") +
             '<td class="vm-num vm-cagr-cell">' + r.cagr + "</td>" +
@@ -415,11 +433,11 @@
       '<h2>10-Year Growth Projection</h2>' +
       '<p class="muted vm-section-desc">Actuals through FY' + latestYear + ' (CAGR over the window above), then 10 years projected forward at the assumptions above (shaded). Beyond FY' + terminalYear + ', growth is assumed to settle at the terminal rate. Parameter, Trend, and the year headers stay fixed as you scroll the table.</p>' +
       '<div class="vm-table-scroll"><table class="table"><thead>' +
-        '<tr><th></th><th></th><th colspan="' + YEARS.length + '" class="vm-group-header">Actual</th><th class="vm-cagr-col"></th><th colspan="' + years10.length + '" class="vm-group-header vm-forecast-col">Forecast</th></tr>' +
-        '<tr><th>Parameter</th><th>Trend</th>' + historicalHeaderCells + '<th class="vm-num vm-cagr-col">CAGR</th>' + forecastHeaderCells + '</tr>' +
+        '<tr><th></th><th></th><th></th><th colspan="' + YEARS.length + '" class="vm-group-header">Actual</th><th class="vm-cagr-col"></th><th colspan="' + years10.length + '" class="vm-group-header vm-forecast-col">Forecast</th></tr>' +
+        '<tr><th>Parameter</th><th>Type</th><th class="vm-trend-header">Trend</th>' + historicalHeaderCells + '<th class="vm-num vm-cagr-col">CAGR</th>' + forecastHeaderCells + '</tr>' +
       '</thead><tbody>' +
         bodyRows +
-        '<tr><td class="text-muted" colspan="2">FY' + terminalYear + ' onward</td><td class="text-muted" colspan="' + totalCols + '">Grows at the terminal rate, ' + futureGrowthPct + ' / yr, in perpetuity</td></tr>' +
+        '<tr><td class="text-muted" colspan="3">FY' + terminalYear + ' onward</td><td class="text-muted" colspan="' + totalCols + '">Grows at the terminal rate, ' + futureGrowthPct + ' / yr, in perpetuity</td></tr>' +
       '</tbody></table></div>' +
       '<p class="text-muted vm-footnote">Price compounds the current price at the annualized price growth rate above for forecast years; P/E divides it by projected EPS.</p>';
 

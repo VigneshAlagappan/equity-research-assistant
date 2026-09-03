@@ -197,6 +197,21 @@ def test_fallback_respects_absolute_decade_range(db_conn: sqlite3.Connection, mo
     assert periods == {"1955", "1999"}
 
 
+def test_fallback_attributes_fred_series_to_usa(db_conn: sqlite3.Connection, monkeypatch) -> None:
+    """A matched series is labeled by its own source's country, not a single
+    global constant — an India (rbi) series and a US (fred) series in the
+    same evidence list get different company_id stand-ins."""
+    _make_unavailable(monkeypatch)
+    _insert(db_conn, "repo_rate", "2020", 6.0, "PERCENT", "rbi")
+    _insert(db_conn, "fed_funds_rate", "2020", 1.5, "PERCENT", "fred")
+
+    evidence = get_macro_evidence(db_conn, "What was the repo rate and the fed funds rate?")
+
+    by_label = {e.label: e.company_id for e in evidence}
+    assert by_label["Repo Rate 2020"] == "INDIA"
+    assert by_label["Fed Funds Rate 2020"] == "USA"
+
+
 def test_fallback_downsamples_to_one_point_per_year(db_conn: sqlite3.Connection, monkeypatch) -> None:
     _make_unavailable(monkeypatch)
     for month in ("01", "02", "03"):

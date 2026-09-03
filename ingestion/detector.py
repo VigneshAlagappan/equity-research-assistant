@@ -16,6 +16,7 @@ from pathlib import Path
 
 from config import settings
 from sources.base import SourceAdapter
+from sources.nse_xbrl import NSEXbrlAdapter
 from sources.proprietary import ProprietaryAdapter
 from sources.screener import ScreenerAdapter
 
@@ -24,6 +25,7 @@ from sources.screener import ScreenerAdapter
 ADAPTER_CLASSES: dict[str, type[SourceAdapter]] = {
     "screener": ScreenerAdapter,
     "proprietary": ProprietaryAdapter,
+    "nse": NSEXbrlAdapter,
 }
 
 MACRO_SENTINEL = "_macro"

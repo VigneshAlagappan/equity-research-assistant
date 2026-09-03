@@ -100,7 +100,7 @@
   <tbody>
     {% for call in recent_calls %}
     <tr>
-      <td>{{ call.created_at[:19].replace("T", " ") }}</td>
+      <td><span class="local-time" data-utc="{{ call.created_at }}">{{ call.created_at[:19].replace("T", " ") }}</span></td>
       <td>{{ call.task_name }}</td>
       <td>{{ call.model_used }}</td>
       <td class="usage-question-cell" title="{{ call.question or '' }}">{{ call.question or '—' }}</td>

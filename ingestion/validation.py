@@ -19,7 +19,7 @@ _VALID_PERIOD_TYPES = {"annual", "quarterly"}
 _VALID_STATEMENT_TYPES = {"consolidated", "standalone", None}
 _VALID_UNITS = {
     "INR_CRORE", "INR_LAKH", "INR",
-    "USD_MILLION", "USD_THOUSAND", "USD",  # non-INR companies — normalization/financials.py's _localize_unit
+    "USD_MILLION", "USD_THOUSAND", "USD", "USD_BILLION",  # non-INR companies — normalization/financials.py's _localize_unit
     "PERCENT", "RATIO", "NUMBER",
 }
 # weekly/fortnightly/quarterly/dated all use the same "YYYY-MM-DD" period

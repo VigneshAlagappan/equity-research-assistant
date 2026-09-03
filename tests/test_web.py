@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,8 +37,24 @@ def _install_fake_llm(monkeypatch, text: str = "The answer. [FACT] some fact. [I
     return captured
 
 
-def _build_app(db_path: Path, monkeypatch):
+def _build_app(db_path: Path, tmp_path: Path, monkeypatch):
     monkeypatch.setattr("config.settings.DB_PATH", db_path)
+    # web/app.py's docs/add and note-attachment upload routes (and the raw-
+    # file admin importer) write real files under these dirs — without
+    # isolating them too, a test that exercises an upload writes its fixture
+    # bytes into the actual data/documents//data/raw checked-out on disk
+    # (found via a stray `data/documents/HDFCBANK/<timestamp>__ar.pdf` full
+    # of test fixture bytes accumulating on every full-suite run; DB_PATH
+    # being isolated didn't help since the file write and the DB row are
+    # two separate writes).
+    monkeypatch.setattr("config.settings.DOCUMENTS_DIR", tmp_path / "documents")
+    monkeypatch.setattr("config.settings.RAW_DIR", tmp_path / "raw")
+    # get_price_db() (web/app.py) reads settings.PRICE_DB_PATH fresh per
+    # request — without isolating it too, the Companies list route reads
+    # the real data/price_history.db during a test (real closes for real
+    # Nifty 500 companies), silently pre-empting whatever a test expected
+    # from its peek_cached_quote fallback.
+    monkeypatch.setattr("config.settings.PRICE_DB_PATH", tmp_path / "price_history.db")
     from web.app import create_app
 
     app = create_app()
@@ -53,7 +70,7 @@ def client(tmp_path: Path, monkeypatch):
     seed_companies(conn)
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         yield test_client
 
@@ -78,7 +95,7 @@ def test_companies_page_shows_cached_price_without_ported_dashboard(client, monk
     )
     response = client.get("/companies")
     assert response.status_code == 200
-    assert b"1234.50" in response.data
+    assert b"1,234.50" in response.data
 
 
 def test_companies_page_has_separate_sortable_sector_and_industry_columns(client) -> None:
@@ -103,7 +120,7 @@ def test_docs_feed_has_quarters_for_quarterly_ingested_company(tmp_path: Path, m
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         response = test_client.get("/companies/HDFCBANK/docs-feed.json")
         assert response.status_code == 200
@@ -134,7 +151,7 @@ def test_docs_feed_has_years_for_annual_only_company(tmp_path: Path, monkeypatch
     ingest_yfinance_company(conn, "AAPL", "AAPL", currency="USD")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         response = test_client.get("/companies/AAPL/docs-feed.json")
         assert response.status_code == 200
@@ -182,6 +199,35 @@ def test_docs_feed_shows_only_the_year_a_document_was_added_to(client) -> None:
     assert q2["docs"]["ppt"]["added_by_user"] == "you"
 
 
+def test_uploaded_document_stores_repo_relative_path_and_serves_correctly(client) -> None:
+    upload_response = client.post(
+        "/companies/HDFCBANK/docs/add",
+        data={"period": "year:FY2024", "type": "annual", "source": "upload", "file": (BytesIO(b"%PDF-fake"), "ar.pdf")},
+        content_type="multipart/form-data",
+    )
+    assert upload_response.status_code == 200
+    document_id = upload_response.get_json()["document_id"]
+
+    import config.settings as settings
+
+    conn = init_db(db_path=settings.DB_PATH)
+    row = conn.execute("SELECT raw_file_path FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+    # config.settings.to_repo_relative()'s own contract: relative-to-BASE_DIR
+    # when the path is under BASE_DIR, an absolute fallback string otherwise
+    # (its docstring) — this test's isolated DOCUMENTS_DIR (see _build_app())
+    # is deliberately OUTSIDE BASE_DIR, so the meaningful check here is that
+    # the stored path resolves to somewhere under that isolated dir (proving
+    # the upload never touched the real repo), not the specific relative/
+    # absolute string shape, which depends on where DOCUMENTS_DIR happens to be.
+    stored_path = Path(row["raw_file_path"])
+    resolved_path = stored_path if stored_path.is_absolute() else settings.BASE_DIR / stored_path
+    assert resolved_path.is_relative_to(settings.DOCUMENTS_DIR)
+
+    file_response = client.get(f"/companies/HDFCBANK/docs/{document_id}/file")
+    assert file_response.status_code == 200
+    assert file_response.data == b"%PDF-fake"
+
+
 def test_docs_feed_period_options_span_2005_onward(client) -> None:
     response = client.get("/companies/HDFCBANK/docs-feed.json")
     data = response.get_json()
@@ -198,7 +244,7 @@ def test_docs_feed_quarter_calendar_is_country_aware(tmp_path: Path, monkeypatch
     register_company(conn, "AAPL", "Apple Inc.", "Apple", country="US", currency="USD")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         india = test_client.get("/companies/HDFCBANK/docs-feed.json").get_json()
         us = test_client.get("/companies/AAPL/docs-feed.json").get_json()
@@ -216,7 +262,7 @@ def test_docs_feed_quarter_calendar_is_country_aware(tmp_path: Path, monkeypatch
 def test_companies_page_shows_empty_state_when_no_companies(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "empty.db"
     init_db(db_path=db_path).close()
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
 
     with app.test_client() as test_client:
         response = test_client.get("/companies")
@@ -225,18 +271,21 @@ def test_companies_page_shows_empty_state_when_no_companies(tmp_path: Path, monk
     assert b"No companies registered yet" in response.data
 
 
-def test_home_page_is_research(client) -> None:
-    """Research is the home page now — "/" renders the same content as the
-    dedicated research() view, not the Companies list."""
+def test_home_page_is_landing(client) -> None:
+    """"/" is the public marketing landing page (web/templates/landing.html)
+    now, not the research tool directly — it links out to /research rather
+    than embedding the question box itself."""
     response = client.get("/")
     assert response.status_code == 200
-    assert b"Ask your own investment question" in response.data
+    assert b"Find clarity in a market built on noise." in response.data
+    assert b'href="/research"' in response.data
 
 
-def test_legacy_research_path_redirects_to_home(client) -> None:
+def test_research_path_renders_the_research_page(client) -> None:
+    """/research is a real page now, not a legacy redirect to "/"."""
     response = client.get("/research")
-    assert response.status_code == 302
-    assert response.headers["Location"] == "/"
+    assert response.status_code == 200
+    assert b"Ask your own investment question" in response.data
 
 
 def test_company_report_unknown_company_is_404(client) -> None:
@@ -269,7 +318,7 @@ def test_company_report_renders_ingested_data(tmp_path: Path, monkeypatch) -> No
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         page = test_client.get("/companies/HDFCBANK?tab=financials")
         feed = test_client.get("/companies/HDFCBANK/valuation-feed.json").get_json()
@@ -277,8 +326,12 @@ def test_company_report_renders_ingested_data(tmp_path: Path, monkeypatch) -> No
     assert page.status_code == 200
     assert b'id="valuation-dashboard"' in page.data
     # No server-rendered ledger/PNG charts any more — the dashboard fetches
-    # its own data client-side.
-    assert b"data:image/png;base64," not in page.data
+    # its own data client-side. A bare substring check on "data:image/png;
+    # base64," would false-positive on _ask_ai.html's own client-side JS
+    # (included on every page), which builds that prefix at runtime from a
+    # template placeholder rather than embedding real image bytes — so look
+    # for an actual base64 payload following the prefix instead.
+    assert re.search(rb"data:image/png;base64,[A-Za-z0-9+/]{50,}", page.data) is None
 
     assert feed["YEARS"] == [2023, 2024]
     net_profit_row = next(r for r in feed["METRICS"]["incomeStatement"] if r["key"] == "netProfit")
@@ -317,7 +370,7 @@ def test_statement_type_toggle_switches_data(tmp_path: Path, monkeypatch) -> Non
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener", statement_type="consolidated")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
         consolidated = test_client.get("/companies/HDFCBANK/valuation-feed.json?statement_type=consolidated").get_json()
         standalone = test_client.get("/companies/HDFCBANK/valuation-feed.json?statement_type=standalone").get_json()
@@ -343,7 +396,7 @@ def test_highlighted_answer_never_double_escapes_ordinary_text(tmp_path: Path, m
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Margins < 20% & rising. [FACT] some fact.")
 
@@ -389,7 +442,7 @@ def test_chat_post_returns_answer_and_charts(tmp_path: Path, monkeypatch) -> Non
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     captured = _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x. [INFERENCE] y.")
 
@@ -465,7 +518,7 @@ def test_research_page_has_no_company_scope_picker(client) -> None:
     """No manual "Scope to companies" chip UI any more — company scoping is
     always auto-detected from the question text (client-side, against the
     COMPANIES list embedded in the page)."""
-    response = client.get("/")
+    response = client.get("/research")
     body = response.data.decode()
     assert response.status_code == 200
     assert "chip-toggle" not in body
@@ -475,13 +528,13 @@ def test_research_page_has_no_company_scope_picker(client) -> None:
 
 def test_research_page_shows_no_key_banner_when_unset(client, monkeypatch) -> None:
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", False)
-    response = client.get("/")
+    response = client.get("/research")
     assert b"ANTHROPIC_API_KEY is not set" in response.data
 
 
 def test_research_page_omits_banner_when_key_set(client, monkeypatch) -> None:
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
-    response = client.get("/")
+    response = client.get("/research")
     assert b"ANTHROPIC_API_KEY is not set" not in response.data
 
 
@@ -495,7 +548,7 @@ def test_research_ask_returns_answer_and_charts(tmp_path: Path, monkeypatch) -> 
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     captured = _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x. [INFERENCE] y.")
 
@@ -526,7 +579,7 @@ def test_research_ask_renders_markdown_structure_in_answer(tmp_path: Path, monke
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(
         monkeypatch,
@@ -630,7 +683,7 @@ def test_research_ask_supports_peer_comparison(tmp_path: Path, monkeypatch) -> N
         ingest_file(conn, file_path, company_id=company_id, source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Comparison. [FACT] x.")
 
@@ -660,7 +713,7 @@ def test_company_ask_saves_answer_as_a_thread(tmp_path: Path, monkeypatch) -> No
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
 
@@ -698,7 +751,7 @@ def test_research_ask_saves_a_thread(tmp_path: Path, monkeypatch) -> None:
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
 
@@ -729,7 +782,7 @@ def test_research_ask_appears_in_investigations_and_reuses_on_repeat(tmp_path: P
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     captured = _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
 
@@ -761,7 +814,7 @@ def test_research_thread_delete_removes_it(tmp_path: Path, monkeypatch) -> None:
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
 
@@ -790,7 +843,7 @@ def test_research_thread_delete_also_drops_it_from_watchlist(tmp_path: Path, mon
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
 
@@ -933,7 +986,7 @@ def test_research_thread_generate_creates_a_thread_and_page(tmp_path: Path, monk
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     _install_fake_signals_llm(monkeypatch, text="## The Short Answer\nNet profit rose. [FACT] x.")
 
@@ -979,7 +1032,7 @@ def test_generated_report_appears_in_investigations(tmp_path: Path, monkeypatch)
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     report_text = "# Is HDFC Bank still growing profit?\n\n## The Short Answer\nYes. [FACT] x.\n\n**Confidence:** High\n"
     _install_fake_signals_llm(monkeypatch, text=report_text)
@@ -997,10 +1050,18 @@ def test_generated_report_appears_in_investigations(tmp_path: Path, monkeypatch)
     body = page.data.decode()
     assert "Is HDFC Bank still growing profit?" in body
     assert "High confidence" in body
-    assert "Generated · HDFCBANK" in body
+    # Type badge and company label are separate elements in the unified
+    # investigations feed (web/templates/investigations.html), not
+    # concatenated into one string any more. "Quick Answer" is the
+    # user-facing label for a generated (single-pass) report.
+    assert ">Quick Answer<" in body
+    assert "HDFCBANK" in body
     assert f'/research/thread/{thread_id}"' in body
-    # example investigations still show up too, not replaced
-    assert "Kalyan Bank" in body
+    # The 3 hand-written EXAMPLES/THREADS fixtures (web/fixtures.py) are
+    # illustrative, not real data — deliberately not mixed into this real,
+    # growing feed (they still show up on the Research page's own "try an
+    # example" showcase instead).
+    assert "Kalyan Bank" not in body
 
 
 def test_generated_report_appears_under_every_named_companys_threads_tab(
@@ -1017,7 +1078,7 @@ def test_generated_report_appears_under_every_named_companys_threads_tab(
         ingest_file(conn, file_path, company_id=company_id, source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     report_text = "# Compare HDFC Bank and ICICI Bank profit growth\n\n## The Short Answer\nBoth grew. [FACT] x.\n\n**Confidence:** Moderate\n"
     _install_fake_signals_llm(monkeypatch, text=report_text)
@@ -1057,7 +1118,7 @@ def test_watchlisted_generated_report_appears_in_watchlist(tmp_path: Path, monke
     ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
     conn.close()
 
-    app = _build_app(db_path, monkeypatch)
+    app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     report_text = "# Is HDFC Bank still growing profit?\n\n## The Short Answer\nYes. [FACT] x.\n\n**Confidence:** High\n"
     _install_fake_signals_llm(monkeypatch, text=report_text)
@@ -1294,13 +1355,13 @@ def test_admin_companies_panel_is_paginated(client) -> None:
 
     _admin_session(client)
 
-    page1 = client.get("/admin?panel=companies").data.decode()
+    page1 = client.get("/settings?panel=admin-companies").data.decode()
     assert page1.count("admin-row") <= 100  # ~50 rows worth of open+close markers, not 62
     assert "Page 1 of 2" in page1
     assert "Next &rarr;" in page1
     assert "&larr; Previous" not in page1
 
-    page2 = client.get("/admin?panel=companies&page=2").data.decode()
+    page2 = client.get("/settings?panel=admin-companies&page=2").data.decode()
     assert "Page 2 of 2" in page2
     assert "&larr; Previous" in page2
     assert "Next &rarr;" not in page2
@@ -1308,13 +1369,13 @@ def test_admin_companies_panel_is_paginated(client) -> None:
 
 def test_admin_companies_panel_page_out_of_range_clamps(client) -> None:
     _admin_session(client)
-    response = client.get("/admin?panel=companies&page=999")
+    response = client.get("/settings?panel=admin-companies&page=999")
     assert response.status_code == 200  # clamped to the last real page, not a 404/500
 
 
 def test_admin_companies_panel_no_pagination_ui_when_it_all_fits(client) -> None:
     _admin_session(client)
-    body = client.get("/admin?panel=companies").data.decode()
+    body = client.get("/settings?panel=admin-companies").data.decode()
     assert 'class="admin-pagination"' not in body  # only 2 seeded companies — well under one page
 
 
@@ -1336,7 +1397,7 @@ def test_admin_companies_search_finds_a_match_on_a_later_page(client) -> None:
 
     _admin_session(client)
 
-    body = client.get("/admin?panel=companies&q=needle").data.decode()
+    body = client.get("/settings?panel=admin-companies&q=needle").data.decode()
     assert "Needle Co" in body
     assert 'class="admin-pagination"' not in body  # one match — no pagination needed
     assert 'value="Test Co 0"' not in body  # the other 60 companies are filtered out (Import dropdown lists all, ignore that)
@@ -1351,7 +1412,7 @@ def test_admin_companies_sector_filter(client) -> None:
 
     _admin_session(client)
 
-    body = client.get("/admin?panel=companies&sector=Energy").data.decode()
+    body = client.get("/settings?panel=admin-companies&sector=Energy").data.decode()
     assert "Energy Co" in body
     assert 'value="HDFC Bank"' not in body  # seeded HDFCBANK is Financial Services, not Energy (Import dropdown lists all, ignore that)
 
@@ -1359,26 +1420,26 @@ def test_admin_companies_sector_filter(client) -> None:
 def test_admin_companies_status_filter(client) -> None:
     _admin_session(client)
 
-    archived = client.get("/admin?panel=companies&status=archived").data.decode()
+    archived = client.get("/settings?panel=admin-companies&status=archived").data.decode()
     assert 'value="HDFC Bank"' not in archived  # seeded companies are active, not archived (Import dropdown lists all, ignore that)
 
-    active = client.get("/admin?panel=companies&status=active").data.decode()
+    active = client.get("/settings?panel=admin-companies&status=active").data.decode()
     assert 'value="HDFC Bank"' in active
 
 
 def test_admin_companies_no_matches_shows_filtered_empty_state(client) -> None:
     _admin_session(client)
-    body = client.get("/admin?panel=companies&q=zzz-not-a-real-company-zzz").data.decode()
+    body = client.get("/settings?panel=admin-companies&q=zzz-not-a-real-company-zzz").data.decode()
     assert "No companies match these filters." in body
     assert "No companies registered yet" not in body  # wrong empty-state message for this case
 
 
 def test_admin_companies_clear_link_only_shown_when_filters_active(client) -> None:
     _admin_session(client)
-    unfiltered = client.get("/admin?panel=companies").data.decode()
+    unfiltered = client.get("/settings?panel=admin-companies").data.decode()
     assert ">Clear</a>" not in unfiltered
 
-    filtered = client.get("/admin?panel=companies&q=hdfc").data.decode()
+    filtered = client.get("/settings?panel=admin-companies&q=hdfc").data.decode()
     assert ">Clear</a>" in filtered
 
 
@@ -1390,7 +1451,7 @@ def test_admin_companies_clear_link_only_shown_when_filters_active(client) -> No
 
 
 def test_admin_taxonomy_panel_requires_admin(client) -> None:
-    response = client.get("/admin?panel=taxonomy")
+    response = client.get("/settings?panel=admin-taxonomy")
     assert response.status_code == 302  # not logged in -> redirect to login
 
 
@@ -1404,7 +1465,7 @@ def test_admin_taxonomy_panel_lists_existing_values_with_counts(client) -> None:
     conn.close()
 
     _admin_session(client)
-    body = client.get("/admin?panel=taxonomy").data.decode()
+    body = client.get("/settings?panel=admin-taxonomy").data.decode()
     assert "Energy" in body
     assert "Financial Services" in body  # HDFCBANK's seeded sector
 
@@ -1415,20 +1476,20 @@ def test_admin_vocabulary_add_rename_delete_round_trip(client, kind: str, label:
 
     add = client.post(f"/admin/vocabulary/{kind}/add", data={"name": f"Test {label} A"})
     assert add.status_code == 302
-    body = client.get("/admin?panel=taxonomy").data.decode()
+    body = client.get("/settings?panel=admin-taxonomy").data.decode()
     assert f"Test {label} A" in body
 
     rename = client.post(
         f"/admin/vocabulary/{kind}/rename", data={"old_name": f"Test {label} A", "new_name": f"Test {label} B"}
     )
     assert rename.status_code == 302
-    body = client.get("/admin?panel=taxonomy").data.decode()
+    body = client.get("/settings?panel=admin-taxonomy").data.decode()
     assert f"Test {label} B" in body
     assert f"Test {label} A" not in body
 
     delete = client.post(f"/admin/vocabulary/{kind}/delete", data={"name": f"Test {label} B"})
     assert delete.status_code == 302
-    body = client.get("/admin?panel=taxonomy").data.decode()
+    body = client.get("/settings?panel=admin-taxonomy").data.decode()
     assert f"Test {label} B" not in body
 
 
@@ -1465,3 +1526,156 @@ def test_admin_company_row_custom_sector_lands_in_lookup_table(client) -> None:
     conn = init_db(db_path=settings.DB_PATH)
     assert "Brand New Sector" in list_sectors(conn)
     assert "Brand New Industry" in list_industries(conn)
+
+
+def test_admin_company_save_preserves_fiscal_year_end_month(client) -> None:
+    """Regression test: the save handler must pass the company's existing
+    fiscal_year_end_month through to register_company() unchanged, or a US
+    company (fiscal_year_end_month=12) would get silently reset to 3 (the
+    register_company() default) on every Admin save, same class of bug the
+    handler's own comment already warns about for country/currency."""
+    import config.settings as settings
+    from companies.registry import get_company, register_company
+
+    conn = init_db(db_path=settings.DB_PATH)
+    register_company(
+        conn, "AAPL", "Apple Inc.", "Apple", country="US", currency="USD", fiscal_year_end_month=12
+    )
+
+    _admin_session(client)
+    response = client.post(
+        "/admin/AAPL",
+        data={"action": "save", "display_name": "Apple", "legal_name": "Apple Inc."},
+    )
+    assert response.status_code == 302
+
+    row = get_company(conn, "AAPL")
+    assert row["fiscal_year_end_month"] == 12
+
+
+def test_admin_add_and_delete_stock_action(client) -> None:
+    import config.settings as settings
+    from companies.stock_actions import list_stock_actions
+
+    _admin_session(client)
+    add_response = client.post(
+        "/admin/HDFCBANK/stock-actions",
+        data={"action_type": "split", "action_date": "2024-06-15", "ratio_from": "1", "ratio_to": "2"},
+    )
+    assert add_response.status_code == 302
+
+    conn = init_db(db_path=settings.DB_PATH)
+    actions = list_stock_actions(conn, "HDFCBANK")
+    assert len(actions) == 1
+    assert actions[0]["action_type"] == "split"
+
+    delete_response = client.post(f"/admin/HDFCBANK/stock-actions/{actions[0]['action_id']}/delete")
+    assert delete_response.status_code == 302
+    assert list_stock_actions(conn, "HDFCBANK") == []
+
+
+def test_admin_add_stock_action_invalid_type_flashes_error_not_500(client) -> None:
+    import config.settings as settings
+    from companies.stock_actions import list_stock_actions
+
+    _admin_session(client)
+    response = client.post(
+        "/admin/HDFCBANK/stock-actions",
+        data={"action_type": "merger", "action_date": "2024-06-15", "ratio_from": "1", "ratio_to": "2"},
+    )
+    assert response.status_code == 302  # redirected back with a flashed error, not a 500
+
+    conn = init_db(db_path=settings.DB_PATH)
+    assert list_stock_actions(conn, "HDFCBANK") == []
+
+
+def test_admin_stock_actions_panel_requires_login(client) -> None:
+    response = client.post(
+        "/admin/HDFCBANK/stock-actions",
+        data={"action_type": "split", "action_date": "2024-06-15", "ratio_from": "1", "ratio_to": "2"},
+    )
+    assert response.status_code in (302, 401, 403)
+    if response.status_code == 302:
+        assert "/login" in response.headers["Location"]
+
+
+def _save_investigation(db_path: Path, investigation_id: str, company_ids: list[str], **kwargs) -> None:
+    from storage.repositories import save_investigation
+
+    conn = init_db(db_path=db_path)
+    save_investigation(
+        conn, investigation_id=investigation_id,
+        question=f"Why do {' and '.join(company_ids)} differ?", company_ids=company_ids,
+        statement_type="consolidated", strongest_explanation="Because of X.",
+        unanswered_questions=[], additional_evidence_needed=[], **kwargs,
+    )
+    conn.close()
+
+
+def test_company_page_lists_its_structured_investigations(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "web_test.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    conn.close()
+    _save_investigation(db_path, "inv_solo", ["HDFCBANK"])
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as client:
+        body = client.get("/companies/HDFCBANK").data.decode()
+
+    assert 'id="sec-investigations"' in body
+    assert "/investigate/inv_solo" in body
+    assert "Why do HDFCBANK differ?" in body
+
+
+def test_a_cross_company_investigation_appears_under_every_company_it_covers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The spec's rule for investigations #4 and #5: one shared record, listed
+    under each associated company, never duplicated per company."""
+    db_path = tmp_path / "web_test.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    conn.close()
+    _save_investigation(db_path, "inv_pair", ["HDFCBANK", "ICICIBANK"])
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as client:
+        hdfc = client.get("/companies/HDFCBANK").data.decode()
+        icici = client.get("/companies/ICICIBANK").data.decode()
+
+    for body, other in ((hdfc, "ICICIBANK"), (icici, "HDFCBANK")):
+        assert "/investigate/inv_pair" in body
+        assert f"Deep Dive · also {other}" in body  # named as a shared, not duplicated, record
+
+    conn = init_db(db_path=db_path)
+    assert conn.execute("SELECT COUNT(*) FROM investigations").fetchone()[0] == 1
+    conn.close()
+
+
+def test_company_page_shows_an_empty_state_when_it_has_no_investigations(client) -> None:
+    body = client.get("/companies/HDFCBANK").data.decode()
+    assert 'id="company-investigations-empty"' in body
+
+
+def test_a_point_in_time_investigation_is_labelled_as_of_on_both_surfaces(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A historical conclusion must state the information set it was reached
+    under, or it can't be audited."""
+    db_path = tmp_path / "web_test.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    conn.close()
+    _save_investigation(db_path, "inv_hist", ["HDFCBANK"], as_of="2013-03-31")
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as client:
+        company_page = client.get("/companies/HDFCBANK").data.decode()
+        investigation_page = client.get("/investigate/inv_hist").data.decode()
+
+    assert "as of 2013-03-31" in company_page
+    assert "evidence as of 2013-03-31" in investigation_page

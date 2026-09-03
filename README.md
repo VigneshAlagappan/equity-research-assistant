@@ -1,9 +1,10 @@
-# Equity AI Research Assistant (POC)
+# Global Equity Research Assistant (POC)
 
-An AI-assisted research system for listed companies that combines structured
-financial data, company filings, management commentary, historical data, macro data,
-deterministic calculations, charts, and LLM reasoning to answer investment-research
-questions — with every material claim traceable back to its source.
+An AI-assisted research system for listed companies — with a primary focus on the US
+and India markets — that combines structured financial data, company filings,
+management commentary, historical data, macro data, deterministic calculations,
+charts, and LLM reasoning to answer investment-research questions — with every
+material claim traceable back to its source.
 
 **This is not a trading system.** It does not produce buy/sell recommendations.
 
@@ -27,6 +28,17 @@ file is what actually governs.
 > [Web UI Implementation Sequence](#web-ui-implementation-sequence)) are kept as a
 > stable roadmap other docs cross-reference by number — their *status* lives in
 > FeatureList.md, not here.
+>
+> This proposal was originally scoped India-only (every worked example below names an
+> Indian company, and its source adapters were designed around NSE/BSE/Screener.in) —
+> the system has since grown a real second market, the US (`yfinance`/`fred` source
+> adapters, per-company `country`/`currency`/`fiscal_year_end_month`), described
+> accurately in [architecture.md](architecture.md). The India-specific examples and
+> adapter names below are kept as-is (they're still accurate for India, and rewriting
+> historical scoping rationale to be market-neutral would just obscure why NSE/BSE/
+> Screener-shaped adapters exist at all) — read "Indian company" in what follows as
+> "the original, still-primary market this proposal was scoped against," not as a
+> claim that the system is India-only today.
 
 ---
 
@@ -236,7 +248,10 @@ had before NSE/BSE (step 6).
 **Narrative files (PDF circulars, policy reports) aren't wired up yet** —
 they'd reuse the existing `documents`/`document_chunks` pipeline as-is
 (`documents.company_id` is already nullable, so `company_id = NULL` needs no
-schema change), but that pipeline itself isn't built yet either (step 7).
+schema change). That pipeline itself now exists (page-scoped chunking + FTS5
+keyword search, see [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy-step-2d)),
+but nothing in `sources/` fetches a macro narrative file in the first place —
+this is a missing source, not a missing pipeline.
 
 **Worked example:**
 
@@ -296,8 +311,17 @@ is a data row, not a migration.
 Conflicting sources are never silently overwritten — both are kept, and the
 reconciliation decision is itself recorded.
 
-Default source priority: **official company filing → NSE/BSE filing → licensed data
-provider → secondary financial source.** This is what lets the assistant say:
+Default source priority for structured financial facts: **NSE XBRL (once
+validated for a period) → official company filing / hand-curated proprietary
+data → licensed data provider → secondary financial source.** NSE XBRL is the
+target source of truth here (2026-08 directive) — once a reporting period has
+a validated NSE observation on file, every other source is ineligible for
+*that period*, metric by metric: a metric the filing didn't report goes
+blank rather than being backfilled from legacy data (`storage/repositories.py`'s
+`reconcile()`/`_period_is_xbrl_migrated()`). Until a period is migrated, the
+older default order still applies: official company filing → NSE/BSE filing →
+licensed data provider → secondary financial source. This is what lets the
+assistant say:
 
 > Net Profit FY2025: ₹X crore — Primary source: NSE filing. Cross-check: Screener.
 
@@ -365,10 +389,15 @@ document_search.py     FTS5 keyword search + metadata filtering today;
 hybrid_search.py        combines both → typed Evidence objects with full provenance
 ```
 
-Built as named for structured data (`retrieval/structured_search.py`); document
-evidence took a leaner shape than proposed here (`research/documents.py` does
-direct PDF extraction per question, no FTS5/chunking/`hybrid_search.py` yet —
-see [architecture.md's Known gaps](architecture.md#documents--docs-tab)).
+Built as named for structured data (`retrieval/structured_search.py`).
+Document evidence *for Q&A/Signals reports* took a leaner shape than proposed
+here — `research/documents.py` does direct PDF extraction per question, no
+caching (see [architecture.md's Known gaps](architecture.md#documents--docs-tab)).
+Page-scoped chunking + FTS5 keyword search were since built as their own
+standalone capability (`research/document_chunker.py`, `retrieval/document_search.py`,
+Step 2D — see [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy-step-2d))
+but are deliberately not wired into that evidence path yet; no `hybrid_search.py`
+module exists.
 
 Retrieval never calls the LLM. Full company archives are never sent to the model —
 only retrieved, filtered evidence. The LLM client is a thin, swappable interface, so

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import base64
 import io
-import sqlite3
 from pathlib import Path
 
 import matplotlib
@@ -24,6 +23,7 @@ import matplotlib.ticker as mticker
 
 from financials.calculations import MissingDataError
 from financials.ratios import roa_for_company, roe_for_company
+from storage.db_types import DBConnection
 from storage.repositories import get_canonical_series
 
 # Same palette as web/templates/base.html's design tokens, so a chart and the
@@ -64,7 +64,7 @@ def _style_axes(ax: plt.Axes, title: str) -> None:
 
 
 def plot_metric_trend(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     metric_key: str,
     title: str,
@@ -87,7 +87,7 @@ def plot_metric_trend(
 
 
 def plot_ratio_trend(
-    conn: sqlite3.Connection, company_id: str, statement_type: str | None = "consolidated"
+    conn: DBConnection, company_id: str, statement_type: str | None = "consolidated"
 ) -> plt.Figure | None:
     """ROA and ROE together, both percent — same fiscal years the text report computes them for."""
     net_profit_years = [
@@ -122,7 +122,7 @@ def plot_ratio_trend(
 
 
 def plot_indexed_comparison(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_ids: list[str],
     metric_key: str,
     title: str,
@@ -175,7 +175,7 @@ def plot_indexed_comparison(
 
 
 def plot_ratio_comparison(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_ids: list[str],
     ratio: str,  # "roa" | "roe"
     statement_type: str | None = "consolidated",
@@ -234,7 +234,7 @@ _COMPARISON_CHART_BUILDERS = [
 
 
 def build_comparison_charts(
-    conn: sqlite3.Connection, company_ids: list[str], statement_type: str | None = "consolidated"
+    conn: DBConnection, company_ids: list[str], statement_type: str | None = "consolidated"
 ) -> dict[str, plt.Figure]:
     """Every comparison chart with enough overlapping data across company_ids,
     keyed by chart_key. Empty/insufficient-overlap charts are omitted."""
@@ -247,7 +247,7 @@ def build_comparison_charts(
 
 
 def plot_advances_vs_deposits(
-    conn: sqlite3.Connection, company_id: str, statement_type: str | None = "consolidated"
+    conn: DBConnection, company_id: str, statement_type: str | None = "consolidated"
 ) -> plt.Figure | None:
     """Advances (loans) vs Deposits, annual — directly serves the "loan/deposit
     growth" success criterion (README: POC Success Criteria, single-company deep dive)."""
@@ -285,7 +285,7 @@ _CHART_BUILDERS = [
 
 
 def build_company_charts(
-    conn: sqlite3.Connection, company_id: str, statement_type: str | None = "consolidated"
+    conn: DBConnection, company_id: str, statement_type: str | None = "consolidated"
 ) -> dict[str, plt.Figure]:
     """Every chart with data for this company, keyed by chart_key. Empty charts are omitted, not returned blank."""
     charts: dict[str, plt.Figure] = {}

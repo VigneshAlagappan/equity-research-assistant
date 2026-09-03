@@ -13,6 +13,7 @@
   <script defer src="{{ static_url('js/charts_overlay.js') }}"></script>
   <script defer src="{{ static_url('js/notes_panel.js') }}"></script>
   <script defer src="{{ static_url('js/threads_panel.js') }}"></script>
+  <script defer src="{{ static_url('js/shareholding_panel.js') }}"></script>
 {% endblock %}
 
 {% block extra_style %}
@@ -21,7 +22,10 @@
      the internal company_id eyebrow and the legal/sector/status/watchlist
      metadata used to take 3 stacked lines; nowrap + auto-hidden horizontal
      scroll (same trick as the tab bar) keeps it to one regardless of width,
-     scrolling sideways instead of wrapping when it doesn't all fit. */
+     scrolling sideways instead of wrapping when it doesn't all fit. Below
+     640px there's rarely room to scroll to anyway (and the hidden scrollbar
+     gives no hint that there's more) — wrapping there instead means nothing
+     ever reads as silently cut off. */
   .company-title-row {
     display: flex; flex-wrap: nowrap; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-3);
     overflow-x: auto; scrollbar-width: none;
@@ -29,6 +33,11 @@
   .company-title-row::-webkit-scrollbar { display: none; }
   .company-title-row > * { flex: none; }
   .company-name { margin: 0; font-size: 1.4rem; white-space: nowrap; }
+  .company-website-link {
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--ink-muted); flex: none;
+  }
+  .company-website-link:hover { color: var(--color-accent); }
   .price-inline { font-family: var(--font-body); font-size: 1rem; font-weight: 400; font-variant-numeric: tabular-nums; color: var(--ink-muted); }
   /* Live quote (yfinance) vs. yesterday's close — muted, not the saturated
      red/green a trading app would use, to stay in this app's understated palette. */
@@ -38,11 +47,13 @@
   .company-identity { font-size: 13px; color: var(--ink-muted); white-space: nowrap; }
   .company-identity a { color: inherit; text-decoration: underline; text-decoration-color: var(--color-divider); }
   .company-identity a:hover { color: var(--color-accent); text-decoration-color: var(--color-accent); }
+  @media (max-width: 640px) {
+    .company-title-row { flex-wrap: wrap; overflow-x: visible; }
+    .company-identity { white-space: normal; flex-basis: 100%; }
+  }
 
-  /* — Overview tab: About (identity) + a financial snapshot, stacked as
-     clearly separated, equally-weighted sections rather than run together. — */
-  .panel-section + .panel-section { margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px solid var(--color-divider); }
   .panel-section-financials :is(h2) { margin-top: 0; }
+  .company-identity-extra { font-size: 13px; color: var(--ink-muted); margin: var(--space-1) 0 0; }
 
   .insights-meta { font-size: 12px; color: var(--ink-muted); display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); }
   .insights-action { font-size: 12px; padding: 0.15rem 0.6rem; }
@@ -68,11 +79,7 @@
   .overview-news-item:hover .overview-news-title { color: var(--color-accent); }
   .overview-news-title { font-size: 13px; line-height: 1.4; }
   .overview-news-source { font-size: 11px; color: var(--ink-muted); margin-top: 2px; }
-  .meta-list { margin: var(--space-4) 0 0; max-width: 480px; }
-  .meta-row { display: flex; gap: var(--space-3); padding: 5px 0; border-bottom: 1px solid var(--color-divider); font-size: 13px; }
-  .meta-row dt { width: 108px; flex: none; color: var(--ink-muted); }
-  .meta-row dd { margin: 0; }
-  .watchlist-toggle-form { display: inline-flex; }
+  .watchlist-toggle-form { display: inline-flex; margin-left: auto; }
   .watchlist-toggle-btn {
     font-size: 12px; padding: 0.15rem 0.6rem; border-radius: 999px;
     border: 1px solid var(--color-divider); background: transparent; color: var(--ink-muted);
@@ -144,6 +151,60 @@
     margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px solid var(--color-divider);
   }
 
+  /* — Indicators section (indicators/*.py). Three columns, each a native
+     <details> so the collapse needs no JS, matching .insights-history /
+     .chart-overlay-hint above. Color is carried on the summary dot, the
+     column's left border and the classification pill only — the pill always
+     spells the classification out in words, so nothing here depends on
+     color alone. Hues come from base.html's --indicator-* tokens, which are
+     redeclared per data-theme rather than hardcoded here. */
+  .ind-section-intro { font-size: 13px; color: var(--ink-muted); max-width: 78ch; margin: 0 0 var(--space-4); }
+  .ind-columns {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-3);
+    align-items: start;
+  }
+  .ind-column { border: 1px solid var(--color-divider); border-radius: var(--radius-lg); background: var(--surface); }
+  .ind-column-positive { border-left: 3px solid var(--indicator-positive); }
+  .ind-column-observation { border-left: 3px solid var(--indicator-observation); }
+  .ind-column-warning { border-left: 3px solid var(--indicator-warning); }
+  .ind-column > summary {
+    cursor: pointer; list-style: none; padding: var(--space-2) var(--space-3);
+    display: flex; align-items: center; gap: var(--space-2); user-select: none;
+  }
+  .ind-column > summary::-webkit-details-marker { display: none; }
+  .ind-column > summary::after {
+    content: "▸"; margin-left: auto; font-size: 10px; color: var(--ink-muted); transition: transform .15s ease;
+  }
+  .ind-column[open] > summary::after { transform: rotate(90deg); }
+  .ind-column-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .ind-column-positive .ind-column-dot { background: var(--indicator-positive); }
+  .ind-column-observation .ind-column-dot { background: var(--indicator-observation); }
+  .ind-column-warning .ind-column-dot { background: var(--indicator-warning); }
+  .ind-column-label { font-size: 12px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+  .ind-column-count {
+    font-size: 11px; font-weight: 600; border-radius: 999px; padding: 0 6px; line-height: 1.6;
+    background: color-mix(in srgb, var(--color-text) 8%, transparent); color: var(--ink-muted);
+  }
+  .ind-column-body { padding: 0 var(--space-3) var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+  .ind-column-empty { font-size: 12px; margin: 0; }
+  .ind-card { padding: var(--space-3); gap: var(--space-2); }
+  .ind-card-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .ind-card-name { font-weight: 600; font-size: 13px; }
+  .ind-card-explanation { font-size: 13px; margin: 0; }
+  .ind-card-facts, .ind-card-values dl {
+    display: grid; grid-template-columns: auto 1fr; gap: 2px var(--space-2);
+    margin: 0; font-size: 11px;
+  }
+  .ind-card-facts dt, .ind-card-values dt { color: var(--ink-muted); }
+  .ind-card-facts dd, .ind-card-values dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .ind-card-values > summary {
+    cursor: pointer; list-style: none; font-size: 11px; color: var(--ink-muted); margin-top: 2px;
+  }
+  .ind-card-values > summary::-webkit-details-marker { display: none; }
+  .ind-card-values > summary::before { content: "▸ "; font-size: 9px; }
+  .ind-card-values[open] > summary::before { content: "▾ "; }
+  .ind-card-values > summary:hover { color: var(--ink); }
+
   .statement-toggle {
     display: inline-flex;
     border: 1px solid var(--color-divider);
@@ -154,6 +215,21 @@
   .statement-toggle a { padding: var(--space-1) var(--space-3); font-size: 12px; text-decoration: none; color: var(--ink-muted); }
   .statement-toggle a.active { background: var(--color-accent); color: var(--accent-ink); font-weight: 600; }
   .statement-toggle a:not(.active):hover { background: var(--row-hover); }
+
+  /* Annual/Quarterly toggle (Financials tab) — same pill styling as
+     .statement-toggle right next to it, but plain <button>s wired by
+     valuation_dashboard.js (client-side re-fetch, no page reload), same
+     interaction shape as the Charts tab's own Annual/Quarterly toggle
+     (.chart-overlay-side-btn below) rather than a server-rendered link. */
+  .vm-toggle-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-4); }
+  .vm-toggle-row .statement-toggle { margin-bottom: 0; }
+  .vm-period-toggle { display: inline-flex; border: 1px solid var(--color-divider); border-radius: var(--radius-md); overflow: hidden; }
+  .vm-period-btn {
+    padding: var(--space-1) var(--space-3); font-size: 12px; border: none; background: transparent;
+    color: var(--ink-muted); cursor: pointer; font-family: inherit;
+  }
+  .vm-period-btn.is-active { background: var(--color-accent); color: var(--accent-ink); font-weight: 600; }
+  .vm-period-btn:not(.is-active):hover { background: var(--row-hover); }
 
   .empty-state {
     padding: var(--space-6);
@@ -420,17 +496,79 @@
   #valuation-dashboard-interactive .vm-sidebar { width: auto; position: static; }
   #valuation-dashboard-interactive .vm-nav { flex-direction: row; }
   #valuation-dashboard-interactive .vm-nav-btn.active { border-left-color: transparent; border-bottom: 2px solid var(--color-accent); }
+
+  /* Financials tab (#valuation-dashboard) — a horizontal row of rounded
+     pill buttons for its 6-section nav, sitting directly under the
+     Consolidated/Standalone + Annual/Quarterly toggles instead of the
+     vertical sidebar every section count used to share (design ask: match
+     a reference dark-theme layout with the section nav as a pill row, not
+     a side rail). Same is-active fill as .statement-toggle/.vm-period-btn
+     right above it, so the whole toggle+nav block reads as one family of
+     pill controls. */
+  #valuation-dashboard.vm-layout { flex-direction: column; align-items: stretch; }
+  #valuation-dashboard .vm-sidebar { width: auto; position: static; }
+  #valuation-dashboard .vm-nav { flex-direction: row; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
+  #valuation-dashboard .vm-nav-btn {
+    border: 1px solid var(--color-divider); border-radius: 999px; padding: var(--space-2) var(--space-4);
+  }
+  #valuation-dashboard .vm-nav-btn.active {
+    background: var(--color-accent); color: var(--accent-ink);
+    border-color: var(--color-accent); font-weight: 600; opacity: 1;
+  }
   .vm-section-desc { max-width: 70ch; margin-bottom: var(--space-5); }
   .vm-kpi-grid {
     display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3);
     margin-bottom: var(--space-5);
   }
   .vm-kpi-grid-3 { grid-template-columns: repeat(3, 1fr); }
+
+  /* Screener.in-style ratio grid — a dense 3-column block of label/value
+     pairs with alternating row shading, replacing the old 6-card KPI grid
+     on the Overview tab (and the Financials tab's own default landing
+     view, which renders the same section). Framed as this app's own
+     .card.elev-sm (styles.css) rather than a bespoke border, so it reads
+     as one cohesive surface consistent with every other card on the site
+     — .vm-ratio-grid itself only owns the grid layout and cell dividers,
+     the card class owns the outer border/radius/padding/shadow. */
+  .vm-ratio-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 0; margin-bottom: var(--space-5);
+  }
+  .vm-ratio-cell {
+    display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
+    padding: 12px 18px; font-size: 13.5px; line-height: 1.3;
+    border-bottom: 1px solid var(--color-divider); border-right: 1px solid var(--color-divider);
+    transition: background-color 0.12s ease;
+  }
+  .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+3) { border-bottom: none; }
+  .vm-ratio-cell:nth-child(3n) { border-right: none; }
+  .vm-ratio-cell:nth-child(6n+1), .vm-ratio-cell:nth-child(6n+2), .vm-ratio-cell:nth-child(6n+3) {
+    background: var(--surface);
+  }
+  .vm-ratio-cell:hover { background: var(--color-accent-100); }
+  .vm-ratio-label {
+    color: var(--ink-muted); font-size: 12.5px;
+  }
+  .vm-ratio-value {
+    font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 14.5px;
+  }
+
   @media (max-width: 720px) {
     .vm-layout { flex-direction: column; }
     .vm-sidebar { width: 100%; position: static; }
     .vm-nav { flex-direction: row; flex-wrap: wrap; }
     .vm-kpi-grid, .vm-kpi-grid-3 { grid-template-columns: repeat(2, 1fr); }
+    .vm-ratio-grid { grid-template-columns: repeat(2, 1fr); }
+    .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+3) { border-bottom: 1px solid var(--color-divider); }
+    .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+2) { border-bottom: none; }
+    .vm-ratio-cell:nth-child(3n) { border-right: 1px solid var(--color-divider); }
+    .vm-ratio-cell:nth-child(2n) { border-right: none; }
+  }
+  @media (max-width: 480px) {
+    .vm-ratio-grid { grid-template-columns: 1fr; }
+    .vm-ratio-cell { border-right: none; }
+    .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+2) { border-bottom: 1px solid var(--color-divider); }
+    .vm-ratio-grid .vm-ratio-cell:last-child { border-bottom: none; }
   }
   .vm-num { font-variant-numeric: tabular-nums; }
   .vm-eps-chart { width: 100%; height: 140px; margin-top: var(--space-3); display: block; }
@@ -440,41 +578,56 @@
   .vm-table-scroll table { font-size: 12.5px; border-collapse: separate; border-spacing: 0; }
   .vm-table-scroll th, .vm-table-scroll td { padding: 5px 8px; }
 
-  /* Frozen header rows + first two columns (Parameter, Trend) — this table
-     scrolls both directions once the 10 forecast-year columns run past the
-     viewport, and without this you'd lose track of which row/year a cell
-     belongs to. Excludes .vm-growth-section rows (the "Balance Sheet" /
-     "Income Statement" / ... dividers): those are one colspan cell each,
-     and sticky-positioning a spanned cell doesn't freeze just its visible
+  /* Frozen first two columns (Parameter, Trend) — this table scrolls
+     horizontally once the 10 forecast-year columns run past the viewport,
+     and without this you'd lose track of which row a cell belongs to.
+     Excludes .vm-growth-section rows (the "Balance Sheet" / "Income
+     Statement" / ... dividers): those are one colspan cell each, and
+     sticky-positioning a spanned cell doesn't freeze just its visible
      slice — it'd try to stick the whole spanned box, overlapping the data
      below as you scroll. Every sticky cell needs its own opaque background
      (transparent would let scrolled content show through) — a box-shadow
      on the frozen edge is the visual cue that it's floating above scrolled
-     content, not just another cell in the grid. */
-  .vm-table-scroll thead th {
-    position: sticky; top: calc(var(--site-header-h) + var(--company-tabbar-h)); height: 27px; background: var(--bg); z-index: 3;
-  }
-  .vm-table-scroll thead tr:first-child th { top: calc(var(--site-header-h) + var(--company-tabbar-h)); }
-  .vm-table-scroll thead tr:last-child th {
-    top: calc(var(--site-header-h) + var(--company-tabbar-h) + 27px);
-    box-shadow: 0 3px 6px -3px color-mix(in srgb, var(--ink) 35%, transparent);
-  }
+     content, not just another cell in the grid.
+
+     No vertical (top) stickiness on the header row, deliberately —
+     `position: sticky; top: ...` here previously tried to pin the header
+     to the viewport, but overflow-x: auto above this rule (needed for the
+     horizontal scroll) makes the browser compute this element's overflow-y
+     as "auto" too, per the CSS Overflow spec's promotion rule (any
+     non-"visible" axis promotes the other from "visible" to "auto") —
+     silently turning .vm-table-scroll itself, not the page, into the
+     sticky positioning's containing block. Verified: the header rendered
+     "stuck" at a fixed offset from the TABLE's own top edge instead of the
+     viewport's, landing mid-table and overlapping the first 1-2 data
+     rows on every load, on both this table and the (already-static, see
+     the .vm-financials-table override below — same underlying bug, fixed
+     there first) Financials-tab tables. There's no CSS-only way to keep
+     overflow-x: auto without this promotion, so vertical sticky is
+     dropped entirely rather than shipped broken. */
   .vm-table-scroll tbody tr:not(.vm-growth-section) td:first-child,
   .vm-table-scroll thead th:first-child {
     position: sticky; left: 0; z-index: 2; background: var(--bg);
     min-width: 170px; max-width: 170px;
   }
+  /* .vm-trend-header, not :nth-child(2) — the Type column (FACT/CALC badge)
+     now sits between Parameter and Trend in every .vm-table-scroll table,
+     so Trend is no longer reliably the 2nd column; a positional selector
+     silently freezes the wrong header cell instead (verified: broke this
+     exact way when Type was added). Class-based ties it to the column's
+     identity, not its index, so it survives the next column insertion too. */
   .vm-table-scroll tbody tr:not(.vm-growth-section) .vm-trend-cell,
-  .vm-table-scroll thead th:nth-child(2) {
+  .vm-table-scroll thead th.vm-trend-header {
     position: sticky; left: 170px; z-index: 2; background: var(--bg);
     box-shadow: 3px 0 6px -3px color-mix(in srgb, var(--ink) 30%, transparent);
   }
   .vm-table-scroll thead th:first-child,
-  .vm-table-scroll thead th:nth-child(2) { z-index: 4; }
+  .vm-table-scroll thead th.vm-trend-header { z-index: 4; }
   .vm-table-scroll tbody tr:not(.vm-growth-section):hover td:first-child,
   .vm-table-scroll tbody tr:not(.vm-growth-section):hover .vm-trend-cell {
     background: color-mix(in srgb, var(--ink) 4%, var(--bg));
   }
+
   .vm-growth-section td {
     font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-accent);
     background: var(--surface); padding: 6px 8px;
@@ -533,27 +686,80 @@
      series, x-axis always FY. Only 2 physical y-axes exist (left/right), so
      each attribute carries an explicit side; attributes sharing a side share
      one linear scale. See charts_overlay.js for the auto-assign heuristic
-     and the per-attribute toggle that overrides it. */
+     and the per-attribute toggle that overrides it.
+
+     Capped and centered, not stretched to the page-wide (up to 1800px)
+     container's full width -- a wide monitor was stretching one line
+     chart edge to edge, which reads worse than a contained, centered chart
+     at a normal reading width. Compare bar/toolbar/chart share this cap so
+     the whole section reads as one centered column, not a full-width
+     toolbar over a narrower chart. */
   .chart-overlay {
     --chart-series-1: var(--color-accent-700); --chart-series-2: #2563eb;
     --chart-series-3: #16a34a; --chart-series-4: #9333ea;
     --chart-series-5: #dc2626; --chart-series-6: #0891b2;
     --chart-series-7: #db2777; --chart-series-8: #64748b;
+    max-width: 1040px;
+    margin: 0 auto;
   }
-  .chart-overlay-controls { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); flex-wrap: wrap; }
-  .chart-overlay-range-select {
-    font-size: 12px; padding: 3px 6px; border: 1px solid var(--color-divider);
-    border-radius: var(--radius-sm); background: var(--bg); color: var(--ink);
+  .chart-overlay-controls { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  /* One horizontal toolbar (period/range toggle + one dropdown pill per
+     statement section) above the chart, replacing a fixed-width left
+     sidebar — the chart below gets the page's full width instead of
+     sharing it with a permanent side column (real-estate ask: move the
+     picker from the side to the top). Each section is a <details> pill
+     that drops its checkbox list down as a floating panel (position:
+     absolute) rather than pushing the toolbar row taller when opened. */
+  .chart-overlay-toolbar {
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4);
   }
-  .chart-overlay-layout { display: flex; gap: var(--space-4); align-items: flex-start; flex-wrap: wrap; }
-  .chart-overlay-picker { flex: 0 0 260px; min-width: 220px; }
-  .chart-overlay-picker-hint { font-size: 12px; color: var(--ink-muted); margin: 0 0 var(--space-2); }
-  .chart-overlay-section-title {
-    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
-    color: var(--ink-muted); margin: var(--space-2) 0 4px;
+  /* Collapsed by default (same <details> disclosure as .insights-history)
+     — the explanation only needs reading once, not permanent vertical
+     space on every visit. */
+  .chart-overlay-hint { flex: none; }
+  .chart-overlay-hint summary {
+    cursor: pointer; list-style: none; font-size: 11px; color: var(--ink-muted);
+    display: flex; align-items: center; gap: 6px; user-select: none;
   }
-  .chart-overlay-section-title:first-child { margin-top: 0; }
-  .chart-overlay-attr { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 2px 0; }
+  .chart-overlay-hint summary::-webkit-details-marker { display: none; }
+  .chart-overlay-hint summary::before { content: "▸"; font-size: 10px; transition: transform 0.15s ease; }
+  .chart-overlay-hint[open] summary::before { transform: rotate(90deg); }
+  .chart-overlay-hint summary:hover { color: var(--ink); }
+  .chart-overlay-hint p {
+    position: absolute; top: 100%; left: 0; margin: 4px 0 0; z-index: 20;
+    background: var(--surface); border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg, 0 4px 12px rgba(0,0,0,.2));
+    font-size: 12px; color: var(--ink-muted); padding: 10px 12px; width: 260px;
+  }
+  .chart-overlay-hint { position: relative; }
+  /* Each statement section is a dropdown pill, open by default only when it
+     already has a selection worth showing at a glance. */
+  .chart-overlay-section {
+    position: relative; flex: none;
+    border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+  }
+  .chart-overlay-section summary {
+    cursor: pointer; list-style: none; font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .03em; color: var(--ink-muted); padding: var(--space-2) var(--space-3);
+    display: flex; align-items: center; gap: 6px; user-select: none;
+  }
+  .chart-overlay-section summary::-webkit-details-marker { display: none; }
+  .chart-overlay-section summary::after { content: "▸"; font-size: 9px; transition: transform 0.15s ease; }
+  .chart-overlay-section[open] summary::after { transform: rotate(90deg); }
+  .chart-overlay-section summary:hover { color: var(--ink); }
+  .chart-overlay-section[open] { border-color: var(--color-accent); }
+  .chart-overlay-section-count {
+    font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: normal;
+    background: var(--color-accent-100); color: var(--color-accent-800);
+    border-radius: 999px; padding: 0 6px; line-height: 1.5;
+  }
+  .chart-overlay-section-body {
+    position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 20;
+    background: var(--surface); border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg, 0 4px 12px rgba(0,0,0,.2));
+    padding: 8px 10px; min-width: 240px; max-height: 320px; overflow-y: auto;
+  }
+  .chart-overlay-attr { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 0; white-space: nowrap; }
   .chart-overlay-attr input[type="checkbox"] { accent-color: var(--color-accent-700); }
   .chart-overlay-attr label { cursor: pointer; flex: 1 1 auto; }
   .chart-overlay-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; flex: none; }
@@ -564,7 +770,14 @@
   }
   .chart-overlay-side-btn + .chart-overlay-side-btn { border-left: 1px solid var(--color-divider); }
   .chart-overlay-side-btn.is-active { background: var(--color-accent-700); color: #fff; }
-  .chart-overlay-chart { flex: 1 1 420px; min-width: 280px; }
+  .chart-overlay-chart { position: relative; }
+  .chart-overlay-tooltip {
+    position: absolute; pointer-events: none; transform: translate(-50%, -110%);
+    background: var(--ink); color: var(--surface); font-size: 12px; line-height: 1.4;
+    padding: 6px 10px; border-radius: 6px; white-space: pre-line; z-index: 30;
+    box-shadow: var(--shadow-lg, 0 4px 12px rgba(0,0,0,.2)); max-width: 220px;
+  }
+  .chart-overlay-hit { fill: transparent; cursor: pointer; }
   .chart-overlay-svg { width: 100%; height: 320px; display: block; }
   .chart-overlay-legend { display: flex; gap: var(--space-3); font-size: 12px; margin-top: 4px; flex-wrap: wrap; }
   .chart-overlay-legend-item { display: flex; align-items: center; gap: 5px; }
@@ -574,6 +787,17 @@
   .chart-overlay-axis-note { font-size: 9px; fill: var(--ink-muted); font-style: italic; }
   .chart-overlay-line { fill: none; stroke-width: 2; }
   .chart-overlay-empty { font-size: 13px; color: var(--ink-muted); padding: var(--space-4) 0; text-align: center; }
+
+  /* — Compare With (web/static/js/charts_overlay.js): the search dropdown
+     itself reuses .site-search-* (styles.css) verbatim — same component as
+     the top-nav company search, not a second bespoke style. */
+  .chart-compare { margin-bottom: var(--space-3); }
+  .chart-compare-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .chart-compare-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--color-divider); border-radius: 999px; font-size: 12px; background: var(--surface); }
+  .chart-compare-pill-remove { border: none; background: transparent; color: var(--ink-muted); cursor: pointer; padding: 0; line-height: 1; font-size: 14px; }
+  .chart-compare-search { position: relative; display: inline-block; }
+  .chart-compare-search .site-search-input,
+  .chart-compare-search .site-search-input:focus { width: 220px; padding-left: 10px; }
 
   /* — Valuation Model tab only: the assumptions panel, CAGR-window picker,
      and intrinsic-value walk that Financials deliberately doesn't have
@@ -604,6 +828,58 @@
   }
   .vm-walk-label { opacity: 0.7; }
   .vm-walk-strong { font-weight: 600; }
+
+  /* — Shareholding Pattern tab ("Major Holders") — real data
+     (web/shareholding_feed.py), rendered client-side by
+     web/static/js/shareholding_panel.js, which owns all of #shp-root's
+     markup; these rules just style what it renders. Ported from a Claude
+     Design prototype (claude.ai/design, "Signals.dc.html"), then reshaped
+     into a Screener-style wide table at the user's request — same
+     .vm-table-scroll/.table mechanics (sticky Parameter + Trend columns)
+     the Financials/Valuation Model tabs already use, rather than a new
+     table pattern. Bucket color = one of the app's existing evidence-tag
+     tokens (--calc/--fact/--statement/--inference) reused for a different
+     meaning here (holder category, not fact-vs-inference) — picked because
+     they already happen to land teal/blue/amber/purple and are already
+     dark-mode-tuned, not because the two meanings are related. */
+  .shp-loading, .shp-error { color: var(--ink-muted); }
+  .shp-subtabs {
+    display: flex; gap: var(--space-4); border-bottom: 1px solid var(--border);
+    margin-bottom: var(--space-4); flex-wrap: wrap;
+  }
+  .shp-subtab {
+    border: none; background: transparent; padding: 0.6rem 0.1rem; margin-bottom: -1px;
+    font: 500 0.85rem var(--font-heading, inherit); color: var(--ink-muted); cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .shp-subtab:hover:not(:disabled) { color: var(--ink); }
+  .shp-subtab.is-active { color: var(--accent); border-bottom-color: var(--accent); }
+  .shp-subtab:disabled { cursor: default; opacity: 0.55; }
+  .shp-lock { margin-left: 3px; opacity: 0.7; }
+
+  .shp-table-scroll { margin-top: var(--space-3); }
+  .shp-bucket-promoter { --bucket-color: var(--calc); }
+  .shp-bucket-fii { --bucket-color: var(--fact); }
+  .shp-bucket-dii { --bucket-color: var(--statement); }
+  .shp-bucket-public { --bucket-color: var(--inference); }
+  .shp-row-category td:first-child { font-weight: 600; }
+  .shp-row-toggle {
+    border: none; background: transparent; padding: 0; font: inherit; color: inherit;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+  }
+  .shp-row-toggle-static { display: inline-flex; align-items: center; gap: 7px; cursor: default; }
+  .shp-chevron { color: var(--ink-muted); font-size: 0.7rem; display: inline-block; width: 0.7em; transition: transform 0.15s ease; }
+  .shp-chevron.is-open { transform: rotate(90deg); }
+  .shp-chevron-empty { visibility: hidden; }
+  .shp-swatch { width: 9px; height: 9px; border-radius: 3px; background: var(--bucket-color); flex-shrink: 0; }
+  .shp-row-sub { color: var(--ink-muted); font-weight: 400; font-size: 0.85em; }
+  .shp-row-label-sub { padding-left: 1.55rem; color: var(--ink-muted); }
+  .shp-row-category .vm-spark path { fill: none; stroke: var(--bucket-color); stroke-width: 1.5; }
+  .shp-delta-col { border-left: 1px solid var(--border); }
+  .shp-delta.is-up { color: var(--success); }
+  .shp-delta.is-down { color: #b3453f; }
+  .shp-delta.is-flat { color: var(--ink-muted); }
+  .shp-footnote { margin-top: var(--space-3); }
 {% endblock %}
 
 {% block content %}
@@ -611,6 +887,11 @@
   <div class="company-header">
     <div class="company-title-row">
       <h1 class="company-name">{{ company['display_name'] }}</h1>
+      {% if company['website'] %}
+      <a class="company-website-link" href="{{ company['website'] }}" target="_blank" rel="noopener noreferrer" aria-label="Open {{ company['display_name'] }}'s website" title="Open company website">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>
+      </a>
+      {% endif %}
       {% if live_quote %}
       <span class="price-inline">
         {{ currency_symbol }}{{ '%.2f'|format(live_quote.price) }}
@@ -624,6 +905,7 @@
       <span class="company-identity">
         {{ company['legal_name'] }}{% if website_display %} · <a href="{{ company['website'] }}" target="_blank" rel="noopener noreferrer">{{ website_display }}</a>{% endif %}{% if company['nse_symbol'] %} · NSE <a href="{{ nse_url }}" target="_blank" rel="noopener noreferrer">{{ company['nse_symbol'] }}</a>{% endif %}{% if company['bse_code'] %} · BSE <a href="{{ bse_url }}" target="_blank" rel="noopener noreferrer">{{ company['bse_code'] }}</a>{% endif %}
       </span>
+      {% if company['industry'] %}<span class="tag tag-neutral">{{ company['industry'] }}</span>{% endif %}
       {% if company['sector'] %}<span class="tag tag-neutral">{{ company['sector'] }}</span>{% endif %}
       <span class="tag {{ 'tag-accent' if company['status'] == 'active' else 'tag-neutral' }}">{{ company['status'] }}</span>
       <form class="watchlist-toggle-form" method="post"
@@ -636,12 +918,34 @@
         </button>
       </form>
       {% if g.user and g.user['is_admin'] %}
-      <a class="import-link-btn" href="{{ url_for('admin', panel='import', company_id=company_id) }}">&#8593; Import raw file</a>
+      <a class="import-link-btn" href="{{ url_for('settings', panel='admin-import', company_id=company_id) }}">&#8593; Import raw file</a>
       <form action="{{ url_for('admin_reconcile_company', company_id=company_id) }}" method="post" style="display:inline">
         <button type="submit" class="import-link-btn">&#8635; Reconcile</button>
       </form>
+      {% if company['nse_symbol'] %}
+      <form action="{{ url_for('admin_refresh_company', company_id=company_id) }}" method="post" style="display:inline">
+        <button type="submit" class="import-link-btn" title="Fetch this company's latest filings live from NSE">&#8635; Refresh from NSE</button>
+      </form>
+      {% endif %}
       {% endif %}
     </div>
+
+    {% set industry_bits = [company['basic_industry']] | select | list %}
+    {% set has_indices = nse_index_tags or bse_index_tags or other_index_tags %}
+    {% if industry_bits or has_indices or company['listed_date'] %}
+    <p class="company-identity-extra">
+      {%- if industry_bits %}{{ industry_bits | join(' · ') }}{% endif -%}
+      {%- if has_indices %}{% if industry_bits %} · {% endif -%}
+        {%- for tag in nse_index_tags -%}
+          {%- if not loop.first %}, {% endif -%}
+          <a href="https://www.nseindia.com/market-data/live-equity-market?symbol={{ tag.upper() | urlencode }}" target="_blank" rel="noopener noreferrer">{{ tag }}</a>
+        {%- endfor -%}
+        {%- if nse_index_tags and (bse_index_tags or other_index_tags) %}, {% endif -%}
+        {{- (bse_index_tags + other_index_tags) | join(', ') -}}
+      {%- endif -%}
+      {%- if company['listed_date'] %}{% if industry_bits or has_indices %} · {% endif %}Listed {{ company['listed_date'] }}{% endif -%}
+    </p>
+    {% endif %}
 
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
@@ -659,11 +963,14 @@
     <nav class="company-tabs" id="company-tab-nav">
       <a href="#sec-overview" data-target="sec-overview" class="{{ 'active' if tab == 'overview' else '' }}">Overview</a>
       <a href="#sec-key-insights" data-target="sec-key-insights" class="{{ 'active' if tab == 'key_insights' else '' }}">Key Insights</a>
+      <a href="#sec-indicators" data-target="sec-indicators" class="{{ 'active' if tab == 'indicators' else '' }}">Indicators</a>
       <a href="#sec-charts" data-target="sec-charts" class="{{ 'active' if tab == 'charts' else '' }}">Charts</a>
       <a href="#sec-financials" data-target="sec-financials" class="{{ 'active' if tab == 'financials' else '' }}">Financials</a>
       <a href="#sec-valuation-model" data-target="sec-valuation-model" class="{{ 'active' if tab == 'valuation_model' else '' }}">Valuation Model</a>
       <a href="#sec-docs" data-target="sec-docs" class="{{ 'active' if tab == 'docs' else '' }}">Docs</a>
       <a href="#sec-notes" data-target="sec-notes" class="{{ 'active' if tab == 'notes' else '' }}">Notes</a>
+      <a href="#sec-shareholding" data-target="sec-shareholding" class="{{ 'active' if tab == 'shareholding' else '' }}">Shareholding Pattern</a>
+      <a href="#sec-investigations" data-target="sec-investigations" class="{{ 'active' if tab == 'investigations' else '' }}">Investigations</a>
       <a href="#sec-threads" data-target="sec-threads" class="{{ 'active' if tab == 'threads' else '' }}">Threads</a>
       <a href="#sec-commentary" data-target="sec-commentary" class="{{ 'active' if tab == 'commentary' else '' }}">Commentary</a>
       <a href="#sec-news" data-target="sec-news" class="{{ 'active' if tab == 'news' else '' }}">News</a>
@@ -682,26 +989,12 @@
   </div>
 
   <section class="merged-section" id="sec-overview">
-    <div class="panel-section">
-      <h2>About</h2>
-      <dl class="meta-list">
-        <div class="meta-row"><dt>Full name</dt><dd>{{ company['legal_name'] }}</dd></div>
-        {% if website_display %}<div class="meta-row"><dt>Website</dt><dd><a href="{{ company['website'] }}" target="_blank" rel="noopener noreferrer">{{ website_display }}</a></dd></div>{% endif %}
-        {% if company['nse_symbol'] %}<div class="meta-row"><dt>NSE</dt><dd><a href="{{ nse_url }}" target="_blank" rel="noopener noreferrer">{{ company['nse_symbol'] }}</a></dd></div>{% endif %}
-        {% if company['bse_code'] %}<div class="meta-row"><dt>BSE</dt><dd><a href="{{ bse_url }}" target="_blank" rel="noopener noreferrer">{{ company['bse_code'] }}</a></dd></div>{% endif %}
-        {% if company['macro_economic_sector'] %}<div class="meta-row"><dt>Macro sector</dt><dd>{{ company['macro_economic_sector'] }}</dd></div>{% endif %}
-        {% if company['sector'] %}<div class="meta-row"><dt>Sector</dt><dd>{{ company['sector'] }}</dd></div>{% endif %}
-        {% if company['industry'] %}<div class="meta-row"><dt>Industry</dt><dd>{{ company['industry'] }}</dd></div>{% endif %}
-        {% if company['basic_industry'] %}<div class="meta-row"><dt>Basic industry</dt><dd>{{ company['basic_industry'] }}</dd></div>{% endif %}
-        {% if nse_index_tags %}<div class="meta-row"><dt>NSE indices</dt><dd>{{ nse_index_tags|join(', ') }}</dd></div>{% endif %}
-        {% if bse_index_tags %}<div class="meta-row"><dt>BSE indices</dt><dd>{{ bse_index_tags|join(', ') }}</dd></div>{% endif %}
-        {% if other_index_tags %}<div class="meta-row"><dt>Indices</dt><dd>{{ other_index_tags|join(', ') }}</dd></div>{% endif %}
-        {% if company['listed_date'] %}<div class="meta-row"><dt>Listed</dt><dd>{{ company['listed_date'] }}</dd></div>{% endif %}
-      </dl>
-    </div>
-
     <div class="panel-section panel-section-financials">
-      <div id="valuation-overview" data-url="{{ valuation_data_url }}">
+      <div id="valuation-overview" data-url="{{ financials_data_url }}"
+           data-price="{{ overview_price if overview_price is not none else '' }}"
+           data-shares-outstanding="{{ shares_outstanding if shares_outstanding is not none else '' }}"
+           data-shares-outstanding-fy="{{ shares_outstanding_fy if shares_outstanding_fy is not none else '' }}"
+           data-ratio-keys="{{ enabled_ratio_keys|tojson|forceescape }}">
         <div class="vm-content"><p class="muted">Loading model&hellip;</p></div>
       </div>
     </div>
@@ -712,7 +1005,7 @@
     <div id="insights-panel" data-company-id="{{ company_id }}" data-statement-type="{{ statement_type }}">
       {% if insights %}
       <p class="insights-meta">
-        Generated {{ insights.generated_at[:10] }} ({{ insights.statement_type }}) &middot;
+        Generated <span class="local-time" data-utc="{{ insights.generated_at }}" data-utc-format="date">{{ insights.generated_at[:10] }}</span> ({{ insights.statement_type }}) &middot;
         <button type="button" class="btn btn-ghost insights-action" id="insights-regenerate" {{ 'disabled' if not api_key_set }}>Regenerate</button>
       </p>
       <div class="card-body insights-text" id="insights-text">{{ insights.html|safe }}</div>
@@ -727,7 +1020,7 @@
       <summary>Previous insights ({{ insights_history|length }})</summary>
       {% for h in insights_history %}
       <div class="insights-history-item">
-        <p class="insights-meta">{{ h.generated_at[:10] }} ({{ h.statement_type }})</p>
+        <p class="insights-meta"><span class="local-time" data-utc="{{ h.generated_at }}" data-utc-format="date">{{ h.generated_at[:10] }}</span> ({{ h.statement_type }})</p>
         <div class="insights-text">{{ h.html|safe }}</div>
       </div>
       {% endfor %}
@@ -735,9 +1028,85 @@
     {% endif %}
   </section>
 
+  {# ——— Indicators ————————————————————————————————————————————————
+     Deterministic, rule-based factual patterns (indicators/*.py), computed
+     fresh on every view from already-ingested facts under the signed-in
+     user's own rule configuration. No LLM anywhere on this path.
+     Three columns, each a <details> disclosure (this app's real-estate
+     convention): only Warnings auto-open, and only when something fired. #}
+  <section class="merged-section" id="sec-indicators">
+    <h2>Indicators</h2>
+    <p class="ind-section-intro">
+      Deterministic patterns computed from this company's ingested facts by configurable rules —
+      factual observations worth noticing, not predictions, conclusions or AI-generated insights.
+      <a href="{{ url_for('settings') }}#indicator-rules">Configure rules</a>.
+    </p>
+    {% if indicator_total == 0 %}
+    <div class="empty-state">
+      No indicators are currently triggered for {{ company['display_name'] }}. Either no rule's
+      threshold was crossed, or the facts those rules need (shareholding quarters, consolidated
+      annual financials) haven't been ingested for this company yet.
+    </div>
+    {% else %}
+    <div class="ind-columns">
+      {% for column in indicator_columns %}
+      <details class="ind-column ind-column-{{ column.key }}" {{ 'open' if column.open else '' }}>
+        <summary>
+          <span class="ind-column-dot" aria-hidden="true"></span>
+          <span class="ind-column-label">{{ column.label }}{{ 's' if column.key != 'positive' else '' }}</span>
+          <span class="ind-column-count">{{ column['items']|length }}</span>
+        </summary>
+        <div class="ind-column-body">
+          {% for indicator in column['items'] %}
+          <article class="card elev-sm ind-card">
+            <div class="ind-card-top">
+              <span class="ind-card-name">{{ indicator.rule_name }}</span>
+              {# Text label always accompanies the color — accessibility. #}
+              <span class="tag tag-{{ indicator.classification }}">{{ indicator.classification_label }}</span>
+              <span class="tag tag-neutral">{{ indicator.severity }} severity</span>
+            </div>
+            <p class="ind-card-explanation">{{ indicator.explanation }}</p>
+            <dl class="ind-card-facts">
+              {% if indicator.period_label %}<dt>Period</dt><dd>{{ indicator.period_label }}</dd>{% endif %}
+              {% if indicator.threshold_summary %}<dt>Threshold</dt><dd>{{ indicator.threshold_summary }}</dd>{% endif %}
+              <dt>Rule</dt><dd><code>{{ indicator.rule_id }}</code> v{{ indicator.rule_version }}</dd>
+              <dt>Configuration</dt>
+              <dd>{{ 'System default' if indicator.scope_applied == 'system' else indicator.scope_applied }}</dd>
+              {% if indicator.provenance %}
+              <dt>Source</dt>
+              <dd>
+                {% if indicator.provenance.startswith('http') %}
+                <a href="{{ indicator.provenance }}" rel="noopener" target="_blank">Filing</a>
+                {% else %}{{ indicator.provenance }}{% endif %}
+              </dd>
+              {% endif %}
+            </dl>
+            <details class="ind-card-values">
+              <summary>Values it fired on</summary>
+              <dl>
+                {% for key, value in indicator.facts.items() %}
+                <dt>{{ key.replace('_', ' ') }}</dt><dd>{{ value if value is not none else '—' }}</dd>
+                {% endfor %}
+              </dl>
+            </details>
+          </article>
+          {% else %}
+          <p class="muted ind-column-empty">None currently triggered.</p>
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+
   <section class="merged-section" id="sec-charts">
     <h2>Charts</h2>
-    <div id="charts-overlay" class="chart-overlay" data-url="{{ url_for('company_charts_feed', company_id=company_id, statement_type=statement_type) }}">
+    <div id="charts-overlay" class="chart-overlay"
+         data-compare-url-template="{{ url_for('company_charts_feed', company_id='__ID__', statement_type=statement_type) }}"
+         data-search-url="{{ url_for('companies_search') }}"
+         data-primary-id="{{ company_id }}"
+         data-primary-name="{{ company['display_name'] }}">
       <p class="muted">Loading chart&hellip;</p>
     </div>
   </section>
@@ -745,19 +1114,28 @@
   <section class="merged-section" id="sec-financials">
     <h2>Financials</h2>
     {% if not has_ported_dataset %}
-    <div class="statement-toggle">
-      <a class="{{ 'active' if statement_type == 'consolidated' else '' }}"
-         href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='consolidated') }}#sec-financials">Consolidated</a>
-      <a class="{{ 'active' if statement_type == 'standalone' else '' }}"
-         href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='standalone') }}#sec-financials">Standalone</a>
+    <div class="vm-toggle-row">
+      <div class="statement-toggle">
+        <a class="{{ 'active' if statement_type == 'consolidated' else '' }}"
+           href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='consolidated') }}#sec-financials">Consolidated</a>
+        <a class="{{ 'active' if statement_type == 'standalone' else '' }}"
+           href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='standalone') }}#sec-financials">Standalone</a>
+      </div>
+      <div class="vm-period-toggle" data-vm-period-toggle>
+        <button type="button" class="vm-period-btn is-active" data-period-type="annual">Annual</button>
+        <button type="button" class="vm-period-btn" data-period-type="quarterly">Quarterly</button>
+      </div>
     </div>
     {% endif %}
 
-    <div id="valuation-dashboard" class="vm-layout" data-url="{{ valuation_data_url }}">
+    <div id="valuation-dashboard" class="vm-layout" data-url="{{ financials_data_url }}"
+         data-price="{{ overview_price if overview_price is not none else '' }}"
+         data-shares-outstanding="{{ shares_outstanding if shares_outstanding is not none else '' }}"
+         data-shares-outstanding-fy="{{ shares_outstanding_fy if shares_outstanding_fy is not none else '' }}"
+         data-ratio-keys="{{ enabled_ratio_keys|tojson|forceescape }}">
       <aside class="vm-sidebar">
         <nav class="vm-nav">
-          <button type="button" class="vm-nav-btn active" data-section="overview">Overview</button>
-          <button type="button" class="vm-nav-btn" data-section="balanceSheet">Balance Sheet</button>
+          <button type="button" class="vm-nav-btn active" data-section="balanceSheet">Balance Sheet</button>
           <button type="button" class="vm-nav-btn" data-section="incomeStatement">Income Statement</button>
           <button type="button" class="vm-nav-btn" data-section="perShare">Per-Share Metrics</button>
           <button type="button" class="vm-nav-btn" data-section="profitability">Profitability Ratios</button>
@@ -836,6 +1214,51 @@
     <script type="application/json" id="notes-initial-data">{{ notes|tojson }}</script>
   </section>
 
+  <section class="merged-section" id="sec-shareholding">
+    <h2>Shareholding Pattern</h2>
+    <!-- Rendered client-side by web/static/js/shareholding_panel.js from
+         web/shareholding_feed.py's real data — see that JS file's header
+         comment for the empty-company fallback message. -->
+    <div id="shp-root" data-url="{{ shareholding_data_url }}" data-company-id="{{ company_id }}"></div>
+  </section>
+
+  {#- Structured 2E-2H investigations (research/investigation.py) covering this
+      company, resolved through the investigation_companies join table
+      (storage/investigation_repository.py). A cross-company investigation is a
+      SINGLE record listed under each of its companies — the "also ..." kicker
+      names the others, and the link goes to the one shared /investigate/<id>
+      view, not a per-company copy. Distinct from the Threads section below,
+      which lists single-narrative Signals reports. -#}
+  <section class="merged-section" id="sec-investigations">
+    <h2>Investigations</h2>
+    {% if company_investigations %}
+    <div class="investigations-list" id="company-investigations-list">
+      {% for iv in company_investigations %}
+      <div class="card elev-sm investigation-card" data-investigation-id="{{ iv.investigation_id }}">
+        <a class="investigation-row" href="{{ url_for('investigate_view', investigation_id=iv.investigation_id) }}">
+          <div class="investigation-top-row">
+            <div class="card-kicker">{{ iv.kicker }}</div>
+            <span class="tag tag-outline">{{ iv.hypothesis_count }} hypotheses</span>
+          </div>
+          <div class="card-title">{{ iv.question }}</div>
+        </a>
+        <div class="investigation-meta-row">
+          <span class="muted investigation-timestamp local-time" data-utc="{{ iv.generated_at }}" data-utc-format="date">{{ iv.generated_at[:10] }}</span>
+          {% if iv.as_of %}<span class="tag tag-outline">as of {{ iv.as_of }}</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state" id="company-investigations-empty">
+      No structured investigations yet for {{ company['display_name'] }}. Run one from the
+      Research page ("Run structured investigation") — it generates competing hypotheses,
+      gathers evidence for each, evaluates them independently and synthesizes a ranked
+      conclusion, and appears here (and under every other company it covers) automatically.
+    </div>
+    {% endif %}
+  </section>
+
   <section class="merged-section" id="sec-threads">
     <h2>Threads</h2>
     {% if company_threads %}
@@ -851,7 +1274,7 @@
           <div class="investigation-question">{{ t.question }}</div>
         </a>
         <div class="investigation-meta-row">
-          <span class="muted investigation-timestamp">{{ t.generated_at[:10] }}</span>
+          <span class="muted investigation-timestamp local-time" data-utc="{{ t.generated_at }}" data-utc-format="date">{{ t.generated_at[:10] }}</span>
           <button type="button" class="notes-link-action notes-link-danger" data-action="delete-thread" data-thread-id="{{ t.thread_id }}">Delete</button>
         </div>
       </div>

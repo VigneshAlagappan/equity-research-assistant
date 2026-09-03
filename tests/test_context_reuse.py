@@ -94,3 +94,33 @@ def test_stale_report_is_not_reused_after_new_data_is_ingested(
     candidate = find_reusable_report(ingested_conn, "How did net profit change?", ["HDFCBANK"], "consolidated")
 
     assert candidate is None
+
+
+def test_injected_fact_store_is_used_instead_of_the_real_tables(db_conn: sqlite3.Connection) -> None:
+    """Proves the FactStore seam (storage/fact_store.py, architecture
+    guardrail #3's 'access structured facts through a repository interface')
+    is actually wired into find_reusable_report — an injected fake FactStore
+    surfaces a candidate even though db_conn here has no real
+    generated_reports row at all."""
+    from dataclasses import replace
+
+    from storage.fact_store import default_fact_store
+
+    fake_report = {
+        "thread_id": "fake-t1", "question": "How did net profit change?", "company_ids": ["HDFCBANK"],
+        "statement_type": "consolidated", "report_markdown": "# fake", "generated_at": "2099-01-01T00:00:00Z",
+    }
+    fs = replace(
+        default_fact_store(),
+        list_generated_reports=lambda conn: [fake_report],
+        list_report_evidence=lambda conn, thread_id: [],
+        list_report_followups=lambda conn, thread_id: [],
+        get_latest_data_timestamp=lambda conn, company_ids: None,
+    )
+
+    candidate = find_reusable_report(
+        db_conn, "How did net profit change?", ["HDFCBANK"], "consolidated", fact_store=fs
+    )
+
+    assert candidate is not None
+    assert candidate.thread_id == "fake-t1"

@@ -8,7 +8,7 @@ never regenerated just from loading the page.
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 
 from config.settings import ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL
 from financials.report import build_analysis_report
@@ -16,7 +16,8 @@ from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
 
-SYSTEM_PROMPT = """You are an equity research assistant for Indian listed companies.
+SYSTEM_PROMPT = """You are an equity research assistant for global listed companies, with a primary \
+focus on US and India markets.
 
 You will be given a text report of a company's financial trends and ratios. Pick \
 the 3-5 most notable, decision-relevant insights from it — the things an investor \
@@ -44,7 +45,7 @@ class NoDataToSummarizeError(Exception):
 
 
 def generate_key_insights(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     statement_type: str = "consolidated",
     model: str = ANTHROPIC_MODEL or DEFAULT_ANTHROPIC_MODEL,

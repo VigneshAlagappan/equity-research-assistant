@@ -15,27 +15,28 @@ deterministic tools and retrieval is sufficient").
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 
 from config.settings import ANTHROPIC_MODEL
 from context.optimizer import optimize
-from context.reuse import find_reusable_report
 from llm import observability
 from llm.hardness import classify
 from llm.router import TIER_PREFERRED_MODEL, AllProvidersUnavailableError, route
-from research.documents import get_document_evidence
+from research.capabilities import InvestigationMemoryCapabilities, default_investigation_memory
+from research.documents import get_document_evidence, get_document_passage_evidence
 from research.evidence import render_evidence_block
 from research.macro_evidence import get_macro_evidence
 from retrieval.structured_search import get_comparison_evidence
 
-SYSTEM_PROMPT = """You are an equity research assistant for Indian listed companies.
+SYSTEM_PROMPT = """You are an equity research assistant for global listed companies, with a primary \
+focus on US and India markets.
 
 HARD RULE — evidence sources: the evidence block below is built ONLY from three \
 sources: the company's ingested Financials (reported metrics, ratios, YoY/CAGR \
 growth), its uploaded Docs (annual reports, transcripts, investor \
-presentations), and India-wide Macro/regulatory data (RBI, IITM rainfall — \
-labeled with company_id "INDIA" rather than a company ticker, since it isn't \
-about any one company). You must answer using ONLY that evidence block — never from \
+presentations), and Macro/regulatory data for India and the US (RBI, IITM \
+rainfall, FRED — labeled with company_id "INDIA" or "USA" rather than a \
+company ticker, since it isn't about any one company). You must answer using ONLY that evidence block — never from \
 your own training knowledge, never by estimating or guessing a number that \
 isn't in the evidence, and never by inventing a source, document, or figure \
 that isn't present. Do not hallucinate. If the evidence doesn't cover what the \
@@ -71,18 +72,21 @@ def _select_model(question: str, company_ids: list[str], evidence_count: int) ->
 
 
 def answer_question(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     question: str,
     company_ids: list[str],
     statement_type: str | None = "consolidated",
     model: str | None = None,
+    *,
+    investigation_memory: InvestigationMemoryCapabilities | None = None,
 ) -> str:
     """Answer a research question about one or more companies, and/or about
-    India-wide macro/regulatory data, grounded in retrieved evidence.
+    macro/regulatory data (India or US), grounded in retrieved evidence.
 
     company_ids may be empty — a question with no company evidence can still
     be answered from Macro evidence alone (e.g. "what was rainfall in India
-    over the last 50 years?"), which is why this isn't rejected upfront.
+    over the last 50 years?" or "what's the Fed funds rate been since 2020?"),
+    which is why this isn't rejected upfront.
 
     Returns a plain-text answer with [FACT]/[CALCULATION]/[MANAGEMENT_STATEMENT]/
     [INFERENCE] tags. Never calls the API if there's no evidence to ground an
@@ -96,11 +100,15 @@ def answer_question(
     models/providers if the preferred one is unavailable — this is the
     default behavior.
 
-    Evidence-source rule: the three calls below (Financials + Docs + Macro)
-    are the only evidence this function is allowed to gather — SYSTEM_PROMPT
-    tells the model to answer from this evidence alone, so widening it
-    further (e.g. pulling in Notes or News) changes what the model is allowed
-    to cite and must be a deliberate choice, not an incidental one.
+    Evidence-source rule: the calls below (Financials + Docs + Macro) are the
+    only evidence this function is allowed to gather — SYSTEM_PROMPT tells
+    the model to answer from this evidence alone, so widening it further
+    (e.g. pulling in Notes or News) changes what the model is allowed to
+    cite and must be a deliberate choice, not an incidental one.
+    get_document_passage_evidence() (hybrid FTS5+semantic retrieval,
+    research/documents.py) is exactly such a deliberate widening — still
+    "Docs" evidence, just the specific relevant passage instead of/alongside
+    each whole document's opening text, per this feature's spec section 9.
 
     Reuse-before-recompute (context/reuse.py): first checked against
     generated_reports for a prior saved answer/report on these exact
@@ -114,7 +122,8 @@ def answer_question(
     second time, and is the mechanism that populates the Investigations list
     in the first place.
     """
-    reused = find_reusable_report(conn, question, company_ids, statement_type)
+    mem = investigation_memory or default_investigation_memory()
+    reused = mem.reusable_report(conn, question, company_ids, statement_type)
     if reused is not None:
         observability.record_reuse(
             conn, task_name="assistant_qa", company_ids=company_ids, question=question,
@@ -126,8 +135,14 @@ def answer_question(
     if len(company_ids) == 1:
         # Uploaded-document evidence (Docs tab) only has single-company
         # attribution today — see research/documents.py.
-        evidence = evidence + get_document_evidence(conn, company_ids[0], question)  # Docs
-    evidence = evidence + get_macro_evidence(conn, question)  # Macro (RBI, IITM, ...)
+        evidence = evidence + get_document_evidence(conn, company_ids[0], question)  # Docs (whole document)
+        # Additive (section 9): the specific passage(s) hybrid retrieval
+        # judges most relevant to THIS question, not just each document's
+        # opening ~12,000 characters — finds a paraphrased answer buried
+        # deep in a long filing that get_document_evidence() above would
+        # never reach. Never removes the whole-document evidence above.
+        evidence = evidence + get_document_passage_evidence(conn, company_ids[0], question)  # Docs (targeted passages)
+    evidence = evidence + get_macro_evidence(conn, question)  # Macro (RBI, IITM, FRED, ...)
     if not evidence:
         if company_ids:
             return (

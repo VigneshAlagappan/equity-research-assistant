@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Docs — Signals{% endblock %}
+
+{% block extra_style %}
+  .docs-wrap { max-width: 720px; }
+  /* Same joined-pill toggle group as the Consolidated/Standalone and
+     Annual/Quarterly switches on a company page (.statement-toggle/
+     .vm-period-btn in web/templates/company.html) — this app's actual
+     current convention for a small (2-4 option) picker, not the older
+     underline-tab bar (web/templates/admin.html's .admin-nav, web/templates/
+     tools.html's .tools-subheader) that convention has been moving away
+     from. Server-rendered links + full navigation (not client-side
+     toggling) since each section here is its own bookmarkable/shareable URL. */
+  .docs-nav {
+    display: inline-flex; border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; margin-bottom: var(--space-4);
+  }
+  .docs-nav-btn {
+    padding: 0.4rem 0.9rem; font-size: 13px; color: var(--ink-muted); text-decoration: none;
+  }
+  .docs-nav-btn:hover { background: var(--row-hover); }
+  .docs-nav-btn.active { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+
+  .docs-card {
+    border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+  }
+  .docs-card h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+  .docs-card p { font-size: 0.85rem; color: var(--ink-muted); line-height: 1.55; margin: 0 0 0.6rem; }
+  .docs-card p:last-child { margin-bottom: 0; }
+  .docs-taxonomy-list { font-size: 0.85rem; color: var(--ink-muted); line-height: 1.7; margin: 0 0 0.6rem; padding-left: 1.1rem; }
+  .docs-source {
+    font-size: 0.78rem; color: var(--ink-muted); border-top: 1px solid var(--border);
+    margin-top: 0.75rem; padding-top: 0.6rem;
+  }
+  .docs-source a { color: var(--color-link); }
+{% endblock %}
+
+{% block content %}
+<div class="docs-wrap">
+  <h1>Docs</h1>
+
+  <nav class="docs-nav">
+    <a class="docs-nav-btn {{ 'active' if active_section == 'sources' else '' }}" href="{{ url_for('docs', section='sources') }}">How We Source Data</a>
+    <a class="docs-nav-btn {{ 'active' if active_section == 'xbrl' else '' }}" href="{{ url_for('docs', section='xbrl') }}">About XBRL</a>
+  </nav>
+
+  {% if active_section == 'sources' %}
+  <div class="docs-card">
+    <h3>How this app sources financial data</h3>
+    <p>Every number in the Financials tab traces back to a specific filing — either an XBRL document filed with NSE, a spreadsheet export, or a manually uploaded workbook. When more than one source has reported the same period, this app keeps every observation on file but reconciles a single canonical figure per source's trust ranking, so nothing is silently averaged or overwritten.</p>
+    <p>The <span class="tag tag-fact">FACT</span> / <span class="tag tag-calculation">CALC</span> tags next to each row on the Financials, Overview, and Valuation Model tabs mark whether that figure was reported as-is by the source, or computed here from other reported figures (a ratio, a CAGR, a fallback formula).</p>
+  </div>
+  {% elif active_section == 'xbrl' %}
+  <div class="docs-card">
+    <h3>About XBRL</h3>
+    <p><strong>XBRL</strong> (eXtensible Business Reporting Language) is a structured, tagged format for reporting business and financial data electronically. Instead of a number sitting in an arbitrary spreadsheet cell, XBRL wraps it in a standardized tag drawn from a published <strong>taxonomy</strong> — a schema defining every reportable item and how it relates to the others for a given regulatory filing. The tagged data itself lives in a separate <strong>instance document</strong>, which also carries the unit, reporting period, and scale (e.g. crores, lakhs) for each figure. Because every filer uses the same tags, XBRL data can be read and compared programmatically without re-keying it by hand.</p>
+    <p>NSE requires listed companies to file XBRL for most SEBI (LODR) Regulations compliance disclosures — a separate taxonomy exists per regulation, for example:</p>
+    <ul class="docs-taxonomy-list">
+      <li>Regulation 33 — Financial Results (separate taxonomies for Ind-AS companies, banks, NBFCs, and insurers)</li>
+      <li>Regulation 31 — Shareholding Pattern</li>
+      <li>Regulation 27(2) — Corporate Governance</li>
+      <li>Regulation 23(9) — Related Party Transactions</li>
+      <li>Regulation 44 — Voting Results</li>
+    </ul>
+    <p>This app's NSE integration reads the <strong>Regulation 33 — Financial Results</strong> taxonomy specifically (the quarterly and annual results filing) — both the Ind-AS/general and the banking variants, across the taxonomy-version changes NSE has made over time (including its newer "Integrated Filing" framework). Only what a filing actually reports is used: nothing here is estimated or inferred to fill a gap in the source XBRL.</p>
+    <p class="docs-source">Source: NSE India, <a href="https://www.nseindia.com/static/companies-listing/xbrl-information" target="_blank" rel="noopener">XBRL Filing Information</a></p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

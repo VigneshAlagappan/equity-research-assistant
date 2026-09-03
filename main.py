@@ -28,6 +28,7 @@ from charts.financial_charts import build_company_charts, save_charts
 from companies.lifecycle import archive_company, restore_company
 from companies.nse_import import import_nse_companies
 from companies.registry import get_company, list_companies, register_company, seed_companies
+from companies.stock_actions import ACTION_TYPES, add_stock_action, list_stock_actions
 from config.settings import (
     CHARTS_DIR,
     DB_PATH,
@@ -38,16 +39,24 @@ from config.settings import (
 )
 from financials.report import build_analysis_report
 from ingestion.detector import is_macro_path
+from ingestion.event_bus import replay
 from ingestion.pipeline import (
     ingest_bank_infrastructure_file,
     ingest_file,
+    ingest_fred_series,
     ingest_macro_file,
     ingest_yfinance_company,
 )
 from normalization.financials import ensure_metric_vocabulary
 from research.assistant import answer_question
 from storage.database import init_db, list_tables
-from storage.repositories import add_watchlist_item, list_watchlist_items, remove_watchlist_item
+from storage.repositories import (
+    add_watchlist_item,
+    list_batch_job_items,
+    list_batch_job_runs,
+    list_watchlist_items,
+    remove_watchlist_item,
+)
 from web.fixtures import THREADS
 
 logger = logging.getLogger(__name__)
@@ -96,6 +105,12 @@ def cmd_add_company(args: argparse.Namespace) -> None:
     """Register (or update) a single company."""
     setup_logging()
     conn = init_db()
+    # --fiscal-year-end-month left unset means "use the country's usual
+    # default" rather than a single global one: 3 (March close) for India,
+    # 12 (calendar year) for the US — an explicit flag always wins.
+    fiscal_year_end_month = args.fiscal_year_end_month
+    if fiscal_year_end_month is None:
+        fiscal_year_end_month = 12 if args.country == "US" else 3
     company_id = register_company(
         conn,
         args.company_id,
@@ -106,6 +121,7 @@ def cmd_add_company(args: argparse.Namespace) -> None:
         isin=args.isin,
         country=args.country,
         currency=args.currency,
+        fiscal_year_end_month=fiscal_year_end_month,
         website=args.website,
         macro_economic_sector=args.macro_economic_sector,
         sector=args.sector,
@@ -160,6 +176,63 @@ def cmd_ingest_yfinance(args: argparse.Namespace) -> None:
         logger.warning("Skipped: %s", reason)
 
 
+def cmd_add_stock_action(args: argparse.Namespace) -> None:
+    """Record a discrete stock action (split/bonus/rights) for a company."""
+    setup_logging()
+    conn = init_db()
+    if get_company(conn, args.company_id) is None:
+        conn.close()
+        raise SystemExit(
+            f"No company registered with company_id={args.company_id!r}. "
+            f"Run: python main.py add-company {args.company_id} ... (or seed-companies)"
+        )
+    action = add_stock_action(
+        conn, args.company_id, args.action_type, args.action_date, args.ratio_from, args.ratio_to,
+        subscription_price=args.subscription_price, source=args.source, source_url=args.source_url,
+        notes=args.notes,
+    )
+    conn.close()
+    logger.info(
+        "Recorded %s for %s on %s (%s -> %s)",
+        action["action_type"], action["company_id"], action["action_date"],
+        action["ratio_from"], action["ratio_to"],
+    )
+
+
+def cmd_list_stock_actions(args: argparse.Namespace) -> None:
+    """List every recorded stock action for a company."""
+    setup_logging()
+    conn = init_db()
+    actions = list_stock_actions(conn, args.company_id)
+    conn.close()
+    if not actions:
+        logger.info("No stock actions recorded yet for %s.", args.company_id)
+        return
+    for action in actions:
+        logger.info(
+            "%-10s %-6s %s -> %s%s",
+            action["action_date"], action["action_type"], action["ratio_from"], action["ratio_to"],
+            f" @ {action['subscription_price']}" if action["subscription_price"] is not None else "",
+        )
+
+
+def cmd_ingest_fred(args: argparse.Namespace) -> None:
+    """Ingest one US macro series live from FRED (see sources/fred.py) — the
+    US counterpart to `ingest data/raw/_macro/rbi/...` for India."""
+    setup_logging()
+    conn = init_db()
+    result = ingest_fred_series(
+        conn, args.series_id, unit=args.unit, series_key=args.series_key, region=args.region
+    )
+    conn.close()
+    logger.info(
+        "%s (macro/fred): parsed=%d inserted=%d skipped=%d",
+        args.series_id, result.parsed_count, result.inserted_count, result.skipped_count,
+    )
+    for reason in result.skip_reasons:
+        logger.warning("Skipped: %s", reason)
+
+
 def cmd_list_companies(args: argparse.Namespace) -> None:
     """List registered companies."""
     setup_logging()
@@ -174,6 +247,151 @@ def cmd_list_companies(args: argparse.Namespace) -> None:
             "%-12s %-28s status=%s sector=%s",
             company["company_id"], company["display_name"], company["status"], company["sector"],
         )
+
+
+def cmd_list_batch_runs(args: argparse.Namespace) -> None:
+    """Recent batch job runs (scripts/batch_fetch_nse.py and similar) — start/end, status, per-run outcome counts."""
+    setup_logging()
+    conn = init_db()
+    runs = list_batch_job_runs(conn, limit=args.limit)
+    conn.close()
+    if not runs:
+        logger.info("No batch job runs on file yet.")
+        return
+    for r in runs:
+        logger.info(
+            "run_id=%-4s %-24s %-10s status=%-9s ok=%s failed=%s started=%s finished=%s %s",
+            r["run_id"], r["job_name"], r["scope_label"] or "", r["status"],
+            r["items_succeeded"], r["items_failed"], r["started_at"], r["finished_at"] or "-",
+            f"note={r['notes']}" if r["notes"] else "",
+        )
+
+
+def cmd_show_batch_run(args: argparse.Namespace) -> None:
+    """Every item (company) in one batch run — status and detail/error per item."""
+    setup_logging()
+    conn = init_db()
+    items = list_batch_job_items(conn, args.run_id)
+    conn.close()
+    if not items:
+        logger.info("No items found for run_id=%s.", args.run_id)
+        return
+    for it in items:
+        logger.info(
+            "%-14s status=%-8s %s",
+            it["company_id"] or "-", it["status"], it["detail"] or "",
+        )
+
+
+def cmd_replay_events(args: argparse.Namespace) -> None:
+    """Re-dispatch already-stored DATASET_INGESTED events to registered
+    workers (ingestion/event_bus.py::replay()) -- worker failure recovery,
+    backfilling a newly-added worker over history, or reprocessing after a
+    worker's logic changed. Never re-fetches/re-ingests source data; a
+    worker re-derives purely from what its event's storage_reference
+    points at. Idempotent unless --force: a worker already logged ok/skipped
+    for an event is left alone."""
+    setup_logging()
+    conn = init_db()
+    outcomes = replay(
+        conn,
+        event_id=args.event_id,
+        dataset_type=args.dataset_type,
+        worker_name=args.worker,
+        since=args.since,
+        force=args.force,
+    )
+    conn.close()
+    if not outcomes:
+        logger.info("Nothing to replay (no matching events, or every worker already ok/skipped -- use --force to override).")
+        return
+    for outcome in outcomes:
+        logger.info(
+            "%-22s v%-3s %-8s %s",
+            outcome.worker_name, outcome.worker_version, outcome.result.status,
+            outcome.result.output_reference or outcome.result.error or "",
+        )
+
+
+def cmd_vector_backfill(args: argparse.Namespace) -> None:
+    """One-time, idempotent backfill (section 11): generate embeddings for
+    every already-processed document's existing chunks and upsert them into
+    the VectorStore. Reuses retrieval/semantic_indexer.py's
+    embed_and_index_document_chunks() -- the same function
+    ingestion/workers/embedding_indexer_worker.py calls on every future
+    ingestion, so there is exactly one embedding-generation implementation
+    (section 12), not a second backfill-only path.
+
+    Idempotent by construction: a chunk already embedding_status='indexed'
+    under the CURRENT embedding model is skipped without calling the
+    embedding provider or the vector store, so re-running this command costs
+    nothing extra and never duplicates vectors. --force re-embeds everything
+    regardless (e.g. after deliberately changing EMBEDDING_MODEL_LOCAL/
+    EMBEDDING_PROVIDER). --company-id/--limit are the cost guardrail this
+    feature's spec calls for -- point this at a small/synthetic dataset (see
+    tests/test_vector_backfill.py) or a small handful of real documents
+    before ever running it unbounded against the real document archive."""
+    setup_logging()
+    conn = init_db()
+
+    from retrieval.embedding_provider import EmbeddingProviderUnavailable, default_embedding_provider
+    from retrieval.semantic_indexer import embed_and_index_document_chunks
+    from retrieval.vector_store import VectorStoreUnavailable, default_vector_store
+    from storage.repositories import list_documents_by_status
+
+    store = default_vector_store()
+    if store is None:
+        conn.close()
+        raise SystemExit("VECTOR_STORE_BACKEND=none — the vector layer is disabled, nothing to backfill.")
+    if not store.health_check():
+        conn.close()
+        raise SystemExit(
+            "Vector store unreachable (config.settings.QDRANT_URL) — start it (see config/settings.py's "
+            "VECTOR_STORE_BACKEND comment for the docker run command) and retry. FTS5/BM25 keyword search "
+            "is unaffected in the meantime (section 10)."
+        )
+    try:
+        provider = default_embedding_provider()
+    except EmbeddingProviderUnavailable as exc:
+        conn.close()
+        raise SystemExit(f"Embedding provider unavailable: {exc}")
+
+    documents = list_documents_by_status(conn, "processed")
+    if args.company_id:
+        documents = [d for d in documents if d["company_id"] == args.company_id]
+    if args.limit is not None:
+        documents = documents[: args.limit]
+
+    logger.info("vector-backfill: %d eligible document(s), embedding_model=%s", len(documents), provider.model_id)
+
+    documents_embedded = 0
+    chunks_embedded = 0
+    chunks_already_indexed = 0
+    failed = 0
+    for doc in documents:
+        try:
+            result = embed_and_index_document_chunks(
+                conn, doc, embedding_provider=provider, vector_store=store, force=args.force
+            )
+        except (VectorStoreUnavailable, EmbeddingProviderUnavailable) as exc:
+            logger.warning("document %s: %s", doc["document_id"], exc)
+            failed += 1
+            continue
+        chunks_already_indexed += result.chunks_already_indexed
+        if result.chunks_embedded:
+            documents_embedded += 1
+            chunks_embedded += result.chunks_embedded
+        logger.info(
+            "document %-6s chunks_total=%-4d embedded=%-4d already_indexed=%-4d",
+            doc["document_id"], result.chunks_total, result.chunks_embedded, result.chunks_already_indexed,
+        )
+
+    conn.close()
+    logger.info(
+        "vector-backfill done: documents_considered=%d documents_with_new_embeddings=%d "
+        "chunks_embedded=%d chunks_already_indexed=%d failed=%d",
+        len(documents), documents_embedded, chunks_embedded, chunks_already_indexed, failed,
+    )
 
 
 def cmd_archive_company(args: argparse.Namespace) -> None:
@@ -362,7 +580,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="main.py",
-        description="Indian Equity AI Research Assistant (POC) CLI",
+        description="Global Equity Research Assistant (POC) CLI — US + India focus",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -390,6 +608,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_company_parser.add_argument("--isin")
     add_company_parser.add_argument("--country", default="IN", help="ISO 3166-1 alpha-2, e.g. IN, US (default: IN)")
     add_company_parser.add_argument("--currency", default="INR", help="ISO 4217, e.g. INR, USD (default: INR)")
+    add_company_parser.add_argument(
+        "--fiscal-year-end-month", type=int, default=None,
+        help="1-12, the month the fiscal year closes in (default: 3 for --country IN, 12 for --country US)",
+    )
     add_company_parser.add_argument("--website")
     add_company_parser.add_argument("--macro-economic-sector", help="NSE classification, broadest level")
     add_company_parser.add_argument("--sector", help="NSE classification")
@@ -457,6 +679,40 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest_yfinance_parser.set_defaults(func=cmd_ingest_yfinance)
 
+    ingest_fred_parser = subparsers.add_parser(
+        "ingest-fred",
+        help="Ingest one US macro series live from FRED (e.g. FEDFUNDS, DGS10, CPIAUCSL, UNRATE)",
+    )
+    ingest_fred_parser.add_argument("series_id", help="FRED series id, e.g. FEDFUNDS")
+    ingest_fred_parser.add_argument("--unit", required=True, help="e.g. PERCENT, INDEX, USD_BILLION")
+    ingest_fred_parser.add_argument(
+        "--series-key", help="Override the series_key (default: series_id lowercased)"
+    )
+    ingest_fred_parser.add_argument("--region", help="Default: national-level (no region)")
+    ingest_fred_parser.set_defaults(func=cmd_ingest_fred)
+
+    add_stock_action_parser = subparsers.add_parser(
+        "add-stock-action", help="Record a discrete stock action (split, bonus, or rights issue)"
+    )
+    add_stock_action_parser.add_argument("company_id")
+    add_stock_action_parser.add_argument("action_type", choices=sorted(ACTION_TYPES))
+    add_stock_action_parser.add_argument("action_date", help="ISO date, e.g. 2024-06-15 (the ex-date)")
+    add_stock_action_parser.add_argument("ratio_from", type=float, help="Shares held before, e.g. 1")
+    add_stock_action_parser.add_argument("ratio_to", type=float, help="Shares held after, e.g. 2 (a 1:2 split)")
+    add_stock_action_parser.add_argument(
+        "--subscription-price", type=float, help="Rights issues only — the per-share subscription price"
+    )
+    add_stock_action_parser.add_argument("--source")
+    add_stock_action_parser.add_argument("--source-url")
+    add_stock_action_parser.add_argument("--notes")
+    add_stock_action_parser.set_defaults(func=cmd_add_stock_action)
+
+    list_stock_actions_parser = subparsers.add_parser(
+        "list-stock-actions", help="List every recorded stock action for a company"
+    )
+    list_stock_actions_parser.add_argument("company_id")
+    list_stock_actions_parser.set_defaults(func=cmd_list_stock_actions)
+
     analyze_parser = subparsers.add_parser(
         "analyze", help="Print a text report: trends, growth, ROA/ROE, vendor-reported ratios"
     )
@@ -494,6 +750,48 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_watchlist_parser = subparsers.add_parser("list-watchlist", help="List everything pinned")
     list_watchlist_parser.set_defaults(func=cmd_list_watchlist)
+
+    list_batch_runs_parser = subparsers.add_parser(
+        "list-batch-runs", help="Recent batch job runs (scripts/batch_fetch_nse.py and similar) — audit log"
+    )
+    list_batch_runs_parser.add_argument("--limit", type=int, default=20)
+    list_batch_runs_parser.set_defaults(func=cmd_list_batch_runs)
+
+    show_batch_run_parser = subparsers.add_parser(
+        "show-batch-run", help="Every item (company) in one batch run — status and detail/error per item"
+    )
+    show_batch_run_parser.add_argument("run_id", type=int)
+    show_batch_run_parser.set_defaults(func=cmd_show_batch_run)
+
+    replay_events_parser = subparsers.add_parser(
+        "replay-events",
+        help="Re-dispatch stored DATASET_INGESTED events to registered workers (worker recovery/backfill/audit)",
+    )
+    replay_events_parser.add_argument("--event-id", help="Replay one specific event")
+    replay_events_parser.add_argument("--dataset-type", help='e.g. "company_financials", "document", "macro"')
+    replay_events_parser.add_argument("--worker", help="Only replay this worker (by name), e.g. financial_derivation")
+    replay_events_parser.add_argument("--since", help="Only events with ingested_at >= this ISO-8601 timestamp")
+    replay_events_parser.add_argument(
+        "--force", action="store_true",
+        help="Re-run a worker even if it already logged ok/skipped for that event (default: skip)",
+    )
+    replay_events_parser.set_defaults(func=cmd_replay_events)
+
+    vector_backfill_parser = subparsers.add_parser(
+        "vector-backfill",
+        help="One-time/idempotent backfill: embed every already-processed document's existing "
+             "chunks and upsert them into the VectorStore for semantic search (section 11)",
+    )
+    vector_backfill_parser.add_argument("--company-id", help="Only backfill this company's documents")
+    vector_backfill_parser.add_argument(
+        "--limit", type=int,
+        help="Only process the first N eligible documents — the cost guardrail for a real-data demo run",
+    )
+    vector_backfill_parser.add_argument(
+        "--force", action="store_true",
+        help="Re-embed every chunk even if already indexed under the current embedding model (default: skip)",
+    )
+    vector_backfill_parser.set_defaults(func=cmd_vector_backfill)
 
     serve_parser = subparsers.add_parser(
         "serve", help="Run the local web viewer (renders the same analyze report in-browser)"

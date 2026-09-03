@@ -1,11 +1,14 @@
 """Macro/regulatory evidence retrieval — the third evidence source (alongside
 Financials and Docs) research/assistant.py's SYSTEM_PROMPT grounds answers in,
-for questions about India-wide macro/regulatory data (rainfall, repo rate,
-credit growth, ...) rather than one company's own reported numbers.
+for questions about macro/regulatory data (rainfall, repo rate, credit
+growth, the Fed funds rate, CPI, ...) rather than one company's own reported
+numbers. Spans both India (rbi/imd/iitm/mospi/irda) and US (fred) sources —
+see _SOURCE_COUNTRY_LABEL below for how a matched series is attributed to a
+country in the rendered evidence.
 
 Deliberately generic, not a per-series hardcoded lookup: macro_observations
-already has 490+ distinct series_key values across just two sources (rbi,
-iitm) and more will land as mospi/irda get ingested.
+already has 490+ distinct series_key values across several sources (rbi,
+iitm, fred, ...) and more will land as mospi/irda get ingested.
 
 Series/date-range *selection* is an LLM call (_plan_retrieval below) — a
 deliberate, narrow exception to README's "Retrieval never calls the LLM"
@@ -33,7 +36,7 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
+from storage.db_types import DBConnection, Row
 from datetime import date
 from pathlib import Path
 
@@ -42,14 +45,22 @@ from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
 from research.evidence import Evidence
-from storage.repositories import get_macro_series
+from research.temporal import period_visible
+from storage.fact_store import FactStore, default_fact_store
 
 logger = logging.getLogger(__name__)
 
 # Evidence.company_id is a required field, but this evidence isn't about any
 # one company — this stand-in makes that legible in the rendered prompt line
-# ("[FACT] INDIA — Repo Rate 2015: ...") without changing Evidence's shape.
-NATIONAL_LABEL = "INDIA"
+# ("[FACT] INDIA — Repo Rate 2015: ..." / "[FACT] USA — Fed Funds Rate 2015: ...")
+# without changing Evidence's shape. Keyed by macro_observations.source, not
+# a single global constant, since series now come from both India and US
+# sources (config.settings.DEFAULT_SOURCES) — falls back to the source_id
+# itself, uppercased, for any source not listed here rather than mislabeling it.
+_SOURCE_COUNTRY_LABEL = {
+    "rbi": "INDIA", "imd": "INDIA", "iitm": "INDIA", "mospi": "INDIA", "irda": "INDIA", "mfin": "INDIA",
+    "fred": "USA",
+}
 
 MAX_SERIES = 3  # cap how many distinct series one question can pull in
 DEFAULT_YEAR_WINDOW = 50  # how far back to look when the question doesn't say
@@ -58,7 +69,7 @@ _WORD_RE = re.compile(r"[a-z0-9]+")
 _STOPWORDS = {
     "the", "a", "an", "is", "was", "are", "were", "of", "in", "on", "for", "and", "to",
     "what", "how", "does", "did", "do", "has", "have", "had", "over", "last", "past", "years", "year",
-    "india", "indian",  # every series in this app is India-specific — no signal either way
+    "india", "indian", "usa",  # country names carry no series-matching signal on their own
 }
 _MIN_WORD_LEN = 3  # drops noise like the stray "s" apostrophe-splitting leaves from "bank's"
 _LAST_N_YEARS_RE = re.compile(r"(?:last|past)\s+(\d+)\s+years?", re.IGNORECASE)
@@ -91,8 +102,8 @@ _IITM_NON_ANNUAL_SUFFIX_RE = re.compile(
 _DEFAULT_PLANNER_MODEL = "claude-haiku-4-5"
 _PLANNER_MAX_TOKENS = 300
 
-_PLANNER_SYSTEM_PROMPT = """You select which India-wide macro/regulatory data series, if any, are \
-relevant to a research question, and what year range to retrieve.
+_PLANNER_SYSTEM_PROMPT = """You select which macro/regulatory data series (India and US sources), if \
+any, are relevant to a research question, and what year range to retrieve.
 
 You are given a catalog of every available series, one per line, formatted as \
 "<series_key> (<source>, <earliest period>-<latest period>)". Most questions are about a specific \
@@ -150,28 +161,25 @@ def _year_range(question: str) -> tuple[int, int]:
     return current_year - DEFAULT_YEAR_WINDOW, current_year
 
 
-def _candidate_series(conn: sqlite3.Connection) -> list[tuple[str, str, str, str]]:
+def _candidate_series(conn: DBConnection, fact_store: FactStore) -> list[tuple[str, str, str, str]]:
     """Every distinct (series_key, source, earliest_period, latest_period) at
     the national level, minus the IITM per-month/season series (see
     _IITM_NON_ANNUAL_SUFFIX_RE above)."""
-    rows = conn.execute(
-        "SELECT series_key, source, MIN(period) AS earliest, MAX(period) AS latest "
-        "FROM macro_observations WHERE region IS NULL GROUP BY series_key, source"
-    ).fetchall()
+    rows = fact_store.list_macro_series_summary(conn)
     return [
         (r["series_key"], r["source"], r["earliest"], r["latest"])
         for r in rows if not _IITM_NON_ANNUAL_SUFFIX_RE.match(r["series_key"])
     ]
 
 
-def _matching_series(conn: sqlite3.Connection, question: str) -> list[str]:
+def _matching_series(conn: DBConnection, question: str, fact_store: FactStore) -> list[str]:
     """Keyword-overlap fallback — see _plan_retrieval, which is tried first."""
     question_words = _words(question)
     if not question_words:
         return []
     scored = [
         (len(question_words & _words(series_key)), series_key)
-        for series_key, _source, _earliest, _latest in _candidate_series(conn)
+        for series_key, _source, _earliest, _latest in _candidate_series(conn, fact_store)
     ]
     scored = [(score, key) for score, key in scored if score > 0]
     scored.sort(key=lambda pair: (-pair[0], pair[1]))
@@ -182,12 +190,12 @@ def _render_catalog(candidates: list[tuple[str, str, str, str]]) -> str:
     return "\n".join(f"{key} ({source}, {earliest}-{latest})" for key, source, earliest, latest in candidates)
 
 
-def _plan_retrieval(conn: sqlite3.Connection, question: str) -> tuple[list[str], int, int] | None:
+def _plan_retrieval(conn: DBConnection, question: str, fact_store: FactStore) -> tuple[list[str], int, int] | None:
     """Ask the LLM which catalog series (if any) and what year range apply to
     this question. Returns None — the caller falls back to _matching_series/
     _year_range — if there's no catalog to choose from, the call fails, or
     the response doesn't parse; never raises."""
-    candidates = _candidate_series(conn)
+    candidates = _candidate_series(conn, fact_store)
     if not candidates:
         return None
     valid_keys = {key for key, _source, _earliest, _latest in candidates}
@@ -228,26 +236,33 @@ def _plan_retrieval(conn: sqlite3.Connection, question: str) -> tuple[list[str],
     return series_keys, start_year, end_year
 
 
-def get_macro_evidence(conn: sqlite3.Connection, question: str) -> list[Evidence]:
+def get_macro_evidence(
+    conn: DBConnection, question: str, *, fact_store: FactStore | None = None, as_of: str | None = None
+) -> list[Evidence]:
     """Gather Evidence for the (at most MAX_SERIES) national macro series
     the LLM planner (_plan_retrieval) picks as relevant to this question,
     restricted to the year range it infers — falling back to the keyword/
     regex heuristic (_matching_series/_year_range) only if that call fails
     or doesn't parse. Returns [] if nothing applies — most company-financials
     questions won't match any macro series, and that's the expected common
-    case, decided by the LLM itself (SERIES: NONE) rather than assumed."""
-    planned = _plan_retrieval(conn, question)
+    case, decided by the LLM itself (SERIES: NONE) rather than assumed.
+
+    `as_of` (ISO date) drops every observation whose period falls after the
+    cutoff — research/temporal.py — so a point-in-time investigation is
+    grounded only in macro data that had actually been published by then."""
+    fs = fact_store or default_fact_store()
+    planned = _plan_retrieval(conn, question, fs)
     if planned is not None:
         series_keys, start_year, end_year = planned
     else:
-        series_keys = _matching_series(conn, question)
+        series_keys = _matching_series(conn, question, fs)
         start_year, end_year = _year_range(question)
     if not series_keys:
         return []
 
     evidence: list[Evidence] = []
     for series_key in series_keys:
-        rows = get_macro_series(conn, series_key, region=None)
+        rows = fs.get_macro_series(conn, series_key, region=None)
         label = _pretty_label(series_key)
 
         # Downsample to (at most) one point per calendar year: weekly/monthly/
@@ -255,18 +270,21 @@ def get_macro_evidence(conn: sqlite3.Connection, question: str) -> list[Evidence
         # hundreds-to-thousands of near-duplicate lines for one matched
         # series — get_macro_series returns oldest-to-newest, so keeping the
         # last row seen per year keeps that year's most recent observation.
-        by_year: dict[int, sqlite3.Row] = {}
+        by_year: dict[int, Row] = {}
         for row in rows:
             year = int(row["period"][:4])
             if year < start_year or year > end_year:
                 continue
+            if not period_visible(row["period"], as_of):
+                continue
             by_year[year] = row
 
         for year, row in sorted(by_year.items()):
+            country_label = _SOURCE_COUNTRY_LABEL.get(row["source"], row["source"].upper())
             evidence.append(
                 Evidence(
                     kind="FACT",
-                    company_id=NATIONAL_LABEL,
+                    company_id=country_label,
                     label=f"{label} {row['period']}",
                     value=f"{row['value']:,.1f} {row['unit']}",
                     citation=f"{row['source'].upper()} ({Path(row['source_file']).name})",
