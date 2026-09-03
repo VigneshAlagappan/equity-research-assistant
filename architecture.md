@@ -33,11 +33,17 @@ answering a different question and never doing another layer's job:
   `research/hypothesis_evaluator.py`, `research/research_synthesis.py`),
   reachable from the Research tab's "Run structured investigation" button
   (`/investigate/generate`, `/investigate/<id>`). For a question, it generates
-  several competing hypotheses, routes each to SQL/macro/documents/the graph
-  for evidence, evaluates each hypothesis independently, then ranks and
-  synthesizes — a fixed linear 2E→2F→2G→2H run per investigation, not yet the
-  iterative Planner-controlled evidence-sufficiency loop described in
-  [Known gaps → Ingestion Coordinator, Knowledge Builder, Research Knowledge Graph & Document Retrieval](#ingestion-coordinator-knowledge-builder-research-knowledge-graph--document-retrieval).
+  several competing hypotheses (2E), then per hypothesis runs an
+  Orchestrator-controlled evidence-sufficiency loop (2F/2G) — an
+  `INSUFFICIENT_EVIDENCE` verdict triggers one more gap-targeted retrieval
+  pass and re-evaluation, bounded by 4 termination controls (evidence
+  sufficiency, `MAX_EVIDENCE_ITERATIONS`, a wall-clock deadline, and a
+  no-new-evidence check) — before ranking and synthesizing (2H). See
+  [Golden Research Loop validation](#golden-research-loop-validation) for
+  what this closed (cross-company association, point-in-time `as_of`
+  scoping, indicator evidence) and [Known gaps](#ingestion-coordinator-knowledge-builder-research-knowledge-graph--document-retrieval)
+  for what's still open (no cost/token budget control; a retry re-runs the
+  same broad evidence-gathering pass rather than targeting one capability).
   Every hypothesis, its evidence, verdict, and rank persists to
   `investigations`/`investigation_hypotheses`/`investigation_hypothesis_evidence`
   and stays individually queryable — distinct from `research/signals_report.py`'s
@@ -1096,16 +1102,21 @@ pre-existing test failure.
   question can't yet be answered from a cross-company claim connection the
   way it can from `canonical_financials` or a sector-peer investigation.
   Building that integration point is a later step, not attempted in 2B.
-- **Investigation Orchestrator (`research/investigation.py`, Steps 2E-2H) is a
-  fixed linear pipeline, not the iterative Planner-controlled loop the
-  guardrails call for** — hypothesis generation (2E) → evidence gathering
-  (2F) → evaluation (2G) → synthesis (2H) runs once per investigation, with
-  no evidence-sufficiency check that loops back for more evidence before
-  synthesizing, and no termination controls (max iterations, cost/token
-  budget, timeout) beyond the single pass. The Knowledge Builder itself still
-  only extracts and persists what a document already states — it's
-  `research/investigation.py` that now does the hypothesis generation/
-  planning/evaluation/synthesis reasoning, not the Knowledge Builder.
+- **Investigation Orchestrator (`research/investigation.py`, Steps 2E-2H) has
+  the iterative evidence-sufficiency loop the guardrails call for, but it's
+  narrower than a full Planner-controlled loop** — an `INSUFFICIENT_EVIDENCE`
+  verdict does trigger one gap-targeted retry (bounded by 4 termination
+  controls: evidence sufficiency, `MAX_EVIDENCE_ITERATIONS`, a wall-clock
+  deadline, a no-new-evidence check — see [The four-layer
+  split](#the-four-layer-split) and [Golden Research Loop
+  validation](#golden-research-loop-validation)), but two things are still
+  missing: no cost/token budget is one of those termination controls, and a
+  retry re-runs the same broad evidence-gathering pass across every capability
+  rather than targeting just the one capability the named evidence gap
+  actually points at. The Knowledge Builder itself still only extracts and
+  persists what a document already states — it's `research/investigation.py`
+  that does the hypothesis generation/planning/evaluation/synthesis
+  reasoning, not the Knowledge Builder.
 - **No UI to browse extracted claims** — `knowledge_claims`/
   `knowledge_entities`/`knowledge_relationships` are real, queryable data
   (`storage/repositories.py::list_knowledge_claims_for_company()` etc.), but

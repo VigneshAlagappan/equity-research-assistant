@@ -14,15 +14,40 @@ source .venv/bin/activate
 
 ## One-time setup
 
-Before using any feature, initialize the database once:
+**Step 1 — after cloning this repo** (or pulling a change to `data/db_shards/`),
+reassemble the real, already-populated database from its git-tracked shard parts
+**before running `init` or anything else**:
+
+```bash
+python scripts/db_unshard.py
+```
+
+`data/equity_research.db` is git-ignored (`*.db`) and can grow past GitHub's 100MB
+per-file limit, so it's committed as ≤50MB parts under `data/db_shards/` instead —
+the live file itself is never touched by this, only how it's stored in git. Before
+committing a change to the database, re-shard it:
+
+```bash
+python scripts/db_shard.py
+```
+
+Both scripts verify a SHA-256 checksum on reassembly and refuse to overwrite an
+existing `data/equity_research.db` unless you pass `--force` — see each script's
+`--help` for options (chunk size, etc.). **If you skip this step**, the next
+command (`init`) will happily create a new, empty database instead of failing —
+there's nothing stopping you from starting work against the wrong (empty) db, and
+`db_unshard.py` will then refuse to fix it without `--force` since a file already
+exists at that path.
+
+**Step 2 — initialize the database** (safe to re-run even against the real,
+unsharded database — it never deletes existing data, only adds anything missing):
 
 ```bash
 python main.py init
 ```
 
-This creates the SQLite database, the folders under `data/`, and seeds the metric
-vocabulary (net profit, ROA/ROE inputs, GNPA %, etc.). Safe to re-run — it never
-deletes existing data.
+This creates the SQLite database if step 1 was skipped, the folders under `data/`,
+and seeds the metric vocabulary (net profit, ROA/ROE inputs, GNPA %, etc.).
 
 **A ready-to-use admin account is seeded automatically** — username `admin`,
 password `admin` — so the web viewer (feature 7) is usable with zero signup.
@@ -41,26 +66,6 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 `.env` is git-ignored and loaded automatically by every `python main.py ...` command —
 you don't need to `export` or `source` anything yourself.
-
-**After cloning this repo** (or pulling a change to `data/db_shards/`), reassemble the
-real database from its git-tracked shard parts before running `init` or anything else:
-
-```bash
-python scripts/db_unshard.py
-```
-
-`data/equity_research.db` is git-ignored (`*.db`) and can grow past GitHub's 100MB
-per-file limit, so it's committed as ≤50MB parts under `data/db_shards/` instead —
-the live file itself is never touched by this, only how it's stored in git. Before
-committing a change to the database, re-shard it:
-
-```bash
-python scripts/db_shard.py
-```
-
-Both scripts verify a SHA-256 checksum on reassembly and refuse to overwrite an
-existing `data/equity_research.db` unless you pass `--force` — see each script's
-`--help` for options (chunk size, etc.).
 
 ---
 
@@ -478,6 +483,13 @@ what's in git to reflect what's actually in the live db.
 
 ```bash
 source .venv/bin/activate
+
+# First time only, after cloning (see One-time setup above) — reassembles the
+# real, already-populated database from its git-tracked shard parts. Skipping
+# this and running `init` first creates an empty database instead, and
+# db_unshard.py will then refuse to overwrite it without --force.
+python scripts/db_unshard.py
+
 python main.py init
 
 # 1. Register the company
