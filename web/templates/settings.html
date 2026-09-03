@@ -2,9 +2,56 @@
 
 {% block title %}Settings — Signals{% endblock %}
 
+{# Settings' own left nav reads as an extension of the app's icon sidebar —
+   sitting it inside the page's usual centered/85%-width column (built for
+   prose and data tables) leaves an oddly wide gap between the two. This
+   page hugs the sidebar instead, like the nav rail itself does. #}
+{% block page_class %}page-flush-left{% endblock %}
+
 {% block extra_style %}
+  .page.page-flush-left { width: auto; max-width: none; margin: 0; }
+  .settings-account { font-size: 0.85rem; color: var(--ink-muted); margin: -0.3rem 0 1.5rem; }
+
+  /* — Settings nav ————————————————————————————————————————
+     A left menu grouped under three section labels (Profile & Preferences
+     / Research Configuration / Indicators & Data) rather than a top-tab
+     bar or an icon rail — each group can hold more than one page (Personal
+     profile vs. Appearance, say) without flattening them into one long
+     scroll or growing the tab bar sideways. */
+  .settings-shell { display: flex; gap: var(--space-6); align-items: flex-start; }
+  .settings-nav { display: flex; flex-direction: column; width: 224px; flex: none; }
+  .settings-nav-group-label {
+    font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-muted);
+    margin: 18px 10px 6px;
+  }
+  .settings-nav-group-label:first-child { margin-top: 0; }
+  .settings-nav-item {
+    display: block; width: 100%;
+    padding: 7px 10px; margin: 0; border-radius: var(--radius-lg);
+    border: 1px solid transparent; background: none; color: var(--ink);
+    font: inherit; font-size: 14px; line-height: 1.3; text-align: left; cursor: pointer;
+    text-decoration: none;
+  }
+  .settings-nav-item:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .settings-nav-item.active {
+    background: var(--surface); border-color: var(--border); color: var(--accent); font-weight: 600;
+  }
+  .settings-content { flex: 1; min-width: 0; }
+  .settings-panel[hidden] { display: none; }
+  .settings-panel-intro { font-size: 0.85rem; color: var(--ink-muted); max-width: 70ch; margin: -0.2rem 0 1.5rem; }
+  @media (max-width: 760px) {
+    .settings-shell { flex-direction: column; }
+    .settings-nav { flex-direction: row; flex-wrap: wrap; width: auto; gap: 4px; }
+    .settings-nav-group-label { width: 100%; margin: 10px 2px 2px; }
+    .settings-nav-group-label:first-child { margin-top: 0; }
+    .settings-nav-item { width: auto; flex: 1 1 auto; }
+  }
+
   .settings-wrap { max-width: 560px; }
-  .settings-account { font-size: 0.85rem; color: var(--ink-muted); margin: -0.3rem 0 2rem; }
+  /* Reuses the app's global .card/.card-title/.card-body (base.html), just
+     given more breathing room than that component's default compact
+     padding. */
+  .settings-card { padding: var(--space-4); gap: var(--space-2); }
 
   .theme-options {
     display: grid;
@@ -58,21 +105,307 @@
   .theme-swatch-dark::after { color: #ece9e6; }
   .theme-swatch-schwab { background: #f7f7f8; border-color: #0072ce; }
   .theme-swatch-schwab::after { content: "Aa"; font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; color: #0072ce; }
+  .theme-swatch-signals { background: #0b0f14; border-color: #45c4b8; }
+  .theme-swatch-signals::after { content: "Aa"; font-family: 'Sora', system-ui, sans-serif; color: #45c4b8; }
+  .theme-swatch-signals-light { background: #f7f8f9; border-color: #1f8f84; }
+  .theme-swatch-signals-light::after { content: "Aa"; font-family: 'Sora', system-ui, sans-serif; color: #1f8f84; }
   .theme-option-label { font-size: 0.85rem; font-weight: 600; }
+
+  /* Research Configuration has no real settings backing yet — a plain
+     dashed empty-state (same shape as admin.html's .empty-state) instead
+     of stub controls that don't do anything. */
+  .settings-empty-state {
+    padding: var(--space-6);
+    color: var(--ink-muted);
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md);
+    max-width: 70ch;
+  }
+
+  /* — Indicator Rules ——————————————————————————————————————
+     Wider than the theme column above (each rule carries a small form), so
+     this section opts out of .settings-wrap's 560px cap rather than the
+     page growing a second layout. */
+  .ind-wrap { max-width: 1000px; }
+  .ind-intro { font-size: 0.85rem; color: var(--ink-muted); max-width: 68ch; margin: 0.2rem 0 1rem; }
+  .ind-search { margin-bottom: var(--space-3); }
+  .ind-search input {
+    width: 100%; max-width: 340px; padding: var(--space-1) var(--space-2); font: inherit; font-size: 13px;
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: var(--bg); color: var(--ink);
+  }
+  .ind-rule {
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    margin-bottom: var(--space-3); background: var(--surface);
+  }
+  .ind-rule > summary {
+    cursor: pointer; list-style: none; padding: var(--space-3);
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  }
+  .ind-rule > summary::-webkit-details-marker { display: none; }
+  .ind-rule > summary::before { content: "▸"; font-size: 10px; color: var(--ink-muted); transition: transform .15s ease; }
+  .ind-rule[open] > summary::before { transform: rotate(90deg); }
+  .ind-rule-name { font-weight: 600; font-size: 14px; }
+  .ind-rule-body { padding: 0 var(--space-3) var(--space-3); border-top: 1px solid var(--border); }
+  .ind-desc { font-size: 13px; color: var(--ink-muted); margin: var(--space-3) 0; max-width: 70ch; }
+  .ind-meta { font-size: 11px; color: var(--ink-muted); margin: 0 0 var(--space-3); }
+  .ind-meta code { font-size: 11px; }
+  .ind-compare { display: flex; gap: var(--space-6); flex-wrap: wrap; margin-bottom: var(--space-4); font-size: 12px; }
+  .ind-compare h4 { margin: 0 0 4px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+  .ind-compare dl { margin: 0; display: grid; grid-template-columns: auto auto; gap: 2px var(--space-2); }
+  .ind-compare dt { color: var(--ink-muted); }
+  .ind-compare dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .ind-form { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: flex-end; }
+  .ind-field { display: flex; flex-direction: column; gap: 3px; }
+  .ind-field label { font-size: 11px; color: var(--ink-muted); }
+  .ind-field select, .ind-field input {
+    font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid var(--border);
+    border-radius: var(--radius-md); background: var(--bg); color: var(--ink); min-width: 120px;
+  }
+  .ind-overrides { margin-top: var(--space-4); }
+  .ind-overrides h4 { margin: 0 0 var(--space-2); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+  .ind-override-row {
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+    font-size: 12px; padding: var(--space-1) 0; border-top: 1px dashed var(--border);
+  }
+  .ind-override-scope { font-weight: 600; }
+  .ind-flash { font-size: 13px; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); margin-bottom: var(--space-3); }
+  .ind-flash-success { background: var(--success-bg); color: var(--success); }
+  .ind-flash-error { background: var(--indicator-warning-bg); color: var(--indicator-warning); }
+
+
+  /* — Administration (admin-only, migrated from the former standalone
+     /admin page — web/templates/admin.html is retired). These panels are
+     reached via real navigation (Settings' Administration nav links), not
+     the client-side tab toggle the rest of this page uses — each panel's
+     data is only computed server-side for the one currently requested (see
+     _build_admin_settings_context in web/app.py), so unlike the other
+     Settings panels only the requested one is ever in the DOM at all
+     (guarded by an "is companies defined" check around the whole group). */
+  /* Ingest panel: Financial Data and Documents are two distinct queues
+     (different backing tables, different pipelines) but one section to the
+     user — a sub-tab switch here rather than both tables stacked and always
+     visible, same "pick a view, don't scroll past everything" reasoning as
+     the top nav itself. */
+  .admin-ingest-subnav { display: flex; gap: var(--space-2); border-bottom: 1px solid var(--color-divider); margin: var(--space-4) 0; }
+  .admin-ingest-subnav-btn {
+    background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    padding: 8px 4px; font-size: 14px; font-weight: 600; color: var(--ink-muted); cursor: pointer;
+  }
+  .admin-ingest-subnav-btn:hover { color: var(--ink); }
+  .admin-ingest-subnav-btn.active { color: var(--ink); border-bottom-color: var(--color-accent); }
+  .admin-ingest-subpanel[hidden] { display: none; }
+  /* Plain <table class="table"> blocks (Needs Review, Failed Items, Pending/
+     Failed Documents, Processing History) otherwise sit at the global 14px
+     .table default — bring them to the same 13px as .admin-grid and the
+     Companies list (index.html's table.companies) for a consistent type scale. */
+  .admin-panel .table { font-size: 13px; }
+  .admin-columns-form {
+    display: flex; flex-direction: column; gap: var(--space-3); max-width: 420px;
+  }
+  .admin-columns-list { display: flex; flex-direction: column; gap: 8px; }
+  .admin-columns-list label {
+    display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;
+  }
+  .admin-columns-list .locked {
+    display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-muted);
+  }
+  /* Settings' left nav (unlike admin.html's old page-wide, sidebar-free
+     layout) takes a fixed slice of the page width, so this fixed-column
+     grid no longer fits uncompressed at common widths — minmax floors on
+     the two flexible columns plus a scrolling wrapper (.admin-grid-scroll)
+     keep every column readable via horizontal scroll instead of letting
+     Display/Legal name shrink to unreadable slivers. */
+  .admin-grid-scroll { overflow-x: auto; }
+  .admin-grid {
+    display: grid;
+    grid-template-columns: 150px minmax(160px, 1fr) minmax(160px, 1fr) 130px 140px 170px 280px 70px;
+    gap: var(--space-2) var(--space-3);
+    align-items: center;
+    margin-top: var(--space-4);
+    font-size: 13px;
+  }
+  .admin-grid-header {
+    display: contents;
+  }
+  .admin-grid-header > div {
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-muted);
+    padding-bottom: var(--space-2); border-bottom: 1px solid var(--color-divider);
+  }
+  .admin-row {
+    display: contents;
+  }
+  .admin-row > * {
+    padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
+  }
+  .admin-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--ink-muted); font-size: 11px;
+  }
+  .admin-grid input.input, .admin-grid select.input { min-height: 32px; font-size: 13px; }
+  .admin-dropdown-field .admin-other-input { margin-top: 4px; }
+
+  .admin-pagination {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+    gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-3);
+    border-top: 1px solid var(--color-divider); font-size: 13px;
+  }
+  .admin-pagination-links { display: flex; align-items: center; gap: var(--space-2); }
+
+  .admin-companies-filters {
+    display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;
+    margin-top: var(--space-3);
+  }
+  .admin-companies-filters .field { width: auto; flex: 1 1 180px; max-width: 280px; }
+  .admin-companies-filters .field label {
+    display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--ink-muted); margin-bottom: 4px;
+  }
+  .admin-companies-filters select.input, .admin-companies-filters input.input { min-height: 36px; }
+  .admin-ingest-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) 0; }
+  .admin-ingest-actions form { display: contents; }
+  .admin-grid select[multiple].input { min-height: auto; padding: 2px; font-size: 12px; }
+  .admin-grid select[multiple].input option { padding: 2px 4px; }
+  .admin-status { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; white-space: nowrap; }
+  .admin-status .tag { flex: none; }
+  .admin-status select.input { max-width: 96px; flex: none; }
+  .admin-status .btn { flex: none; padding: 0.25rem 0.6rem; font-size: 12px; }
+  .admin-save { text-align: right; }
+  .admin-save .btn { font-size: 12px; padding: 0.25rem 0.7rem; }
+
+  @media (max-width: 900px) {
+    .admin-grid { grid-template-columns: 1fr; }
+    .admin-grid-header { display: none; }
+    .admin-row { display: grid; grid-template-columns: 1fr; gap: 4px; padding: var(--space-3) 0; border-bottom: 1px solid var(--color-divider); }
+    .admin-row > * { border-bottom: none; padding: 2px 0; }
+    .admin-save { text-align: left; }
+  }
+
+  .empty-state {
+    padding: var(--space-6);
+    text-align: center;
+    color: var(--ink-muted);
+    background: var(--surface);
+    border: 1px dashed var(--color-divider);
+    border-radius: var(--radius-md);
+  }
+  .empty-state code {
+    background: var(--bg);
+    padding: 0.1rem 0.35rem;
+    border-radius: var(--radius-sm);
+  }
+
+  .import-form { display: flex; flex-direction: column; gap: var(--space-3); max-width: 460px; }
+
+  /* Audit Log — one table, each company row expandable in place (a hand-
+     rolled disclosure since <details> can't wrap table rows) rather than a
+     second standalone table, so a company with zero reconciliation history
+     still gets a row instead of being invisible in a flat event log. */
+  .admin-audit-row { cursor: pointer; }
+  .admin-audit-row:hover { background: color-mix(in srgb, var(--color-text) 4%, transparent); }
+  .admin-audit-expand {
+    background: none; border: none; cursor: pointer; font: inherit; font-size: 16px;
+    color: var(--ink-muted); padding: 0 var(--space-2); line-height: 1; transition: transform 0.15s;
+  }
+  .admin-audit-row.is-expanded .admin-audit-expand { transform: rotate(90deg); color: var(--color-text); }
+  .admin-audit-detail-row td { background: color-mix(in srgb, var(--color-text) 3%, transparent); padding: var(--space-3); }
+  .admin-audit-detail-table { font-size: 12px; margin: 0; }
+
+  .taxonomy-section { margin-top: var(--space-5); }
+  .taxonomy-section:first-of-type { margin-top: var(--space-3); }
+  .taxonomy-section-title { font-size: 15px; font-weight: 600; }
+  .taxonomy-table { margin: var(--space-2) 0 var(--space-3); max-width: 640px; }
+  .taxonomy-table td, .taxonomy-table th { vertical-align: middle; }
+  .taxonomy-num { text-align: right; font-variant-numeric: tabular-nums; width: 90px; }
+  .taxonomy-rename-form { display: flex; gap: var(--space-2); align-items: center; }
+  .taxonomy-rename-form input.input { min-height: 30px; font-size: 13px; width: 160px; }
+  .taxonomy-add-form { display: flex; gap: var(--space-2); max-width: 400px; }
+
+  /* Shown the instant an ingest action form is submitted (Ingest Selected/All
+     Pending, Retry Failed, Refresh) — these are plain POST-and-reload forms,
+     so there's no real per-file progress to report, only confirmation the
+     click registered and the request is in flight before the page reloads. */
+  .admin-async-status {
+    display: flex; align-items: center; gap: var(--space-2);
+    margin-top: var(--space-2); font-size: 13px; color: var(--ink-muted);
+  }
+  .admin-async-bar {
+    width: 120px; height: 4px; border-radius: 999px;
+    background: var(--color-accent-100); overflow: hidden; flex: none;
+  }
+  .admin-async-bar::after {
+    content: ""; display: block; width: 40%; height: 100%;
+    background: var(--color-accent); border-radius: 999px;
+    animation: admin-async-sweep 1.1s ease-in-out infinite;
+  }
+  @keyframes admin-async-sweep {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(250%); }
+  }
 {% endblock %}
 
 {% block content %}
-<div class="settings-wrap">
-  <h1>Settings</h1>
-  {% if g.user %}
-  <p class="settings-account">Signed in as {{ g.user['email'] or g.user['username'] }}</p>
-  {% else %}
-  <p class="settings-account">Not signed in — this choice is saved for this browser session only. <a href="{{ url_for('login') }}">Log in</a> to keep it across devices.</p>
-  {% endif %}
+<h1>Settings</h1>
 
-  <form method="post" action="{{ url_for('settings') }}">
-    <div class="field">
-      <label>Theme</label>
+<div class="settings-shell">
+<nav class="settings-nav">
+  <div class="settings-nav-group-label">Profile &amp; Preferences</div>
+  <button type="button" class="settings-nav-item {{ 'active' if active_panel == 'profile' }}" data-panel="profile">Personal profile</button>
+  <button type="button" class="settings-nav-item {{ 'active' if active_panel == 'appearance' }}" data-panel="appearance">Appearance</button>
+  <button type="button" class="settings-nav-item {{ 'active' if active_panel == 'notifications' }}" data-panel="notifications">Notifications</button>
+  <button type="button" class="settings-nav-item {{ 'active' if active_panel == 'personal-defaults' }}" data-panel="personal-defaults">Personal defaults</button>
+
+  <div class="settings-nav-group-label">Research Configuration</div>
+  <button type="button" class="settings-nav-item {{ 'active' if active_panel == 'methodology' }}" data-panel="methodology">Research Methodology</button>
+  <button type="button" class="settings-nav-item {{ 'active' if active_panel == 'research-defaults' }}" data-panel="research-defaults">Research Defaults</button>
+  <button type="button" class="settings-nav-item {{ 'active' if active_panel == 'indicators' }}" data-panel="indicators">Indicator Rules</button>
+
+  {# Real links, not buttons — the first click into any of these needs a
+     server round trip (_build_admin_settings_context in web/app.py isn't
+     computed for a non-admin page load), unlike the always-rendered panels
+     above. The click handler below upgrades this to an instant client-side
+     switch, same as the rest of the nav, once that data is already on the
+     page — i.e. every click after the first, switching among these 8. #}
+  {% if g.user and g.user['is_admin'] %}
+  <div class="settings-nav-group-label">Data &amp; Classification</div>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-companies' }}" data-panel="admin-companies" href="{{ url_for('settings', panel='admin-companies') }}">Companies</a>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-taxonomy' }}" data-panel="admin-taxonomy" href="{{ url_for('settings', panel='admin-taxonomy') }}">Sectors, Industries &amp; Tags</a>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-columns' }}" data-panel="admin-columns" href="{{ url_for('settings', panel='admin-columns') }}">Company List Columns</a>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-overview_ratios' }}" data-panel="admin-overview_ratios" href="{{ url_for('settings', panel='admin-overview_ratios') }}">Overview Ratios</a>
+
+  <div class="settings-nav-group-label">Data Operations</div>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-import' }}" data-panel="admin-import" href="{{ url_for('settings', panel='admin-import') }}">Import Data</a>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-stock_actions' }}" data-panel="admin-stock_actions" href="{{ url_for('settings', panel='admin-stock_actions') }}">Corporate Actions</a>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-ingest' }}" data-panel="admin-ingest" href="{{ url_for('settings', panel='admin-ingest') }}">Ingestion</a>
+
+  <div class="settings-nav-group-label">System</div>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-audit' }}" data-panel="admin-audit" href="{{ url_for('settings', panel='admin-audit') }}">Audit Log</a>
+  {% endif %}
+</nav>
+
+<div class="settings-content">
+
+{# ——— Profile & Preferences — "How I use Signal" ——————————————————— #}
+<div class="settings-panel" id="settings-panel-profile" {{ 'hidden' if active_panel != 'profile' }}>
+  <h2>Personal profile</h2>
+  <div class="settings-wrap">
+    <section class="card settings-card">
+      {% if g.user %}
+      <p class="card-body">Signed in as <strong>{{ g.user['email'] or g.user['username'] }}</strong>.</p>
+      {% else %}
+      <p class="card-body">Not signed in — choices on this page are saved for this browser session only.
+        <a href="{{ url_for('login') }}">Log in</a> to keep them across devices.</p>
+      {% endif %}
+    </section>
+  </div>
+</div>
+
+<div class="settings-panel" id="settings-panel-appearance" {{ 'hidden' if active_panel != 'appearance' }}>
+  <h2>Appearance</h2>
+  <p class="settings-panel-intro">Choose how Signal looks.</p>
+  <div class="settings-wrap">
+    <form method="post" action="{{ url_for('settings') }}">
       <div class="theme-options">
         {% for value, label in themes %}
         <label class="theme-option">
@@ -83,7 +416,1075 @@
         </label>
         {% endfor %}
       </div>
-    </div>
-  </form>
+    </form>
+  </div>
 </div>
+
+<div class="settings-panel" id="settings-panel-notifications" {{ 'hidden' if active_panel != 'notifications' }}>
+  <h2>Notifications</h2>
+  <div class="settings-empty-state">
+    Nothing here is configurable yet — Signal doesn't send email or in-app notifications today.
+    This page is reserved for that once it exists (a watchlist digest is the most likely first one).
+  </div>
+</div>
+
+<div class="settings-panel" id="settings-panel-personal-defaults" {{ 'hidden' if active_panel != 'personal-defaults' }}>
+  <h2>Personal defaults</h2>
+  <div class="settings-empty-state">
+    Nothing here is configurable yet — things like a default landing page or default company-list
+    view aren't personalizable today. This page is reserved for those once they are.
+  </div>
+</div>
+
+{# ——— Research Configuration — "How Signal researches for me" —————————— #}
+<div class="settings-panel" id="settings-panel-methodology" {{ 'hidden' if active_panel != 'methodology' }}>
+  <h2>Research Methodology</h2>
+  <div class="settings-empty-state">
+    Nothing here is configurable yet — investigations currently run hypothesis generation, evidence
+    retrieval, and confidence scoring on Signal's fixed defaults. This page is reserved for those
+    controls once they're tunable, so they don't end up mixed in with account preferences or
+    Indicators &amp; Data.
+  </div>
+</div>
+
+<div class="settings-panel" id="settings-panel-research-defaults" {{ 'hidden' if active_panel != 'research-defaults' }}>
+  <h2>Research defaults</h2>
+  <div class="settings-empty-state">
+    Nothing here is configurable yet — things like default investigation depth or how heavily
+    different evidence sources are weighted aren't tunable today. This page is reserved for those
+    once they are.
+  </div>
+</div>
+
+{# ——— Indicators & Data — "What Signal uses" ———————————————————————
+   Configuration only. The rules themselves are deterministic Python
+   (indicators/rules.py) and nothing on this page can change their trigger
+   logic, id or version — a save here writes one indicator_rule_config row
+   scoped to this user, and a reset deletes it. See indicators/config.py for
+   the Company > Sector > Global > System resolution order shown below. #}
+<div class="settings-panel" id="settings-panel-indicators" {{ 'hidden' if active_panel != 'indicators' }}>
+  <p class="settings-panel-intro">What Signal's research is built on — indicator rules, and (for admins) the underlying data sources.</p>
+  <div class="ind-wrap" id="indicator-rules">
+    <h2>Indicator Rules</h2>
+    <p class="ind-intro">
+      Indicators are deterministic, rule-based factual patterns computed from already-ingested
+      data — not predictions, conclusions or AI-generated insights. Adjust a rule's threshold or
+      classification, or turn it off, globally or for one sector or company. The most specific
+      setting wins: <b>company → sector → your global default → the system default</b>. Your
+      changes never modify the underlying system rule.
+    </p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+      <div class="ind-flash ind-flash-{{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    {% if indicator_signed_out %}
+    <p class="muted" style="font-size: 13px;">
+      <a href="{{ url_for('login') }}">Log in</a> to configure indicator rules — rule configuration
+      is stored per account, so there's nowhere to save it for a signed-out visitor.
+    </p>
+    {% else %}
+    <div class="ind-search">
+      <input type="search" id="ind-search-input" placeholder="Search rules by name, id or description…"
+             aria-label="Search indicator rules" autocomplete="off">
+    </div>
+
+    {% for entry in indicator_rules %}
+    <details class="ind-rule" data-search="{{ (entry.name ~ ' ' ~ entry.rule_id ~ ' ' ~ entry.description ~ ' ' ~ entry.family)|lower }}">
+      <summary>
+        <span class="ind-rule-name">{{ entry.name }}</span>
+        <span class="tag tag-neutral">{{ entry.family.replace('_', ' ') }}</span>
+        <span class="tag tag-{{ entry.effective.classification }}">{{ entry.effective.classification_label }}</span>
+        {% if not entry.effective.enabled %}<span class="tag tag-outline">Disabled</span>{% endif %}
+        {% if entry.effective.overridden or entry.overrides %}<span class="tag tag-accent">Overridden</span>{% endif %}
+      </summary>
+      <div class="ind-rule-body">
+        <p class="ind-desc">{{ entry.description }}</p>
+        <p class="ind-meta">
+          <code>{{ entry.rule_id }}</code> · version {{ entry.version }} · default severity
+          {{ entry.system.severity }} · requires {{ entry.required_facts|join(', ') }}
+        </p>
+
+        <div class="ind-compare">
+          <div>
+            <h4>System default</h4>
+            <dl>
+              <dt>Classification</dt><dd>{{ entry.system.classification_label }}</dd>
+              <dt>Enabled</dt><dd>{{ 'Yes' if entry.system.enabled else 'No' }}</dd>
+              {% for t in entry.system.thresholds %}
+              <dt>{{ t.label }}</dt><dd>{{ '%g'|format(t.default) }}{{ t.unit }}</dd>
+              {% endfor %}
+            </dl>
+          </div>
+          <div>
+            <h4>Your effective configuration (global)</h4>
+            <dl>
+              <dt>Classification</dt>
+              <dd>{{ entry.effective.classification_label }}</dd>
+              <dt>Enabled</dt><dd>{{ 'Yes' if entry.effective.enabled else 'No' }}</dd>
+              {% for t in entry.effective.thresholds %}
+              <dt>{{ t.label }}</dt>
+              <dd>{{ '%g'|format(t.effective) }}{{ t.unit }}{% if t.overridden %} <span class="tag tag-accent">overridden</span>{% endif %}</dd>
+              {% endfor %}
+            </dl>
+          </div>
+        </div>
+
+        <form method="post" action="{{ url_for('settings_save_indicator_rule') }}" class="ind-form">
+          <input type="hidden" name="rule_id" value="{{ entry.rule_id }}">
+          <div class="ind-field">
+            <label for="scope-type-{{ loop.index }}">Apply to</label>
+            <select name="scope_type" id="scope-type-{{ loop.index }}" data-ind-scope-type>
+              {% for scope in entry.rule.applicable_scopes %}
+              <option value="{{ scope }}">{{ 'Globally' if scope == 'global' else ('By sector' if scope == 'sector' else 'By company') }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="ind-field">
+            <label for="scope-value-{{ loop.index }}">Sector / company</label>
+            <input type="text" name="scope_value" id="scope-value-{{ loop.index }}" data-ind-scope-value
+                   list="ind-scope-values" placeholder="(global)" disabled>
+          </div>
+          <div class="ind-field">
+            <label for="enabled-{{ loop.index }}">Enabled</label>
+            <select name="enabled" id="enabled-{{ loop.index }}">
+              <option value="inherit">(inherit)</option>
+              <option value="1">Enabled</option>
+              <option value="0">Disabled</option>
+            </select>
+          </div>
+          <div class="ind-field">
+            <label for="classification-{{ loop.index }}">Classification</label>
+            <select name="classification" id="classification-{{ loop.index }}">
+              <option value="">(inherit)</option>
+              {% for value, label in indicator_classifications %}
+              <option value="{{ value }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% for t in entry.effective.thresholds %}
+          <div class="ind-field">
+            <label for="th-{{ loop.index0 }}-{{ entry.rule_id }}">{{ t.label }} ({{ t.unit }})</label>
+            <input type="number" step="any" min="{{ t.minimum }}" max="{{ t.maximum }}"
+                   id="th-{{ loop.index0 }}-{{ entry.rule_id }}"
+                   name="threshold__{{ t.key }}" placeholder="{{ '%g'|format(t.effective) }}">
+          </div>
+          {% endfor %}
+          <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+
+        <div class="ind-overrides">
+          <h4>Your overrides for this rule</h4>
+          {% if entry.effective.overridden %}
+          <div class="ind-override-row">
+            <span class="ind-override-scope">Global</span>
+            <span class="tag tag-{{ entry.effective.classification }}">{{ entry.effective.classification_label }}</span>
+            <span>{{ 'Enabled' if entry.effective.enabled else 'Disabled' }}</span>
+            {% for t in entry.effective.thresholds %}<span>{{ t.label }} {{ '%g'|format(t.effective) }}{{ t.unit }}</span>{% endfor %}
+            <form method="post" action="{{ url_for('settings_reset_indicator_rule') }}">
+              <input type="hidden" name="rule_id" value="{{ entry.rule_id }}">
+              <input type="hidden" name="scope_type" value="global">
+              <input type="hidden" name="scope_value" value="">
+              <button type="submit" class="btn btn-ghost">Reset to default</button>
+            </form>
+          </div>
+          {% endif %}
+          {% for o in entry.overrides %}
+          <div class="ind-override-row">
+            <span class="ind-override-scope">{{ o.scope_type|capitalize }}: {{ o.scope_value }}</span>
+            <span class="tag tag-{{ o.classification }}">{{ o.classification_label }}</span>
+            <span>{{ 'Enabled' if o.enabled else 'Disabled' }}</span>
+            {% for t in o.thresholds %}<span>{{ t.label }} {{ '%g'|format(t.effective) }}{{ t.unit }}</span>{% endfor %}
+            <form method="post" action="{{ url_for('settings_reset_indicator_rule') }}">
+              <input type="hidden" name="rule_id" value="{{ entry.rule_id }}">
+              <input type="hidden" name="scope_type" value="{{ o.scope_type }}">
+              <input type="hidden" name="scope_value" value="{{ o.scope_value }}">
+              <button type="submit" class="btn btn-ghost">Reset</button>
+            </form>
+          </div>
+          {% endfor %}
+          {% if not entry.effective.overridden and not entry.overrides %}
+          <p class="muted" style="font-size: 12px; margin: 0;">None — this rule runs on its system defaults.</p>
+          {% endif %}
+        </div>
+      </div>
+    </details>
+    {% endfor %}
+
+    <datalist id="ind-scope-values">
+      {% for s in indicator_sectors %}<option value="{{ s }}"></option>{% endfor %}
+    </datalist>
+
+    {% endif %}
+  </div>
+</div>
+
+{% if companies is defined %}
+
+
+    <div class="settings-panel" id="settings-panel-admin-companies" {{ 'hidden' if active_admin_panel != 'companies' }}>
+      <p class="muted">Edit a company's name, sector, industry, and active/archived status. Ingested financial data is edited only via Import Data (this tab) or the CLI, never here.</p>
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-companies">
+        <div class="field">
+          <label for="admin-companies-search">Search</label>
+          <input class="input" type="text" id="admin-companies-search" name="q" value="{{ companies_query }}"
+                 placeholder="Name, ID, sector, index, status&hellip;" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="admin-companies-sector">Sector</label>
+          <select class="input" id="admin-companies-sector" name="sector" onchange="this.form.requestSubmit()">
+            <option value="">All sectors</option>
+            {% for s in sectors %}<option value="{{ s }}" {{ 'selected' if s == companies_sector_filter }}>{{ s }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="admin-companies-industry">Industry</label>
+          <select class="input" id="admin-companies-industry" name="industry" onchange="this.form.requestSubmit()">
+            <option value="">All industries</option>
+            {% for i in industries %}<option value="{{ i }}" {{ 'selected' if i == companies_industry_filter }}>{{ i }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="admin-companies-tag">Index tag</label>
+          <select class="input" id="admin-companies-tag" name="tag" onchange="this.form.requestSubmit()">
+            <option value="">All indices</option>
+            {% for t in index_names %}<option value="{{ t }}" {{ 'selected' if t == companies_tag_filter }}>{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="admin-companies-status">Status</label>
+          <select class="input" id="admin-companies-status" name="status" onchange="this.form.requestSubmit()">
+            <option value="">All statuses</option>
+            <option value="active" {{ 'selected' if companies_status_filter == 'active' }}>Active</option>
+            <option value="archived" {{ 'selected' if companies_status_filter == 'archived' }}>Archived</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Search</button>
+        {% if companies_filters_active %}
+        <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-companies') }}">Clear</a>
+        {% endif %}
+      </form>
+
+      {% if companies %}
+      <div class="admin-grid-scroll">
+      <div class="admin-grid">
+        <div class="admin-grid-header">
+          <div>ID</div>
+          <div>Display name</div>
+          <div>Full (legal) name</div>
+          <div>Sector</div>
+          <div>Industry</div>
+          <div>Tags (indices)</div>
+          <div>Status</div>
+          <div></div>
+        </div>
+        {% for c in companies %}
+        {% set sector_is_custom = c['sector'] and c['sector'] not in sectors %}
+        {% set industry_is_custom = c['industry'] and c['industry'] not in industries %}
+        <form class="admin-row" method="post" action="{{ url_for('admin_update_company', company_id=c['company_id']) }}">
+          <div class="admin-id">{{ c['company_id'] }}</div>
+          <input class="input" type="text" name="display_name" value="{{ c['display_name'] }}" required>
+          <input class="input" type="text" name="legal_name" value="{{ c['legal_name'] }}" required>
+          <div class="admin-dropdown-field">
+            <select class="input" name="sector" aria-label="Sector"
+                    onchange="this.nextElementSibling.style.display = this.value === '__new__' ? 'block' : 'none';">
+              <option value="" {{ 'selected' if not c['sector'] }}>&mdash;</option>
+              {% for s in sectors %}<option value="{{ s }}" {{ 'selected' if c['sector'] == s }}>{{ s }}</option>{% endfor %}
+              <option value="__new__" {{ 'selected' if sector_is_custom }}>+ Add new&hellip;</option>
+            </select>
+            <input type="text" class="input admin-other-input" name="sector_other" placeholder="New sector"
+                   value="{{ c['sector'] if sector_is_custom else '' }}"
+                   style="display: {{ 'block' if sector_is_custom else 'none' }};">
+          </div>
+          <div class="admin-dropdown-field">
+            <select class="input" name="industry" aria-label="Industry"
+                    onchange="this.nextElementSibling.style.display = this.value === '__new__' ? 'block' : 'none';">
+              <option value="" {{ 'selected' if not c['industry'] }}>&mdash;</option>
+              {% for i in industries %}<option value="{{ i }}" {{ 'selected' if c['industry'] == i }}>{{ i }}</option>{% endfor %}
+              <option value="__new__" {{ 'selected' if industry_is_custom }}>+ Add new&hellip;</option>
+            </select>
+            <input type="text" class="input admin-other-input" name="industry_other" placeholder="New industry"
+                   value="{{ c['industry'] if industry_is_custom else '' }}"
+                   style="display: {{ 'block' if industry_is_custom else 'none' }};">
+          </div>
+          <select class="input" name="index_tags" multiple size="3" aria-label="Index membership">
+            {% for name in index_names %}
+            <option value="{{ name }}" {{ 'selected' if name in c['index_tags'] }}>{{ name }}</option>
+            {% endfor %}
+          </select>
+          <div class="admin-status">
+            <span class="tag {{ 'tag-accent' if c['status'] == 'active' else 'tag-neutral' }}">{{ c['status'] }}</span>
+            {% if c['status'] == 'active' %}
+            <select class="input" name="archive_reason" aria-label="Archive reason">
+              {% for r in archive_reasons %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+            </select>
+            <button type="submit" name="action" value="archive" class="btn btn-ghost"
+                    onclick='return confirm("Archive " + {{ c["display_name"]|tojson }} + "?");'>Archive</button>
+            {% else %}
+            <button type="submit" name="action" value="restore" class="btn btn-ghost">Restore</button>
+            {% endif %}
+          </div>
+          <div class="admin-save">
+            <button type="submit" name="action" value="save" class="btn btn-ghost admin-save-btn">Save</button>
+          </div>
+        </form>
+        {% endfor %}
+      </div>
+      </div>
+
+      {% if companies_total_pages > 1 %}
+      <div class="admin-pagination">
+        <span class="muted">
+          Showing {{ (companies_page - 1) * companies_page_size + 1 }}&ndash;{{ (companies_page - 1) * companies_page_size + companies|length }}
+          of {{ companies_total }} companies
+        </span>
+        <div class="admin-pagination-links">
+          {% set pagination_args = {'panel': 'admin-companies', 'q': companies_query, 'sector': companies_sector_filter, 'industry': companies_industry_filter, 'tag': companies_tag_filter, 'status': companies_status_filter} %}
+          {% if companies_page > 1 %}
+          <a class="btn btn-ghost" href="{{ url_for('settings', page=companies_page - 1, **pagination_args) }}">&larr; Previous</a>
+          {% endif %}
+          <span class="muted">Page {{ companies_page }} of {{ companies_total_pages }}</span>
+          {% if companies_page < companies_total_pages %}
+          <a class="btn btn-ghost" href="{{ url_for('settings', page=companies_page + 1, **pagination_args) }}">Next &rarr;</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      {% elif companies_filters_active %}
+      <div class="empty-state">No companies match these filters.</div>
+      {% else %}
+      <div class="empty-state">
+        No companies registered yet. Run <code>python main.py seed-companies</code> or
+        <code>python main.py add-company &lt;ID&gt; ...</code> from the CLI.
+      </div>
+      {% endif %}
+    </div>
+
+    {% macro vocab_section(kind, label, hint, items, counts) %}
+    <div class="taxonomy-section">
+      <div class="taxonomy-section-title">{{ label }}</div>
+      <p class="muted">{{ hint }}</p>
+      {% if items %}
+      <table class="table taxonomy-table">
+        <thead><tr><th>Name</th><th class="taxonomy-num">Companies</th><th>Rename</th><th></th></tr></thead>
+        <tbody>
+          {% for item in items %}
+          <tr>
+            <td>{{ item }}</td>
+            <td class="taxonomy-num">{{ counts.get(item, 0) }}</td>
+            <td>
+              <form class="taxonomy-rename-form" method="post" action="{{ url_for('admin_vocabulary_rename', kind=kind) }}">
+                <input type="hidden" name="old_name" value="{{ item }}">
+                <input class="input" type="text" name="new_name" value="{{ item }}" required>
+                <button type="submit" class="btn btn-ghost">Rename</button>
+              </form>
+            </td>
+            <td>
+              {% set n = counts.get(item, 0) %}
+              {% if n > 0 %}
+              {% set confirm_message = "Delete " ~ item ~ "? " ~ n ~ " compan" ~ ("y" if n == 1 else "ies") ~ " using it will be cleared to —, not reassigned." %}
+              {% else %}
+              {% set confirm_message = "Delete " ~ item ~ "?" %}
+              {% endif %}
+              <form method="post" action="{{ url_for('admin_vocabulary_delete', kind=kind) }}">
+                <input type="hidden" name="name" value="{{ item }}">
+                <button type="submit" class="btn btn-ghost" onclick="return confirm({{ confirm_message|tojson }});">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">Nothing here yet.</div>
+      {% endif %}
+      <form class="taxonomy-add-form" method="post" action="{{ url_for('admin_vocabulary_add', kind=kind) }}">
+        <input class="input" type="text" name="name" placeholder="Add a new {{ label[:-1].lower() if label.endswith('s') else label.lower() }}&hellip;" required>
+        <button type="submit" class="btn btn-primary">Add</button>
+      </form>
+    </div>
+    {% endmacro %}
+
+    <div class="settings-panel" id="settings-panel-admin-taxonomy" {{ 'hidden' if active_admin_panel != 'taxonomy' }}>
+      <p class="muted">
+        These are the same dropdown options every company's Sector, Industry, and Index tags fields
+        offer — add one here before assigning it to any company, rename one (every company using it
+        updates too), or delete one (companies using it are cleared, not silently reassigned).
+      </p>
+      {{ vocab_section('sector', 'Sectors', 'Shown on the Overview tab and used to filter the Companies list.', taxonomy['sector']['items'], taxonomy['sector']['counts']) }}
+      {{ vocab_section('industry', 'Industries', 'Also affects which ratios are computed for a company (e.g. bank-specific ratios need "Bank"/"NBFC" in the industry).', taxonomy['industry']['items'], taxonomy['industry']['counts']) }}
+      {{ vocab_section('index-tag', 'Index Tags', 'Market indices (Nifty 50, Sensex, ...) a company belongs to.', taxonomy['index-tag']['items'], taxonomy['index-tag']['counts']) }}
+    </div>
+
+    <div class="settings-panel" id="settings-panel-admin-columns" {{ 'hidden' if active_admin_panel != 'columns' }}>
+      <p class="muted">
+        Choose which optional columns are available on the Companies list. "Company" is always shown.
+        Visitors can further hide any of the columns enabled here for themselves, temporarily, from the
+        column icon at the top of that list.
+      </p>
+      <form class="admin-columns-form" method="post" action="{{ url_for('admin_update_columns') }}">
+        <div class="admin-columns-list">
+          <span class="locked"><input type="checkbox" checked disabled> Company (always shown)</span>
+          {% for col in list_columns %}
+          <label>
+            <input type="checkbox" name="columns" value="{{ col['key'] }}" {{ 'checked' if column_settings[col['key']] }}>
+            {{ col['label'] }}
+          </label>
+          {% endfor %}
+        </div>
+        <div>
+          <button type="submit" class="btn btn-primary">Save columns</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="settings-panel" id="settings-panel-admin-overview_ratios" {{ 'hidden' if active_admin_panel != 'overview_ratios' }}>
+      <p class="muted">
+        Choose which ratios appear on a company's Overview tab (screener.in-style ratio grid). Every ratio here is
+        computed from data already ingested — nothing is fetched or guessed. Adding a genuinely new ratio (one not
+        listed below) is a code change, not a settings change — see <code>OVERVIEW_RATIO_CATALOG</code> in
+        <code>storage/repositories.py</code> and the matching entry in <code>RATIO_CATALOG</code> in
+        <code>web/static/js/valuation_dashboard.js</code>.
+      </p>
+      <form class="admin-columns-form" method="post" action="{{ url_for('admin_update_overview_ratios') }}">
+        <div class="admin-columns-list">
+          {% for ratio in ratio_catalog %}
+          <label>
+            <input type="checkbox" name="ratios" value="{{ ratio['key'] }}" {{ 'checked' if ratio_settings[ratio['key']] }}>
+            {{ ratio['label'] }}
+          </label>
+          {% endfor %}
+        </div>
+        <div>
+          <button type="submit" class="btn btn-primary">Save ratios</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="settings-panel" id="settings-panel-admin-import" {{ 'hidden' if active_admin_panel != 'import' }}>
+      <p class="muted">
+        Upload a raw source file for one company — it's parsed, validated, stored, and reconciled the same
+        way <code>python main.py ingest</code> does. Only sources with a working adapter are listed below;
+        {% if import_sources %}today that's just {{ import_sources|join(', ') }}{% else %}no adapter is registered yet{% endif %}.
+      </p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="flash-list">
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
+
+      {% if active_companies and import_sources %}
+      <form class="import-form" method="post" action="{{ url_for('admin_import_raw_file') }}" enctype="multipart/form-data">
+        <div class="field">
+          <label for="import-company-input">Company</label>
+          <div class="site-search" data-company-picker>
+            <input type="text" class="input" id="import-company-input" data-company-picker-input
+                   placeholder="Search by name, ID, or NSE symbol&hellip;" autocomplete="off"
+                   value="{{ import_selected_company_label }}">
+            <input type="hidden" name="company_id" data-company-picker-value required value="{{ import_selected_company }}">
+            <div class="site-search-results" data-company-picker-results hidden></div>
+          </div>
+        </div>
+        <div class="field">
+          <label for="import-source">Source</label>
+          <select class="input" id="import-source" name="source_id" required>
+            {% for s in import_sources %}
+            <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="import-statement-type">Statement type</label>
+          <select class="input" id="import-statement-type" name="statement_type">
+            <option value="consolidated" selected>Consolidated</option>
+            <option value="standalone">Standalone</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="import-file">Raw file</label>
+          <input class="input" type="file" id="import-file" name="file" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Upload &amp; Ingest</button>
+      </form>
+      {% elif not import_sources %}
+      <div class="empty-state">No source adapters are registered yet (see <code>ingestion/detector.py</code>'s <code>ADAPTER_CLASSES</code>).</div>
+      {% else %}
+      <div class="empty-state">No active companies to import into. Register or restore a company first.</div>
+      {% endif %}
+    </div>
+
+    <div class="settings-panel" id="settings-panel-admin-stock_actions" {{ 'hidden' if active_admin_panel != 'stock_actions' }}>
+      <p class="muted">
+        Record discrete stock actions (splits, bonus issues, rights issues) for a company — raw events only for
+        now, kept as an auditable log. Nothing else in the app adjusts historical shares/EPS/price series from
+        these yet.
+      </p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="flash-list">
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-stock_actions">
+        <div class="field">
+          <label for="sa-company">Company</label>
+          <select class="input" id="sa-company" name="sa_company_id" onchange="this.form.requestSubmit()">
+            <option value="">Select a company&hellip;</option>
+            {% for c in active_companies %}
+            <option value="{{ c['company_id'] }}" {{ 'selected' if c['company_id'] == stock_action_selected_company }}>{{ c['display_name'] }} ({{ c['company_id'] }})</option>
+            {% endfor %}
+          </select>
+        </div>
+      </form>
+
+      {% if stock_action_selected_company %}
+      {% if stock_actions %}
+      <table class="table" style="margin-top: var(--space-4);">
+        <thead>
+          <tr><th>Date</th><th>Type</th><th>Ratio</th><th>Subscription price</th><th>Source</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for a in stock_actions %}
+          <tr>
+            <td>{{ a['action_date'] }}</td>
+            <td>{{ a['action_type'] }}</td>
+            <td>{{ a['ratio_from']|int if a['ratio_from'] == a['ratio_from']|int else a['ratio_from'] }}
+                : {{ a['ratio_to']|int if a['ratio_to'] == a['ratio_to']|int else a['ratio_to'] }}</td>
+            <td>{{ a['subscription_price'] if a['subscription_price'] is not none else '—' }}</td>
+            <td>{{ a['source'] or '—' }}</td>
+            <td>
+              <form method="post" action="{{ url_for('admin_delete_stock_action', company_id=stock_action_selected_company, action_id=a['action_id']) }}">
+                <button type="submit" class="btn btn-ghost" onclick='return confirm("Delete this stock action?");'>Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">No stock actions recorded yet for {{ stock_action_selected_company }}.</div>
+      {% endif %}
+
+      <form class="import-form" method="post" style="margin-top: var(--space-4);"
+            action="{{ url_for('admin_add_stock_action', company_id=stock_action_selected_company) }}">
+        <div class="field">
+          <label for="sa-action-type">Type</label>
+          <select class="input" id="sa-action-type" name="action_type" required>
+            {% for t in stock_action_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="sa-action-date">Date (ex-date)</label>
+          <input class="input" type="date" id="sa-action-date" name="action_date" required>
+        </div>
+        <div class="field">
+          <label for="sa-ratio-from">Ratio from</label>
+          <input class="input" type="number" step="any" min="0" id="sa-ratio-from" name="ratio_from" value="1" required>
+        </div>
+        <div class="field">
+          <label for="sa-ratio-to">Ratio to</label>
+          <input class="input" type="number" step="any" min="0" id="sa-ratio-to" name="ratio_to" required>
+        </div>
+        <div class="field">
+          <label for="sa-subscription-price">Subscription price (rights only)</label>
+          <input class="input" type="number" step="any" min="0" id="sa-subscription-price" name="subscription_price">
+        </div>
+        <div class="field">
+          <label for="sa-source">Source</label>
+          <input class="input" type="text" id="sa-source" name="source" placeholder="e.g. NSE announcement">
+        </div>
+        <div class="field">
+          <label for="sa-source-url">Source URL</label>
+          <input class="input" type="text" id="sa-source-url" name="source_url">
+        </div>
+        <div class="field">
+          <label for="sa-notes">Notes</label>
+          <input class="input" type="text" id="sa-notes" name="notes">
+        </div>
+        <button type="submit" class="btn btn-primary">Record action</button>
+      </form>
+      {% else %}
+      <div class="empty-state">Select a company above to see or record its stock actions.</div>
+      {% endif %}
+    </div>
+
+    <div class="settings-panel" id="settings-panel-admin-ingest" {{ 'hidden' if active_admin_panel != 'ingest' }}>
+      <p class="muted">
+        Discover and process financial/macro files sitting under <code>data/raw/</code> and documents added via
+        the Docs tab that haven't been processed yet. Financial/macro files run through the existing ingestion
+        pipeline (same <code>ingest_file()</code>/<code>ingest_macro_file()</code> flow as Import Data and the
+        CLI) — not a second one. Documents also run Knowledge Builder extraction (entities/claims/relationships,
+        with provenance) — an LLM call per document, so failures here are usually a model/API issue, not a bad file.
+      </p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="flash-list">
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
+
+      <div class="admin-ingest-subnav">
+        <button type="button" class="admin-ingest-subnav-btn {{ 'active' if active_ingest_tab != 'documents' }}" data-ingest-subpanel="financial">Financial Data ({{ ingest_fq_total }})</button>
+        <button type="button" class="admin-ingest-subnav-btn {{ 'active' if active_ingest_tab == 'documents' }}" data-ingest-subpanel="documents">Documents ({{ ingest_dq_total }})</button>
+      </div>
+
+      <div class="admin-ingest-subpanel" id="admin-ingest-subpanel-financial" {{ 'hidden' if active_ingest_tab == 'documents' }}>
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-ingest">
+        <input type="hidden" name="ingest_tab" value="financial">
+        <div class="field">
+          <label for="ingest-fq-status">Status</label>
+          <select class="input" id="ingest-fq-status" name="fq_status" onchange="this.form.requestSubmit()">
+            <option value="">All statuses</option>
+            {% for s in ['PENDING', 'NEEDS_REVIEW', 'FAILED', 'PROCESSED', 'ARCHIVED'] %}
+            <option value="{{ s }}" {{ 'selected' if s == ingest_fq_status_filter }}>{{ s|title|replace('_', ' ') }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="ingest-fq-company">Company</label>
+          <select class="input" id="ingest-fq-company" name="fq_company" onchange="this.form.requestSubmit()">
+            <option value="">All companies</option>
+            {% for c in ingest_fq_companies %}<option value="{{ c }}" {{ 'selected' if c == ingest_fq_company_filter }}>{{ c }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="ingest-fq-kind">Kind</label>
+          <select class="input" id="ingest-fq-kind" name="fq_kind" onchange="this.form.requestSubmit()">
+            <option value="">All kinds</option>
+            {% for k in ingest_fq_kinds %}<option value="{{ k }}" {{ 'selected' if k == ingest_fq_kind_filter }}>{{ k }}</option>{% endfor %}
+          </select>
+        </div>
+        {% if ingest_fq_status_filter or ingest_fq_company_filter or ingest_fq_kind_filter %}
+        <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-ingest') }}">Clear</a>
+        {% endif %}
+      </form>
+
+      <div class="admin-ingest-actions">
+        <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_refresh') }}">
+          <input type="hidden" name="ingest_tab" value="financial">
+          <button type="submit" class="btn btn-ghost">Refresh Pending Files</button>
+        </form>
+        <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process_all') }}">
+          <input type="hidden" name="ingest_tab" value="financial">
+          <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
+        </form>
+        <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_retry_failed') }}">
+          <input type="hidden" name="ingest_tab" value="financial">
+          <button type="submit" class="btn btn-ghost">Retry Failed</button>
+        </form>
+      </div>
+
+      {% if ingest_fq_rows %}
+      <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process') }}">
+        <input type="hidden" name="ingest_tab" value="financial">
+        <table class="table">
+          <thead>
+            <tr><th></th><th>File</th><th>Company</th><th>Source</th><th>Kind</th><th>Status</th><th>Detail</th><th>Updated</th></tr>
+          </thead>
+          <tbody>
+            {% for item in ingest_fq_rows %}
+            <tr>
+              <td><input type="checkbox" name="item_id" value="{{ item['item_id'] }}"></td>
+              <td>{{ item['file_path'].split('/')[-1] }}</td>
+              <td>{{ item['company_id'] or '—' }}</td>
+              <td>{{ item['source_id'] or '—' }}</td>
+              <td>{{ item['item_kind'] }}</td>
+              <td><span class="tag {{ 'tag-success' if item['status'] == 'PROCESSED' else 'tag-neutral' if item['status'] == 'ARCHIVED' else 'tag-outline' }}">{{ item['status'] }}</span></td>
+              <td>{{ item['error_message'] or item['status_reason'] or '—' }}</td>
+              <td>{% set ts = item['last_attempt_at'] or item['processed_at'] or item['discovered_at'] %}<span class="local-time" data-utc="{{ ts }}">{{ ts }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <button type="submit" class="btn btn-primary">Ingest Selected</button>
+        <button type="submit" class="btn btn-ghost" formaction="{{ url_for('admin_ingest_archive') }}">Archive Selected</button>
+        <button type="submit" class="btn btn-ghost" formaction="{{ url_for('admin_ingest_unarchive') }}">Unarchive Selected</button>
+      </form>
+      {% if ingest_fq_total_pages > 1 %}
+      <div class="admin-pagination">
+        <span class="muted">
+          Showing {{ (ingest_fq_page - 1) * ingest_fq_page_size + 1 }}&ndash;{{ (ingest_fq_page - 1) * ingest_fq_page_size + ingest_fq_rows|length }}
+          of {{ ingest_fq_total }}
+        </span>
+        <div class="admin-pagination-links">
+          {% set fq_pagination_args = {'panel': 'admin-ingest', 'ingest_tab': 'financial', 'fq_status': ingest_fq_status_filter, 'fq_company': ingest_fq_company_filter, 'fq_kind': ingest_fq_kind_filter} %}
+          {% if ingest_fq_page > 1 %}
+          <a class="btn btn-ghost" href="{{ url_for('settings', fq_page=ingest_fq_page - 1, **fq_pagination_args) }}">&larr; Previous</a>
+          {% endif %}
+          <span class="muted">Page {{ ingest_fq_page }} of {{ ingest_fq_total_pages }}</span>
+          {% if ingest_fq_page < ingest_fq_total_pages %}
+          <a class="btn btn-ghost" href="{{ url_for('settings', fq_page=ingest_fq_page + 1, **fq_pagination_args) }}">Next &rarr;</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      {% elif ingest_fq_status_filter or ingest_fq_company_filter or ingest_fq_kind_filter %}
+      <div class="empty-state">No items match these filters.</div>
+      {% else %}
+      <div class="empty-state">Nothing in the financial-data queue.</div>
+      {% endif %}
+      </div>
+
+      <div class="admin-ingest-subpanel" id="admin-ingest-subpanel-documents" {{ 'hidden' if active_ingest_tab != 'documents' }}>
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-ingest">
+        <input type="hidden" name="ingest_tab" value="documents">
+        <div class="field">
+          <label for="ingest-dq-status">Status</label>
+          <select class="input" id="ingest-dq-status" name="dq_status" onchange="this.form.requestSubmit()">
+            <option value="">All statuses</option>
+            {% for s in ['pending', 'failed', 'processed', 'archived'] %}
+            <option value="{{ s }}" {{ 'selected' if s == ingest_dq_status_filter }}>{{ s|title }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="ingest-dq-company">Company</label>
+          <select class="input" id="ingest-dq-company" name="dq_company" onchange="this.form.requestSubmit()">
+            <option value="">All companies</option>
+            {% for c in ingest_dq_companies %}<option value="{{ c }}" {{ 'selected' if c == ingest_dq_company_filter }}>{{ c }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="ingest-dq-type">Type</label>
+          <select class="input" id="ingest-dq-type" name="dq_type" onchange="this.form.requestSubmit()">
+            <option value="">All types</option>
+            {% for t in ingest_dq_types %}<option value="{{ t }}" {{ 'selected' if t == ingest_dq_type_filter }}>{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        {% if ingest_dq_status_filter or ingest_dq_company_filter or ingest_dq_type_filter %}
+        <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-ingest') }}">Clear</a>
+        {% endif %}
+      </form>
+
+      <div class="admin-ingest-actions">
+        <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process_all_documents') }}">
+          <input type="hidden" name="ingest_tab" value="documents">
+          <button type="submit" class="btn btn-ghost">Ingest All Pending</button>
+        </form>
+        <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_retry_failed_documents') }}">
+          <input type="hidden" name="ingest_tab" value="documents">
+          <button type="submit" class="btn btn-ghost">Retry Failed</button>
+        </form>
+      </div>
+
+      {% if ingest_dq_rows %}
+      <form class="admin-async-form" method="post" action="{{ url_for('admin_ingest_process_documents') }}">
+        <input type="hidden" name="ingest_tab" value="documents">
+        <table class="table">
+          <thead>
+            <tr><th></th><th>Company</th><th>Type</th><th>Period</th><th>Status</th><th>Detail</th><th>Updated</th></tr>
+          </thead>
+          <tbody>
+            {% for doc in ingest_dq_rows %}
+            <tr>
+              <td><input type="checkbox" name="document_id" value="{{ doc['document_id'] }}"></td>
+              <td>{{ doc['company_id'] or '—' }}</td>
+              <td>{{ doc['document_type'] or '—' }}</td>
+              <td>{{ doc['fiscal_year'] or '—' }}{{ ' ' + doc['quarter'] if doc['quarter'] else '' }}</td>
+              <td><span class="tag {{ 'tag-success' if doc['processing_status'] == 'processed' else 'tag-neutral' if doc['processing_status'] == 'archived' else 'tag-outline' }}">{{ doc['processing_status'] }}</span></td>
+              <td>{{ doc['error_message'] or '—' }}</td>
+              <td>{% set ts = doc['processed_at'] or doc['retrieved_at'] %}<span class="local-time" data-utc="{{ ts }}">{{ ts }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <button type="submit" class="btn btn-primary">Ingest Selected</button>
+        <button type="submit" class="btn btn-ghost" formaction="{{ url_for('admin_ingest_archive_documents') }}">Archive Selected</button>
+        <button type="submit" class="btn btn-ghost" formaction="{{ url_for('admin_ingest_unarchive_documents') }}">Unarchive Selected</button>
+      </form>
+      {% if ingest_dq_total_pages > 1 %}
+      <div class="admin-pagination">
+        <span class="muted">
+          Showing {{ (ingest_dq_page - 1) * ingest_dq_page_size + 1 }}&ndash;{{ (ingest_dq_page - 1) * ingest_dq_page_size + ingest_dq_rows|length }}
+          of {{ ingest_dq_total }}
+        </span>
+        <div class="admin-pagination-links">
+          {% set dq_pagination_args = {'panel': 'admin-ingest', 'ingest_tab': 'documents', 'dq_status': ingest_dq_status_filter, 'dq_company': ingest_dq_company_filter, 'dq_type': ingest_dq_type_filter} %}
+          {% if ingest_dq_page > 1 %}
+          <a class="btn btn-ghost" href="{{ url_for('settings', dq_page=ingest_dq_page - 1, **dq_pagination_args) }}">&larr; Previous</a>
+          {% endif %}
+          <span class="muted">Page {{ ingest_dq_page }} of {{ ingest_dq_total_pages }}</span>
+          {% if ingest_dq_page < ingest_dq_total_pages %}
+          <a class="btn btn-ghost" href="{{ url_for('settings', dq_page=ingest_dq_page + 1, **dq_pagination_args) }}">Next &rarr;</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      {% elif ingest_dq_status_filter or ingest_dq_company_filter or ingest_dq_type_filter %}
+      <div class="empty-state">No documents match these filters.</div>
+      {% else %}
+      <div class="empty-state">No documents in the queue.</div>
+      {% endif %}
+      </div>
+    </div>
+
+    <div class="settings-panel" id="settings-panel-admin-audit" {{ 'hidden' if active_admin_panel != 'audit' }}>
+      <p class="muted">
+        One row per NSE-listed company: where its data stands against NSE XBRL migration, and its recent
+        reconciliation decision trail on demand — expand a row to see every source candidate its canonical
+        values were chosen from, and why (including a metric an XBRL filing didn't report, left blank rather
+        than backfilled from legacy data).
+      </p>
+      <p class="muted" style="margin-top: 0;">
+        {{ audit_pending_count }} compan{{ 'y' if audit_pending_count == 1 else 'ies' }} with legacy data more
+        recent than their XBRL coverage &middot; {{ audit_not_started_count }} with no XBRL coverage yet.
+      </p>
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-audit">
+        <div class="field">
+          <label for="audit-q">Search</label>
+          <input class="input" type="text" id="audit-q" name="al_q" placeholder="Name, ID, or NSE symbol&hellip;" value="{{ audit_query }}">
+        </div>
+        <div class="field">
+          <label for="audit-status">Status</label>
+          <select class="input" id="audit-status" name="al_status" onchange="this.form.requestSubmit()">
+            <option value="">All statuses</option>
+            <option value="pending" {{ 'selected' if audit_status_filter == 'pending' }}>Pending</option>
+            <option value="not_started" {{ 'selected' if audit_status_filter == 'not_started' }}>Not started</option>
+            <option value="up_to_date" {{ 'selected' if audit_status_filter == 'up_to_date' }}>Up to date</option>
+            <option value="no_data" {{ 'selected' if audit_status_filter == 'no_data' }}>No data</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-ghost">Filter</button>
+        {% if audit_status_filter or audit_query %}
+        <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-audit') }}">Clear</a>
+        {% endif %}
+      </form>
+
+      {% if audit_rows %}
+      <table class="table admin-audit-table">
+        <thead>
+          <tr><th></th><th>Company</th><th>NSE Symbol</th><th>Latest legacy period</th><th>Latest XBRL period</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {% for row in audit_rows %}
+          <tr class="admin-audit-row" data-audit-toggle>
+            <td><button type="button" class="admin-audit-expand" aria-expanded="false" aria-label="Show reconciliation history">&rsaquo;</button></td>
+            <td><a href="{{ url_for('company_report', company_id=row['company_id']) }}">{{ row['display_name'] }}</a> ({{ row['company_id'] }})</td>
+            <td>{{ row['nse_symbol'] }}</td>
+            <td>{{ row['latest_legacy_period'] or '—' }}</td>
+            <td>{{ row['latest_xbrl_period'] or '—' }}</td>
+            <td>
+              <span class="tag {{ 'tag-outline' if row['migration_status'] == 'pending' else 'tag-neutral' if row['migration_status'] == 'not_started' else 'tag-success' if row['migration_status'] == 'up_to_date' else 'tag-neutral' }}">
+                {{ row['migration_status']|replace('_', ' ') }}
+              </span>
+            </td>
+          </tr>
+          <tr class="admin-audit-detail-row" hidden>
+            <td colspan="6">
+              {% if row['recent_log'] %}
+              <table class="table admin-audit-detail-table">
+                <thead>
+                  <tr><th>When</th><th>Metric</th><th>Period</th><th>Statement</th><th>Source</th><th>Chosen</th><th>Note</th></tr>
+                </thead>
+                <tbody>
+                  {% for log in row['recent_log'] %}
+                  <tr>
+                    <td><span class="local-time" data-utc="{{ log['considered_at'] }}">{{ log['considered_at'] }}</span></td>
+                    <td>{{ log['metric_key'] }}</td>
+                    <td>{{ log['fiscal_year'] }}{{ log['quarter'] or '' }}</td>
+                    <td>{{ log['statement_type'] or '—' }}</td>
+                    <td>{{ log['source'] }}</td>
+                    <td><span class="tag {{ 'tag-success' if log['was_chosen'] else 'tag-neutral' }}">{{ 'yes' if log['was_chosen'] else 'no' }}</span></td>
+                    <td>{{ log['note'] }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              {% else %}
+              <div class="empty-state">No reconciliation activity recorded for this company yet.</div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if audit_total_pages > 1 %}
+      <div class="admin-pagination">
+        <span class="muted">
+          Showing {{ (audit_page - 1) * audit_page_size + 1 }}&ndash;{{ (audit_page - 1) * audit_page_size + audit_rows|length }}
+          of {{ audit_total }}
+        </span>
+        <div class="admin-pagination-links">
+          {% set audit_pagination_args = {'panel': 'admin-audit', 'al_status': audit_status_filter, 'al_q': audit_query} %}
+          {% if audit_page > 1 %}
+          <a class="btn btn-ghost" href="{{ url_for('settings', al_page=audit_page - 1, **audit_pagination_args) }}">&larr; Previous</a>
+          {% endif %}
+          <span class="muted">Page {{ audit_page }} of {{ audit_total_pages }}</span>
+          {% if audit_page < audit_total_pages %}
+          <a class="btn btn-ghost" href="{{ url_for('settings', al_page=audit_page + 1, **audit_pagination_args) }}">Next &rarr;</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      {% else %}
+      <div class="empty-state">No NSE-listed active companies match this filter.</div>
+      {% endif %}
+    </div>
+{% endif %}
+
+</div>
+</div>
+
+  <script src="{{ static_url('js/company_picker.js') }}"></script>
+  <script>
+    // Audit Log — each company row's detail (its recent reconciliation_log
+    // entries) is a sibling <tr> rendered hidden by the server; clicking the
+    // row (or its chevron button) just toggles that one sibling. Delegated
+    // on the table body rather than bound per-row, same reasoning the
+    // Ingest actions forms don't bind per-checkbox listeners.
+    (function () {
+      const table = document.querySelector('.admin-audit-table');
+      if (!table) return;
+      table.addEventListener('click', function (event) {
+        const row = event.target.closest('[data-audit-toggle]');
+        if (!row) return;
+        const detail = row.nextElementSibling;
+        if (!detail || !detail.classList.contains('admin-audit-detail-row')) return;
+        detail.hidden = !detail.hidden;
+        row.classList.toggle('is-expanded', !detail.hidden);
+        const expandBtn = row.querySelector('.admin-audit-expand');
+        if (expandBtn) expandBtn.setAttribute('aria-expanded', String(!detail.hidden));
+      });
+    })();
+
+    (function () {
+      const buttons = document.querySelectorAll('.admin-ingest-subnav-btn');
+      buttons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          buttons.forEach(function (b) { b.classList.toggle('active', b === btn); });
+          document.querySelectorAll('.admin-ingest-subpanel').forEach(function (panel) {
+            panel.hidden = panel.id !== 'admin-ingest-subpanel-' + btn.dataset.ingestSubpanel;
+          });
+        });
+      });
+    })();
+
+    // Save only lights up (btn-ghost -> btn-primary) once a row's form
+    // actually differs from how it loaded — otherwise, with ~2,600 rows on
+    // screen across pages, every row's Save button competing for attention
+    // is just noise. Compares the live FormData against a snapshot taken on
+    // load, so it un-highlights again if an edit is undone back to the
+    // original value, not just on first touch.
+    (function () {
+      document.querySelectorAll('.admin-row').forEach(function (form) {
+        const saveBtn = form.querySelector('.admin-save-btn');
+        if (!saveBtn) return;
+        function snapshot() {
+          return JSON.stringify(Array.from(new FormData(form).entries()));
+        }
+        const initial = snapshot();
+        function updateDirty() {
+          const dirty = snapshot() !== initial;
+          saveBtn.classList.toggle('btn-primary', dirty);
+          saveBtn.classList.toggle('btn-ghost', !dirty);
+        }
+        form.addEventListener('input', updateDirty);
+        form.addEventListener('change', updateDirty);
+      });
+    })();
+
+    // Ingest action forms (Ingest Selected/All Pending, Retry Failed,
+    // Refresh) are plain POST-and-reload — the browser gives no feedback of
+    // its own between click and the next page finishing load, which reads as
+    // a dead button on a slow ingest (LLM-backed document extraction can
+    // take a while). Shows an immediate "request accepted" state — button
+    // disabled so a second click can't double-submit, label swapped, an
+    // indeterminate bar since there's no real per-file progress to report
+    // until the reloaded page shows the actual queue state.
+    (function () {
+      document.querySelectorAll('.admin-async-form').forEach(function (form) {
+        form.addEventListener('submit', function (event) {
+          // event.submitter is the actual button clicked — several of these
+          // forms (Ingest/Archive/Unarchive Selected) now share one form via
+          // formaction, so the first submit button in the DOM isn't
+          // necessarily the one that triggered this submit.
+          const btn = event.submitter || form.querySelector('button[type="submit"]');
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Working…';
+          }
+          const status = document.createElement('div');
+          status.className = 'admin-async-status';
+          status.innerHTML = '<span class="admin-async-bar"></span><span>Request accepted — processing…</span>';
+          form.appendChild(status);
+        });
+      });
+    })();
+  </script>
+
+<script>
+  (function () {
+    var buttons = document.querySelectorAll('.settings-nav-item');
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', function (event) {
+        // Administration's items are <a href> (a first visit needs a real
+        // page load — their data isn't computed for a non-admin request;
+        // see _build_admin_settings_context in web/app.py). Once that
+        // panel is already in the DOM, switching to it (or between it and
+        // any other already-loaded panel) is instant, same as every other
+        // item here — only intercept navigation when there's somewhere to
+        // switch to without one.
+        var target = document.getElementById('settings-panel-' + btn.dataset.panel);
+        if (!target) return;
+        event.preventDefault();
+        buttons.forEach(function (b) { b.classList.toggle('active', b === btn); });
+        document.querySelectorAll('.settings-panel').forEach(function (panel) {
+          panel.hidden = panel.id !== target.id;
+        });
+        var url = new URL(window.location.href);
+        url.searchParams.set('panel', btn.dataset.panel);
+        window.history.replaceState(null, '', url);
+      });
+    });
+  })();
+
+  // Two small conveniences only — every value here is still validated
+  // server-side (indicators/config.py's validate_override).
+  document.querySelectorAll('[data-ind-scope-type]').forEach(function (select) {
+    var input = select.closest('form').querySelector('[data-ind-scope-value]');
+    function sync() {
+      var isGlobal = select.value === 'global';
+      input.disabled = isGlobal;
+      input.required = !isGlobal;
+      input.placeholder = isGlobal ? '(global)' : (select.value === 'sector' ? 'Sector name' : 'Company id');
+      if (isGlobal) { input.value = ''; }
+    }
+    select.addEventListener('change', sync);
+    sync();
+  });
+  var indSearch = document.getElementById('ind-search-input');
+  if (indSearch) {
+    indSearch.addEventListener('input', function () {
+      var needle = indSearch.value.trim().toLowerCase();
+      document.querySelectorAll('.ind-rule').forEach(function (card) {
+        card.hidden = needle !== '' && card.dataset.search.indexOf(needle) === -1;
+      });
+    });
+  }
+</script>
 {% endblock %}

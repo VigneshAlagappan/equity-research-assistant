@@ -55,10 +55,10 @@ def test_preferred_model_unavailable_falls_back_to_next_cloud_model(monkeypatch)
     """STANDARD, not DEEP: with Opus disabled, DEEP's only eligible cloud
     candidate is Sonnet itself (Haiku's reasoning_strength is below what
     DEEP requires) — there's no other cloud model left to fall back to.
-    STANDARD's minimum is lower, so Sonnet -> Haiku is still a real
-    same-tier cloud fallback to exercise here."""
+    STANDARD now prefers Haiku (config.settings.TIER_PREFERRED_MODEL), so
+    Haiku -> Sonnet is the real same-tier cloud fallback to exercise here."""
     def fake_generate(**kw):
-        if kw["model"] == "claude-sonnet-5":
+        if kw["model"] == "claude-haiku-4-5":
             raise ProviderUnavailable("rate limited")
         return _response(kw["model"], "anthropic")
 
@@ -66,9 +66,9 @@ def test_preferred_model_unavailable_falls_back_to_next_cloud_model(monkeypatch)
 
     result = route(system="s", user_message="u", hardness=fixed(Tier.STANDARD, "test"), max_tokens=100)
 
-    assert result.response.model == "claude-haiku-4-5"
+    assert result.response.model == "claude-sonnet-5"
     assert result.fallback_used is True
-    assert any(a.model == "claude-sonnet-5" and a.outcome == "unavailable" for a in result.attempts)
+    assert any(a.model == "claude-haiku-4-5" and a.outcome == "unavailable" for a in result.attempts)
 
 
 def test_all_cloud_unavailable_falls_back_to_local(monkeypatch) -> None:

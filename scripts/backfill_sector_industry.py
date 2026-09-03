@@ -23,6 +23,7 @@ import time
 
 import yfinance as yf
 
+from storage.company_repository import select_companies_missing_sector_or_industry, update_company_sector_industry
 from storage.database import init_db
 
 REQUEST_DELAY_SECONDS = 0.4
@@ -30,11 +31,7 @@ REQUEST_DELAY_SECONDS = 0.4
 
 def main() -> None:
     conn = init_db()
-    rows = conn.execute(
-        "SELECT company_id, nse_symbol, sector, industry FROM companies "
-        "WHERE (sector IS NULL OR industry IS NULL) AND nse_symbol IS NOT NULL "
-        "ORDER BY company_id"
-    ).fetchall()
+    rows = select_companies_missing_sector_or_industry(conn)
     total = len(rows)
     print(f"{total} companies missing sector/industry with an nse_symbol on file", flush=True)
 
@@ -54,11 +51,7 @@ def main() -> None:
             no_data += 1
             print(f"[{i}/{total}] {company_id:24s} no Yahoo sector/industry data", flush=True)
         else:
-            conn.execute(
-                "UPDATE companies SET sector = ?, industry = ? WHERE company_id = ?",
-                (new_sector, new_industry, company_id),
-            )
-            conn.commit()
+            update_company_sector_industry(conn, company_id, sector=new_sector, industry=new_industry)
             updated += 1
             print(f"[{i}/{total}] {company_id:24s} sector={new_sector!r} industry={new_industry!r}", flush=True)
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
+from storage.db_types import DBConnection
 
 from context.optimizer import OptimizedContext
 from llm.router import RouteResult
@@ -45,7 +45,7 @@ def _attempts_json(attempts) -> str:
 
 
 def record(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     *,
     task_name: str,
     company_ids: list[str],
@@ -94,7 +94,7 @@ def record(
 
 
 def record_reuse(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     *,
     task_name: str,
     company_ids: list[str],

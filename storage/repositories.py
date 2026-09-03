@@ -9,15 +9,36 @@ and records that decision (and every candidate it considered) separately.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterable
+from pathlib import Path
 
+from config.settings import to_repo_relative
+from ingestion.events import DatasetIngestedEvent
 from sources.base import NormalizedObservation
 from sources.macro import MacroNormalizedObservation
 from sources.rbi_bank_infrastructure import BankInfrastructureObservation
 from storage.database import utcnow_iso
+from storage.investigation_repository import insert_investigation_companies
 
 NORMALIZATION_VERSION = "v1"
+
+
+def _normalize_source_file(value: str | None) -> str | None:
+    """Source adapters (sources/*.py) pass whatever file_path they were
+    given straight through as source_file — usually already-absolute
+    (ingestion/coordinator.py resolves data/raw/ files against BASE_DIR
+    before handing them to a source adapter), which bakes today's repo
+    location into the row forever (config/settings.py's to_repo_relative()
+    docstring: this repo has already been renamed once, silently breaking
+    every previously-stored absolute path). Only real filesystem paths get
+    relativized — a synthetic identifier like "fred:FEDFUNDS" or
+    "yfinance:AAPL" (never absolute) is left untouched rather than risking
+    to_repo_relative() misinterpreting it as a path."""
+    if value and Path(value).is_absolute():
+        return to_repo_relative(value)
+    return value
 
 
 def insert_financial_observations(
@@ -37,13 +58,51 @@ def insert_financial_observations(
             """,
             (
                 obs.company_id, obs.metric_key, obs.period_type, obs.fiscal_year, obs.quarter,
-                obs.statement_type, obs.value, obs.unit, obs.currency, obs.source, obs.source_file,
+                obs.statement_type, obs.value, obs.unit, obs.currency, obs.source, _normalize_source_file(obs.source_file),
                 obs.source_url, obs.retrieved_at or now, obs.parser_version, NORMALIZATION_VERSION, now,
             ),
         )
         ids.append(cursor.lastrowid)
     conn.commit()
     return ids
+
+
+#: Source policy (2026-08 NSE XBRL directive): once a reporting period has a
+#: validated NSE observation on file, NSE XBRL is the sole source of truth
+#: for structured financial facts in that period — a metric it didn't report
+#: must stay blank, never fall back to legacy. This is the source_id
+#: reconcile() treats that way; extending to BSE happens once a BSE adapter
+#: exists (they're tied on trust_rank already — see config/settings.py).
+XBRL_SOURCE_ID = "nse"
+
+
+def _period_is_xbrl_migrated(
+    conn: sqlite3.Connection,
+    company_id: str,
+    period_type: str,
+    fiscal_year: str,
+    quarter: str | None,
+    statement_type: str | None,
+) -> bool:
+    """Whether ANY validated XBRL_SOURCE_ID observation exists for this exact
+    (company, period_type, fiscal_year, quarter, statement_type) scope —
+    regardless of which metric_key it's for. "Validated" today just means
+    "present as an nse-sourced observation": there's no separate filing
+    -validation gate yet (Open Decisions), so ingestion itself is the only
+    checkpoint. standalone/consolidated are independently migrated since
+    statement_type is part of the scope, same as everywhere else in this
+    module — an XBRL consolidated filing never affects standalone
+    reconciliation for the same period, and vice versa."""
+    row = conn.execute(
+        """
+        SELECT 1 FROM financial_observations
+        WHERE company_id = ? AND source = ? AND period_type = ?
+          AND fiscal_year = ? AND quarter IS ? AND statement_type IS ?
+        LIMIT 1
+        """,
+        (company_id, XBRL_SOURCE_ID, period_type, fiscal_year, quarter, statement_type),
+    ).fetchone()
+    return row is not None
 
 
 def reconcile(
@@ -57,12 +116,24 @@ def reconcile(
 ) -> int | None:
     """Reconcile every observation for one (company, metric, period) key.
 
-    Phase 2 has exactly one source per company, so this degenerates to the
-    trivial pass-through the README describes ("only source available"). The
-    same logic already generalizes to multiple sources (picks the lowest
-    sources.trust_rank, most-recent observation as tiebreak) for when NSE/BSE
-    ingestion lands in a later phase — it isn't special-cased to "one source".
-    Returns the canonical_id, or None if there are no observations for this key.
+    Multiple sources are handled by picking the lowest sources.trust_rank,
+    most-recent observation as tiebreak. One case is special-cased ahead of
+    trust_rank, not just ordered by it: once _period_is_xbrl_migrated() is
+    true for this key's period scope, only XBRL_SOURCE_ID observations are
+    eligible candidates for ANY metric in that scope — even one XBRL simply
+    didn't report — rather than silently falling back to a legacy source.
+    That's a real behavioral carve-out (not something a trust_rank number
+    alone can express), because trust_rank only ranks candidates that exist
+    for this exact metric; it can't say "this period is XBRL's now, so a
+    metric XBRL is silent on should go blank, not legacy". See
+    config/settings.py's DEFAULT_SOURCES comment for the source policy this
+    implements.
+
+    Returns the canonical_id, or None if there are no eligible observations
+    for this key (either genuinely none on file, or every candidate was
+    rejected as legacy-in-a-migrated-period) — in the latter case, any
+    stale canonical_financials row from before migration is deleted rather
+    than left showing a pre-migration legacy value.
     """
     rows = conn.execute(
         """
@@ -75,6 +146,35 @@ def reconcile(
         """,
         (company_id, metric_key, period_type, fiscal_year, quarter, statement_type),
     ).fetchall()
+
+    def _delete_stale_canonical_row() -> None:
+        # reconciliation_log rows from the pre-migration reconciliation still
+        # reference this canonical_id (nullable FK, no ON DELETE CASCADE) —
+        # null those references out first so the DELETE below doesn't trip
+        # the foreign-key constraint; the log rows themselves are kept (audit
+        # trail), just no longer pointing at a canonical row that no longer
+        # exists.
+        conn.execute(
+            """
+            UPDATE reconciliation_log SET canonical_id = NULL
+            WHERE canonical_id IN (
+                SELECT canonical_id FROM canonical_financials
+                WHERE company_id = ? AND metric_key = ? AND period_type = ?
+                  AND fiscal_year = ? AND quarter IS ? AND statement_type IS ?
+            )
+            """,
+            (company_id, metric_key, period_type, fiscal_year, quarter, statement_type),
+        )
+        conn.execute(
+            """
+            DELETE FROM canonical_financials
+            WHERE company_id = ? AND metric_key = ? AND period_type = ?
+              AND fiscal_year = ? AND quarter IS ? AND statement_type IS ?
+            """,
+            (company_id, metric_key, period_type, fiscal_year, quarter, statement_type),
+        )
+        conn.commit()
+
     if not rows:
         return None
 
@@ -88,16 +188,44 @@ def reconcile(
         latest_per_source[row["source"]] = row
     candidates = list(latest_per_source.values())
 
+    all_candidates = candidates  # kept for the audit-log loop below even once `candidates` is narrowed
+    migrated = _period_is_xbrl_migrated(conn, company_id, period_type, fiscal_year, quarter, statement_type)
+    if migrated:
+        xbrl_candidates = [row for row in candidates if row["source"] == XBRL_SOURCE_ID]
+        if not xbrl_candidates:
+            # Period is on XBRL now, but this metric wasn't in the filing —
+            # blank, not backfilled from whatever legacy candidates exist.
+            _delete_stale_canonical_row()
+            now = utcnow_iso()
+            for row in candidates:
+                conn.execute(
+                    """
+                    INSERT INTO reconciliation_log (canonical_id, observation_id, considered_at, was_chosen, note)
+                    VALUES (NULL, ?, ?, 0, ?)
+                    """,
+                    (
+                        row["observation_id"], now,
+                        f"not chosen (source={row['source']}): period migrated to validated "
+                        f"{XBRL_SOURCE_ID!r} XBRL and this metric wasn't in the filing — left blank, not legacy-filled",
+                    ),
+                )
+            conn.commit()
+            return None
+        candidates = xbrl_candidates
+
     def sort_key(row: sqlite3.Row) -> tuple[int, str, int]:
         rank = row["trust_rank"] if row["trust_rank"] is not None else 999
         return (rank, row["retrieved_at"], row["observation_id"])
 
     chosen = min(candidates, key=sort_key)
-    reason = (
-        "only source available"
-        if len(candidates) == 1
-        else f"source '{chosen['source']}' preferred by trust_rank"
-    )
+    if migrated:
+        reason = f"source '{chosen['source']}' — period validated on NSE XBRL"
+    else:
+        reason = (
+            "only source available"
+            if len(candidates) == 1
+            else f"source '{chosen['source']}' preferred by trust_rank"
+        )
 
     # SQLite's UNIQUE constraint (and therefore ON CONFLICT) never fires when
     # a NULL participates in the unique columns — quarter/statement_type are
@@ -144,8 +272,14 @@ def reconcile(
              NORMALIZATION_VERSION, now, canonical_id),
         )
 
-    for row in candidates:
+    for row in all_candidates:
         was_chosen = row["observation_id"] == chosen["observation_id"]
+        note_for_rejected = (
+            f"not chosen (source={row['source']}, trust_rank={row['trust_rank']}): "
+            f"period validated on NSE XBRL — legacy sources aren't eligible for this period"
+            if migrated and row["source"] != XBRL_SOURCE_ID
+            else None
+        )
         conn.execute(
             """
             INSERT INTO reconciliation_log (canonical_id, observation_id, considered_at, was_chosen, note)
@@ -153,7 +287,9 @@ def reconcile(
             """,
             (
                 canonical_id, row["observation_id"], now, 1 if was_chosen else 0,
-                reason if was_chosen else f"not chosen (source={row['source']}, trust_rank={row['trust_rank']})",
+                reason if was_chosen else (
+                    note_for_rejected or f"not chosen (source={row['source']}, trust_rank={row['trust_rank']})"
+                ),
             ),
         )
     conn.commit()
@@ -203,12 +339,173 @@ def get_canonical_series(
     ).fetchall()
 
 
-def reconcile_batch(conn: sqlite3.Connection, observations: Iterable[NormalizedObservation]) -> int:
-    """Reconcile every distinct (company, metric, period) key touched by a batch of observations."""
+def list_canonical_financials_for_companies(conn: sqlite3.Connection, company_ids: list[str]) -> list[sqlite3.Row]:
+    """Every canonical_financials row for the given companies in one query,
+    joined with metrics_dictionary for a human-readable display_name/
+    category -- the bulk read context/graph_neo4j.py's sync_financials()
+    (trial: projects canonical_financials into Neo4j) needs. Deliberately
+    company-scoped, not a list-everything query: canonical_financials runs
+    to 1000+ rows per company, and get_canonical_series() above is
+    per-metric/per-company by design (retrieval/structured_search.py's
+    normal access pattern) -- this is the one place a bulk multi-metric
+    read is actually needed."""
+    if not company_ids:
+        return []
+    placeholders = ",".join("?" * len(company_ids))
+    return conn.execute(
+        f"""
+        SELECT cf.company_id, cf.metric_key, cf.period_type, cf.fiscal_year, cf.quarter,
+               cf.statement_type, cf.canonical_value, cf.unit,
+               md.display_name, md.category
+        FROM canonical_financials cf
+        LEFT JOIN metrics_dictionary md ON md.metric_key = cf.metric_key
+        WHERE cf.company_id IN ({placeholders})
+        """,
+        company_ids,
+    ).fetchall()
+
+
+def list_latest_shares_outstanding(conn: sqlite3.Connection) -> dict[str, tuple[float, str]]:
+    """Latest reconciled (shares-outstanding value in Cr, its fiscal year e.g.
+    "FY2014") per company, one query for every company at once — used to
+    compute market cap on the Companies list and to drive the company page's
+    Overview ratio grid, where a get_canonical_series() call per row (of
+    ~2,500 on the list) would be an N+1. Sparse: only companies with at
+    least one shares_outstanding observation appear.
+
+    Across BOTH period_type='annual' and 'quarterly' rows, not annual-only —
+    a company's quarterly XBRL filing reports its own share count every
+    quarter, and that can move between annual filings (ESOP allotments,
+    buybacks, rights issues); restricting to annual-only meant a company
+    with a fresher quarterly filing than its last annual one still showed
+    the stale annual figure (verified live: ICICIBANK's FY2026 annual row
+    is 716.115 Cr shares, but its Q1 FY2027 quarterly row -- filed after
+    that annual figure -- already shows 717.47 Cr). ORDER BY fiscal_year
+    DESC, quarter DESC naturally picks whichever period is chronologically
+    latest regardless of which period_type it came from: quarter is NULL on
+    an annual row, and SQLite sorts NULL last in a DESC ordering, so an
+    annual and same-fiscal-year Q4 row (normally identical in value anyway)
+    only matters as a tie-break -- a later fiscal_year string always wins
+    first regardless.
+
+    The fiscal year comes along because "latest on file" and "current" are
+    not the same thing here: a company whose financial-statement ingestion
+    stalled years ago (common in this dataset — as of 2026-08, most
+    companies' newest shares_outstanding row is FY2013/FY2014) still has
+    exactly one "latest" row, just a stale one. A caller computing market
+    cap from it needs the fiscal year to decide whether that's current
+    enough to show at all, not just the value — see web/app.py's
+    _is_shares_outstanding_current()."""
+    rows = conn.execute(
+        """
+        SELECT company_id, canonical_value, fiscal_year FROM (
+            SELECT company_id, canonical_value, fiscal_year,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY company_id ORDER BY fiscal_year DESC, quarter DESC
+                   ) AS rn
+            FROM canonical_financials
+            WHERE metric_key = 'shares_outstanding' AND statement_type = 'consolidated'
+        )
+        WHERE rn = 1
+        """
+    ).fetchall()
+    return {row["company_id"]: (row["canonical_value"], row["fiscal_year"]) for row in rows}
+
+
+# ------------------------------------------------------------------
+# Metric vocabulary (metrics_dictionary / metric_aliases) — used by
+# normalization/financials.py to seed/resolve the vendor-label -> metric_key
+# mapping, and by financials/ratios.py to check a metric's applicable_sectors.
+# ------------------------------------------------------------------
+
+
+def seed_metric_vocabulary(
+    conn: sqlite3.Connection, metrics: Iterable[tuple], aliases: Iterable[tuple]
+) -> None:
+    """Bulk-insert metrics_dictionary/metric_aliases rows, leaving existing
+    ones untouched (INSERT OR IGNORE)."""
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO metrics_dictionary
+            (metric_key, display_name, category, applicable_sectors, default_unit)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        metrics,
+    )
+    conn.executemany(
+        "INSERT OR IGNORE INTO metric_aliases (source, raw_label, metric_key) VALUES (?, ?, ?)",
+        aliases,
+    )
+    conn.commit()
+
+
+def get_metric_key_for_alias(conn: sqlite3.Connection, source: str, raw_label: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT metric_key FROM metric_aliases WHERE source = ? AND raw_label = ?",
+        (source, raw_label),
+    ).fetchone()
+
+
+def get_metric_dictionary_entry(conn: sqlite3.Connection, metric_key: str) -> sqlite3.Row | None:
+    """Full metrics_dictionary row for one metric_key (default_unit,
+    applicable_sectors, ...) — normalization/financials.py reads
+    default_unit from it, financials/ratios.py reads applicable_sectors."""
+    return conn.execute(
+        "SELECT * FROM metrics_dictionary WHERE metric_key = ?", (metric_key,)
+    ).fetchone()
+
+
+def compute_reconciliation_keys(
+    conn: sqlite3.Connection, observations: Iterable[NormalizedObservation]
+) -> list[tuple[str, str, str, str, str | None, str | None]]:
+    """Every distinct (company, metric, period_type, fiscal_year, quarter,
+    statement_type) key a batch of observations touches, expanded to
+    include XBRL's migration side effect.
+
+    When the batch includes an XBRL_SOURCE_ID observation, that also
+    "migrates" its (company, period_type, fiscal_year, quarter,
+    statement_type) scope (reconcile()'s docstring) — every OTHER metric
+    already on file for that same period must be re-reconciled too, not
+    just the metrics this particular filing happened to report, or a
+    legacy metric XBRL is silent on would keep showing its stale
+    pre-migration canonical value instead of going blank.
+
+    Pulled out of reconcile_batch() so ingestion/pipeline.py can compute the
+    same key set to publish on a DATASET_INGESTED event's
+    storage_reference — the Financial Derivation Worker
+    (ingestion/workers/financial_derivation.py) reconciles from those keys
+    alone, without needing the observations themselves re-passed through
+    the event or re-ingested on replay.
+    """
+    observations = list(observations)
     keys = {
         (obs.company_id, obs.metric_key, obs.period_type, obs.fiscal_year, obs.quarter, obs.statement_type)
         for obs in observations
     }
+
+    period_scopes = {
+        (obs.company_id, obs.period_type, obs.fiscal_year, obs.quarter, obs.statement_type)
+        for obs in observations if obs.source == XBRL_SOURCE_ID
+    }
+    for company_id, period_type, fiscal_year, quarter, statement_type in period_scopes:
+        sibling_metrics = conn.execute(
+            """
+            SELECT DISTINCT metric_key FROM financial_observations
+            WHERE company_id = ? AND period_type = ? AND fiscal_year = ? AND quarter IS ? AND statement_type IS ?
+            """,
+            (company_id, period_type, fiscal_year, quarter, statement_type),
+        ).fetchall()
+        for row in sibling_metrics:
+            keys.add((company_id, row["metric_key"], period_type, fiscal_year, quarter, statement_type))
+
+    return list(keys)
+
+
+def reconcile_batch(conn: sqlite3.Connection, observations: Iterable[NormalizedObservation]) -> int:
+    """Reconcile every distinct (company, metric, period) key touched by a
+    batch of observations. See compute_reconciliation_keys() for how that
+    key set (including XBRL's migration side effect) is derived."""
+    keys = compute_reconciliation_keys(conn, observations)
     return sum(1 for key in keys if reconcile(conn, *key) is not None)
 
 
@@ -236,6 +533,150 @@ def reconcile_company(conn: sqlite3.Connection, company_id: str) -> int:
         )
         is not None
     )
+
+
+def list_reconciliation_log(
+    conn: sqlite3.Connection,
+    *,
+    company_id: str | None = None,
+    source: str | None = None,
+    limit: int = 200,
+) -> list[sqlite3.Row]:
+    """Recent reconciliation_log entries, newest first — the Admin Audit Log
+    panel's raw decision trail (every candidate reconcile() considered for
+    a (company, metric, period) key, chosen or not, with why). Joined
+    through financial_observations for company_id/metric_key/period/source,
+    since reconciliation_log itself only stores observation_id/canonical_id
+    — canonical_id can be NULL (a candidate rejected outright, or a stale
+    canonical row deleted after a period migrated to XBRL — see reconcile()'s
+    _delete_stale_canonical_row), so joining via canonical_financials would
+    silently drop exactly the rows an XBRL-migration audit most needs to
+    show."""
+    query = """
+        SELECT rl.log_id, rl.considered_at, rl.was_chosen, rl.note,
+               fo.company_id, fo.metric_key, fo.period_type, fo.fiscal_year,
+               fo.quarter, fo.statement_type, fo.source
+        FROM reconciliation_log rl
+        JOIN financial_observations fo ON fo.observation_id = rl.observation_id
+        WHERE 1=1
+    """
+    params: list[object] = []
+    if company_id:
+        query += " AND fo.company_id = ?"
+        params.append(company_id)
+    if source:
+        query += " AND fo.source = ?"
+        params.append(source)
+    query += " ORDER BY rl.considered_at DESC, rl.log_id DESC LIMIT ?"
+    params.append(limit)
+    return conn.execute(query, params).fetchall()
+
+
+def list_reconciliation_log_by_company(
+    conn: sqlite3.Connection, company_ids: Iterable[str], *, limit_per_company: int = 20
+) -> dict[str, list[sqlite3.Row]]:
+    """Recent reconciliation_log entries for a batch of companies at once,
+    capped per company — the Admin Audit Log table's per-row expandable
+    detail (list_xbrl_migration_status()'s companion), fetched for a whole
+    page of companies in one query rather than one query per row (the N+1
+    admin.html's own Companies-panel comment already flags as a real
+    problem at ~2,600 rows). ROW_NUMBER()-per-company keeps this bounded
+    even for a company with a long history (IDFCFIRSTB already has 130+
+    entries and growing), same windowing approach list_latest_shares_outstanding()
+    already uses for "top N per company" from one query."""
+    ids = list(company_ids)
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        f"""
+        SELECT * FROM (
+            SELECT rl.log_id, rl.considered_at, rl.was_chosen, rl.note,
+                   fo.company_id, fo.metric_key, fo.period_type, fo.fiscal_year,
+                   fo.quarter, fo.statement_type, fo.source,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY fo.company_id ORDER BY rl.considered_at DESC, rl.log_id DESC
+                   ) AS rn
+            FROM reconciliation_log rl
+            JOIN financial_observations fo ON fo.observation_id = rl.observation_id
+            WHERE fo.company_id IN ({placeholders})
+        )
+        WHERE rn <= ?
+        ORDER BY company_id, considered_at DESC
+        """,
+        (*ids, limit_per_company),
+    ).fetchall()
+    by_company: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        by_company.setdefault(row["company_id"], []).append(row)
+    return by_company
+
+
+def list_xbrl_migration_status(conn: sqlite3.Connection) -> list[dict]:
+    """Per NSE-listed active company: the latest quarterly period on file
+    from ANY source vs the latest one specifically validated on NSE XBRL —
+    the Admin Audit Log panel's "what's pending" view (source policy: NSE
+    XBRL as the target source of truth for structured financial facts).
+
+    A company is "pending" when legacy data extends past where XBRL
+    coverage currently reaches (fo.source='nse' has never overtaken it);
+    "not_started" when there's no XBRL coverage on file at all yet, but
+    there is legacy quarterly data to eventually migrate; "no_data" when
+    there's no quarterly data of any kind. Scoped to quarterly — that's
+    XBRL's actual reporting cadence today (sources/nse_xbrl.py) — and to
+    companies with an nse_symbol, since only those are fetchable from NSE's
+    API at all (scripts/fetch_nse_xbrl.py).
+
+    fiscal_year||quarter (e.g. "FY2025Q3") sorts correctly as plain text
+    since fiscal_year is always "FY" + 4 digits and quarter is always a
+    single "Q1".."Q4" — MAX()/< on that concatenation is a valid
+    chronological comparison without parsing it apart.
+    """
+    coverage_rows = conn.execute(
+        """
+        SELECT company_id,
+               MAX(CASE WHEN source = 'nse' THEN fiscal_year || quarter END) AS latest_xbrl_period,
+               MAX(fiscal_year || quarter) AS latest_any_period
+        FROM financial_observations
+        WHERE period_type = 'quarterly'
+        GROUP BY company_id
+        """
+    ).fetchall()
+    coverage_by_company = {row["company_id"]: row for row in coverage_rows}
+
+    companies = conn.execute(
+        """
+        SELECT company_id, display_name, nse_symbol FROM companies
+        WHERE nse_symbol IS NOT NULL AND nse_symbol != '' AND status = 'active'
+        """
+    ).fetchall()
+
+    _STATUS_ORDER = {"pending": 0, "not_started": 1, "no_data": 2, "up_to_date": 3}
+    results: list[dict] = []
+    for company in companies:
+        coverage = coverage_by_company.get(company["company_id"])
+        latest_xbrl = coverage["latest_xbrl_period"] if coverage else None
+        latest_any = coverage["latest_any_period"] if coverage else None
+        if latest_any is None:
+            migration_status = "no_data"
+        elif latest_xbrl is None:
+            migration_status = "not_started"
+        elif latest_xbrl < latest_any:
+            migration_status = "pending"
+        else:
+            migration_status = "up_to_date"
+        results.append(
+            {
+                "company_id": company["company_id"],
+                "display_name": company["display_name"],
+                "nse_symbol": company["nse_symbol"],
+                "latest_xbrl_period": latest_xbrl,
+                "latest_legacy_period": latest_any,
+                "migration_status": migration_status,
+            }
+        )
+    results.sort(key=lambda r: (_STATUS_ORDER[r["migration_status"]], r["display_name"] or ""))
+    return results
 
 
 WATCHLIST_ITEM_TYPES = ("company", "thread")
@@ -305,6 +746,72 @@ def save_company_insights(conn: sqlite3.Connection, company_id: str, insight_tex
         (company_id, insight_text, statement_type, utcnow_iso()),
     )
     conn.commit()
+
+
+def save_system_insight(
+    conn: sqlite3.Connection, *, insight_id: str, company_ids: list[str], insight_text: str,
+    source_claim_ids: list[int],
+) -> None:
+    """One row per system-generated insight (Tools tab), status='new' until
+    the user retains/archives it via update_system_insight_status()."""
+    conn.execute(
+        "INSERT INTO system_insights (insight_id, company_ids, insight_text, source_claim_ids, status, generated_at) "
+        "VALUES (?, ?, ?, ?, 'new', ?)",
+        (insight_id, json.dumps(company_ids), insight_text, json.dumps(source_claim_ids), utcnow_iso()),
+    )
+    conn.commit()
+
+
+def list_system_insights(conn: sqlite3.Connection, *, statuses: tuple[str, ...] = ("new", "retained")) -> list[dict]:
+    """Insights in any of `statuses`, newest first — defaults to everything
+    the Insights panel shows by default (archived hidden unless asked for)."""
+    placeholders = ",".join("?" for _ in statuses)
+    rows = conn.execute(
+        f"SELECT * FROM system_insights WHERE status IN ({placeholders}) ORDER BY generated_at DESC",
+        statuses,
+    ).fetchall()
+    return [
+        {
+            "insight_id": r["insight_id"], "company_ids": json.loads(r["company_ids"]),
+            "insight_text": r["insight_text"],
+            "source_claim_ids": json.loads(r["source_claim_ids"]) if r["source_claim_ids"] else [],
+            "status": r["status"], "generated_at": r["generated_at"], "status_changed_at": r["status_changed_at"],
+        }
+        for r in rows
+    ]
+
+
+def update_system_insight_status(conn: sqlite3.Connection, insight_id: str, status: str) -> None:
+    if status not in ("new", "retained", "archived"):
+        raise ValueError(f"status must be one of new|retained|archived, got {status!r}")
+    conn.execute(
+        "UPDATE system_insights SET status = ?, status_changed_at = ? WHERE insight_id = ?",
+        (status, utcnow_iso(), insight_id),
+    )
+    conn.commit()
+
+
+def list_recent_high_confidence_claims(
+    conn: sqlite3.Connection, *, claim_types: tuple[str, ...], limit: int = 10
+) -> list[sqlite3.Row]:
+    """Candidate claims for system-insight generation (research/system_insights.py)
+    — the "give me everything interesting across companies" read
+    find_claims_about_entity() can't do (it requires naming one entity
+    first). Highest-confidence, most-recent claims of the given types,
+    across every company."""
+    placeholders = ",".join("?" for _ in claim_types)
+    return conn.execute(
+        f"SELECT * FROM knowledge_claims WHERE claim_type IN ({placeholders}) "
+        "ORDER BY extraction_confidence DESC, created_at DESC LIMIT ?",
+        (*claim_types, limit),
+    ).fetchall()
+
+
+def list_company_ids_with_financial_data(conn: sqlite3.Connection) -> list[str]:
+    """Distinct companies with at least one canonical_financials row — the
+    cheap prefilter analytics/patterns.py uses instead of iterating every
+    registered company (most of which have nothing ingested yet)."""
+    return [r["company_id"] for r in conn.execute("SELECT DISTINCT company_id FROM canonical_financials").fetchall()]
 
 
 def list_company_notes(conn: sqlite3.Connection, company_id: str) -> list[sqlite3.Row]:
@@ -441,6 +948,14 @@ def list_company_documents(conn: sqlite3.Connection, company_id: str) -> list[sq
     ).fetchall()
 
 
+def get_document(conn: sqlite3.Connection, document_id: int) -> sqlite3.Row | None:
+    """Not company-scoped — for the Ingest queue's coordinator, which
+    already has document_id from ingestion_queue_items/documents-by-status
+    and has no separate company_id to filter by (unlike
+    get_company_document(), which exists for the company-facing routes)."""
+    return conn.execute("SELECT * FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+
+
 def get_company_document(conn: sqlite3.Connection, company_id: str, document_id: int) -> sqlite3.Row | None:
     """Scoped by company_id too — a document's id alone shouldn't be enough
     to serve someone else's file from a mistyped/guessed URL."""
@@ -475,6 +990,506 @@ def save_company_document(
     )
     conn.commit()
     return conn.execute("SELECT * FROM documents WHERE document_id = ?", (cursor.lastrowid,)).fetchone()
+
+
+def list_documents_by_status(conn: sqlite3.Connection, status: str | None = None) -> list[sqlite3.Row]:
+    """Every document across every company at this processing_status (or,
+    with status=None, at any status) — unlike list_company_documents, not
+    scoped to one company, since the Admin -> Ingest queue view spans the
+    whole document archive. Same optional-status convention as
+    list_ingestion_queue_items."""
+    if status is None:
+        return conn.execute("SELECT * FROM documents ORDER BY retrieved_at DESC").fetchall()
+    return conn.execute(
+        "SELECT * FROM documents WHERE processing_status = ? ORDER BY retrieved_at DESC",
+        (status,),
+    ).fetchall()
+
+
+def mark_document_processing_status(
+    conn: sqlite3.Connection,
+    document_id: int,
+    *,
+    status: str,
+    file_hash: str | None = None,
+    processed_at: str | None = None,
+    error_message: str | None = None,
+) -> sqlite3.Row | None:
+    """file_hash is only overwritten when explicitly given (e.g. computed
+    fresh during Ingest queue processing) — passing None leaves whatever's
+    already stored on the row untouched, not wiped. error_message is always
+    written (including None, to clear a stale one on a later success)."""
+    if file_hash is not None:
+        conn.execute(
+            "UPDATE documents SET processing_status = ?, processed_at = ?, file_hash = ?, error_message = ? WHERE document_id = ?",
+            (status, processed_at, file_hash, error_message, document_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE documents SET processing_status = ?, processed_at = ?, error_message = ? WHERE document_id = ?",
+            (status, processed_at, error_message, document_id),
+        )
+    conn.commit()
+    return conn.execute("SELECT * FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+
+
+def set_document_processing_status(conn: sqlite3.Connection, document_id: int, status: str) -> sqlite3.Row | None:
+    """Archive/Unarchive — a manual status change, not a processing outcome,
+    so unlike mark_document_processing_status() this never touches
+    processed_at/error_message/file_hash; the row's history stays exactly as
+    it was, just parked (or unparked) out of the working set."""
+    conn.execute("UPDATE documents SET processing_status = ? WHERE document_id = ?", (status, document_id))
+    conn.commit()
+    return conn.execute("SELECT * FROM documents WHERE document_id = ?", (document_id,)).fetchone()
+
+
+def list_ingestion_queue_items(
+    conn: sqlite3.Connection, *, status: str | None = None, item_kind: str | None = None
+) -> list[sqlite3.Row]:
+    query = "SELECT * FROM ingestion_queue_items WHERE 1=1"
+    params: list[object] = []
+    if status is not None:
+        query += " AND status = ?"
+        params.append(status)
+    if item_kind is not None:
+        query += " AND item_kind = ?"
+        params.append(item_kind)
+    query += " ORDER BY discovered_at DESC"
+    return conn.execute(query, params).fetchall()
+
+
+def get_ingestion_queue_item(conn: sqlite3.Connection, item_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM ingestion_queue_items WHERE item_id = ?", (item_id,)).fetchone()
+
+
+def get_ingestion_queue_item_by_path(conn: sqlite3.Connection, file_path: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM ingestion_queue_items WHERE file_path = ?", (file_path,)).fetchone()
+
+
+def upsert_ingestion_queue_item(
+    conn: sqlite3.Connection,
+    *,
+    item_kind: str,
+    file_path: str,
+    content_hash: str | None,
+    company_id: str | None,
+    source_id: str | None,
+    status: str,
+    status_reason: str | None,
+) -> sqlite3.Row:
+    """Insert a newly-discovered file, or refresh an existing row's
+    detection/hash — discovery is a full rescan every time, not an
+    append-only log, so re-running it must update in place, not duplicate.
+    Deliberately does NOT touch status/last_processed_content_hash/
+    processed_at for a row that's already PROCESSED with an unchanged
+    content_hash — see ingestion/coordinator.py's discover_pending_
+    financial_items, which decides that before calling this."""
+    now = utcnow_iso()
+    existing = get_ingestion_queue_item_by_path(conn, file_path)
+    if existing is None:
+        cursor = conn.execute(
+            """
+            INSERT INTO ingestion_queue_items (
+                item_kind, file_path, content_hash, company_id, source_id,
+                status, status_reason, discovered_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (item_kind, file_path, content_hash, company_id, source_id, status, status_reason, now),
+        )
+        item_id = cursor.lastrowid
+    else:
+        conn.execute(
+            """
+            UPDATE ingestion_queue_items SET
+                item_kind = ?, content_hash = ?, company_id = ?, source_id = ?,
+                status = ?, status_reason = ?
+            WHERE item_id = ?
+            """,
+            (item_kind, content_hash, company_id, source_id, status, status_reason, existing["item_id"]),
+        )
+        item_id = existing["item_id"]
+    conn.commit()
+    return get_ingestion_queue_item(conn, item_id)
+
+
+def update_ingestion_queue_item_result(
+    conn: sqlite3.Connection,
+    item_id: int,
+    *,
+    status: str,
+    error_message: str | None = None,
+    processed_at: str | None = None,
+    last_processed_content_hash: str | None = None,
+) -> sqlite3.Row | None:
+    """Records the outcome of one processing attempt — always stamps
+    last_attempt_at; processed_at/last_processed_content_hash are only set
+    on success (callers pass them then), left untouched on failure."""
+    conn.execute(
+        """
+        UPDATE ingestion_queue_items SET
+            status = ?, error_message = ?, last_attempt_at = ?,
+            processed_at = COALESCE(?, processed_at),
+            last_processed_content_hash = COALESCE(?, last_processed_content_hash)
+        WHERE item_id = ?
+        """,
+        (status, error_message, utcnow_iso(), processed_at, last_processed_content_hash, item_id),
+    )
+    conn.commit()
+    return get_ingestion_queue_item(conn, item_id)
+
+
+def set_ingestion_queue_item_status(conn: sqlite3.Connection, item_id: int, status: str) -> sqlite3.Row | None:
+    """Archive/Unarchive — a manual status change, not a processing attempt,
+    so unlike update_ingestion_queue_item_result() this never touches
+    last_attempt_at/error_message; the row's history stays exactly as it
+    was, just parked (or unparked) out of the working set."""
+    conn.execute("UPDATE ingestion_queue_items SET status = ? WHERE item_id = ?", (status, item_id))
+    conn.commit()
+    return get_ingestion_queue_item(conn, item_id)
+
+
+def save_investigation(
+    conn: sqlite3.Connection,
+    *,
+    investigation_id: str,
+    question: str,
+    company_ids: list[str],
+    statement_type: str,
+    strongest_explanation: str | None,
+    unanswered_questions: list[str],
+    additional_evidence_needed: list[str],
+    as_of: str | None = None,
+) -> None:
+    """Writes the investigation row AND its `investigation_companies`
+    associations in one transaction — the JSON `company_ids` column stays the
+    ordered as-asked list the investigation view renders, while the join table
+    is what "Company -> Investigations" queries (see
+    storage/investigation_repository.py for why both exist). A cross-company
+    investigation is one record here, associated with several companies, never
+    duplicated per company."""
+    conn.execute(
+        "INSERT INTO investigations (investigation_id, question, company_ids, statement_type, "
+        "strongest_explanation, unanswered_questions, additional_evidence_needed, generated_at, as_of) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (investigation_id, question, json.dumps(company_ids), statement_type, strongest_explanation,
+         json.dumps(unanswered_questions), json.dumps(additional_evidence_needed), utcnow_iso(), as_of),
+    )
+    insert_investigation_companies(conn, investigation_id, company_ids)
+    conn.commit()
+
+
+def save_investigation_hypothesis(
+    conn: sqlite3.Connection,
+    *,
+    hypothesis_id: str,
+    investigation_id: str,
+    statement: str,
+    mechanism: str | None,
+    category: str,
+    rationale: str | None,
+    unknowns: list[str],
+    generation_order: int,
+    verdict: str | None = None,
+    confidence_basis: str | None = None,
+    synthesis_rank: int | None = None,
+) -> None:
+    conn.execute(
+        "INSERT INTO investigation_hypotheses (hypothesis_id, investigation_id, statement, mechanism, "
+        "category, rationale, unknowns, generation_order, verdict, confidence_basis, synthesis_rank, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (hypothesis_id, investigation_id, statement, mechanism, category, rationale, json.dumps(unknowns),
+         generation_order, verdict, confidence_basis, synthesis_rank, utcnow_iso()),
+    )
+    conn.commit()
+
+
+def save_investigation_hypothesis_evidence(
+    conn: sqlite3.Connection, hypothesis_id: str, evidence: list[dict]
+) -> None:
+    """evidence: list of {stance, kind, label, value, citation} dicts —
+    plain dicts, not a dataclass, same reasoning save_report_evidence()
+    already gives for research_thread_evidence."""
+    conn.executemany(
+        "INSERT INTO investigation_hypothesis_evidence (hypothesis_id, stance, kind, label, value, citation) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [(hypothesis_id, e["stance"], e["kind"], e["label"], e.get("value"), e.get("citation")) for e in evidence],
+    )
+    conn.commit()
+
+
+def get_investigation(conn: sqlite3.Connection, investigation_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM investigations WHERE investigation_id = ?", (investigation_id,)
+    ).fetchone()
+
+
+def list_investigations(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM investigations ORDER BY generated_at DESC").fetchall()
+
+
+def list_investigation_hypotheses(conn: sqlite3.Connection, investigation_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM investigation_hypotheses WHERE investigation_id = ? ORDER BY "
+        "CASE WHEN synthesis_rank IS NULL THEN 1 ELSE 0 END, synthesis_rank, generation_order",
+        (investigation_id,),
+    ).fetchall()
+
+
+def list_investigation_hypothesis_evidence(conn: sqlite3.Connection, hypothesis_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM investigation_hypothesis_evidence WHERE hypothesis_id = ? ORDER BY id", (hypothesis_id,)
+    ).fetchall()
+
+
+def get_or_create_knowledge_entity(
+    conn: sqlite3.Connection, entity_type: str, name: str, company_id: str | None = None
+) -> sqlite3.Row:
+    """Entities are shared/deduped across every claim that mentions them
+    (UNIQUE(entity_type, name, company_id)) — unlike knowledge_claims,
+    which is always append-only, the same "Product: iPhone" entity
+    shouldn't get a new row every time a new document mentions it again."""
+    existing = conn.execute(
+        "SELECT * FROM knowledge_entities WHERE entity_type = ? AND name = ? AND company_id IS ?",
+        (entity_type, name, company_id),
+    ).fetchone()
+    if existing is not None:
+        return existing
+    cursor = conn.execute(
+        "INSERT INTO knowledge_entities (entity_type, name, company_id, created_at) VALUES (?, ?, ?, ?)",
+        (entity_type, name, company_id, utcnow_iso()),
+    )
+    conn.commit()
+    return conn.execute("SELECT * FROM knowledge_entities WHERE entity_id = ?", (cursor.lastrowid,)).fetchone()
+
+
+def insert_knowledge_claim(
+    conn: sqlite3.Connection,
+    *,
+    document_id: int,
+    company_id: str | None,
+    claim_type: str,
+    category: str | None,
+    claim_text: str,
+    speaker: str | None,
+    fiscal_year: str | None,
+    quarter: str | None,
+    extraction_confidence: float | None,
+) -> sqlite3.Row:
+    """Always a fresh INSERT, never an UPDATE — a new document's claims are
+    additive, same "never overwrite" discipline financial_observations
+    already follows (schemas/sqlite_schema.sql's Knowledge Builder section)."""
+    cursor = conn.execute(
+        """
+        INSERT INTO knowledge_claims (
+            document_id, company_id, claim_type, category, claim_text, speaker,
+            fiscal_year, quarter, extraction_confidence, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (document_id, company_id, claim_type, category, claim_text, speaker,
+         fiscal_year, quarter, extraction_confidence, utcnow_iso()),
+    )
+    conn.commit()
+    return conn.execute("SELECT * FROM knowledge_claims WHERE claim_id = ?", (cursor.lastrowid,)).fetchone()
+
+
+def insert_knowledge_relationship(
+    conn: sqlite3.Connection, *, claim_id: int | None, source_entity_id: int, relationship_type: str, target_entity_id: int
+) -> None:
+    conn.execute(
+        "INSERT INTO knowledge_relationships (claim_id, source_entity_id, relationship_type, target_entity_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (claim_id, source_entity_id, relationship_type, target_entity_id, utcnow_iso()),
+    )
+    conn.commit()
+
+
+def insert_knowledge_evidence(conn: sqlite3.Connection, *, claim_id: int, document_id: int, quote: str | None) -> None:
+    conn.execute(
+        "INSERT INTO knowledge_evidence (claim_id, document_id, quote, created_at) VALUES (?, ?, ?, ?)",
+        (claim_id, document_id, quote, utcnow_iso()),
+    )
+    conn.commit()
+
+
+def list_knowledge_claims_for_document(conn: sqlite3.Connection, document_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM knowledge_claims WHERE document_id = ? ORDER BY claim_id", (document_id,)
+    ).fetchall()
+
+
+def list_knowledge_claims_for_company(conn: sqlite3.Connection, company_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM knowledge_claims WHERE company_id = ? ORDER BY fiscal_year, quarter, claim_id",
+        (company_id,),
+    ).fetchall()
+
+
+def list_knowledge_entities_for_companies(
+    conn: sqlite3.Connection, company_ids: list[str], *, entity_types: tuple[str, ...] | None = None,
+    limit: int | None = None,
+) -> list[sqlite3.Row]:
+    """Distinct entities already extracted for one or more companies —
+    the repository-layer replacement for what research/investigation_planner.py
+    and research/hypothesis_generator.py used to run as raw SQL against
+    knowledge_entities directly. `entity_types`/`limit` are optional filters
+    the single-company caller (hypothesis_generator.py's own context lookup)
+    needs; the multi-company caller (investigation_planner.py's mentioned-entity
+    match) leaves both unset."""
+    if not company_ids:
+        return []
+    placeholders = ",".join("?" for _ in company_ids)
+    sql = f"SELECT DISTINCT entity_type, name FROM knowledge_entities WHERE company_id IN ({placeholders})"
+    params: list[object] = list(company_ids)
+    if entity_types:
+        type_placeholders = ",".join("?" for _ in entity_types)
+        sql += f" AND entity_type IN ({type_placeholders})"
+        params.extend(entity_types)
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
+
+
+def list_all_knowledge_entities(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Unfiltered read of every entity — only for context/graph_neo4j.py's
+    full-graph resync, never for a per-request path (use
+    list_knowledge_entities_for_companies for that)."""
+    return conn.execute("SELECT entity_id, entity_type, name, company_id FROM knowledge_entities").fetchall()
+
+
+def list_all_knowledge_claims(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Unfiltered read of every claim — see list_all_knowledge_entities."""
+    return conn.execute(
+        "SELECT claim_id, document_id, company_id, claim_type, category, claim_text, speaker, "
+        "fiscal_year, quarter, extraction_confidence FROM knowledge_claims"
+    ).fetchall()
+
+
+def list_all_knowledge_relationships(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Unfiltered read of every relationship — see list_all_knowledge_entities."""
+    return conn.execute(
+        "SELECT relationship_id, claim_id, source_entity_id, relationship_type, target_entity_id "
+        "FROM knowledge_relationships"
+    ).fetchall()
+
+
+def list_all_knowledge_evidence(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Unfiltered read of every evidence row — see list_all_knowledge_entities."""
+    return conn.execute("SELECT evidence_id, claim_id, document_id, quote FROM knowledge_evidence").fetchall()
+
+
+_FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _sanitize_fts_query(query: str) -> str:
+    """FTS5's MATCH syntax treats hyphens/colons/quotes as query operators —
+    an arbitrary query passed straight through can raise a syntax error
+    instead of just finding nothing. Tokenizing to plain alphanumeric words
+    and double-quoting each one individually keeps every token literal
+    (safe from operator interpretation).
+
+    OR-joined, not FTS5's default AND — deliberately: a short 2-3 word
+    search phrase is fine either way, but research/investigation_planner.py
+    (Step 2F) composes a much longer blob (a question plus a hypothesis's
+    own statement and mechanism) to search with, and requiring literally
+    every one of those words to co-occur in one small chunk means almost
+    nothing ever matches. OR plus bm25 ranking (search_document_chunks()'s
+    `ORDER BY rank`) already rewards a chunk sharing MORE query terms over
+    one sharing just one, without demanding all of them — a better fit for
+    "where was something *similar* discussed" than a rigid AND would be."""
+    tokens = _FTS_TOKEN_RE.findall(query)
+    return " OR ".join(f'"{t}"' for t in tokens)
+
+
+def replace_document_chunks(conn: sqlite3.Connection, document_id: int, chunks: list[dict]) -> None:
+    """Deletes this document's existing chunks (if it's being reprocessed)
+    and inserts the fresh set. Unlike knowledge_claims, a chunk has no
+    standalone provenance value once superseded — it's a mechanical index
+    over the document's CURRENT text for search, not a historical claim —
+    so replacing it on reprocess is correct here, not a violation of the
+    "never overwrite" rule that governs genuinely historical facts/claims."""
+    now = utcnow_iso()
+    existing_ids = [
+        row["chunk_id"] for row in
+        conn.execute("SELECT chunk_id FROM document_chunks WHERE document_id = ?", (document_id,)).fetchall()
+    ]
+    if existing_ids:
+        conn.executemany("DELETE FROM document_chunks_fts WHERE rowid = ?", [(i,) for i in existing_ids])
+        conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (document_id,))
+    for chunk in chunks:
+        cursor = conn.execute(
+            "INSERT INTO document_chunks (document_id, company_id, page_number, chunk_index, text, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (chunk["document_id"], chunk["company_id"], chunk["page_number"], chunk["chunk_index"], chunk["text"], now),
+        )
+        conn.execute(
+            "INSERT INTO document_chunks_fts (rowid, text) VALUES (?, ?)", (cursor.lastrowid, chunk["text"])
+        )
+    conn.commit()
+
+
+def search_document_chunks(
+    conn: sqlite3.Connection, query: str, *, company_id: str | None = None, limit: int = 10
+) -> list[sqlite3.Row]:
+    """FTS5 keyword search over indexed chunks, joined back to `documents`
+    for full provenance — Step 2D's "every returned passage must retain
+    document, company, date, quarter, page/section, source." Returns []
+    (not an error) for a query with no usable search tokens."""
+    fts_query = _sanitize_fts_query(query)
+    if not fts_query:
+        return []
+    sql = (
+        "SELECT dc.chunk_id, dc.document_id, dc.company_id, dc.page_number, dc.chunk_index, dc.text, "
+        "       d.document_type, d.fiscal_year, d.quarter, d.source, d.published_at, d.retrieved_at "
+        "FROM document_chunks_fts fts "
+        "JOIN document_chunks dc ON dc.chunk_id = fts.rowid "
+        "JOIN documents d ON d.document_id = dc.document_id "
+        "WHERE document_chunks_fts MATCH ?"
+    )
+    params: list[object] = [fts_query]
+    if company_id is not None:
+        sql += " AND dc.company_id = ?"
+        params.append(company_id)
+    sql += " ORDER BY fts.rank LIMIT ?"
+    params.append(limit)
+    return conn.execute(sql, params).fetchall()
+
+
+def list_knowledge_evidence_for_claim(conn: sqlite3.Connection, claim_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM knowledge_evidence WHERE claim_id = ? ORDER BY evidence_id", (claim_id,)
+    ).fetchall()
+
+
+def find_knowledge_claims_about_entity(conn: sqlite3.Connection, entity_type: str, entity_name: str) -> list[sqlite3.Row]:
+    """Every claim (any company) whose extracted relationships touch this
+    entity — the SQLite path for context/knowledge_graph.py's cross-entity
+    query, a real join-based traversal, not a stub."""
+    return conn.execute(
+        """
+        SELECT DISTINCT c.*
+        FROM knowledge_entities e
+        JOIN knowledge_relationships r ON r.source_entity_id = e.entity_id OR r.target_entity_id = e.entity_id
+        JOIN knowledge_claims c ON c.claim_id = r.claim_id
+        WHERE e.entity_type = ? AND e.name = ?
+        ORDER BY c.fiscal_year, c.quarter, c.claim_id
+        """,
+        (entity_type, entity_name),
+    ).fetchall()
+
+
+def list_knowledge_relationships_for_claim(conn: sqlite3.Connection, claim_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT r.*, se.entity_type AS source_type, se.name AS source_name,
+               te.entity_type AS target_type, te.name AS target_name
+        FROM knowledge_relationships r
+        JOIN knowledge_entities se ON se.entity_id = r.source_entity_id
+        JOIN knowledge_entities te ON te.entity_id = r.target_entity_id
+        WHERE r.claim_id = ?
+        """,
+        (claim_id,),
+    ).fetchall()
 
 
 def _row_to_generated_report(row: sqlite3.Row) -> dict:
@@ -839,6 +1854,9 @@ COMPANY_LIST_COLUMNS = [
     {"key": "sector", "label": "Sector"},
     {"key": "industry", "label": "Industry"},
     {"key": "price", "label": "Price"},
+    {"key": "market_cap", "label": "Mkt Cap"},
+    {"key": "week52", "label": "52W Range"},
+    {"key": "all_time", "label": "All-Time Range"},
     {"key": "status", "label": "Status"},
     {"key": "tags", "label": "Index tags & IDs"},
 ]
@@ -869,6 +1887,70 @@ def set_company_list_column_settings(conn: sqlite3.Connection, enabled_keys: Ite
     conn.commit()
 
 
+# The Overview tab's ratio grid (web/templates/company.html, "About" ->
+# renders into web/static/js/valuation_dashboard.js's renderOverview()).
+# Every key here has a matching compute case in that file's RATIO_CATALOG
+# object — adding a genuinely new ratio is exactly two edits (one entry
+# here for the admin-facing label, one compute case there), never a schema
+# or settings-table change. `default_enabled=False` entries are ratios this
+# app can already compute from ingested data but aren't shown out of the
+# box — an admin can turn them on with no code change at all.
+OVERVIEW_RATIO_CATALOG = [
+    {"key": "marketCap", "label": "Market Cap", "default_enabled": True},
+    {"key": "price", "label": "Current Price", "default_enabled": True},
+    {"key": "stockPE", "label": "Stock P/E", "default_enabled": True},
+    {"key": "bookValue", "label": "Book Value", "default_enabled": True},
+    {"key": "dividendYield", "label": "Dividend Yield", "default_enabled": True},
+    {"key": "roe", "label": "ROE", "default_enabled": True},
+    {"key": "eps", "label": "EPS", "default_enabled": True},
+    {"key": "priceToBook", "label": "Price to Book Value", "default_enabled": True},
+    {"key": "debtToEquity", "label": "Debt to Equity", "default_enabled": True},
+    {"key": "payout", "label": "Dividend Payout", "default_enabled": True},
+    {"key": "shares", "label": "No. Equity Shares", "default_enabled": True},
+    {"key": "netProfit", "label": "Net Profit (latest FY)", "default_enabled": True},
+    {"key": "revenue", "label": "Revenue (latest FY)", "default_enabled": True},
+    {"key": "salesCagr", "label": "Sales Growth (full recorded range)", "default_enabled": True},
+    {"key": "profitCagr", "label": "Profit Growth (full recorded range)", "default_enabled": True},
+    {"key": "netMargin", "label": "Net Profit Margin", "default_enabled": False},
+    {"key": "taxRate", "label": "Tax Rate", "default_enabled": False},
+    {"key": "retention", "label": "Retention Ratio", "default_enabled": False},
+    {"key": "roa", "label": "Return on Assets (bank/NBFC)", "default_enabled": False},
+    {"key": "cdRatio", "label": "Credit-Deposit Ratio (bank)", "default_enabled": False},
+    {"key": "intCoverage", "label": "Interest Coverage", "default_enabled": False},
+    {"key": "networth", "label": "Net Worth", "default_enabled": False},
+    {"key": "totalAssets", "label": "Total Assets", "default_enabled": False},
+    {"key": "salesPerShare", "label": "Sales per Share", "default_enabled": False},
+]
+_OVERVIEW_RATIO_KEYS = {r["key"] for r in OVERVIEW_RATIO_CATALOG}
+_OVERVIEW_RATIO_DEFAULT_ENABLED = {r["key"] for r in OVERVIEW_RATIO_CATALOG if r["default_enabled"]}
+
+
+def get_overview_ratio_settings(conn: sqlite3.Connection) -> dict[str, bool]:
+    """Which of the ratio catalog's entries actually render on a company's
+    Overview tab. A ratio with no row yet defaults per its own
+    default_enabled — same reasoning get_company_list_column_settings
+    already gives for new columns, except the default can be off (most of
+    the always-on-by-default set is the original 15; extras start hidden
+    until an admin opts in)."""
+    rows = conn.execute("SELECT ratio_key, enabled FROM overview_ratio_settings").fetchall()
+    overrides = {row["ratio_key"]: bool(row["enabled"]) for row in rows}
+    return {key: overrides.get(key, key in _OVERVIEW_RATIO_DEFAULT_ENABLED) for key in _OVERVIEW_RATIO_KEYS}
+
+
+def set_overview_ratio_settings(conn: sqlite3.Connection, enabled_keys: Iterable[str]) -> None:
+    """Replace the whole set — same replace-all pattern as set_company_list_column_settings."""
+    enabled_keys = set(enabled_keys)
+    unknown = enabled_keys - _OVERVIEW_RATIO_KEYS
+    if unknown:
+        raise ValueError(f"Unknown ratio key(s): {sorted(unknown)}; must be one of {sorted(_OVERVIEW_RATIO_KEYS)}")
+    conn.executemany(
+        "INSERT INTO overview_ratio_settings (ratio_key, enabled) VALUES (?, ?) "
+        "ON CONFLICT(ratio_key) DO UPDATE SET enabled = excluded.enabled",
+        [(key, 1 if key in enabled_keys else 0) for key in _OVERVIEW_RATIO_KEYS],
+    )
+    conn.commit()
+
+
 def insert_macro_observations(
     conn: sqlite3.Connection, observations: Iterable[MacroNormalizedObservation]
 ) -> list[int]:
@@ -889,7 +1971,7 @@ def insert_macro_observations(
             """,
             (
                 obs.series_key, obs.region, obs.period_type, obs.period, obs.value, obs.unit,
-                obs.source, obs.source_file, obs.source_url, obs.retrieved_at or now, obs.parser_version, now,
+                obs.source, _normalize_source_file(obs.source_file), obs.source_url, obs.retrieved_at or now, obs.parser_version, now,
             ),
         )
         ids.append(cursor.lastrowid)
@@ -914,7 +1996,7 @@ def insert_bank_infrastructure_observations(
             """,
             (
                 obs.bank_name, obs.metric, obs.period_type, obs.period, obs.value, obs.unit,
-                obs.source, obs.source_file, obs.parser_version, now, now,
+                obs.source, _normalize_source_file(obs.source_file), obs.parser_version, now, now,
             ),
         )
         ids.append(cursor.lastrowid)
@@ -945,13 +2027,23 @@ def get_macro_series(
     ).fetchall()
 
 
+def list_macro_series_summary(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every distinct (series_key, source, earliest, latest) at the national
+    level (region IS NULL) — research/macro_evidence.py's own catalog
+    discovery used to run this as raw SQL directly."""
+    return conn.execute(
+        "SELECT series_key, source, MIN(period) AS earliest, MAX(period) AS latest "
+        "FROM macro_observations WHERE region IS NULL GROUP BY series_key, source"
+    ).fetchall()
+
+
 # ============================================================
 # Users (README: sign-up is email-based, no verification; the one seeded
 # admin account logs in by username instead — see schemas/sqlite_schema.sql)
 # ============================================================
 
-VALID_THEMES = {"light", "white", "green", "dark", "schwab"}
-DEFAULT_THEME = "schwab"
+VALID_THEMES = {"light", "white", "green", "dark", "schwab", "signals", "signals-light"}
+DEFAULT_THEME = "signals"
 
 
 def create_user(conn: sqlite3.Connection, email: str, password_hash: str) -> int:
@@ -994,3 +2086,384 @@ def update_user_theme(conn: sqlite3.Connection, user_id: int, theme: str) -> Non
         raise ValueError(f"theme must be one of {sorted(VALID_THEMES)}, got {theme!r}")
     conn.execute("UPDATE users SET theme = ? WHERE user_id = ?", (theme, user_id))
     conn.commit()
+
+
+# ============================================================
+# Shareholding pattern (SEBI LODR Reg 31) -- sources/nse_shareholding.py.
+# Single-source (NSE only) today, so upserted directly by natural key
+# rather than routed through the metric_aliases/reconciliation machinery
+# the financials tables use.
+# ============================================================
+
+def insert_shareholding_observations(conn: sqlite3.Connection, company_id: str, summaries: Iterable) -> int:
+    """Upsert one row per (company, fiscal_year, quarter) -- a re-fetch of
+    an already-seen quarter overwrites its percentages/provenance in place
+    (a later submission for the same quarter is a correction, not a second
+    observation to keep both of), same "latest wins" reasoning as
+    sources/nse_fetch.py's own seq_Id dedup for revised filings."""
+    now = utcnow_iso()
+    count = 0
+    for s in summaries:
+        conn.execute(
+            """
+            INSERT INTO shareholding_observations
+                (company_id, fiscal_year, quarter, promoter_holding_percent,
+                 public_holding_percent, employee_trust_percent, source,
+                 source_url, submission_date, retrieved_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'nse', ?, ?, ?, ?)
+            ON CONFLICT(company_id, fiscal_year, quarter) DO UPDATE SET
+                promoter_holding_percent = excluded.promoter_holding_percent,
+                public_holding_percent = excluded.public_holding_percent,
+                employee_trust_percent = excluded.employee_trust_percent,
+                source_url = excluded.source_url,
+                submission_date = excluded.submission_date,
+                retrieved_at = excluded.retrieved_at
+            """,
+            (
+                company_id, s.fiscal_year, s.quarter, s.promoter_percent,
+                s.public_percent, s.employee_trust_percent, s.source_url,
+                s.submission_date, now, now,
+            ),
+        )
+        count += 1
+    conn.commit()
+    return count
+
+
+def update_shareholding_category_breakdown(
+    conn: sqlite3.Connection, company_id: str, fiscal_year: str, quarter: str, breakdown
+) -> None:
+    """Backfill the FII/DII/Government/Public(non-institutional) columns
+    onto an already-upserted shareholding_observations row -- a separate
+    call from insert_shareholding_observations() because this data comes
+    from a per-quarter XBRL parse (one extra HTTP call per quarter,
+    sources/nse_shareholding.py's fetch_shareholding_detail()), not the
+    master listing every summary row is upserted from. A no-op if that row
+    doesn't exist yet (shouldn't happen in the normal fetch-then-detail
+    call order, but silently doing nothing is safer than erroring the
+    whole ingest run over one quarter's ordering)."""
+    conn.execute(
+        """
+        UPDATE shareholding_observations
+        SET fii_percent = ?, dii_percent = ?, government_percent = ?,
+            public_non_institutional_percent = ?, num_shareholders = ?
+        WHERE company_id = ? AND fiscal_year = ? AND quarter = ?
+        """,
+        (
+            breakdown.fii_percent, breakdown.dii_percent, breakdown.government_percent,
+            breakdown.public_non_institutional_percent, breakdown.num_shareholders,
+            company_id, fiscal_year, quarter,
+        ),
+    )
+    conn.commit()
+
+
+def insert_shareholding_holders(
+    conn: sqlite3.Connection,
+    company_id: str,
+    fiscal_year: str,
+    quarter: str,
+    holdings: Iterable,
+    *,
+    source_url: str | None,
+    submission_date: str | None,
+) -> int:
+    """Upsert one row per (company, fiscal_year, quarter, side, holder_name)
+    -- same latest-wins reasoning as insert_shareholding_observations()."""
+    now = utcnow_iso()
+    count = 0
+    for h in holdings:
+        conn.execute(
+            """
+            INSERT INTO shareholding_holders
+                (company_id, fiscal_year, quarter, side, category, holder_name,
+                 num_shares, percent_of_shares, source, source_url,
+                 submission_date, retrieved_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'nse', ?, ?, ?, ?)
+            ON CONFLICT(company_id, fiscal_year, quarter, side, holder_name) DO UPDATE SET
+                category = excluded.category,
+                num_shares = excluded.num_shares,
+                percent_of_shares = excluded.percent_of_shares,
+                source_url = excluded.source_url,
+                submission_date = excluded.submission_date,
+                retrieved_at = excluded.retrieved_at
+            """,
+            (
+                company_id, fiscal_year, quarter, h.side, h.category, h.holder_name,
+                h.num_shares, h.percent_of_shares, source_url, submission_date, now, now,
+            ),
+        )
+        count += 1
+    conn.commit()
+    return count
+
+
+# 40 quarters = 10 years -- matches the Financials tab's own 10-year framing
+# (valuation_dashboard_interactive.js's growth-projection table). Was 12
+# (3 years) originally; too tight once the Major Holders table grew an
+# Annual view (Q4-of-each-year), which needs several years of Q4s to be
+# useful and would otherwise silently truncate a company's older years --
+# found via ICICIBANK (20 quarters on file, oldest 8 got cut off).
+_SHAREHOLDING_HISTORY_QUARTERS = 40
+
+
+def list_shareholding_history(
+    conn: sqlite3.Connection, company_id: str, limit: int = _SHAREHOLDING_HISTORY_QUARTERS
+) -> list[dict]:
+    """Up to the last `limit` quarters' shareholding summaries, oldest
+    first (left-to-right column order for a Screener-style time-series
+    table) -- for the company page's Shareholding Pattern tab."""
+    rows = conn.execute(
+        """
+        SELECT * FROM shareholding_observations
+        WHERE company_id = ?
+        ORDER BY fiscal_year DESC, quarter DESC
+        LIMIT ?
+        """,
+        (company_id, limit),
+    ).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
+def list_shareholding_holders_all(conn: sqlite3.Connection, company_id: str) -> list[dict]:
+    """Every individually-named holder row on file for this company, across
+    every quarter -- the raw material web/shareholding_feed.py groups into
+    per-quarter FII/DII/Public-other buckets (sources.nse_shareholding.
+    classify_public_category) and per-holder trend sparklines. One query
+    covering the whole company rather than one per quarter: this table is
+    small (a few dozen named holders per quarter, and named-holder
+    extraction only covers the last several quarters -- see
+    sources/nse_shareholding.py's module docstring), so the feed builder
+    just filters/groups the full set in Python against
+    list_shareholding_history()'s own quarter list."""
+    rows = conn.execute(
+        """
+        SELECT fiscal_year, quarter, side, category, holder_name, num_shares, percent_of_shares
+        FROM shareholding_holders
+        WHERE company_id = ?
+        """,
+        (company_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ============================================================
+# Batch job audit log -- ingestion/batch_log.py is the only caller of these;
+# everything else reads via list_batch_job_runs/list_batch_job_items (Admin
+# UI, main.py's batch-log CLI command).
+# ============================================================
+
+
+def start_batch_job_run(conn: sqlite3.Connection, job_name: str, scope_label: str | None = None) -> int:
+    now = utcnow_iso()
+    cursor = conn.execute(
+        "INSERT INTO batch_job_runs (job_name, scope_label, started_at, status) VALUES (?, ?, ?, 'running')",
+        (job_name, scope_label, now),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def finish_batch_job_run(conn: sqlite3.Connection, run_id: int, *, status: str, notes: str | None = None) -> None:
+    counts = conn.execute(
+        "SELECT "
+        "  COUNT(*) AS total, "
+        "  SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS succeeded, "
+        "  SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed "
+        "FROM batch_job_items WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    conn.execute(
+        "UPDATE batch_job_runs SET finished_at = ?, status = ?, notes = ?, "
+        "  items_total = ?, items_succeeded = ?, items_failed = ? "
+        "WHERE run_id = ?",
+        (
+            utcnow_iso(), status, notes,
+            counts["total"] or 0, counts["succeeded"] or 0, counts["failed"] or 0,
+            run_id,
+        ),
+    )
+    conn.commit()
+
+
+def start_batch_job_item(conn: sqlite3.Connection, run_id: int, company_id: str | None) -> int:
+    cursor = conn.execute(
+        "INSERT INTO batch_job_items (run_id, company_id, started_at, status) VALUES (?, ?, ?, 'running')",
+        (run_id, company_id, utcnow_iso()),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def finish_batch_job_item(conn: sqlite3.Connection, item_id: int, *, status: str, detail: str | None = None) -> None:
+    conn.execute(
+        "UPDATE batch_job_items SET finished_at = ?, status = ?, detail = ? WHERE item_id = ?",
+        (utcnow_iso(), status, detail, item_id),
+    )
+    conn.commit()
+
+
+def list_batch_job_runs(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
+    """Most recent runs first -- Admin UI / CLI history view."""
+    rows = conn.execute(
+        "SELECT * FROM batch_job_runs ORDER BY started_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_batch_job_items(conn: sqlite3.Connection, run_id: int) -> list[dict]:
+    """Every item in one run, in the order they started -- for drilling into
+    which companies failed and why."""
+    rows = conn.execute(
+        "SELECT * FROM batch_job_items WHERE run_id = ? ORDER BY item_id ASC", (run_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ============================================================
+# Dataset-centric ingestion events (ingestion/events.py, ingestion/event_bus.py)
+# ============================================================
+
+def insert_dataset_event(conn: sqlite3.Connection, event: DatasetIngestedEvent) -> None:
+    """Append one DATASET_INGESTED event to the Event Store. event_id/
+    ingested_at are expected to already be filled (event_bus.publish() does
+    that before calling this) -- this function only ever appends, never
+    updates, matching the Event Store's immutable-history contract."""
+    conn.execute(
+        """
+        INSERT INTO dataset_events (
+            event_id, event_type, dataset_id, dataset_type, source, scope_json,
+            period, storage_reference_json, ingestion_id, ingested_at, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event.event_id, event.event_type, event.dataset_id, event.dataset_type, event.source,
+            json.dumps(event.scope), event.period, json.dumps(event.storage_reference),
+            event.ingestion_id, event.ingested_at, json.dumps(event.metadata), utcnow_iso(),
+        ),
+    )
+    conn.commit()
+
+
+def get_dataset_event(conn: sqlite3.Connection, event_id: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM dataset_events WHERE event_id = ?", (event_id,)).fetchone()
+
+
+def list_dataset_events(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str | None = None,
+    dataset_type: str | None = None,
+    source: str | None = None,
+    ingestion_id: str | None = None,
+    since: str | None = None,
+) -> list[sqlite3.Row]:
+    """Query the Event Store -- ingestion/event_bus.py's replay() uses this
+    to find events to re-dispatch (README: manual replay / worker failure
+    recovery / historical processing for a newly-added worker). Filters
+    combine with AND; every filter is optional so callers only constrain
+    what they care about."""
+    clauses, params = [], []
+    if event_id is not None:
+        clauses.append("event_id = ?")
+        params.append(event_id)
+    if dataset_type is not None:
+        clauses.append("dataset_type = ?")
+        params.append(dataset_type)
+    if source is not None:
+        clauses.append("source = ?")
+        params.append(source)
+    if ingestion_id is not None:
+        clauses.append("ingestion_id = ?")
+        params.append(ingestion_id)
+    if since is not None:
+        clauses.append("ingested_at >= ?")
+        params.append(since)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.execute(
+        f"SELECT * FROM dataset_events {where} ORDER BY ingested_at ASC", params
+    ).fetchall()
+
+
+def start_worker_log(
+    conn: sqlite3.Connection, *, event_id: str, ingestion_id: str, worker_name: str, worker_version: str
+) -> int:
+    """A worker is about to run against one event -- same start/finish
+    shape as start_batch_job_item()/finish_batch_job_item(). A replay that
+    re-runs the same (event_id, worker_name, worker_version) increments
+    retry_count on the existing row instead of violating the table's
+    UNIQUE constraint, so history for that exact worker version stays one
+    row (the log's own idempotency key), not a growing pile of duplicates."""
+    now = utcnow_iso()
+    existing = get_worker_log(conn, event_id, worker_name, worker_version)
+    if existing is not None:
+        conn.execute(
+            "UPDATE worker_processing_log SET status = 'running', started_at = ?, completed_at = NULL, "
+            "  retry_count = retry_count + 1 WHERE log_id = ?",
+            (now, existing["log_id"]),
+        )
+        conn.commit()
+        return existing["log_id"]
+    cursor = conn.execute(
+        """
+        INSERT INTO worker_processing_log (event_id, ingestion_id, worker_name, worker_version, status, started_at)
+        VALUES (?, ?, ?, ?, 'running', ?)
+        """,
+        (event_id, ingestion_id, worker_name, worker_version, now),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def finish_worker_log(
+    conn: sqlite3.Connection,
+    log_id: int,
+    *,
+    status: str,
+    output_reference: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    conn.execute(
+        "UPDATE worker_processing_log SET status = ?, completed_at = ?, output_reference = ?, error_message = ? "
+        "WHERE log_id = ?",
+        (status, utcnow_iso(), output_reference, error_message, log_id),
+    )
+    conn.commit()
+
+
+def get_worker_log(
+    conn: sqlite3.Connection, event_id: str, worker_name: str, worker_version: str
+) -> sqlite3.Row | None:
+    """The idempotency check ingestion/event_bus.py's replay() relies on:
+    a non-forced replay skips a worker for an event once this returns a row
+    with status 'ok' or 'skipped' for that exact worker_version."""
+    return conn.execute(
+        "SELECT * FROM worker_processing_log WHERE event_id = ? AND worker_name = ? AND worker_version = ?",
+        (event_id, worker_name, worker_version),
+    ).fetchone()
+
+
+def list_worker_processing_log(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str | None = None,
+    worker_name: str | None = None,
+    status: str | None = None,
+) -> list[sqlite3.Row]:
+    """"What did each worker do with this ingestion event" -- and the
+    reverse, "what has this worker done across every event" -- same query,
+    filtered differently."""
+    clauses, params = [], []
+    if event_id is not None:
+        clauses.append("event_id = ?")
+        params.append(event_id)
+    if worker_name is not None:
+        clauses.append("worker_name = ?")
+        params.append(worker_name)
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.execute(
+        f"SELECT * FROM worker_processing_log {where} ORDER BY log_id ASC", params
+    ).fetchall()

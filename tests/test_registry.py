@@ -28,6 +28,33 @@ def test_register_company_normalizes_id(db_conn: sqlite3.Connection) -> None:
     assert company_id == "HDFCBANK"
 
 
+def test_register_company_defaults_to_march_fiscal_year_end(db_conn: sqlite3.Connection) -> None:
+    register_company(db_conn, "HDFCBANK", "HDFC Bank Limited", "HDFC Bank")
+    row = get_company(db_conn, "HDFCBANK")
+    assert row["country"] == "IN"
+    assert row["currency"] == "INR"
+    assert row["fiscal_year_end_month"] == 3
+
+
+def test_register_us_company_with_calendar_fiscal_year_end(db_conn: sqlite3.Connection) -> None:
+    register_company(
+        db_conn, "AAPL", "Apple Inc.", "Apple", country="US", currency="USD", fiscal_year_end_month=12
+    )
+    row = get_company(db_conn, "AAPL")
+    assert row["country"] == "US"
+    assert row["currency"] == "USD"
+    assert row["fiscal_year_end_month"] == 12
+
+
+def test_register_company_with_a_dotted_us_ticker(db_conn: sqlite3.Connection) -> None:
+    """company_id normalization (normalization/companies.py) allows "." and
+    "-" so a real US ticker like Berkshire's class B shares round-trips
+    as-is, not just NSE/BSE-style alphanumeric symbols."""
+    company_id = register_company(db_conn, "brk.b", "Berkshire Hathaway Inc.", "Berkshire Hathaway B", country="US")
+    assert company_id == "BRK.B"
+    assert get_company(db_conn, "BRK.B") is not None
+
+
 def test_register_company_is_upsert(db_conn: sqlite3.Connection) -> None:
     register_company(db_conn, "HDFCBANK", "HDFC Bank Limited", "HDFC Bank", sector="Old Sector")
     register_company(db_conn, "HDFCBANK", "HDFC Bank Limited", "HDFC Bank", sector="Financial Services")

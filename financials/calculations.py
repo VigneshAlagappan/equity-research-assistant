@@ -10,7 +10,7 @@ from FY2023-FY2026 reported revenue" (README's worked example).
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 from dataclasses import dataclass
 
 from normalization.periods import fiscal_year_number, previous_quarter
@@ -85,7 +85,7 @@ def rolling_avg(values: list[float], window: int) -> list[float]:
 
 
 def cagr_for_metric(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     metric_key: str,
     start_fiscal_year: str,
@@ -114,7 +114,7 @@ def cagr_for_metric(
 
 
 def yoy_growth_for_metric(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     metric_key: str,
     fiscal_year: str,
@@ -142,7 +142,7 @@ def yoy_growth_for_metric(
 
 
 def qoq_growth_for_metric(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     metric_key: str,
     fiscal_year: str,

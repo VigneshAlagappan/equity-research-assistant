@@ -46,6 +46,15 @@
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   }
 
+  // note.created_at/updated_at are UTC (storage/database.py's utcnow_iso) —
+  // the viewer's own local calendar date, not the server's, is what a
+  // "dated note" should read as.
+  function localDate(isoUtc) {
+    const d = new Date(isoUtc);
+    if (Number.isNaN(d.getTime())) return isoUtc.slice(0, 10);
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+
   function init(root) {
     const companyId = root.dataset.companyId;
     const companyName = root.dataset.companyName;
@@ -71,11 +80,11 @@
     const countEl = document.getElementById("notes-count");
 
     function stampShort(note) {
-      return note.created_at.slice(0, 10);
+      return localDate(note.created_at);
     }
     function stampFull(note) {
-      let s = note.created_at.slice(0, 10);
-      if (note.updated_at) s += " · edited " + note.updated_at.slice(0, 10);
+      let s = localDate(note.created_at);
+      if (note.updated_at) s += " · edited " + localDate(note.updated_at);
       return s;
     }
 

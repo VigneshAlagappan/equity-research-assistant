@@ -51,6 +51,11 @@ def test_invalid_unit_is_flagged() -> None:
     assert any("unit" in p for p in problems)
 
 
+def test_usd_billion_is_a_valid_unit() -> None:
+    obs = replace(VALID, unit="USD_BILLION", currency="USD", source="yfinance")
+    assert validate_observation(obs) == []
+
+
 def test_invalid_statement_type_is_flagged() -> None:
     obs = replace(VALID, statement_type="restated")
     problems = validate_observation(obs)

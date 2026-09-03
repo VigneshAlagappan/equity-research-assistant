@@ -35,6 +35,15 @@
   }
   .companies-filters select.input { min-height: 36px; }
 
+  /* Same pagination pattern as the Admin Ingest panel / Investigations /
+     Watchlist (web/templates/admin.html and friends). */
+  .admin-pagination {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+    gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-3);
+    border-top: 1px solid var(--color-divider); font-size: 13px;
+  }
+  .admin-pagination-links { display: flex; align-items: center; gap: var(--space-2); }
+
   /* Column picker: a small icon button + popover, positioned to line up
      with the other filter controls' baseline. */
   .companies-column-picker { position: relative; flex: none; }
@@ -69,7 +78,38 @@
   table.companies th, table.companies td { padding: 6px 9px; }
   table.companies td.company a { font-weight: 600; text-decoration: none; }
   table.companies td.company a:hover { text-decoration: underline; }
+  .company-website-link {
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--ink-muted); margin-left: 6px; vertical-align: middle;
+  }
+  .company-website-link:hover { color: var(--color-accent); }
   table.companies td.price, table.companies th.price { font-variant-numeric: tabular-nums; text-align: right; }
+  table.companies td.price .price-change { display: block; font-size: 11px; margin-top: 1px; }
+  /* Default (untheme-scoped) colors, same pattern web/templates/company.html
+     uses for its own .price-up/.price-down — classical/styles.css's
+     :root[data-theme="..."] .price-up/.price-down rules override these for
+     the themes that define their own accent-matched pair (signals,
+     signals-light, schwab), same specificity trick as everywhere else those
+     rules apply. */
+  .price-up { color: #2e7d32; }
+  .price-down { color: #c62828; }
+
+  /* 52-week / all-time range cells: a thin track the full width of the
+     column with a dot marking where the latest price sits between the
+     range's low and high, labels below giving the two endpoints. */
+  table.companies td.range-cell { min-width: 150px; text-align: left; }
+  .range-track {
+    position: relative; height: 2px; margin: 9px 3px 6px;
+    background: var(--color-divider); border-radius: 1px;
+  }
+  .range-dot {
+    position: absolute; top: 50%; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--color-accent); transform: translate(-50%, -50%);
+  }
+  .range-labels {
+    display: flex; justify-content: space-between; gap: 6px;
+    font-size: 11px; color: var(--ink-muted); font-variant-numeric: tabular-nums;
+  }
   table.companies .companies-ids {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--ink-muted);
     display: block;
@@ -135,6 +175,15 @@
       </select>
     </div>
     {% endif %}
+    <div class="field">
+      <label for="companies-page-size">Rows per page</label>
+      <select class="input" id="companies-page-size">
+        <option value="25">25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="all">All</option>
+      </select>
+    </div>
     {% if columns %}
     <div class="companies-column-picker">
       <button type="button" class="btn btn-ghost companies-columns-btn" id="companies-columns-btn"
@@ -159,7 +208,7 @@
         <tr>
           <th class="sortable" data-sort-key="name">Company<span class="sort-indicator"></span></th>
           {% for col in columns %}
-          <th class="sortable {{ 'price' if col['key'] == 'price' else '' }}" data-sort-key="{{ col['key'] }}">{{ col['label'] }}<span class="sort-indicator"></span></th>
+          <th class="sortable {{ 'price' if col['key'] in ('price', 'market_cap', 'week52', 'all_time') else '' }}" data-sort-key="{{ col['key'] }}">{{ col['label'] }}<span class="sort-indicator"></span></th>
           {% endfor %}
         </tr>
       </thead>
@@ -174,11 +223,19 @@
             data-sector="{{ c['sector'] or '' }}" data-industry="{{ c['industry'] or '' }}"
             data-country="{{ c['country'] }}"
             data-price="{{ c['latest_price'] if c['latest_price'] is not none else '' }}"
+            data-market-cap="{{ c['market_cap_cr'] if c['market_cap_cr'] is not none else '' }}"
+            data-week52-high="{{ c['week52_high'] if c['week52_high'] is not none else '' }}"
+            data-all-time-high="{{ c['all_time_high'] if c['all_time_high'] is not none else '' }}"
             data-status="{{ c['status'] }}"
             data-tags="|{{ c['index_tags']|join('|') }}|"
             data-tags-sort="{{ c['index_tags']|join(', ')|lower }}">
           <td class="company">
             <a href="{{ url_for('company_report', company_id=c['company_id']) }}">{{ c['display_name'] }}</a>
+            {% if c['website'] %}
+            <a class="company-website-link" href="{{ c['website'] }}" target="_blank" rel="noopener noreferrer" aria-label="Open {{ c['display_name'] }}'s website" title="Open company website">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>
+            </a>
+            {% endif %}
           </td>
           {% for col in columns %}
             {% if col['key'] == 'sector' %}
@@ -186,7 +243,36 @@
             {% elif col['key'] == 'industry' %}
           <td data-col="industry">{{ c['industry'] or '—' }}</td>
             {% elif col['key'] == 'price' %}
-          <td data-col="price" class="price">{% if c['latest_price'] is not none %}{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '%.2f'|format(c['latest_price']) }}{% else %}—{% endif %}</td>
+          <td data-col="price" class="price">
+            {% if c['latest_price'] is not none %}
+            {{ '$' if c['currency'] == 'USD' else '₹' }}{{ '{:,.2f}'.format(c['latest_price']) }}
+            {% if c['price_change_pct'] is not none %}
+            <span class="price-change {{ 'price-up' if c['price_change_pct'] >= 0 else 'price-down' }}">{{ '+' if c['price_change_pct'] >= 0 else '' }}{{ '%.1f'|format(c['price_change_pct']) }}%</span>
+            {% endif %}
+            {% else %}—{% endif %}
+          </td>
+            {% elif col['key'] == 'market_cap' %}
+          <td data-col="market_cap" class="price">{% if c['market_cap_cr'] is not none %}{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '{:,.0f}'.format(c['market_cap_cr']) }} Cr{% else %}—{% endif %}</td>
+            {% elif col['key'] == 'week52' %}
+          <td data-col="week52" class="price range-cell">
+            {% if c['week52_low'] is not none %}
+            <div class="range-track">{% if c['week52_pct'] is not none %}<div class="range-dot" style="left: {{ '%.1f'|format(c['week52_pct']) }}%;"></div>{% endif %}</div>
+            <div class="range-labels">
+              <span>{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '{:,.0f}'.format(c['week52_low']) }}</span>
+              <span>{{ '{:,.0f}'.format(c['week52_high']) }}</span>
+            </div>
+            {% else %}—{% endif %}
+          </td>
+            {% elif col['key'] == 'all_time' %}
+          <td data-col="all_time" class="price range-cell">
+            {% if c['all_time_low'] is not none %}
+            <div class="range-track">{% if c['all_time_pct'] is not none %}<div class="range-dot" style="left: {{ '%.1f'|format(c['all_time_pct']) }}%;"></div>{% endif %}</div>
+            <div class="range-labels">
+              <span>{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '{:,.0f}'.format(c['all_time_low']) }}</span>
+              <span>{{ '{:,.0f}'.format(c['all_time_high']) }}</span>
+            </div>
+            {% else %}—{% endif %}
+          </td>
             {% elif col['key'] == 'status' %}
           <td data-col="status">
             {% if c['status'] == 'active' %}
@@ -215,6 +301,14 @@
   <div class="empty-state" id="companies-no-matches" style="display:none;">
     No companies match these filters.
   </div>
+  <div class="admin-pagination" id="companies-pagination" style="display:none;">
+    <span class="muted" id="companies-pagination-summary"></span>
+    <div class="admin-pagination-links">
+      <button type="button" class="btn btn-ghost" id="companies-page-prev">&larr; Previous</button>
+      <span class="muted" id="companies-pagination-pages"></span>
+      <button type="button" class="btn btn-ghost" id="companies-page-next">Next &rarr;</button>
+    </div>
+  </div>
 
   <script>
     (function () {
@@ -223,35 +317,85 @@
       const sectorSelect = document.getElementById('companies-sector');
       const industrySelect = document.getElementById('companies-industry');
       const tagSelect = document.getElementById('companies-tag');
+      const pageSizeSelect = document.getElementById('companies-page-size');
       const rows = Array.from(document.querySelectorAll('#companies-tbody tr'));
       const noMatchesEl = document.getElementById('companies-no-matches');
       const wrapEl = document.querySelector('.companies-wrap');
+      const paginationEl = document.getElementById('companies-pagination');
+      const paginationSummary = document.getElementById('companies-pagination-summary');
+      const paginationPages = document.getElementById('companies-pagination-pages');
+      const prevBtn = document.getElementById('companies-page-prev');
+      const nextBtn = document.getElementById('companies-page-next');
 
+      // Per-browser only (localStorage), same pattern as the column picker
+      // just below — not a server-side setting, just a remembered UI choice.
+      const PAGE_SIZE_STORAGE_KEY = 'companies-list-page-size-v1';
+      let pageSize = localStorage.getItem(PAGE_SIZE_STORAGE_KEY) || '25';
+      pageSizeSelect.value = pageSize;
+
+      // The order pagination slices from — starts as document order, but
+      // sortRows() (below) replaces it with the freshly-sorted order after
+      // a header click, since rows/tbody-children reordering alone
+      // wouldn't otherwise be reflected in which rows land on which page.
+      let sortedRows = rows;
+      let matchingRows = rows;
+      let currentPage = 1;
+
+      // Filtering decides *which* rows match; pagination (below) then
+      // decides which slice of those matches is actually visible — the two
+      // are separate passes so neither has to know about the other's logic.
       function applyFilters() {
-        // Multi-token AND match against the row's full metadata blob (name,
-        // ID, legal name, NSE/BSE/ISIN codes, country, sector, industry,
-        // status, website, index tags) — "hdfc bank nifty50" narrows down
-        // by every word, not just one field at a time.
         const tokens = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
         const country = countrySelect ? countrySelect.value : '';
         const sector = sectorSelect.value;
         const industry = industrySelect.value;
         const tag = tagSelect ? tagSelect.value : '';
-        let visible = 0;
-        for (const row of rows) {
+        matchingRows = sortedRows.filter((row) => {
           const haystack = row.dataset.search;
-          const matches =
+          return (
             tokens.every((t) => haystack.includes(t)) &&
             (!country || row.dataset.country === country) &&
             (!sector || row.dataset.sector === sector) &&
             (!industry || row.dataset.industry === industry) &&
-            (!tag || row.dataset.tags.includes('|' + tag + '|'));
-          row.style.display = matches ? '' : 'none';
-          if (matches) visible++;
-        }
-        wrapEl.style.display = visible === 0 ? 'none' : '';
-        noMatchesEl.style.display = visible === 0 ? '' : 'none';
+            (!tag || row.dataset.tags.includes('|' + tag + '|'))
+          );
+        });
+        currentPage = 1;
+        renderPage();
       }
+
+      function renderPage() {
+        const total = matchingRows.length;
+        const size = pageSize === 'all' ? total || 1 : parseInt(pageSize, 10);
+        const totalPages = Math.max(1, Math.ceil(total / size));
+        currentPage = Math.min(Math.max(1, currentPage), totalPages);
+        const start = (currentPage - 1) * size;
+        const end = start + size;
+        const visibleSet = new Set(matchingRows.slice(start, end));
+
+        for (const row of rows) {
+          row.style.display = visibleSet.has(row) ? '' : 'none';
+        }
+
+        wrapEl.style.display = total === 0 ? 'none' : '';
+        noMatchesEl.style.display = total === 0 ? '' : 'none';
+        paginationEl.style.display = total === 0 || pageSize === 'all' ? 'none' : '';
+        if (total > 0 && pageSize !== 'all') {
+          paginationSummary.textContent = `Showing ${start + 1}–${Math.min(end, total)} of ${total}`;
+          paginationPages.textContent = `Page ${currentPage} of ${totalPages}`;
+          prevBtn.disabled = currentPage <= 1;
+          nextBtn.disabled = currentPage >= totalPages;
+        }
+      }
+
+      prevBtn.addEventListener('click', () => { currentPage -= 1; renderPage(); });
+      nextBtn.addEventListener('click', () => { currentPage += 1; renderPage(); });
+      pageSizeSelect.addEventListener('change', () => {
+        pageSize = pageSizeSelect.value;
+        localStorage.setItem(PAGE_SIZE_STORAGE_KEY, pageSize);
+        currentPage = 1;
+        renderPage();
+      });
 
       search.addEventListener('input', applyFilters);
       if (tagSelect) tagSelect.addEventListener('change', applyFilters);
@@ -268,28 +412,33 @@
       // regardless of direction rather than landing at the top on descending.
       const tbody = document.getElementById('companies-tbody');
       const headerCells = Array.from(document.querySelectorAll('table.companies thead th[data-sort-key]'));
-      const SORT_ATTR = { name: 'name', sector: 'sector', industry: 'industry', price: 'price', status: 'status', tags: 'tagsSort' };
+      // week52/all_time sort by their High value (dataset.week52High /
+      // dataset.allTimeHigh) — a Low–High range has no single natural sort
+      // number, and High is the more commonly-scanned-for figure of the two.
+      const SORT_ATTR = {
+        name: 'name', sector: 'sector', industry: 'industry', price: 'price', market_cap: 'marketCap',
+        week52: 'week52High', all_time: 'allTimeHigh', status: 'status', tags: 'tagsSort',
+      };
       let sortState = { key: null, dir: 1 };
 
       function sortRows(key) {
         const attr = SORT_ATTR[key];
         if (!attr) return;
         sortState = sortState.key === key ? { key, dir: -sortState.dir } : { key, dir: 1 };
-        const numeric = key === 'price';
-        rows
-          .slice()
-          .sort((a, b) => {
-            const av = a.dataset[attr] || '';
-            const bv = b.dataset[attr] || '';
-            if (numeric) {
-              if (av === '' && bv === '') return 0;
-              if (av === '') return 1;
-              if (bv === '') return -1;
-              return (parseFloat(av) - parseFloat(bv)) * sortState.dir;
-            }
-            return av.localeCompare(bv) * sortState.dir;
-          })
-          .forEach((row) => tbody.appendChild(row));
+        const numeric = key === 'price' || key === 'market_cap' || key === 'week52' || key === 'all_time';
+        sortedRows = rows.slice().sort((a, b) => {
+          const av = a.dataset[attr] || '';
+          const bv = b.dataset[attr] || '';
+          if (numeric) {
+            if (av === '' && bv === '') return 0;
+            if (av === '') return 1;
+            if (bv === '') return -1;
+            return (parseFloat(av) - parseFloat(bv)) * sortState.dir;
+          }
+          return av.localeCompare(bv) * sortState.dir;
+        });
+        sortedRows.forEach((row) => tbody.appendChild(row));
+        applyFilters();
         headerCells.forEach((th) => {
           const indicator = th.querySelector('.sort-indicator');
           const active = th.dataset.sortKey === key;

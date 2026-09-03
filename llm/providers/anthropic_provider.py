@@ -14,9 +14,16 @@ from llm.providers.base import ProviderResponse, ProviderUnavailable
 
 PROVIDER_NAME = "anthropic"
 
+# The SDK's own default (10 minutes) lets one stuck call block a whole batch
+# ingestion run — observed hanging well past any reasonable single-call
+# duration. Failing fast here raises APITimeoutError (an APIError subclass,
+# already turned into ProviderUnavailable below) so llm/router.py's fallback
+# chain — or knowledge_builder's own corrective retry — gets a turn instead.
+REQUEST_TIMEOUT_SECONDS = 90.0
+
 
 def generate(*, system: str, user_message: str, model: str, max_tokens: int) -> ProviderResponse:
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=REQUEST_TIMEOUT_SECONDS)
     try:
         response = client.messages.create(
             model=model,
@@ -25,6 +32,16 @@ def generate(*, system: str, user_message: str, model: str, max_tokens: int) -> 
             messages=[{"role": "user", "content": user_message}],
         )
     except anthropic.APIError as exc:
+        raise ProviderUnavailable(f"anthropic:{model}: {exc}") from exc
+    except TypeError as exc:
+        # No ANTHROPIC_API_KEY configured at all: the SDK doesn't raise
+        # anthropic.APIError for this (no request is ever attempted) — it
+        # raises a bare TypeError from header-building
+        # ("Could not resolve authentication method"). That's still just
+        # "this provider isn't usable right now", same as a rate limit or
+        # outage — must fall back like every other operational failure here,
+        # not crash the whole route() call before local_provider ever gets a
+        # chance to run.
         raise ProviderUnavailable(f"anthropic:{model}: {exc}") from exc
 
     text = "".join(block.text for block in response.content if block.type == "text")

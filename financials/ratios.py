@@ -10,12 +10,12 @@ sector, instead of silently returning nothing or a wrong number.
 from __future__ import annotations
 
 import json
-import sqlite3
 
 from companies.registry import get_company
 from financials.calculations import CalculationResult, MissingDataError
 from normalization.periods import fiscal_year_number
-from storage.repositories import get_canonical_value
+from storage.db_types import DBConnection, Row
+from storage.repositories import get_canonical_value, get_metric_dictionary_entry
 
 
 class SectorMismatchError(ValueError):
@@ -68,7 +68,7 @@ def net_profit_margin(net_profit: float, total_income: float) -> float:
 # ------------------------------------------------------------------
 
 
-def _company_sector_tags(company_row: sqlite3.Row) -> set[str]:
+def _company_sector_tags(company_row: Row) -> set[str]:
     """Derive metrics_dictionary-style sector tags from a company's industry text.
 
     A POC-level heuristic (companies has free-text sector/industry, not a tag
@@ -85,23 +85,21 @@ def _company_sector_tags(company_row: sqlite3.Row) -> set[str]:
 
 
 def get_required_metric(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     metric_key: str,
     fiscal_year: str,
     period_type: str = "annual",
     quarter: str | None = None,
     statement_type: str | None = "consolidated",
-) -> sqlite3.Row:
+) -> Row:
     """Fetch one canonical value, refusing sector-inapplicable metrics and
     missing data with a clear error rather than guessing."""
     company = get_company(conn, company_id)
     if company is None:
         raise MissingDataError(f"No company registered with company_id={company_id!r}")
 
-    metric_row = conn.execute(
-        "SELECT applicable_sectors FROM metrics_dictionary WHERE metric_key = ?", (metric_key,)
-    ).fetchone()
+    metric_row = get_metric_dictionary_entry(conn, metric_key)
     if metric_row is None:
         raise MissingDataError(f"Unknown metric_key: {metric_key!r}")
 
@@ -121,7 +119,7 @@ def get_required_metric(
 
 
 def roa_for_company(
-    conn: sqlite3.Connection, company_id: str, fiscal_year: str, statement_type: str | None = "consolidated"
+    conn: DBConnection, company_id: str, fiscal_year: str, statement_type: str | None = "consolidated"
 ) -> CalculationResult:
     prior_fy = f"FY{fiscal_year_number(fiscal_year) - 1}"
     net_profit = get_required_metric(conn, company_id, "net_profit", fiscal_year, statement_type=statement_type)
@@ -143,7 +141,7 @@ def roa_for_company(
 
 
 def _shareholders_funds(
-    conn: sqlite3.Connection, company_id: str, fiscal_year: str, statement_type: str | None
+    conn: DBConnection, company_id: str, fiscal_year: str, statement_type: str | None
 ) -> tuple[float, str, bool]:
     """total_shareholders_funds if reported directly, else the exact identity
     equity_share_capital + reserves. Not an estimate — every balance sheet
@@ -168,7 +166,7 @@ def _shareholders_funds(
 
 
 def roe_for_company(
-    conn: sqlite3.Connection, company_id: str, fiscal_year: str, statement_type: str | None = "consolidated"
+    conn: DBConnection, company_id: str, fiscal_year: str, statement_type: str | None = "consolidated"
 ) -> CalculationResult:
     prior_fy = f"FY{fiscal_year_number(fiscal_year) - 1}"
     net_profit = get_required_metric(conn, company_id, "net_profit", fiscal_year, statement_type=statement_type)
@@ -191,7 +189,7 @@ def roe_for_company(
 
 
 def vendor_reported(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     company_id: str,
     metric_key: str,
     fiscal_year: str,

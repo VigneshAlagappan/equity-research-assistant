@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% block title %}{{ investigation.question }} — Signals{% endblock %}
+
+{% block page_class %}page-wide{% endblock %}
+
+{% block extra_style %}
+  .investigation-eyebrow {
+    font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55;
+  }
+  .investigation-question-block { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-5); max-width: 68ch; }
+  .investigation-question-block h2 { margin: 0; }
+  .investigation-meta { font-size: 12px; opacity: 0.6; margin-bottom: var(--space-5); }
+
+  .investigation-synthesis { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-6); max-width: 68ch; }
+  .investigation-synthesis p { text-align: justify; margin: 0; }
+  .investigation-synthesis ul { margin: var(--space-1) 0 0; padding-left: 1.2em; }
+  .investigation-synthesis li { margin: 3px 0; }
+  .investigation-synthesis-section { margin-top: var(--space-3); }
+  .investigation-synthesis-section .card-kicker { display: block; margin-bottom: var(--space-1); }
+
+  .hypothesis-list { display: flex; flex-direction: column; gap: var(--space-4); max-width: 68ch; }
+  .hypothesis-card { padding: var(--space-4); }
+  .hypothesis-top-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+  .hypothesis-tags { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+  .hypothesis-rank { font-size: 12px; opacity: 0.55; }
+  .hypothesis-statement { margin: var(--space-2) 0 0; font-size: 15px; }
+  .hypothesis-mechanism, .hypothesis-rationale { margin: var(--space-2) 0 0; opacity: 0.85; font-size: 13.5px; }
+  .hypothesis-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55; margin-top: var(--space-3); }
+  .hypothesis-unknowns { margin: 4px 0 0; padding-left: 1.2em; font-size: 13px; opacity: 0.8; }
+
+  .hypothesis-evidence { margin-top: var(--space-2); }
+  .hypothesis-evidence-group { margin-top: var(--space-2); }
+  .hypothesis-evidence-group summary { cursor: pointer; font-size: 12.5px; font-weight: 600; }
+  .hyp-evidence-cards { display: flex; flex-direction: column; margin-top: var(--space-1); }
+  .hyp-evidence-card { padding: var(--space-1) 0; border-top: 1px solid var(--color-divider); font-size: 13px; }
+  .hyp-evidence-card:first-child { border-top: none; }
+  .hyp-evidence-label { font-weight: 600; }
+  .hyp-evidence-value { opacity: 0.85; margin-top: 2px; }
+  .hyp-evidence-meta { opacity: 0.55; font-size: 11px; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.03em; }
+{% endblock %}
+
+{% block content %}
+  <a class="btn btn-ghost" href="{{ url_for('research') }}">&larr; New question</a>
+
+  <div class="investigation-question-block" style="margin-top: var(--space-4);">
+    <div class="investigation-eyebrow">Investigation</div>
+    <h2>{{ investigation.question }}</h2>
+  </div>
+  <div class="investigation-meta">
+    <span class="local-time" data-utc="{{ investigation.generated_at }}">{{ investigation.generated_at }}</span> &middot;
+    {{ investigation.company_ids|join(', ') if investigation.company_ids else 'Macro/regulatory' }} &middot;
+    {{ investigation.statement_type }} &middot;
+    {{ hypotheses|length }} hypothes{{ 'is' if hypotheses|length == 1 else 'es' }}
+    {%- if investigation.as_of %} &middot;
+    <span class="tag tag-outline" title="Point-in-time investigation: every evidence source was restricted to what was on file on this date (research/temporal.py). No later data was retrievable.">evidence as of {{ investigation.as_of }}</span>
+    {%- endif %}
+  </div>
+
+  {% if investigation.strongest_explanation %}
+  <div class="investigation-synthesis">
+    <span class="tag tag-accent" style="align-self: flex-start;">Strongest explanation</span>
+    <p>{{ investigation.strongest_explanation }}</p>
+
+    {% if investigation.unanswered_questions %}
+    <div class="investigation-synthesis-section">
+      <span class="card-kicker">Still unanswered</span>
+      <ul>{% for q in investigation.unanswered_questions %}<li>{{ q }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+
+    {% if investigation.additional_evidence_needed %}
+    <div class="investigation-synthesis-section">
+      <span class="card-kicker">Additional evidence worth collecting</span>
+      <ul>{% for e in investigation.additional_evidence_needed %}<li>{{ e }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="investigation-meta">Synthesis wasn't available for this investigation — individual hypothesis
+    evaluations below are still grounded in their own evidence.</p>
+  {% endif %}
+
+  <div class="hr" style="max-width:680px;margin:0 0 var(--space-6)"></div>
+
+  <div class="hypothesis-list">
+    {% for h in hypotheses %}
+    <div class="card elev-sm hypothesis-card">
+      <div class="hypothesis-top-row">
+        <div class="hypothesis-tags">
+          {% if h.synthesis_rank %}<span class="hypothesis-rank">#{{ h.synthesis_rank }}</span>{% endif %}
+          <span class="tag tag-neutral">{{ h.category }}</span>
+          {% if h.verdict == 'SUPPORTED' %}
+          <span class="tag tag-accent">Supported</span>
+          {% elif h.verdict == 'PARTIALLY_SUPPORTED' %}
+          <span class="tag tag-accent-2">Partially supported</span>
+          {% elif h.verdict == 'REFUTED' %}
+          <span class="tag tag-neutral">Refuted</span>
+          {% elif h.verdict == 'INSUFFICIENT_EVIDENCE' %}
+          <span class="tag tag-outline">Insufficient evidence</span>
+          {% else %}
+          <span class="tag tag-outline">Not evaluated</span>
+          {% endif %}
+        </div>
+      </div>
+
+      <p class="hypothesis-statement">{{ h.statement }}</p>
+      {% if h.mechanism %}<p class="hypothesis-mechanism">{{ h.mechanism }}</p>{% endif %}
+      {% if h.confidence_basis %}<p class="hypothesis-rationale">{{ h.confidence_basis }}</p>
+      {% elif h.rationale %}<p class="hypothesis-rationale">{{ h.rationale }}</p>{% endif %}
+
+      {% if h.unknowns %}
+      <div class="hypothesis-label">Unknowns at time of generation</div>
+      <ul class="hypothesis-unknowns">{% for u in h.unknowns %}<li>{{ u }}</li>{% endfor %}</ul>
+      {% endif %}
+
+      {% if h.supporting_evidence or h.contradicting_evidence or h.missing_evidence %}
+      <div class="hypothesis-evidence">
+        {% if h.supporting_evidence %}
+        <details class="hypothesis-evidence-group" open>
+          <summary>Supporting evidence ({{ h.supporting_evidence|length }})</summary>
+          <div class="hyp-evidence-cards">
+            {% for ev in h.supporting_evidence %}
+            <div class="hyp-evidence-card">
+              <div class="hyp-evidence-label">{{ ev.label }}</div>
+              {% if ev.value %}<div class="hyp-evidence-value">{{ ev.value }}</div>{% endif %}
+              <div class="hyp-evidence-meta">{{ ev.kind }}{{ ' · ' + ev.citation if ev.citation }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+
+        {% if h.contradicting_evidence %}
+        <details class="hypothesis-evidence-group" open>
+          <summary>Contradicting evidence ({{ h.contradicting_evidence|length }})</summary>
+          <div class="hyp-evidence-cards">
+            {% for ev in h.contradicting_evidence %}
+            <div class="hyp-evidence-card">
+              <div class="hyp-evidence-label">{{ ev.label }}</div>
+              {% if ev.value %}<div class="hyp-evidence-value">{{ ev.value }}</div>{% endif %}
+              <div class="hyp-evidence-meta">{{ ev.kind }}{{ ' · ' + ev.citation if ev.citation }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+
+        {% if h.missing_evidence %}
+        <details class="hypothesis-evidence-group">
+          <summary>Missing evidence ({{ h.missing_evidence|length }})</summary>
+          <div class="hyp-evidence-cards">
+            {% for ev in h.missing_evidence %}
+            <div class="hyp-evidence-card">
+              <div class="hyp-evidence-label">{{ ev.label }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+{% endblock %}

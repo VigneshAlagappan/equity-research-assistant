@@ -20,7 +20,7 @@ grid's shape.
 
 from __future__ import annotations
 
-import sqlite3
+from storage.db_types import DBConnection
 from pathlib import Path
 
 import openpyxl
@@ -40,7 +40,7 @@ _YEAR_RANGE = range(1980, 2100)
 class ProprietaryAdapter(SourceAdapter):
     source_id = "proprietary"
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: DBConnection):
         self._conn = conn
 
     def parse(

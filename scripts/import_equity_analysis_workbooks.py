@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 
 from companies.registry import get_company, register_company
+from storage.company_repository import update_company_valuation_model_file
 from storage.database import init_db
 from scripts.parse_equity_analysis_workbook import parse_workbook
 
@@ -67,11 +68,7 @@ def main() -> None:
         json_filename = f"{company_id.lower()}-analysis.json"
         (STATIC_DATA_DIR / json_filename).write_text(json.dumps(feed))
 
-        conn.execute(
-            "UPDATE companies SET valuation_model_file = ? WHERE company_id = ?",
-            (json_filename, company_id),
-        )
-        conn.commit()
+        update_company_valuation_model_file(conn, company_id, json_filename)
 
         years = feed["YEARS"]
         results.append((company_id, f"OK  years {years[0]}-{years[-1]}" if years else "OK  no years found"))

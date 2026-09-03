@@ -1,14 +1,6 @@
-<!doctype html>
-<html lang="en" data-theme="{{ g.theme }}">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>About — Signals</title>
-<link rel="stylesheet" href="{{ static_url('classical/styles.css') }}">
-<style>
-body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body)}
-a{color:var(--color-link)}
-a:hover{color:color-mix(in srgb, var(--color-link) 75%, black)}
+{% extends "base.html" %}
+{% block title %}About — Signals{% endblock %}
+{% block extra_style %}
 .about-wrap{max-width:720px;margin:0 auto;padding:56px 24px 80px}
 .about-wrap h1{font-family:var(--font-heading);font-weight:400;font-size:38px;line-height:1.2;margin:0 0 8px}
 .about-kicker{font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--color-accent);margin-bottom:10px}
@@ -24,12 +16,8 @@ a:hover{color:color-mix(in srgb, var(--color-link) 75%, black)}
 @media (max-width: 640px) {
   .about-pillars{grid-template-columns:1fr}
 }
-</style>
-</head>
-<body>
-
-{% include "_header.html" %}
-
+{% endblock %}
+{% block content %}
 <div class="about-wrap">
   <div class="about-kicker">About Signals</div>
   <h1>A personal research desk, not a data terminal.</h1>
@@ -91,6 +79,4 @@ a:hover{color:color-mix(in srgb, var(--color-link) 75%, black)}
 <footer style="border-top:1px solid var(--color-divider);padding:24px 48px;text-align:center;font-size:12px;opacity:.6">
   Signals — consolidated equity research, from your own model.
 </footer>
-
-</body>
-</html>
+{% endblock %}

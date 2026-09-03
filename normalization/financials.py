@@ -9,12 +9,13 @@ differently is a data edit (INSERT into these tables), never a code change.
 from __future__ import annotations
 
 import logging
-import sqlite3
 from datetime import datetime, timezone
 
 from normalization.periods import PeriodParseError, parse_period_header
 from normalization.units import NumericParseError, infer_unit, parse_numeric
 from sources.base import NormalizedObservation
+from storage.db_types import DBConnection
+from storage.repositories import get_metric_dictionary_entry, get_metric_key_for_alias, seed_metric_vocabulary
 
 logger = logging.getLogger(__name__)
 
@@ -238,30 +239,101 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
     # Left unmapped rather than guessed.
 ]
 
+# "nse" (sources/nse_xbrl.py) reads a quarterly-results XBRL filing pulled
+# live from NSE's corporates-financial-results / Integrated Filing listings
+# — raw_label here is the XBRL tag's local name (e.g. "InterestEarned"), not
+# a spreadsheet row label, but the same alias mechanism applies unchanged.
+# Two taxonomies verified against real filings so far (guardrail: add
+# support taxonomy-by-taxonomy) — banking ("IFBanking"/"in-bse-fin", IDFC
+# First Bank) below, and the general Ind-AS corporate one ("IFIndAs",
+# Infosys) further down. They use different tag names for similar concepts
+# (e.g. "EmployeeBenefitExpense" vs "EmployeesCost", "ProfitBeforeTax" vs
+# "ProfitLossFromOrdinaryActivitiesBeforeTax") but a few tags are genuinely
+# shared verbatim across both (OtherIncome, TaxExpense,
+# PaidUpValueOfEquityShareCapital/FaceValueOfEquityShareCapital) — aliased
+# once, not duplicated per taxonomy. "ProfitLossForPeriod" is the one that
+# looks shared but isn't: banking's own tag is "ProfitLossForThePeriod"
+# (with "The") — a real, easy-to-miss difference, verified against both a
+# real IDFC First Bank and a real Infosys filing side by side — so it gets
+# its own separate alias row per taxonomy below rather than one shared row.
+# Only the adapter's own "One*" context-ID
+# convention (this filing's single reported quarter, not a year-to-date or
+# prior-period comparative also present in the same file) feeds these — see
+# sources/nse_xbrl.py's module docstring.
+DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
+    # Banking ("IFBanking")
+    ("nse", "InterestEarned", "interest_earned"),
+    ("nse", "InterestExpended", "interest_expended"),
+    ("nse", "OtherIncome", "other_income"),
+    ("nse", "OperatingExpenses", "operating_expenses"),
+    ("nse", "OperatingProfitBeforeProvisionAndContingencies", "operating_profit"),
+    ("nse", "ProvisionsOtherThanTaxAndContingencies", "provisions_and_contingencies"),
+    ("nse", "ProfitLossFromOrdinaryActivitiesBeforeTax", "profit_before_tax"),
+    ("nse", "TaxExpense", "tax"),
+    ("nse", "ProfitLossForThePeriod", "net_profit"),
+    ("nse", "BasicEarningsPerShareBeforeExtraordinaryItems", "eps"),
+    ("nse", "PercentageOfGrossNpa", "gross_npa_percent"),
+    ("nse", "PercentageOfNpa", "net_npa_percent"),
+    ("nse", "ReturnOnAssets", "return_on_assets_percent"),
+    # General Ind-AS corporate ("IFIndAs") — verified against a real Infosys
+    # filing (Q1 FY27, both consolidated and standalone). "RevenueFromOperations"
+    # (not "Income", which is Revenue + Other Income combined — this app's
+    # total_revenue convention is core revenue only, matching Screener's own
+    # "Sales", with other_income aliased separately) and "Expenses" (this
+    # taxonomy's one combined total-expenses line, no separate operating-vs-
+    # non-operating split) are the two where the natural-sounding tag name
+    # isn't the right pick. No "operating_profit"-equivalent tag exists in
+    # this taxonomy at all (the P&L runs straight from Income to Expenses to
+    # ProfitBeforeExceptionalItemsAndTax) — left unmapped rather than
+    # subtracting two lines to approximate one, same reasoning already
+    # documented above for "proprietary"'s deliberately-unmapped rows.
+    ("nse", "RevenueFromOperations", "total_revenue"),
+    ("nse", "Expenses", "operating_expenses"),
+    ("nse", "DepreciationDepletionAndAmortisationExpense", "depreciation"),
+    ("nse", "ProfitBeforeTax", "profit_before_tax"),
+    ("nse", "ProfitLossForPeriod", "net_profit"),
+    ("nse", "BasicEarningsLossPerShareFromContinuingAndDiscontinuedOperations", "eps"),
+    # Not a real XBRL tag — sources/nse_xbrl.py derives this row_label itself
+    # (PaidUpValueOfEquityShareCapital / FaceValueOfEquityShareCapital,
+    # verified against real filings on both taxonomies) since neither has a
+    # direct shares-outstanding tag at all.
+    ("nse", "DerivedSharesOutstanding", "shares_outstanding"),
+    # Balance-sheet facts — reported under the "OneI" INSTANT context (a
+    # point-in-time snapshot as of the filing's own period end), not "OneD"/
+    # "FourD" (durations) like every tag above. Verified against real
+    # Infosys (general Ind-AS) and IDFC First Bank (banking) Q4 FY26
+    # filings. "Assets" and "CashAndCashEquivalentsCashFlowStatement" are
+    # the two tags genuinely shared verbatim across both taxonomy families
+    # (verified: same local name, same meaning, in both real filings) —
+    # aliased once. Banking has no standalone "Liabilities" tag (it reports
+    # "CapitalAndLiabilities", the same total as "Assets" — the balance
+    # sheet's other side, not liabilities-excluding-equity) and no split
+    # current/noncurrent Investments (Ind-AS's own "NoncurrentInvestments"/
+    # "CurrentInvestments" are similarly left unmapped here rather than
+    # guessed at as a sum) — both genuinely unmapped, not an oversight.
+    ("nse", "Assets", "total_assets"),
+    ("nse", "Liabilities", "total_liabilities"),  # Ind-AS only — no banking equivalent
+    ("nse", "Equity", "total_shareholders_funds"),  # Ind-AS only — includes non-controlling interest
+    ("nse", "EquityShareCapital", "equity_share_capital"),  # Ind-AS
+    ("nse", "OtherEquity", "reserves"),  # Ind-AS
+    ("nse", "CashAndCashEquivalentsCashFlowStatement", "cash_and_bank"),
+    ("nse", "Deposits", "deposits"),  # banking
+    ("nse", "Advances", "advances"),  # banking
+    ("nse", "Investments", "investments"),  # banking's one combined line
+    ("nse", "Borrowings", "borrowings"),  # banking
+    ("nse", "Capital", "equity_share_capital"),  # banking
+    ("nse", "ReservesAndSurplus", "reserves"),  # banking
+]
 
-def ensure_metric_vocabulary(conn: sqlite3.Connection) -> None:
+
+def ensure_metric_vocabulary(conn: DBConnection) -> None:
     """Seed metrics_dictionary and metric_aliases, leaving existing rows untouched."""
-    conn.executemany(
-        """
-        INSERT OR IGNORE INTO metrics_dictionary
-            (metric_key, display_name, category, applicable_sectors, default_unit)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        DEFAULT_METRICS,
-    )
-    conn.executemany(
-        "INSERT OR IGNORE INTO metric_aliases (source, raw_label, metric_key) VALUES (?, ?, ?)",
-        DEFAULT_METRIC_ALIASES,
-    )
-    conn.commit()
+    seed_metric_vocabulary(conn, DEFAULT_METRICS, DEFAULT_METRIC_ALIASES)
 
 
-def resolve_metric_key(conn: sqlite3.Connection, source: str, raw_label: str) -> str | None:
+def resolve_metric_key(conn: DBConnection, source: str, raw_label: str) -> str | None:
     """Look up the metric_key for a vendor's raw row label, or None if there's no alias yet."""
-    row = conn.execute(
-        "SELECT metric_key FROM metric_aliases WHERE source = ? AND raw_label = ?",
-        (source, raw_label.strip()),
-    ).fetchone()
+    row = get_metric_key_for_alias(conn, source, raw_label.strip())
     return row["metric_key"] if row else None
 
 
@@ -285,16 +357,14 @@ def _localize_unit(unit: str, currency: str) -> str:
     return _UNIT_CURRENCY_LOCALIZATIONS.get(unit, {}).get(currency, unit)
 
 
-def _default_unit_for_metric(conn: sqlite3.Connection, metric_key: str, currency: str = "INR") -> str:
-    row = conn.execute(
-        "SELECT default_unit FROM metrics_dictionary WHERE metric_key = ?", (metric_key,)
-    ).fetchone()
+def _default_unit_for_metric(conn: DBConnection, metric_key: str, currency: str = "INR") -> str:
+    row = get_metric_dictionary_entry(conn, metric_key)
     unit = row["default_unit"] if row and row["default_unit"] else "NUMBER"
     return _localize_unit(unit, currency)
 
 
 def build_observations_from_periods(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     *,
     company_id: str,
     source: str,
@@ -368,7 +438,7 @@ def build_observations_from_periods(
 
 
 def build_observations(
-    conn: sqlite3.Connection,
+    conn: DBConnection,
     *,
     company_id: str,
     source: str,

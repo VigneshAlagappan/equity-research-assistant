@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from sources.macro import MacroDataAdapter, MacroPeriodError, infer_period_type
+from sources.macro import MACRO_SOURCE_IDS, MacroDataAdapter, MacroPeriodError, infer_period_type
+
+
+def test_fred_is_a_registered_macro_source_id() -> None:
+    """FRED (sources/fred.py) is the US macro-data source, alongside the
+    India ones (rbi/imd/iitm/mospi/irda/mfin) — even though it's live-fetched
+    rather than CSV-staged, it validates through the same set."""
+    assert "fred" in MACRO_SOURCE_IDS
 
 
 @pytest.mark.parametrize(

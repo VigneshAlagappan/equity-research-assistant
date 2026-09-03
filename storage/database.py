@@ -39,13 +39,21 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     conn.executescript(schema_sql)
     _migrate_companies_website_column(conn)
     _migrate_companies_country_currency_columns(conn)
+    _migrate_companies_fiscal_year_end_column(conn)
     _migrate_company_insights_history(conn)
     _migrate_users_theme_column(conn)
     _migrate_documents_table(conn)
     _migrate_documents_old_fk_references(conn)
+    _migrate_document_chunks_fk_reference(conn)
+    _migrate_documents_processing_status_columns(conn)
+    _migrate_raw_file_paths_to_repo_relative(conn)
     _migrate_company_notes_updated_at(conn)
     _migrate_llm_call_log_columns(conn)
+    _migrate_shareholding_observations_columns(conn)
+    _migrate_investigations_as_of_column(conn)
+    _migrate_investigation_companies(conn)
     _seed_sources(conn)
+    _migrate_source_trust_ranks(conn)
     _seed_sectors_and_industries(conn)
     _seed_index_definitions(conn)
     _seed_admin_user(conn)
@@ -77,6 +85,16 @@ def _migrate_companies_country_currency_columns(conn: sqlite3.Connection) -> Non
         conn.execute("ALTER TABLE companies ADD COLUMN country TEXT NOT NULL DEFAULT 'IN'")
     if "currency" not in columns:
         conn.execute("ALTER TABLE companies ADD COLUMN currency TEXT NOT NULL DEFAULT 'INR'")
+
+
+def _migrate_companies_fiscal_year_end_column(conn: sqlite3.Connection) -> None:
+    """Same reasoning as _migrate_companies_country_currency_columns — ALTER
+    TABLE with a DEFAULT backfills every existing row to 3 (March close),
+    which is correct for every company registered before per-company fiscal
+    years existed (all India, all Apr-Mar)."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(companies)")}
+    if "fiscal_year_end_month" not in columns:
+        conn.execute("ALTER TABLE companies ADD COLUMN fiscal_year_end_month INTEGER NOT NULL DEFAULT 3")
 
 
 def _migrate_company_insights_history(conn: sqlite3.Connection) -> None:
@@ -144,6 +162,46 @@ def _migrate_llm_call_log_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE llm_call_log ADD COLUMN reuse_hit INTEGER NOT NULL DEFAULT 0")
     if "reused_thread_id" not in columns:
         conn.execute("ALTER TABLE llm_call_log ADD COLUMN reused_thread_id TEXT")
+
+
+def _migrate_shareholding_observations_columns(conn: sqlite3.Connection) -> None:
+    """`CREATE TABLE IF NOT EXISTS` is a no-op on a shareholding_observations
+    table that already existed before the FII/DII/Government/Public
+    institutional-breakdown columns were added — same pattern as the other
+    _migrate_* functions above. Empty `columns` means the table itself
+    doesn't exist yet (a genuinely fresh DB, where CREATE TABLE just above
+    already created it with every column) -- nothing to backfill."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(shareholding_observations)")}
+    if not columns:
+        return
+    for column in ("fii_percent", "dii_percent", "government_percent", "public_non_institutional_percent"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE shareholding_observations ADD COLUMN {column} REAL")
+    if "num_shareholders" not in columns:
+        conn.execute("ALTER TABLE shareholding_observations ADD COLUMN num_shareholders INTEGER")
+
+
+def _migrate_investigations_as_of_column(conn: sqlite3.Connection) -> None:
+    """`as_of` (the point-in-time evidence cutoff an investigation was run
+    under — research/temporal.py) was added after `investigations` shipped;
+    ALTER TABLE backfills it as NULL, which is exactly the right value for
+    every pre-existing investigation ("no cutoff, everything known at the
+    time"). Same pattern as _migrate_companies_website_column."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(investigations)")}
+    if columns and "as_of" not in columns:
+        conn.execute("ALTER TABLE investigations ADD COLUMN as_of TEXT")
+
+
+def _migrate_investigation_companies(conn: sqlite3.Connection) -> None:
+    """`investigation_companies` (storage/investigation_repository.py) is
+    created by the schema above, but an investigation saved before it existed
+    has no rows in it and would silently vanish from its companies'
+    Investigations sections. Backfill from the JSON `company_ids` column that
+    has always been written. Idempotent (an anti-join finds nothing on the
+    second run), so it can stay in init_db()'s unconditional migration list."""
+    from storage.investigation_repository import backfill_investigation_companies
+
+    backfill_investigation_companies(conn)
 
 
 def _migrate_users_theme_column(conn: sqlite3.Connection) -> None:
@@ -218,13 +276,10 @@ def _migrate_documents_old_fk_references(conn: sqlite3.Connection) -> None:
     can't see a stale FK target); a no-op on any database that never had the
     rename happen at all (fresh installs).
 
-    document_chunks has the exact same stale reference but is left alone
-    here — it's wired to an FTS5 virtual table (document_chunks_fts) with
-    its own internal sync triggers, and nothing writes to document_chunks
-    yet (README: no document pipeline), so there's no live bug to fix there
-    and rebuilding it risks that FTS5 wiring for zero present benefit.
-    Whoever builds the document pipeline will need to touch this table
-    anyway and can fix it then."""
+    document_chunks has the exact same stale reference — fixed separately in
+    _migrate_document_chunks_fk_reference() below, once
+    research/document_chunker.py (Step 2D) became the first thing to ever
+    write to that table and actually hit the bug."""
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='financial_observations'"
     ).fetchone()
@@ -284,6 +339,131 @@ def _migrate_documents_old_fk_references(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE financial_observations_fixed RENAME TO financial_observations")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_obs_lookup ON financial_observations(company_id, metric_key, fiscal_year)")
+
+
+def _migrate_document_chunks_fk_reference(conn: sqlite3.Connection) -> None:
+    """document_chunks has the same stale `REFERENCES documents_old(...)`
+    _migrate_documents_old_fk_references() already fixes for
+    financial_observations (see that function's docstring for the root
+    cause) — left unfixed until now because nothing ever wrote to
+    document_chunks before research/document_chunker.py (Step 2D).
+    Simpler than the financial_observations fix: nothing else holds a live
+    FK reference to document_chunks the way canonical_financials/
+    reconciliation_log do to financial_observations, so no cascading
+    rewrite to guard against — just rebuild under a temp name and rename
+    into place. document_chunks_fts (the FTS5 virtual table) references
+    document_chunks by name, not a real FK — its own stored definition is
+    untouched by this, and resolves correctly against the rebuilt table
+    once it's renamed back to "document_chunks"."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='document_chunks'"
+    ).fetchone()
+    if row is None or "documents_old" not in row["sql"]:
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        """
+        CREATE TABLE document_chunks_fixed (
+          chunk_id INTEGER PRIMARY KEY,
+          document_id INTEGER REFERENCES documents(document_id),
+          company_id TEXT,
+          section_heading TEXT,
+          page_number INTEGER,
+          chunk_index INTEGER,
+          text TEXT NOT NULL,
+          embedding BLOB,
+          created_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO document_chunks_fixed
+        SELECT chunk_id, document_id, company_id, section_heading, page_number, chunk_index, text, embedding, created_at
+        FROM document_chunks
+        """
+    )
+    conn.execute("DROP TABLE document_chunks")
+    conn.execute("ALTER TABLE document_chunks_fixed RENAME TO document_chunks")
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
+def _migrate_documents_processing_status_columns(conn: sqlite3.Connection) -> None:
+    """Same reasoning as _migrate_companies_website_column — ALTER TABLE
+    backfills every existing document row to 'pending', which is correct:
+    no document was ever processed by the (new) Ingest queue before this
+    column existed, so every one of them is genuinely still pending."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(documents)")}
+    if not columns:
+        return
+    if "processing_status" not in columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN processing_status TEXT NOT NULL DEFAULT 'pending'")
+    if "processed_at" not in columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN processed_at TEXT")
+    if "error_message" not in columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN error_message TEXT")
+
+
+def _migrate_raw_file_paths_to_repo_relative(conn: sqlite3.Connection) -> None:
+    """documents.raw_file_path and company_note_attachments.raw_file_path
+    used to be stored as absolute paths (config.settings.to_repo_relative/
+    from_repo_relative's docstring explains why that's wrong) — an absolute
+    path bakes in the repo folder's name/location at write time, and breaks
+    every stored reference the moment the repo is renamed or moved (as this
+    one already has been: "indian-equity-research-assistant" ->
+    "equity-research-assistant"). Rewrites any row already stored absolute
+    to the same repo-relative form new writes use.
+
+    Robust to ANY historical absolute prefix, not just the one rename this
+    app has actually been through: every path this app ever wrote under
+    DOCUMENTS_DIR necessarily contains "data/documents/" as a structural
+    fragment (that folder layout itself was never renamed, only the outer
+    repo directory), so slicing the stored string from the first occurrence
+    of "data/documents/" onward recovers the correct relative path
+    regardless of what came before it. A row not matching that shape is
+    left untouched — most likely already relative, or a genuinely unusual
+    value not worth guessing at.
+    """
+    marker = "data/documents/"
+    # SQLite labels an INTEGER PRIMARY KEY's rowid alias by its declared
+    # column name in query results, not literally "rowid" — select each
+    # table's real primary key column by name rather than relying on that.
+    pk_columns = {"documents": "document_id", "company_note_attachments": "attachment_id"}
+    for table, pk_column in pk_columns.items():
+        rows = conn.execute(
+            f"SELECT {pk_column}, raw_file_path FROM {table} "
+            f"WHERE raw_file_path IS NOT NULL AND raw_file_path LIKE '/%'"
+        ).fetchall()
+        for row in rows:
+            raw_path = row["raw_file_path"]
+            marker_at = raw_path.find(marker)
+            if marker_at == -1:
+                continue
+            conn.execute(
+                f"UPDATE {table} SET raw_file_path = ? WHERE {pk_column} = ?",
+                (raw_path[marker_at:], row[pk_column]),
+            )
+    conn.commit()
+
+
+def _migrate_source_trust_ranks(conn: sqlite3.Connection) -> None:
+    """sources is seeded with INSERT OR IGNORE (_seed_sources, below), so a
+    row already seeded on a prior run never picks up a later trust_rank
+    correction on its own. config/settings.py promoted nse/bse from
+    trust_rank 2 to 0 (NSE XBRL as the target source of truth for
+    structured financial facts, ahead of the hand-curated 'proprietary'
+    tier it used to sit below) — propagate that to any database that
+    already has the old value. trust_rank/description are code-owned
+    config with no admin-editable UI, so an unconditional UPDATE (not a
+    conditional backfill) is the correct way to keep an existing database
+    in sync with DEFAULT_SOURCES, same as this function will need to do
+    again the next time a rank changes."""
+    conn.executemany(
+        "UPDATE sources SET trust_rank = :trust_rank, description = :description "
+        "WHERE source_id = :source_id AND source_id IN ('nse', 'bse')",
+        DEFAULT_SOURCES,
+    )
 
 
 def _seed_sources(conn: sqlite3.Connection) -> None:

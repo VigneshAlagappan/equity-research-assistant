@@ -111,7 +111,7 @@
   </div>
 
   {% if generated %}
-  <div class="signals-report-meta">Generated {{ generated.generated_at }} · {{ generated.company_ids|join(', ') }} · {{ generated.statement_type }}</div>
+  <div class="signals-report-meta">Generated <span class="local-time" data-utc="{{ generated.generated_at }}">{{ generated.generated_at }}</span> · {{ generated.company_ids|join(', ') }} · {{ generated.statement_type }}</div>
 
   <div class="thread-layout">
     <div class="thread-main">

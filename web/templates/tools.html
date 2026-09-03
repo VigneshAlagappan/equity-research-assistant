@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+
+{% block title %}Tools — Signals{% endblock %}
+
+{% block page_class %}page-wide{% endblock %}
+
+{% block extra_style %}
+  /* Horizontal sub-header tab row — the full page width goes to whichever
+     panel is active instead of losing a sidebar column to it, styled like
+     the site header's own .site-nav-link/.current bottom-border convention
+     (web/static/classical/styles.css) rather than the Admin-page pill-button
+     sidebar. Kept as its own page-local copy, same convention every other
+     page-specific layout here already follows. */
+  .tools-subheader {
+    display: flex; gap: 24px; border-bottom: 1px solid var(--color-divider);
+    margin-bottom: var(--space-5);
+  }
+  .tools-nav-btn {
+    font-size: 14px; color: var(--ink-muted); text-decoration: none;
+    padding: 0 2px var(--space-2); border-bottom: 2px solid transparent;
+  }
+  .tools-nav-btn:hover { color: var(--color-accent); }
+  .tools-nav-btn.active { color: var(--color-accent); border-bottom-color: var(--color-accent); font-weight: 600; }
+  .tools-panel[hidden] { display: none; }
+
+  .tools-field { display: flex; flex-direction: column; gap: 4px; max-width: 420px; margin-bottom: var(--space-4); }
+  .tools-field label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-muted); }
+
+  .macro-chart-meta { font-size: 12px; opacity: 0.6; margin-bottom: var(--space-2); }
+  .macro-chart-empty { padding: var(--space-6); text-align: center; color: var(--ink-muted); }
+
+  .pattern-list { display: flex; flex-direction: column; gap: 2px; max-width: 640px; }
+  .pattern-row {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+    padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider); font-size: 13.5px;
+  }
+  .pattern-move { font-variant-numeric: tabular-nums; font-weight: 600; flex: none; }
+  .pattern-move.up { color: var(--color-accent-800); }
+  .pattern-move.down { color: #a33; }
+
+  .insight-list { display: flex; flex-direction: column; gap: var(--space-3); max-width: 680px; }
+  .insight-card { padding: var(--space-3) var(--space-4); }
+  .insight-text { margin: 0 0 var(--space-2); font-size: 14px; }
+  .insight-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+  .insight-companies { font-size: 12px; opacity: 0.6; }
+  .insight-actions { display: flex; gap: var(--space-2); }
+
+  .admin-async-status {
+    display: flex; align-items: center; gap: var(--space-2);
+    margin-top: var(--space-2); font-size: 13px; color: var(--ink-muted);
+  }
+  .admin-async-bar {
+    width: 120px; height: 4px; border-radius: 999px;
+    background: var(--color-accent-100); overflow: hidden; flex: none;
+  }
+  .admin-async-bar::after {
+    content: ""; display: block; width: 40%; height: 100%;
+    background: var(--color-accent); border-radius: 999px;
+    animation: tools-async-sweep 1.1s ease-in-out infinite;
+  }
+  @keyframes tools-async-sweep {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(250%); }
+  }
+{% endblock %}
+
+{% block content %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-list">
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endwith %}
+
+  <nav class="tools-subheader">
+    <a class="tools-nav-btn {{ 'active' if active_panel == 'macro' }}" href="{{ url_for('tools', panel='macro') }}">Macro</a>
+    <a class="tools-nav-btn {{ 'active' if active_panel == 'analytics' }}" href="{{ url_for('tools', panel='analytics') }}">Analytics</a>
+    <a class="tools-nav-btn {{ 'active' if active_panel == 'insights' }}" href="{{ url_for('tools', panel='insights') }}">Insights</a>
+  </nav>
+
+  {% if active_panel == 'macro' %}
+    <div class="tools-panel" id="tools-panel-macro">
+      <p class="muted">Browse the macro/regulatory series already ingested (RBI, IITM rainfall, ...) — the same
+        data research answers draw on, here as its own chart.</p>
+
+      <div class="tools-field">
+        <label for="macro-series-select">Series</label>
+        <select class="input" id="macro-series-select">
+          <option value="">Choose a series…</option>
+          {% for row in tools_macro_catalog %}
+          <option value="{{ row.series_key }}">{{ row.source|upper }} — {{ row.series_key }} ({{ row.earliest }}–{{ row.latest }})</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div id="macro-chart-meta" class="macro-chart-meta"></div>
+      <div id="macro-chart-container">
+        <div class="macro-chart-empty">Pick a series above to plot it.</div>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if active_panel == 'analytics' %}
+    <div class="tools-panel" id="tools-panel-analytics">
+      <p class="muted">Out-of-the-box pattern detection — significant year-over-year metric moves across every
+        company with ingested financials, recomputed on every view (not user-generated, not persisted).</p>
+
+      {% if tools_analytics_patterns %}
+      <div class="pattern-list">
+        {% for p in tools_analytics_patterns %}
+        <div class="pattern-row">
+          <span>{{ p.company_id }} — {{ p.metric_label }} ({{ p.fiscal_year }})</span>
+          <span class="pattern-move {{ 'up' if p.yoy_percent >= 0 else 'down' }}">
+            {{ '+' if p.yoy_percent >= 0 }}{{ '%.1f'|format(p.yoy_percent) }}% YoY
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-state">No significant year-over-year moves found right now.</div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if active_panel == 'insights' %}
+    <div class="tools-panel" id="tools-panel-insights">
+      <p class="muted">System-generated insights grounded in the Knowledge Graph's extracted claims — not tied to
+        any one question. Retain the ones worth keeping, archive the rest.</p>
+
+      <form class="admin-async-form" method="post" action="{{ url_for('tools_insights_generate') }}" style="margin-bottom: var(--space-4);">
+        <button type="submit" class="btn btn-primary" {{ 'disabled' if not api_key_set }}>Generate new insights</button>
+        {% if not api_key_set %}
+        <span class="muted" style="margin-left: var(--space-2); font-size: 12px;">ANTHROPIC_API_KEY is not set.</span>
+        {% endif %}
+      </form>
+
+      {% if tools_insights %}
+      <div class="insight-list">
+        {% for insight in tools_insights %}
+        <div class="card elev-sm insight-card">
+          <p class="insight-text">{{ insight.insight_text }}</p>
+          <div class="insight-meta">
+            <span class="insight-companies">{{ insight.company_ids|join(', ') }}{{ ' · ' if insight.company_ids }}<span class="local-time" data-utc="{{ insight.generated_at }}">{{ insight.generated_at }}</span></span>
+            <div class="insight-actions">
+              {% if insight.status == 'new' %}
+              <form method="post" action="{{ url_for('tools_insights_retain', insight_id=insight.insight_id) }}">
+                <button type="submit" class="btn btn-ghost">Retain</button>
+              </form>
+              {% endif %}
+              <form method="post" action="{{ url_for('tools_insights_archive', insight_id=insight.insight_id) }}">
+                <button type="submit" class="btn btn-ghost">Archive</button>
+              </form>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-state">No insights yet — click Generate, or check back once more documents have been ingested.</div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <script>
+    (function () {
+      // Ingest-panel-style "request accepted" feedback for the Generate
+      // button — same reasoning admin.html's own .admin-async-form handler
+      // has (a plain POST-and-reload form, no per-item progress to report).
+      document.querySelectorAll('.admin-async-form').forEach(function (form) {
+        form.addEventListener('submit', function () {
+          const btn = form.querySelector('button[type="submit"]');
+          if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+          const status = document.createElement('div');
+          status.className = 'admin-async-status';
+          status.innerHTML = '<span class="admin-async-bar"></span><span>Request accepted — processing…</span>';
+          form.appendChild(status);
+        });
+      });
+    })();
+
+    (function () {
+      const select = document.getElementById('macro-series-select');
+      if (!select) return;
+      const meta = document.getElementById('macro-chart-meta');
+      const container = document.getElementById('macro-chart-container');
+
+      function renderEmpty(message) {
+        container.innerHTML = '<div class="macro-chart-empty"></div>';
+        container.firstChild.textContent = message;
+      }
+
+      // Hand-rolled inline SVG polyline — same minimal, no-library technique
+      // web/templates/research_thread.html's own chart already uses, just
+      // computed client-side here since the series is picked interactively.
+      function renderChart(data) {
+        const points = data.points;
+        if (!points.length) { renderEmpty('No data points for this series.'); return; }
+        const values = points.map(function (p) { return p.value; });
+        const minV = Math.min.apply(null, values);
+        const maxV = Math.max.apply(null, values);
+        const range = maxV - minV || 1;
+        const width = 640, height = 200, pad = 8;
+        const coords = points.map(function (p, i) {
+          const x = points.length === 1 ? width / 2 : pad + (i / (points.length - 1)) * (width - 2 * pad);
+          const y = height - pad - ((p.value - minV) / range) * (height - 2 * pad);
+          return x.toFixed(1) + ',' + y.toFixed(1);
+        }).join(' ');
+
+        const svgNs = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNs, 'svg');
+        svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+        svg.setAttribute('width', '100%');
+        svg.style.maxWidth = width + 'px';
+        svg.style.display = 'block';
+        const polyline = document.createElementNS(svgNs, 'polyline');
+        polyline.setAttribute('points', coords);
+        polyline.setAttribute('fill', 'none');
+        polyline.setAttribute('stroke', 'var(--color-accent-700)');
+        polyline.setAttribute('stroke-width', '2');
+        svg.appendChild(polyline);
+
+        container.innerHTML = '';
+        container.appendChild(svg);
+        meta.textContent = (
+          data.source.toUpperCase() + ' · ' + data.unit + ' · '
+          + points[0].period + '–' + points[points.length - 1].period + ' · ' + points.length + ' point(s)'
+        );
+      }
+
+      select.addEventListener('change', function () {
+        const seriesKey = select.value;
+        if (!seriesKey) { renderEmpty('Pick a series above to plot it.'); meta.textContent = ''; return; }
+        renderEmpty('Loading…');
+        fetch('/tools/macro/series.json?series_key=' + encodeURIComponent(seriesKey))
+          .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+          .then(function (result) {
+            if (!result.ok) { renderEmpty(result.data.error || 'Something went wrong.'); return; }
+            renderChart(result.data);
+          })
+          .catch(function (err) { renderEmpty('Network error: ' + err.message); });
+      });
+    })();
+  </script>
+{% endblock %}

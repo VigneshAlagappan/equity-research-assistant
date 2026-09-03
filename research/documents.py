@@ -21,17 +21,21 @@ to extract, so they're silently skipped rather than erroring.
 from __future__ import annotations
 
 import re
-import sqlite3
+from storage.db_types import DBConnection, Row
+import time
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
 from pypdf import PdfReader
-from pypdf.errors import PdfReadError
+
+from config.settings import from_repo_relative
+from pypdf.errors import DependencyError, PyPdfError
 
 from research.evidence import Evidence
-from storage.repositories import list_company_documents
+from research.temporal import date_visible
+from storage.fact_store import FactStore, default_fact_store
 
 # Bounds a single link-only document fetch — avoids hanging on a slow host or
 # pulling down an unexpectedly huge file just because its URL ends in .pdf.
@@ -72,7 +76,7 @@ def _extract_period_hint(question: str) -> tuple[str | None, str | None]:
     return fiscal_year, quarter
 
 
-def _select_documents(docs: list[sqlite3.Row], question: str) -> list[sqlite3.Row]:
+def _select_documents(docs: list[Row], question: str) -> list[Row]:
     """Filter to the fiscal year/quarter mentioned in the question, if any —
     falls back to every document on file when nothing is mentioned, or when
     the mentioned period matches nothing (an unfiltered answer beats a
@@ -87,8 +91,12 @@ def _select_documents(docs: list[sqlite3.Row], question: str) -> list[sqlite3.Ro
     return matching or docs
 
 
+def _pages_from_reader(reader: PdfReader) -> list[str]:
+    return [page.extract_text() or "" for page in reader.pages]
+
+
 def _text_from_reader(reader: PdfReader) -> str | None:
-    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    text = "\n".join(_pages_from_reader(reader))
     text = text.strip()
     return text or None
 
@@ -96,7 +104,14 @@ def _text_from_reader(reader: PdfReader) -> str | None:
 def _extract_pdf_text(path: str) -> str | None:
     try:
         return _text_from_reader(PdfReader(path))
-    except (PdfReadError, OSError):
+    except (PyPdfError, DependencyError, OSError):
+        # DependencyError (e.g. an AES-encrypted PDF needing the optional
+        # `cryptography` package) is a direct Exception subclass, not a
+        # PyPdfError — needs its own arm here, not just a broader PyPdfError
+        # catch. Missing it used to crash the whole ingestion batch instead
+        # of just this one unreadable document, same "absence isn't an
+        # error" rule this function already follows for every other
+        # unreadable-PDF case.
         return None
 
 
@@ -105,6 +120,13 @@ def _looks_like_pdf_url(url: str) -> bool:
 
 
 def _fetch_url_bytes(url: str) -> bytes | None:
+    # requests' `timeout=` with stream=True only bounds each individual
+    # socket read, not the download as a whole — a host trickling bytes just
+    # under that interval (throttled, or a huge slow filing) never trips it
+    # and can hang far past REQUEST_TIMEOUT_SECONDS. This wall-clock deadline
+    # is what actually caps total time spent on one link, so one slow host
+    # can't stall an entire batch ingestion run.
+    deadline = time.monotonic() + REQUEST_TIMEOUT_SECONDS * 4
     try:
         response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS, stream=True)
         response.raise_for_status()
@@ -112,6 +134,8 @@ def _fetch_url_bytes(url: str) -> bytes | None:
         for chunk in response.iter_content(chunk_size=65_536):
             content += chunk
             if len(content) > MAX_DOWNLOAD_BYTES:
+                return None
+            if time.monotonic() > deadline:
                 return None
         return bytes(content)
     except requests.RequestException:
@@ -124,31 +148,69 @@ def _extract_pdf_text_from_url(url: str) -> str | None:
         return None
     try:
         return _text_from_reader(PdfReader(BytesIO(data)))
-    except PdfReadError:
+    except (PyPdfError, DependencyError):
         return None
 
 
-def _document_text(row: sqlite3.Row) -> str | None:
+def document_text(row: Row) -> str | None:
     if row["raw_file_path"]:
         if Path(row["raw_file_path"]).suffix.lower() != ".pdf":
             return None
-        return _extract_pdf_text(row["raw_file_path"])
+        return _extract_pdf_text(str(from_repo_relative(row["raw_file_path"])))
     if row["source_url"] and _looks_like_pdf_url(row["source_url"]):
         return _extract_pdf_text_from_url(row["source_url"])
     return None
 
 
-def get_document_evidence(conn: sqlite3.Connection, company_id: str, question: str) -> list[Evidence]:
+def document_pages(row: Row) -> list[str] | None:
+    """Same source resolution as document_text() (uploaded file vs. a
+    fetched PDF-looking link), but preserving page boundaries —
+    research/document_chunker.py (Step 2D) uses this to attach a real
+    page_number to each chunk, which the single flattened string
+    document_text() returns can't do. Returns None under the exact same
+    conditions document_text() would (non-PDF, unfetchable link) rather
+    than a list of one flattened page."""
+    if row["raw_file_path"]:
+        if Path(row["raw_file_path"]).suffix.lower() != ".pdf":
+            return None
+        try:
+            return _pages_from_reader(PdfReader(str(from_repo_relative(row["raw_file_path"]))))
+        except (PyPdfError, DependencyError, OSError):
+            return None
+    if row["source_url"] and _looks_like_pdf_url(row["source_url"]):
+        data = _fetch_url_bytes(row["source_url"])
+        if data is None:
+            return None
+        try:
+            return _pages_from_reader(PdfReader(BytesIO(data)))
+        except (PyPdfError, DependencyError):
+            return None
+    return None
+
+
+def get_document_evidence(
+    conn: DBConnection, company_id: str, question: str, *, fact_store: FactStore | None = None,
+    as_of: str | None = None,
+) -> list[Evidence]:
     """MANAGEMENT_STATEMENT evidence extracted from this company's Docs-tab
     documents — uploaded files and fetched links alike (README: Evidence &
     Citations). Company-specific only — there's
     no per-company attribution story yet for a multi-company comparison, so
-    callers should only use this for single-company investigations."""
-    docs = _select_documents(list_company_documents(conn, company_id), question)
+    callers should only use this for single-company investigations.
+
+    `as_of` (ISO date) keeps only documents published on or before the cutoff
+    — research/temporal.py, which fails closed: a document with no
+    published_at at all is dropped under a cutoff rather than assumed old
+    enough."""
+    fs = fact_store or default_fact_store()
+    docs = list(fs.list_company_documents(conn, company_id))
+    if as_of:
+        docs = [d for d in docs if date_visible(d["published_at"], as_of)]
+    docs = _select_documents(docs, question)
 
     evidence = []
     for row in docs:
-        text = _document_text(row)
+        text = document_text(row)
         if text is None:
             continue
         label = _DOCUMENT_TYPE_LABELS.get(row["document_type"], row["document_type"] or "Document")
