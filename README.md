@@ -1,4 +1,4 @@
-# Equity AI Research Assistant (POC)
+# Equity AI Research Assistant
 
 An AI-assisted research system for listed companies that combines structured
 financial data, company filings, management commentary, historical data, macro data,
@@ -6,6 +6,33 @@ deterministic calculations, charts, and LLM reasoning to answer investment-resea
 questions — with every material claim traceable back to its source.
 
 **This is not a trading system.** It does not produce buy/sell recommendations.
+
+## Project Ownership & Development Approach
+
+The **product concept, product strategy, system architecture, user experience, research approach, data/source strategy, design decisions, and overall technical direction of Signal are my original work**.
+
+AI coding tools, primarily **Claude Code**, are used as a **vibe-coding and implementation assistant** to help translate these designs into working software, accelerate prototyping, generate and refactor code, and explore implementation alternatives.
+
+The project is grounded in **software and solution architecture** and in core software-engineering principles such as **modularity, abstraction, interfaces, separation of concerns, maintainability, testability, and clear system boundaries**.
+
+This project also serves as a hands-on learning environment for developing a deeper understanding of:
+
+* AI agents and agentic systems
+* AI agent design patterns
+* Planning, orchestration, tool use, memory, retrieval, and evaluation
+* Knowledge graphs, semantic search, and multi-store architectures in the context of AI agents
+* Product management for AI-native products
+* Practical application of software architecture and engineering principles in AI systems
+
+A core belief behind this project is that **deep technical expertise does not become less important in an AI-driven software world; it becomes more important**.
+
+AI can significantly accelerate coding and implementation, but effective use of AI still depends on strong technical judgment: understanding system boundaries, architecture trade-offs, data models, interfaces, failure modes, scalability, security, reliability, and software-engineering fundamentals.
+
+The differentiating skill is therefore not simply the ability to write code manually, but the ability to **design the right system, ask the right questions, evaluate AI-generated implementations, recognize architectural weaknesses, make sound trade-offs, and guide AI toward robust engineering outcomes**.
+
+The primary skills being exercised in this project are **product thinking, product management, deep technical judgment, system/software architecture, analytical reasoning, and sound software-engineering principles**.
+
+AI-assisted coding is used to accelerate implementation; **it does not replace technical expertise or define the product vision, product decisions, system architecture, research methodology, or overall technical intent of Signal**.
 
 ## License
 
@@ -43,9 +70,9 @@ file is what actually governs.
 
 ## Table of Contents
 
+- [Project Ownership & Development Approach](#project-ownership--development-approach)
 - [License](#license)
 - [Objective](#objective)
-- [POC Scope](#poc-scope)
 - [High-Level Architecture](#high-level-architecture)
 - [Folder Structure](#folder-structure)
 - [Source Adapters](#source-adapters)
@@ -83,34 +110,10 @@ The system should eventually answer questions like:
 It should behave like a personal financial research analyst — not a financial-data
 chatbot that only looks numbers up.
 
-### POC Success Criteria
-
-1. **Single-company deep dive** — HDFC Bank, 10 years: trends, ROA, ROE, loan/deposit
-   growth, important changes, charts, source evidence.
-2. **Peer comparison** — HDFC Bank vs ICICI Bank, 5 years: growth, profitability, asset
-   quality, efficiency, structural differences.
-3. **Cross-sector macro reasoning** — HDFC Bank vs Mahindra & Mahindra under a weak
-   monsoon: transmission mechanism, metrics to monitor, evidence, and an explicit
-   fact-vs-inference split. This is the question that proves the system is more than a
-   lookup tool.
-
-## POC Scope
-
-| | POC | Future |
-|---|---|---|
-| Companies | 5–20 | 10,000+ |
-| History | 10–20 years where available | 20+ years |
-| Storage | SQLite + local filesystem | PostgreSQL + S3-compatible object storage + pgvector |
-| Ingestion | Manual file drop | Scheduled, licensed feeds |
-| Interface | CLI + lightweight read-only web viewer | Full web UI ([wireframed](#web-ui-implementation-sequence): persistent investigations, hypothesis chains, watchlist) |
-
-The research logic must not need to change when storage infrastructure changes — every
-source sits behind an adapter, and storage sits behind a repository layer.
-
 ## High-Level Architecture
 
 ```
-Sources (manually obtained files)
+Sources (manually obtained files or periodic ingestion)
       │
       ▼
 Ingestion  (detect → parse → validate → normalize → store)
@@ -128,11 +131,18 @@ Research Assistant  (deterministic tools  +  LLM reasoning)
 Answer  (FACT / CALCULATION / MANAGEMENT STATEMENT / INFERENCE, all cited)
 ```
 
-No multi-agent framework, no orchestrator/planner agents, no LangChain/LangGraph for
-the POC — one research assistant backed by deterministic tools and retrieval is
+No multi-agent framework, no orchestrator/planner agents, no LangChain/LangGraph —
+one research assistant backed by deterministic tools and retrieval is
 sufficient. Components are shaped so they *can* later be registered as callable tools
 (`get_company_financials`, `calculate_ratio`, `compare_companies`, `generate_chart`, …)
 without building that registry now.
+
+This is the *original* proposed pipeline, kept as-is for historical context — the
+system has since grown well past this single linear flow (a Flask web app alongside
+the CLI, a knowledge graph, a Model Router/Fallback layer, an event bus, price
+history, and more). See [architecture.md's High-level
+architecture](architecture.md#high-level-architecture) for the current, accurate
+diagram.
 
 ## Folder Structure
 
@@ -185,7 +195,7 @@ SourceAdapter (interface)
      ├── NSEAdapter                 manually obtained CSV/XLS/XBRL/PDF
      ├── BSEAdapter                 manually obtained CSV/XLS/XBRL/PDF
      ├── InvestorRelationsAdapter   annual reports, presentations, transcripts
-     └── MacroDataAdapter           RBI / MOSPI / IMD / commodity data (stub in POC)
+     └── MacroDataAdapter           RBI / MOSPI / IMD / commodity data (stub for now)
 ```
 
 The research/retrieval/calculation layers never depend on a vendor-specific format —
@@ -291,7 +301,7 @@ tracked separately so renames/relistings never corrupt historical joins.
 
 ### Company Lifecycle / Archiving
 
-Two statuses in the POC: `active` → `archived` (future: `inactive`, `delisted`,
+Two statuses today: `active` → `archived` (future: `inactive`, `delisted`,
 `merged`, `acquired`). Archiving only flips metadata (`status`, `archived_at`,
 `archive_reason`) on the `companies` row — it never touches observations, documents, or
 canonical data, so nothing is ever reconstructed on restore. Ingestion checks
@@ -423,16 +433,17 @@ Unit-tested against fixture values.
 
 ## Evidence & Citations
 
-Every answer distinguishes:
+Every answer distinguishes FACT (a reported number or statement, with source),
+CALCULATION (a deterministic computation, with inputs cited), MANAGEMENT STATEMENT
+(quoted/paraphrased commentary, with source), and INFERENCE (reasoning that connects
+facts — never presented as confirmed). This is still the current tagging scheme,
+unchanged since this proposal — see [architecture.md's Key design
+principles](architecture.md#key-design-principles) #1-#2 for how it's actually
+enforced in code today (every LLM claim traces back to a specific retrieved
+`Evidence` line; the LLM never computes a number itself).
 
-```
-FACT                  reported number or statement, with source
-CALCULATION           deterministic computation, with inputs cited
-MANAGEMENT STATEMENT  quoted/paraphrased commentary, with source
-INFERENCE             reasoning that connects facts — never presented as confirmed
-```
-
-Example:
+Example, from this proposal's original scoping question (a weak monsoon's effect on
+Mahindra & Mahindra):
 
 ```
 Fact:        Rural segment revenue declined 8%.  [Source: FY2026 investor presentation]
@@ -475,7 +486,7 @@ plan and its rationale, not a running checklist.
 4. **Charts** — `financial_charts.py` wired into the same CLI command.
 5. **Research assistant + LLM** — `assistant.py`, `evidence.py` (FACT/CALCULATION
    labeling). Answers **Question 1** (single-company deep dive) and **Question 2**
-   (peer comparison) from [POC Success Criteria](#poc-success-criteria).
+   (peer comparison) — the original questions this system was designed to answer.
 6. **NSE + BSE for one company** — shareholding pattern, announcements as documents;
    exercise `reconciliation_log` on a real two-source case.
 7. **Investor Relations + document pipeline** — annual report/presentation → chunking →
@@ -623,17 +634,18 @@ status list. Check there (plus `git log`/`git status`) for current state.
 
 ## Open Decisions
 
-Two calls made while drafting this architecture that are worth confirming before
-implementation starts:
+Two calls made while drafting this architecture, both since settled:
 
-- **Embeddings sequencing** — retrieval starts with SQLite FTS5 keyword search +
-  metadata filtering only; no vector embeddings in the first pass. `document_search.py`
-  is shaped so a semantic backend can be added later without touching callers. This
-  trades off against the spec's default diagram, which shows embeddings as a day-one
-  step — flagging in case semantic search is wanted from the start.
-- **NSE/BSE trust-rank tie** — both sit at the same priority tier (both are official
-  exchange filings). Matching values → BSE recorded as a confirming cross-check.
-  Differing values → both kept, conflict surfaced, no auto-resolution.
+- **Embeddings sequencing** — decided: FTS5 keyword search first, no vector
+  embeddings. This shipped as Step 2D's `document_search.py` (real, page-scoped
+  chunking + FTS5) — still keyword-only today, no semantic/embedding layer added
+  since. See [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy-step-2d)
+  for the current implementation and why FTS5 was kept over embeddings.
+- **NSE/BSE trust-rank tie** — decided: both sit at the same priority tier (both are
+  official exchange filings). Matching values → BSE recorded as a confirming
+  cross-check. Differing values → both kept, conflict surfaced, no auto-resolution.
+  NSE XBRL ingestion is real today ([Source / Provenance](#source--provenance--reconciliation));
+  BSE still has no adapter — see [FeatureList.md](FeatureList.md).
 
 ## Engineering Principles
 
@@ -647,3 +659,18 @@ implementation starts:
 7. Write unit tests for parsers and financial calculations.
 8. Build incrementally; optimize for correctness and traceability before autonomy.
 9. No multi-agent orchestration until a concrete requirement proves it necessary.
+
+---
+
+## Related documentation
+
+This file is the original design proposal — why the system is shaped this way.
+For everything else:
+
+- **[USER_GUIDE.md](USER_GUIDE.md)** — how to actually run it: setup, every CLI
+  command, and troubleshooting.
+- **[architecture.md](architecture.md)** — the current, accurate technical
+  picture (what's actually built, as opposed to what was originally proposed
+  here).
+- **[FeatureList.md](FeatureList.md)** — what's shipped vs. still open, and the
+  running status against this document's numbered roadmap steps.

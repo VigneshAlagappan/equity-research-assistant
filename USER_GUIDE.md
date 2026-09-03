@@ -1,4 +1,4 @@
-# User Guide
+# Equity AI Research Assistant — User Guide
 
 This is a guide for **using** the Global Equity Research Assistant (US + India
 focus) as an analyst — what each feature does and the exact commands to run it.
@@ -106,7 +106,7 @@ python main.py add-company HDFCBANK \
 - Running this again for the same `company_id` updates the record — it doesn't create
   a duplicate.
 
-**Or register the two POC demo companies (HDFC Bank + ICICI Bank) in one step:**
+**Or register the two seed demo companies (HDFC Bank + ICICI Bank) in one step:**
 
 ```bash
 python main.py seed-companies
@@ -509,3 +509,13 @@ python main.py ask "What stands out about HDFC Bank's last 10 years?" --company 
   a given company, or the report/assistant will report "no data" for the other view.
 - **Nothing shows in `analyze` or `ask` after ingesting** — double check the
   `--statement-type` you ingested with matches the one you're viewing/asking with.
+
+---
+
+## Related documentation
+
+- **[README.md](README.md)** — the original design proposal and scoping
+  rationale: why the system is shaped the way it is.
+- **[architecture.md](architecture.md)** — the current, accurate technical
+  picture of what's actually built.
+- **[FeatureList.md](FeatureList.md)** — what's shipped vs. still open.

@@ -250,7 +250,7 @@ def plot_advances_vs_deposits(
     conn: DBConnection, company_id: str, statement_type: str | None = "consolidated"
 ) -> plt.Figure | None:
     """Advances (loans) vs Deposits, annual — directly serves the "loan/deposit
-    growth" success criterion (README: POC Success Criteria, single-company deep dive)."""
+    growth" trend for a single-company deep dive."""
     advances = get_canonical_series(conn, company_id, "advances", "annual", statement_type)
     deposits = get_canonical_series(conn, company_id, "deposits", "annual", statement_type)
     if not advances and not deposits:

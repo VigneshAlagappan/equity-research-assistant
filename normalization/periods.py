@@ -32,7 +32,7 @@ class PeriodParseError(ValueError):
 def _expand_year(two_or_four_digit: str) -> int:
     if len(two_or_four_digit) == 4:
         return int(two_or_four_digit)
-    # Screener-style 2-digit years are always 2000s in this POC's date range.
+    # Screener-style 2-digit years are always 2000s in this system's date range.
     return 2000 + int(two_or_four_digit)
 
 

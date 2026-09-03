@@ -1,4 +1,4 @@
--- Global Equity Research Assistant (POC) — SQLite schema
+-- Global Equity Research Assistant — SQLite schema
 --
 -- Layer order: sources -> companies -> documents -> financial_observations
 --   -> canonical_financials -> reconciliation_log -> document_chunks (+FTS5)
@@ -245,7 +245,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_fts
   USING fts5(text, content='document_chunks', content_rowid='chunk_id');
 
 -- ============================================================
--- Watchlist (single shared list -- no per-user model in the POC,
+-- Watchlist (single shared list -- no per-user model yet,
 -- README: Web UI Implementation Sequence, step 16)
 -- ============================================================
 
@@ -711,7 +711,7 @@ CREATE TABLE IF NOT EXISTS stock_actions (
 CREATE INDEX IF NOT EXISTS idx_stock_actions_company ON stock_actions(company_id, action_date);
 
 -- ============================================================
--- Users -- sign-up is email-based (no verification, README: self-use POC).
+-- Users -- sign-up is email-based (no verification, self-use system).
 -- The one seeded admin account logs in by username instead of email, so
 -- it's a separate nullable column rather than a fake "admin@..." email.
 -- ============================================================

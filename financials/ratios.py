@@ -71,7 +71,7 @@ def net_profit_margin(net_profit: float, total_income: float) -> float:
 def _company_sector_tags(company_row: Row) -> set[str]:
     """Derive metrics_dictionary-style sector tags from a company's industry text.
 
-    A POC-level heuristic (companies has free-text sector/industry, not a tag
+    A simple heuristic (companies has free-text sector/industry, not a tag
     column): "bank" / "nbfc" if the industry text mentions them. Extend this
     as new sectors/tags are needed — it's the one place that mapping lives.
     """

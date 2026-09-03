@@ -671,8 +671,8 @@ def test_research_ask_unregistered_company_is_404(client, monkeypatch) -> None:
 
 def test_research_ask_supports_peer_comparison(tmp_path: Path, monkeypatch) -> None:
     """The chip picker allows multiple companies — the backend already supports
-    peer comparison (README POC Success Criteria #2), this just exercises it
-    through the new endpoint rather than the CLI's --company flag."""
+    peer comparison, this just exercises it through the new endpoint rather
+    than the CLI's --company flag."""
     db_path = tmp_path / "research_ask_peer.db"
     conn = init_db(db_path=db_path)
     ensure_metric_vocabulary(conn)

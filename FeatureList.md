@@ -19,6 +19,23 @@ Legend: ✅ done · 🟡 partial · ⬜ not started
 
 ---
 
+## Deployment model
+
+**Current design target: a single individual user, running locally.** This
+isn't an oversight to fix later in the features below — it's the deliberate
+scope this phase was built to (see [architecture.md's Key design principles
+#5](architecture.md#key-design-principles), "Local-first, self-use"): one
+SQLite file (`data/equity_research.db`), one seeded admin account, a Flask
+dev server (`main.py serve`) with no production WSGI/process manager in
+front of it, no connection pooling, no per-request rate limiting, no
+horizontal scaling story. Every "Available" row above assumes this
+single-user, single-process context.
+
+**Future phase (not started): a server deployment planned for 1000+
+concurrent sessions.** Getting there is a distinct, sizeable body of work —
+not a config flag — and is tracked as its own Pending item below rather than
+implied by anything currently shipped.
+
 ## Available
 
 | Area | Feature | Status | Notes |
@@ -74,12 +91,13 @@ Legend: ✅ done · 🟡 partial · ⬜ not started
 | Medium | Add a non-financial-sector company (README [step 10](README.md#implementation-sequence)) | 🟡 partial | No longer true that every registered company is Financial Services — NSE XBRL ingestion (see Data pipeline row above) brought in real data for non-financial companies too (e.g. ADANIPORTS, ADANIENT both have real promoter-holding/net-profit data — `SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md` §6.4). What's unverified: whether sector-specific metrics (segment revenue, volume, realization) made it in too, or just the generic metrics indicators check — the schema's sector-generality claim isn't confirmed either way yet. |
 | Low | Pin/unpin from the Companies list | ⬜ not started | Today only available from a company's own detail page or the Research-thread page. |
 | Low | Comparison charts beyond 4 companies | ⬜ not started | `_LINE_COLORS`/`_MARKERS` in `charts/financial_charts.py` are 4-element lists; a 5th company would cycle back and become ambiguous. Untested beyond 2 in practice. |
-| Low | Pricing page | ⬜ not started | No pricing model exists (self-use POC, no billing/plans) — nav link was removed rather than left dead. |
+| Low | Pricing page | ⬜ not started | No pricing model exists (self-use project, no billing/plans) — nav link was removed rather than left dead. |
 | Low | System theme auto-detection | ⬜ not started | Per-user theming ships 4 explicit themes; no `prefers-color-scheme`-driven "System" option yet. |
 | Medium | US company sector/industry classification | ⬜ not started | `companies.sector`/`industry`/`macro_economic_sector`/`basic_industry` are NSE's own 4-level taxonomy; no GICS-equivalent importer exists for US companies, so those columns stay `NULL` for them. `financials/ratios.py`'s bank/NBFC heuristic and GNPA/CASA terminology also stay India-vocabulary-biased. |
 | Medium | Bulk US company-master importer | ⬜ not started | `companies/nse_import.py` bulk-registers from an NSE export; no parallel importer exists for a US index constituent list. Registering a US company is one-at-a-time today (`add-company --country US` / `ingest-yfinance`). |
 | Low | `yfinance` fiscal-year labeling doesn't consult `fiscal_year_end_month` | ⬜ not started | `sources/yfinance_financials.py` labels US fiscal years by calendar close year (`FY{period_end.year}`), not the company's actual `fiscal_year_end_month`. Data is correct either way; only the `FY` label can be cosmetically off for a non-calendar US fiscal year (e.g. Apple's September close). |
 | Low | N-country ticker-suffix / index-tag generalization | ⬜ not started | `web/live_quote.py`/`web/app.py`'s ticker-suffix and index-tag logic is a 2-way IN/US hardcoded branch — matches the app's stated US+India focus, not a general lookup table a third market would need. |
+| Future phase | Multi-user server deployment, 1000+ concurrent sessions | ⬜ not started | Out of scope for the current [single-user, local-first design](#deployment-model) — a distinct future phase, not a natural extension of what's shipped. Would need, at minimum: a production WSGI server/process manager in front of Flask (`main.py serve` is a dev server); SQLite replaced or fronted for concurrent multi-writer access (single-file `data/equity_research.db`, no connection pooling today); real multi-tenant auth/authorization (today: one seeded admin, no per-user data isolation model); per-user/per-session LLM cost and rate controls (today's Model Router/Fallback and `llm_call_log` observability assume one user's traffic); and horizontal scaling for the Flask app itself. None of this is designed against yet. |
 
 Two more backlog areas exist beyond this table and are tracked in
 [pendingList.md](pendingList.md) rather than duplicated here: the
