@@ -152,17 +152,19 @@ def test_select_model_routes_quick_lookup_to_the_cheap_tier() -> None:
 
 
 def test_select_model_routes_analysis_question_to_the_top_tier() -> None:
-    # Top tier is Sonnet, not Opus — Opus is disabled by operator policy
-    # (llm/capability_registry.py), so DEEP's preferred model is Sonnet too.
-    assert _select_model("Why did net profit decline in FY2020?", ["HDFCBANK"], evidence_count=20) == "claude-sonnet-5"
+    # All three tiers currently prefer Haiku (config.settings.TIER_PREFERRED_MODEL
+    # — a deliberate cost policy) — _select_model is a thin wrapper around that
+    # config, not the router's actual fallback chain, which still enforces
+    # DEEP's higher TIER_MIN_REASONING_STRENGTH and would skip Haiku there.
+    assert _select_model("Why did net profit decline in FY2020?", ["HDFCBANK"], evidence_count=20) == "claude-haiku-4-5"
 
 
 def test_select_model_routes_peer_comparison_to_the_top_tier_regardless_of_wording() -> None:
-    assert _select_model("net profit", ["HDFCBANK", "ICICIBANK"], evidence_count=5) == "claude-sonnet-5"
+    assert _select_model("net profit", ["HDFCBANK", "ICICIBANK"], evidence_count=5) == "claude-haiku-4-5"
 
 
 def test_select_model_routes_generic_question_to_the_mid_tier() -> None:
-    assert _select_model("How has net profit grown over the years?", ["HDFCBANK"], evidence_count=25) == "claude-sonnet-5"
+    assert _select_model("How has net profit grown over the years?", ["HDFCBANK"], evidence_count=25) == "claude-haiku-4-5"
 
 
 def test_answer_question_auto_routes_without_an_explicit_model(

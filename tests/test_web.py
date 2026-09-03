@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -270,18 +271,21 @@ def test_companies_page_shows_empty_state_when_no_companies(tmp_path: Path, monk
     assert b"No companies registered yet" in response.data
 
 
-def test_home_page_is_research(client) -> None:
-    """Research is the home page now — "/" renders the same content as the
-    dedicated research() view, not the Companies list."""
+def test_home_page_is_landing(client) -> None:
+    """"/" is the public marketing landing page (web/templates/landing.html)
+    now, not the research tool directly — it links out to /research rather
+    than embedding the question box itself."""
     response = client.get("/")
     assert response.status_code == 200
-    assert b"Ask your own investment question" in response.data
+    assert b"Find clarity in a market built on noise." in response.data
+    assert b'href="/research"' in response.data
 
 
-def test_legacy_research_path_redirects_to_home(client) -> None:
+def test_research_path_renders_the_research_page(client) -> None:
+    """/research is a real page now, not a legacy redirect to "/"."""
     response = client.get("/research")
-    assert response.status_code == 302
-    assert response.headers["Location"] == "/"
+    assert response.status_code == 200
+    assert b"Ask your own investment question" in response.data
 
 
 def test_company_report_unknown_company_is_404(client) -> None:
@@ -322,8 +326,12 @@ def test_company_report_renders_ingested_data(tmp_path: Path, monkeypatch) -> No
     assert page.status_code == 200
     assert b'id="valuation-dashboard"' in page.data
     # No server-rendered ledger/PNG charts any more — the dashboard fetches
-    # its own data client-side.
-    assert b"data:image/png;base64," not in page.data
+    # its own data client-side. A bare substring check on "data:image/png;
+    # base64," would false-positive on _ask_ai.html's own client-side JS
+    # (included on every page), which builds that prefix at runtime from a
+    # template placeholder rather than embedding real image bytes — so look
+    # for an actual base64 payload following the prefix instead.
+    assert re.search(rb"data:image/png;base64,[A-Za-z0-9+/]{50,}", page.data) is None
 
     assert feed["YEARS"] == [2023, 2024]
     net_profit_row = next(r for r in feed["METRICS"]["incomeStatement"] if r["key"] == "netProfit")
@@ -510,7 +518,7 @@ def test_research_page_has_no_company_scope_picker(client) -> None:
     """No manual "Scope to companies" chip UI any more — company scoping is
     always auto-detected from the question text (client-side, against the
     COMPANIES list embedded in the page)."""
-    response = client.get("/")
+    response = client.get("/research")
     body = response.data.decode()
     assert response.status_code == 200
     assert "chip-toggle" not in body
@@ -520,13 +528,13 @@ def test_research_page_has_no_company_scope_picker(client) -> None:
 
 def test_research_page_shows_no_key_banner_when_unset(client, monkeypatch) -> None:
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", False)
-    response = client.get("/")
+    response = client.get("/research")
     assert b"ANTHROPIC_API_KEY is not set" in response.data
 
 
 def test_research_page_omits_banner_when_key_set(client, monkeypatch) -> None:
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
-    response = client.get("/")
+    response = client.get("/research")
     assert b"ANTHROPIC_API_KEY is not set" not in response.data
 
 
