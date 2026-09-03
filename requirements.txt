@@ -9,3 +9,5 @@ pypdf>=5.0
 requests>=2.31
 bleach>=6.4
 neo4j>=5.0
+qdrant-client>=1.9
+sentence-transformers>=3.0

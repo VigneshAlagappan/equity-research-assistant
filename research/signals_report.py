@@ -26,7 +26,7 @@ from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
 from research.capabilities import InvestigationMemoryCapabilities, default_investigation_memory
-from research.documents import get_document_evidence
+from research.documents import get_document_evidence, get_document_passage_evidence
 from research.evidence import Evidence, render_evidence_block
 from retrieval.structured_search import get_comparison_evidence
 
@@ -182,7 +182,12 @@ def generate_signals_report(
     if len(company_ids) == 1:
         # Uploaded-document evidence (Docs tab) only has single-company
         # attribution today — see research/documents.py.
-        evidence = evidence + get_document_evidence(conn, company_ids[0], question)
+        evidence = evidence + get_document_evidence(conn, company_ids[0], question)  # whole document
+        # Additive (feature spec section 9): hybrid (FTS5+semantic) retrieval's
+        # top-K passages, alongside the whole-document evidence above — same
+        # reasoning as research/assistant.py::answer_question()'s identical
+        # addition. Never replaces the whole-document evidence.
+        evidence = evidence + get_document_passage_evidence(conn, company_ids[0], question)  # targeted passages
     if not evidence:
         return SignalsReport(
             report_markdown=(

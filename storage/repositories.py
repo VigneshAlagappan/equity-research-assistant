@@ -1455,6 +1455,119 @@ def search_document_chunks(
     return conn.execute(sql, params).fetchall()
 
 
+def list_document_chunks(conn: sqlite3.Connection, document_id: int) -> list[sqlite3.Row]:
+    """Every chunk belonging to one document, joined back to `documents` for
+    the same full provenance search_document_chunks() returns — the read
+    side retrieval/semantic_indexer.py uses to (re-)embed a document's
+    chunks without re-deriving them from the PDF a second time (section 5:
+    "the same logical chunk must have both a keyword-search representation
+    and a semantic-search representation — do not create a second
+    independent chunking implementation")."""
+    return conn.execute(
+        """
+        SELECT dc.chunk_id, dc.document_id, dc.company_id, dc.page_number, dc.chunk_index, dc.text,
+               dc.embedding_status, dc.embedding_model,
+               d.document_type, d.fiscal_year, d.quarter, d.source, d.published_at, d.retrieved_at
+        FROM document_chunks dc
+        JOIN documents d ON d.document_id = dc.document_id
+        WHERE dc.document_id = ?
+        ORDER BY dc.chunk_index
+        """,
+        (document_id,),
+    ).fetchall()
+
+
+def get_document_chunks_by_ids(conn: sqlite3.Connection, chunk_ids: list[int]) -> list[sqlite3.Row]:
+    """Hydrate a set of chunk_ids (typically a VectorStore search's hits,
+    retrieval/semantic_search.py) back into full provenance rows — same
+    joined shape search_document_chunks() returns, so semantic and keyword
+    hits become the identical DocumentPassage shape downstream. The vector
+    store itself is never trusted for provenance (retrieval/vector_store.py:
+    "the vector store staying authoritative for nothing"); this table always
+    is. Returns [] for an empty/no-longer-existing chunk_id list rather than
+    raising — a stale vector pointing at a since-deleted chunk is dropped
+    silently, the same "absence isn't an error" convention used everywhere
+    else in this pipeline."""
+    if not chunk_ids:
+        return []
+    placeholders = ",".join("?" for _ in chunk_ids)
+    sql = (
+        "SELECT dc.chunk_id, dc.document_id, dc.company_id, dc.page_number, dc.chunk_index, dc.text, "
+        "       d.document_type, d.fiscal_year, d.quarter, d.source, d.published_at, d.retrieved_at "
+        "FROM document_chunks dc "
+        "JOIN documents d ON d.document_id = dc.document_id "
+        f"WHERE dc.chunk_id IN ({placeholders})"
+    )
+    return conn.execute(sql, chunk_ids).fetchall()
+
+
+def set_document_chunks_embedding_status(
+    conn: sqlite3.Connection, chunk_ids: list[int], *, status: str, model: str | None, embedded_at: str | None
+) -> None:
+    """Record semantic-indexing status per chunk (retrieval/semantic_indexer.py)
+    — what makes backfill idempotent (a chunk already 'indexed' under the
+    current embedding_model is skipped on the next run) without querying the
+    vector store just to find out. Never touches document_chunks_fts or any
+    other column — a failed embedding attempt (status='failed') must not
+    disturb the FTS5 index this same chunk already serves (section 10)."""
+    if not chunk_ids:
+        return
+    placeholders = ",".join("?" for _ in chunk_ids)
+    conn.execute(
+        f"UPDATE document_chunks SET embedding_status = ?, embedding_model = ?, embedded_at = ? "
+        f"WHERE chunk_id IN ({placeholders})",
+        (status, model, embedded_at, *chunk_ids),
+    )
+    conn.commit()
+
+
+def insert_retrieval_diagnostic(
+    conn: sqlite3.Connection,
+    *,
+    created_at: str,
+    query_excerpt: str | None,
+    company_id: str | None,
+    as_of: str | None,
+    keyword_candidate_count: int,
+    semantic_candidate_count: int,
+    returned_count: int,
+    embedding_latency_ms: float | None,
+    vector_store_latency_ms: float | None,
+    keyword_latency_ms: float | None,
+    degraded: bool,
+    degradation_reason: str | None,
+    passages_json: str,
+) -> None:
+    """One row per retrieval/hybrid_search.py call (section 13,
+    observability) — same "structured row per call" role
+    insert_llm_call_log plays for LLM calls, just without any cost/token
+    accounting since retrieval never calls the LLM."""
+    conn.execute(
+        """
+        INSERT INTO retrieval_diagnostics (
+            created_at, query_excerpt, company_id, as_of, keyword_candidate_count,
+            semantic_candidate_count, returned_count, embedding_latency_ms, vector_store_latency_ms,
+            keyword_latency_ms, degraded, degradation_reason, passages_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            created_at, query_excerpt, company_id, as_of, keyword_candidate_count,
+            semantic_candidate_count, returned_count, embedding_latency_ms, vector_store_latency_ms,
+            keyword_latency_ms, int(degraded), degradation_reason, passages_json,
+        ),
+    )
+    conn.commit()
+
+
+def list_retrieval_diagnostics(conn: sqlite3.Connection, limit: int = 50) -> list[sqlite3.Row]:
+    """Most recent retrieval diagnostic rows, newest first — admin/debug
+    visibility (section 13), same shape of use as the Admin Usage page reads
+    llm_call_log."""
+    return conn.execute(
+        "SELECT * FROM retrieval_diagnostics ORDER BY retrieval_id DESC LIMIT ?", (limit,)
+    ).fetchall()
+
+
 def list_knowledge_evidence_for_claim(conn: sqlite3.Connection, claim_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM knowledge_evidence WHERE claim_id = ? ORDER BY evidence_id", (claim_id,)

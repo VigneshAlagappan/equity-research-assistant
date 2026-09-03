@@ -237,7 +237,18 @@ CREATE TABLE IF NOT EXISTS document_chunks (
   page_number INTEGER,
   chunk_index INTEGER,
   text TEXT NOT NULL,
-  embedding BLOB,                   -- NULL until a semantic layer is added
+  embedding BLOB,                   -- unused legacy column, left in place; the real semantic
+                                     -- layer (retrieval/vector_store.py) indexes vectors in the
+                                     -- VectorStore, not here -- this table + FTS5 stay the
+                                     -- rebuildable source chunks/keyword index, never the vector
+                                     -- store's storage.
+  -- Semantic-indexing status (retrieval/semantic_indexer.py) -- lets a
+  -- backfill/re-index be idempotent (a chunk already 'indexed' under the
+  -- current embedding_model is skipped) without needing to query the vector
+  -- store just to find out. pending (default) | indexed | failed.
+  embedding_status TEXT NOT NULL DEFAULT 'pending',
+  embedding_model TEXT,
+  embedded_at TEXT,
   created_at TEXT
 );
 
@@ -355,6 +366,38 @@ CREATE TABLE IF NOT EXISTS llm_call_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_llm_call_log_created_at ON llm_call_log(created_at);
+
+-- ============================================================
+-- Hybrid retrieval diagnostics (retrieval/observability.py) -- one row per
+-- retrieval/hybrid_search.py call. Same "structured log line, not just a
+-- console message" role llm_call_log plays for LLM calls, section 13's
+-- observability ask. No LLM call happens here (retrieval never calls the
+-- LLM) so there is no cost/token accounting -- only retrieval-specific
+-- timing/rank/degradation fields. query_excerpt is truncated, never the
+-- full query text, and per-passage detail (chunk_id/document_id/page/
+-- fts_rank/semantic_score/hybrid_rank/source) is a compact JSON array of
+-- small numeric/id fields -- never raw passage text -- so this table never
+-- becomes a second, unbounded copy of document content purely for logging.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS retrieval_diagnostics (
+  retrieval_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL,
+  query_excerpt TEXT,              -- first ~200 chars of the query, for eyeballing -- never the full prompt/question
+  company_id TEXT,
+  as_of TEXT,
+  keyword_candidate_count INTEGER NOT NULL DEFAULT 0,
+  semantic_candidate_count INTEGER NOT NULL DEFAULT 0,
+  returned_count INTEGER NOT NULL DEFAULT 0,
+  embedding_latency_ms REAL,
+  vector_store_latency_ms REAL,
+  keyword_latency_ms REAL,
+  degraded INTEGER NOT NULL DEFAULT 0,      -- 1 if the vector store/embedding step was unavailable this call
+  degradation_reason TEXT,
+  passages_json TEXT                        -- compact per-passage diagnostics, see comment above
+);
+
+CREATE INDEX IF NOT EXISTS idx_retrieval_diagnostics_created_at ON retrieval_diagnostics(created_at);
 
 -- ============================================================
 -- LLM-generated key insights (Overview tab) -- every generate/regenerate

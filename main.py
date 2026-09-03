@@ -313,6 +313,87 @@ def cmd_replay_events(args: argparse.Namespace) -> None:
         )
 
 
+def cmd_vector_backfill(args: argparse.Namespace) -> None:
+    """One-time, idempotent backfill (section 11): generate embeddings for
+    every already-processed document's existing chunks and upsert them into
+    the VectorStore. Reuses retrieval/semantic_indexer.py's
+    embed_and_index_document_chunks() -- the same function
+    ingestion/workers/embedding_indexer_worker.py calls on every future
+    ingestion, so there is exactly one embedding-generation implementation
+    (section 12), not a second backfill-only path.
+
+    Idempotent by construction: a chunk already embedding_status='indexed'
+    under the CURRENT embedding model is skipped without calling the
+    embedding provider or the vector store, so re-running this command costs
+    nothing extra and never duplicates vectors. --force re-embeds everything
+    regardless (e.g. after deliberately changing EMBEDDING_MODEL_LOCAL/
+    EMBEDDING_PROVIDER). --company-id/--limit are the cost guardrail this
+    feature's spec calls for -- point this at a small/synthetic dataset (see
+    tests/test_vector_backfill.py) or a small handful of real documents
+    before ever running it unbounded against the real document archive."""
+    setup_logging()
+    conn = init_db()
+
+    from retrieval.embedding_provider import EmbeddingProviderUnavailable, default_embedding_provider
+    from retrieval.semantic_indexer import embed_and_index_document_chunks
+    from retrieval.vector_store import VectorStoreUnavailable, default_vector_store
+    from storage.repositories import list_documents_by_status
+
+    store = default_vector_store()
+    if store is None:
+        conn.close()
+        raise SystemExit("VECTOR_STORE_BACKEND=none — the vector layer is disabled, nothing to backfill.")
+    if not store.health_check():
+        conn.close()
+        raise SystemExit(
+            "Vector store unreachable (config.settings.QDRANT_URL) — start it (see config/settings.py's "
+            "VECTOR_STORE_BACKEND comment for the docker run command) and retry. FTS5/BM25 keyword search "
+            "is unaffected in the meantime (section 10)."
+        )
+    try:
+        provider = default_embedding_provider()
+    except EmbeddingProviderUnavailable as exc:
+        conn.close()
+        raise SystemExit(f"Embedding provider unavailable: {exc}")
+
+    documents = list_documents_by_status(conn, "processed")
+    if args.company_id:
+        documents = [d for d in documents if d["company_id"] == args.company_id]
+    if args.limit is not None:
+        documents = documents[: args.limit]
+
+    logger.info("vector-backfill: %d eligible document(s), embedding_model=%s", len(documents), provider.model_id)
+
+    documents_embedded = 0
+    chunks_embedded = 0
+    chunks_already_indexed = 0
+    failed = 0
+    for doc in documents:
+        try:
+            result = embed_and_index_document_chunks(
+                conn, doc, embedding_provider=provider, vector_store=store, force=args.force
+            )
+        except (VectorStoreUnavailable, EmbeddingProviderUnavailable) as exc:
+            logger.warning("document %s: %s", doc["document_id"], exc)
+            failed += 1
+            continue
+        chunks_already_indexed += result.chunks_already_indexed
+        if result.chunks_embedded:
+            documents_embedded += 1
+            chunks_embedded += result.chunks_embedded
+        logger.info(
+            "document %-6s chunks_total=%-4d embedded=%-4d already_indexed=%-4d",
+            doc["document_id"], result.chunks_total, result.chunks_embedded, result.chunks_already_indexed,
+        )
+
+    conn.close()
+    logger.info(
+        "vector-backfill done: documents_considered=%d documents_with_new_embeddings=%d "
+        "chunks_embedded=%d chunks_already_indexed=%d failed=%d",
+        len(documents), documents_embedded, chunks_embedded, chunks_already_indexed, failed,
+    )
+
+
 def cmd_archive_company(args: argparse.Namespace) -> None:
     """Archive a company (metadata flip only — observations/documents untouched)."""
     setup_logging()
@@ -695,6 +776,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Re-run a worker even if it already logged ok/skipped for that event (default: skip)",
     )
     replay_events_parser.set_defaults(func=cmd_replay_events)
+
+    vector_backfill_parser = subparsers.add_parser(
+        "vector-backfill",
+        help="One-time/idempotent backfill: embed every already-processed document's existing "
+             "chunks and upsert them into the VectorStore for semantic search (section 11)",
+    )
+    vector_backfill_parser.add_argument("--company-id", help="Only backfill this company's documents")
+    vector_backfill_parser.add_argument(
+        "--limit", type=int,
+        help="Only process the first N eligible documents — the cost guardrail for a real-data demo run",
+    )
+    vector_backfill_parser.add_argument(
+        "--force", action="store_true",
+        help="Re-embed every chunk even if already indexed under the current embedding model (default: skip)",
+    )
+    vector_backfill_parser.set_defaults(func=cmd_vector_backfill)
 
     serve_parser = subparsers.add_parser(
         "serve", help="Run the local web viewer (renders the same analyze report in-browser)"

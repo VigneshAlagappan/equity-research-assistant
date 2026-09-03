@@ -223,3 +223,59 @@ def get_document_evidence(
             citation=f"{label}, {period}, added {row['retrieved_at']}",
         ))
     return evidence
+
+
+#: How many hybrid-retrieved passages get_document_passage_evidence() adds
+#: to a Q&A answer's evidence block — a handful of the MOST relevant
+#: passages, not a second copy of every document (get_document_evidence()
+#: above already contributes each whole document up to
+#: MAX_CHARS_PER_DOCUMENT; this is the additive, targeted complement to it,
+#: not a replacement).
+MAX_PASSAGE_EVIDENCE = 5
+
+
+def get_document_passage_evidence(
+    conn: DBConnection, company_id: str, question: str, *, fact_store: FactStore | None = None,
+    as_of: str | None = None, limit: int = MAX_PASSAGE_EVIDENCE,
+) -> list[Evidence]:
+    """MANAGEMENT_STATEMENT evidence from the hybrid (FTS5 + semantic)
+    document retriever (retrieval/hybrid_search.py) — the specific,
+    question-relevant passages a question is actually asking about, as an
+    ADDITIVE complement to get_document_evidence()'s whole-document text
+    above (feature spec section 9: "question -> hybrid retrieval -> top-K
+    relevant passages -> LLM", added alongside the existing full-document
+    path, not replacing it — a workflow that genuinely needs the complete
+    source still gets it from get_document_evidence()).
+
+    Finds evidence get_document_evidence() cannot: that function only reads
+    documents this company has directly on file via the Docs tab and returns
+    each one's OWN opening ~12,000 characters regardless of where in a long
+    filing the relevant passage actually sits; this function's semantic leg
+    also matches on paraphrased wording FTS5 alone would miss, and its
+    result is the exact page/passage — not just "somewhere in this
+    document." Company-specific only, same constraint as
+    get_document_evidence() (research/documents.py has no per-company
+    attribution story for a multi-company comparison yet).
+
+    No LLM call anywhere in this path (retrieval/hybrid_search.py). Same
+    `as_of` convention as get_document_evidence() (research/temporal.py) —
+    threaded straight through to the hybrid retriever's own as_of handling,
+    not re-implemented here."""
+    from retrieval.hybrid_search import hybrid_search_documents
+
+    passages = hybrid_search_documents(
+        conn, question, company_id=company_id, limit=limit, as_of=as_of, fact_store=fact_store,
+    )
+    evidence = []
+    for passage in passages:
+        label = _DOCUMENT_TYPE_LABELS.get(passage.document_type, passage.document_type or "Document")
+        period = f"{passage.quarter} {passage.fiscal_year}" if passage.quarter else (passage.fiscal_year or "period unknown")
+        page = f", page {passage.page_number}" if passage.page_number else ""
+        evidence.append(Evidence(
+            kind="MANAGEMENT_STATEMENT",
+            company_id=company_id,
+            label=f"{label} ({period}){page} — relevant passage",
+            value=passage.text,
+            citation=f"{label}, {period}{page}, matched via {passage.retrieval_source} retrieval",
+        ))
+    return evidence

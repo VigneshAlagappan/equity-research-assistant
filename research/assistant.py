@@ -23,7 +23,7 @@ from llm import observability
 from llm.hardness import classify
 from llm.router import TIER_PREFERRED_MODEL, AllProvidersUnavailableError, route
 from research.capabilities import InvestigationMemoryCapabilities, default_investigation_memory
-from research.documents import get_document_evidence
+from research.documents import get_document_evidence, get_document_passage_evidence
 from research.evidence import render_evidence_block
 from research.macro_evidence import get_macro_evidence
 from retrieval.structured_search import get_comparison_evidence
@@ -100,11 +100,15 @@ def answer_question(
     models/providers if the preferred one is unavailable — this is the
     default behavior.
 
-    Evidence-source rule: the three calls below (Financials + Docs + Macro)
-    are the only evidence this function is allowed to gather — SYSTEM_PROMPT
-    tells the model to answer from this evidence alone, so widening it
-    further (e.g. pulling in Notes or News) changes what the model is allowed
-    to cite and must be a deliberate choice, not an incidental one.
+    Evidence-source rule: the calls below (Financials + Docs + Macro) are the
+    only evidence this function is allowed to gather — SYSTEM_PROMPT tells
+    the model to answer from this evidence alone, so widening it further
+    (e.g. pulling in Notes or News) changes what the model is allowed to
+    cite and must be a deliberate choice, not an incidental one.
+    get_document_passage_evidence() (hybrid FTS5+semantic retrieval,
+    research/documents.py) is exactly such a deliberate widening — still
+    "Docs" evidence, just the specific relevant passage instead of/alongside
+    each whole document's opening text, per this feature's spec section 9.
 
     Reuse-before-recompute (context/reuse.py): first checked against
     generated_reports for a prior saved answer/report on these exact
@@ -131,7 +135,13 @@ def answer_question(
     if len(company_ids) == 1:
         # Uploaded-document evidence (Docs tab) only has single-company
         # attribution today — see research/documents.py.
-        evidence = evidence + get_document_evidence(conn, company_ids[0], question)  # Docs
+        evidence = evidence + get_document_evidence(conn, company_ids[0], question)  # Docs (whole document)
+        # Additive (section 9): the specific passage(s) hybrid retrieval
+        # judges most relevant to THIS question, not just each document's
+        # opening ~12,000 characters — finds a paraphrased answer buried
+        # deep in a long filing that get_document_evidence() above would
+        # never reach. Never removes the whole-document evidence above.
+        evidence = evidence + get_document_passage_evidence(conn, company_ids[0], question)  # Docs (targeted passages)
     evidence = evidence + get_macro_evidence(conn, question)  # Macro (RBI, IITM, FRED, ...)
     if not evidence:
         if company_ids:

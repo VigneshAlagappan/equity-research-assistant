@@ -19,3 +19,10 @@ from ingestion.workers import (  # noqa: F401 -- imported for the registration s
     financial_derivation,
     knowledge_builder_worker,
 )
+
+# embedding_indexer_worker MUST be imported (and therefore registered) AFTER
+# chunk_indexer_worker above -- ingestion/event_bus.py dispatches registered
+# workers in registration order, and the Embedding Indexer Worker reads the
+# chunks the Chunk Indexer Worker just (re)wrote within the same publish()
+# call (ingestion/workers/embedding_indexer_worker.py's module docstring).
+from ingestion.workers import embedding_indexer_worker  # noqa: F401,E402

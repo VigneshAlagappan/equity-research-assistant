@@ -335,6 +335,51 @@ NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "")
 
 # ------------------------------------------------------------------
+# Hybrid document retrieval — Vector Store + Embedding Provider (optional
+# infra, additive to FTS5/BM25 — retrieval/hybrid_search.py, architecture.md
+# "Hybrid Document Retrieval")
+#
+# Same optional-infra shape as GRAPH_BACKEND/Neo4j above: VECTOR_STORE_BACKEND
+# selects which concrete VectorStore (retrieval/vector_store.py) backs
+# semantic search. "qdrant" (default) talks to a local/Dockerized Qdrant
+# instance — not started/stopped by this app (README §20, local-first: start
+# it yourself, same as Neo4j/Ollama):
+#     docker run -d --name qdrant -p 6333:6333 -p 6334:6334 qdrant/qdrant
+# "none" disables the vector layer entirely (e.g. no Docker available) — every
+# capability that calls into retrieval/hybrid_search.py falls back to FTS5/
+# BM25-only automatically (section 10, graceful degradation), same as
+# GRAPH_BACKEND falling back to the SQLite traversal when Neo4j isn't
+# reachable. A running Qdrant that becomes unreachable mid-session degrades
+# the exact same way — retrieval/vector_store.py never lets a connectivity
+# failure raise past the Hybrid Retriever.
+VECTOR_STORE_BACKEND = os.environ.get("VECTOR_STORE_BACKEND", "qdrant")
+QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "signal_document_chunks")
+QDRANT_TIMEOUT_SECONDS = float(os.environ.get("QDRANT_TIMEOUT_SECONDS", "3"))
+
+# EMBEDDING_PROVIDER selects which concrete EmbeddingProvider
+# (retrieval/embedding_provider.py) computes chunk/query vectors. "local"
+# (default) runs sentence-transformers entirely on-device — zero API cost,
+# no key required, so the test suite and CI never need a paid embeddings
+# key. "voyage" opts into Voyage AI's hosted embeddings API (Anthropic's
+# commonly-recommended embeddings partner — Claude itself has no first-party
+# embeddings endpoint) for better retrieval quality in production, gated on
+# VOYAGE_API_KEY being set. Swapping this value is the only code-free way to
+# change which embeddings power semantic search — no call site outside
+# retrieval/embedding_provider_*.py imports a specific embeddings SDK.
+EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "local")
+EMBEDDING_MODEL_LOCAL = os.environ.get("EMBEDDING_MODEL_LOCAL", "sentence-transformers/all-MiniLM-L6-v2")
+EMBEDDING_MODEL_VOYAGE = os.environ.get("EMBEDDING_MODEL_VOYAGE", "voyage-3-lite")
+VOYAGE_API_KEY = os.environ.get("VOYAGE_API_KEY", "")
+
+# Reciprocal Rank Fusion constant (retrieval/hybrid_search.py) — the standard
+# RRF default (Cormack et al.); higher values flatten the influence of exact
+# rank position, lower values reward a top-1 hit more heavily. Deterministic
+# and explainable on purpose (architecture.md: retrieval ranking is never an
+# LLM's call to make).
+HYBRID_RETRIEVAL_RRF_K = int(os.environ.get("HYBRID_RETRIEVAL_RRF_K", "60"))
+
+# ------------------------------------------------------------------
 # Web session secret (signs the login cookie — web/app.py)
 #
 # Self-use local app (README: no deployment target yet), so there's no

@@ -1,10 +1,10 @@
 # Signals — Equity AI Research Assistant
 
-**Signals** is an AI-assisted research system for listed companies that combines
-structured financial data, company filings, management commentary, historical data,
-macro data, deterministic calculations, charts, and LLM reasoning to answer
-investment-research questions — with every material claim traceable back to its
-source.
+**Signals** is an AI-assisted research system for listed companies — with a primary
+focus on the US and India markets — that combines structured financial data, company
+filings, management commentary, historical data, macro data, deterministic
+calculations, charts, and LLM reasoning to answer investment-research questions —
+with every material claim traceable back to its source.
 
 **This is not a trading system.** It does not produce buy/sell recommendations.
 
