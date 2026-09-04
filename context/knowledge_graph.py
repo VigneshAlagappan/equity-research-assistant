@@ -84,6 +84,24 @@ def find_claims_about_entity(
     return _apply_as_of(claims, as_of)
 
 
+def mentioned_entities(
+    conn: DBConnection, company_ids: list[str], text: str, *, fact_store: FactStore | None = None
+) -> list[tuple[str, str]]:
+    """Which already-extracted entities (any type, scoped to these
+    companies) this text names — simple case-insensitive substring match
+    against knowledge_entities.name. Not a fuzzy match — a real, if narrow,
+    connection. Shared by research/investigation_planner.py (per-hypothesis
+    entity mentions) and research/knowledge_evidence.py (Q&A/Signals-report
+    entity mentions), so both surfaces detect "does this text name a known
+    entity" the same way."""
+    if not company_ids:
+        return []
+    fs = fact_store or default_fact_store()
+    rows = fs.list_knowledge_entities_for_companies(conn, company_ids)
+    text_lower = text.lower()
+    return [(r["entity_type"], r["name"]) for r in rows if r["name"] and r["name"].lower() in text_lower]
+
+
 def _apply_as_of(claims: list[KnowledgeClaimView], as_of: str | None) -> list[KnowledgeClaimView]:
     if not as_of:
         return claims

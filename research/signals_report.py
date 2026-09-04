@@ -6,7 +6,12 @@ short tagged answer.
 Financial evidence retrieval (get_comparison_evidence) grounds every report;
 single-company reports also pull MANAGEMENT_STATEMENT evidence extracted from
 this company's uploaded documents (research/documents.py — Docs tab annual
-reports, transcripts, investor presentations). The Signals report format also
+reports, transcripts, investor presentations), plus Knowledge Graph claims
+already extracted from those same documents and connected to the company or
+to a named entity the question mentions (research/knowledge_evidence.py,
+Step 2B — the same cross-company claim connection research/
+investigation_planner.py's structured investigations already use, now
+reachable from an ordinary Signals report too). The Signals report format also
 calls for customer/competitive/journalism evidence this app doesn't ingest at
 all — the system prompt below tells the model to say so in "What We Still
 Don't Know" rather than invent it, which is the same rule research/assistant.py
@@ -28,6 +33,7 @@ from llm.router import AllProvidersUnavailableError, route
 from research.capabilities import InvestigationMemoryCapabilities, default_investigation_memory
 from research.documents import get_document_evidence, get_document_passage_evidence
 from research.evidence import Evidence, render_evidence_block
+from research.knowledge_evidence import get_knowledge_graph_evidence
 from retrieval.structured_search import get_comparison_evidence
 
 SIGNALS_SYSTEM_PROMPT = """You are Signals, a personal research analyst for individuals investigating \
@@ -48,7 +54,10 @@ with", "suggests".
 
 The evidence block contains financial-statement data (reported figures and deterministic \
 ratios/calculations from them) and, when investigating a single company, may also contain \
-MANAGEMENT_STATEMENT excerpts from that company's own uploaded documents. It never contains \
+MANAGEMENT_STATEMENT excerpts from that company's own uploaded documents, plus Knowledge Graph \
+claims already extracted from those same documents (connected to the company or to a named \
+entity the question mentions) — cite a Knowledge Graph claim the same as any other \
+FACT/CALCULATION/MANAGEMENT_STATEMENT/INFERENCE line, never as a separate category. It never contains \
 independent customer evidence, competitive intelligence, regulatory filings text, journalism, or \
 social sentiment — a management document's own framing of its competitors or customers is still just \
 that company's word, not independent evidence, so treat it as MANAGEMENT_STATEMENT, not FACT. \
@@ -199,6 +208,11 @@ def generate_signals_report(
         # reasoning as research/assistant.py::answer_question()'s identical
         # addition. Never replaces the whole-document evidence.
         variable_evidence += get_document_passage_evidence(conn, company_ids[0], question)  # targeted passages
+        # Cross-company Knowledge Graph claims (Step 2B) connected to this
+        # company's own Company node or to any known entity the question
+        # names — see research/knowledge_evidence.py. Single-company only,
+        # same constraint the Docs evidence above already has.
+        variable_evidence += get_knowledge_graph_evidence(conn, company_ids[0], question)
     evidence = financial_evidence + variable_evidence
     if not evidence:
         return SignalsReport(

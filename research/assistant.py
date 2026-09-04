@@ -25,18 +25,23 @@ from llm.router import TIER_PREFERRED_MODEL, AllProvidersUnavailableError, route
 from research.capabilities import InvestigationMemoryCapabilities, default_investigation_memory
 from research.documents import get_document_evidence, get_document_passage_evidence
 from research.evidence import render_evidence_block
+from research.knowledge_evidence import get_knowledge_graph_evidence
 from research.macro_evidence import get_macro_evidence
 from retrieval.structured_search import get_comparison_evidence
 
 SYSTEM_PROMPT = """You are an equity research assistant for global listed companies, with a primary \
 focus on US and India markets.
 
-HARD RULE — evidence sources: the evidence block below is built ONLY from three \
+HARD RULE — evidence sources: the evidence block below is built ONLY from four \
 sources: the company's ingested Financials (reported metrics, ratios, YoY/CAGR \
 growth), its uploaded Docs (annual reports, transcripts, investor \
-presentations), and Macro/regulatory data for India and the US (RBI, IITM \
+presentations), Macro/regulatory data for India and the US (RBI, IITM \
 rainfall, FRED — labeled with company_id "INDIA" or "USA" rather than a \
-company ticker, since it isn't about any one company). You must answer using ONLY that evidence block — never from \
+company ticker, since it isn't about any one company), and Knowledge Graph \
+claims (statements already extracted from the company's own documents, \
+connected to the company or to a named entity the question mentions — cited \
+the same as any other FACT/CALCULATION/MANAGEMENT_STATEMENT/INFERENCE line, \
+never a separate category). You must answer using ONLY that evidence block — never from \
 your own training knowledge, never by estimating or guessing a number that \
 isn't in the evidence, and never by inventing a source, document, or figure \
 that isn't present. Do not hallucinate. If the evidence doesn't cover what the \
@@ -100,15 +105,20 @@ def answer_question(
     models/providers if the preferred one is unavailable — this is the
     default behavior.
 
-    Evidence-source rule: the calls below (Financials + Docs + Macro) are the
-    only evidence this function is allowed to gather — SYSTEM_PROMPT tells
-    the model to answer from this evidence alone, so widening it further
-    (e.g. pulling in Notes or News) changes what the model is allowed to
-    cite and must be a deliberate choice, not an incidental one.
-    get_document_passage_evidence() (hybrid FTS5+semantic retrieval,
-    research/documents.py) is exactly such a deliberate widening — still
-    "Docs" evidence, just the specific relevant passage instead of/alongside
-    each whole document's opening text, per this feature's spec section 9.
+    Evidence-source rule: the calls below (Financials + Docs + Macro +
+    Knowledge Graph) are the only evidence this function is allowed to
+    gather — SYSTEM_PROMPT tells the model to answer from this evidence
+    alone, so widening it further (e.g. pulling in Notes or News) changes
+    what the model is allowed to cite and must be a deliberate choice, not
+    an incidental one. get_document_passage_evidence() (hybrid
+    FTS5+semantic retrieval, research/documents.py) and
+    get_knowledge_graph_evidence() (research/knowledge_evidence.py,
+    single-company only) are exactly such deliberate widenings — the latter
+    surfaces a cross-company claim connection (Step 2B) touching this
+    company or an entity the question names by name, folded into an
+    ordinary FACT/CALCULATION/MANAGEMENT_STATEMENT/INFERENCE Evidence line
+    rather than a separate block, since it's genuine evidence about this
+    question's own company, not another company's reasoning.
 
     Reuse-before-recompute (context/reuse.py): first checked against
     generated_reports for a prior saved answer/report on these exact
@@ -158,6 +168,11 @@ def answer_question(
         # deep in a long filing that get_document_evidence() above would
         # never reach. Never removes the whole-document evidence above.
         variable_evidence += get_document_passage_evidence(conn, company_ids[0], question)  # Docs (targeted passages)
+        # Cross-company Knowledge Graph claims (Step 2B) connected to this
+        # company's own Company node or to any known entity the question
+        # names — see research/knowledge_evidence.py. Single-company only,
+        # same constraint the Docs evidence above already has.
+        variable_evidence += get_knowledge_graph_evidence(conn, company_ids[0], question)  # Knowledge Graph
     variable_evidence += get_macro_evidence(conn, question)  # Macro (RBI, IITM, FRED, ...)
     evidence = financial_evidence + variable_evidence
     if not evidence:

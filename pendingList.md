@@ -13,7 +13,7 @@ Nothing below is uncommitted or blocking — this is the backlog, not open work.
   docstring as an extension point, not built.
 - **Critical (red) classification tier** — vocabulary slot reserved, unused.
   Only `positive` / `observation` / `warning` are live.
-- **8 of the 10 anticipated indicator families** — only `shareholding` and
+- **9 of the 11 anticipated indicator families** — only `shareholding` and
   `financial_trajectory` are seeded. Not yet built: promoter pledging, debt/
   refinancing, revenue/profitability, operating performance, valuation,
   governance, corporate actions, cash flow, capital allocation.

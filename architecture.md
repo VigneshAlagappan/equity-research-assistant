@@ -446,6 +446,27 @@ a real join, not a stub), a real Neo4j graph when `GRAPH_BACKEND=neo4j`
 (`context/graph_neo4j.py::sync_knowledge_graph()`/`find_claims_about_entity()`),
 with automatic fallback to SQLite if unreachable.
 
+- **Wired into Q&A and Signals reports** (`research/knowledge_evidence.py`,
+  single-company only) — `research/assistant.py::answer_question()` and
+  `research/signals_report.py::generate_signals_report()` now query every
+  claim connected to the company's own `Company` node, plus every claim
+  connected to any known entity the question names by substring match
+  (`mentioned_entities()` below), the same cross-company claim connection
+  `research/investigation_planner.py`'s structured investigations already
+  use. Each `KnowledgeClaimView` is folded into a plain `Evidence` line —
+  not a separate labeled block the way `context/graph.py`'s "Related prior
+  investigations" is — since a claim extracted from this company's own
+  documents (Step 2A) genuinely is evidence about this question's company,
+  not another company's borrowed reasoning; `_CLAIM_KIND_MAP` narrows the
+  ontology's 7-value `CLAIM_TYPES` down to `research/evidence.py`'s 4-value
+  `EVIDENCE_KINDS` (`MANAGEMENT_OPINION`→`MANAGEMENT_STATEMENT`,
+  `PREDICTION`/`CORRELATION`/`CAUSATION`→`INFERENCE`), asserted complete at
+  import time so a future ontology addition fails a test run rather than a
+  live request. `mentioned_entities()` (the substring-match entity
+  detector) was promoted out of `research/investigation_planner.py`'s
+  private `_mentioned_entities()` into a shared function here, so the
+  Planner and this module detect "does this text name a known entity" the
+  same way rather than maintaining two copies.
 - **Company nodes are shared with the sector-peer graph, not duplicated** —
   a `knowledge_entities` row of type `Company` merges into the *exact same*
   `(:Company {id: ...})` node `context/graph_neo4j.py::sync_graph()` already
@@ -1061,7 +1082,7 @@ storage/price_repository.py — upsert_daily_bar()/upsert_daily_bars()
 data/price_history.db  — daily_prices, separate file from equity_research.db
       │
       ▼
-web/app.py:1683 — GET /companies/<company_id>/price-feed.json
+web/app.py:1702 — GET /companies/<company_id>/price-feed.json
 ```
 
 - **Why a separate db file**: `schemas/price_schema.sql`'s header comment
@@ -1087,10 +1108,14 @@ web/app.py:1683 — GET /companies/<company_id>/price-feed.json
   yfinance's soft rate limits than one continuous loop over ~500 tickers.
   See `USER_GUIDE.md` §12/13 for the operator-facing version.
 - **Read back via `/companies/<company_id>/price-feed.json`**
-  (`web/app.py:1683`) — takes `period` (`1y`/`5y`/`10y`/`max`), resolves it
+  (`web/app.py:1702`) — takes `period` (`1y`/`5y`/`10y`/`max`), resolves it
   to a date range, and returns parallel `dates`/`open`/`high`/`low`/`close`/
   `volume` arrays read straight off `daily_prices` for that company and
-  window. Backs the Charts tab's price overlay.
+  window. **Not yet rendered anywhere in the UI** — the Charts tab's own
+  "Price & Volume" section is fed separately, through `web/charts_feed.py`'s
+  general charts feed (which reads `daily_prices` directly via its own
+  optional `price_conn`), not through this route. This route is a raw JSON
+  feed only today — see `USER_GUIDE.md` §12.
 - **`PriceStore`** (`storage/price_store.py`) is the same DI shape as
   `storage/fact_store.py`'s `FactStore` (architecture guardrail #3) — a
   frozen dataclass of plain callables matching the repository functions'
@@ -1270,11 +1295,6 @@ pre-existing test failure.
   full document for search — the two gaps are different: extraction is
   still single-pass and length-capped, search indexes everything.
 - **Entity resolution is name-string matching, not identity resolution** — a
-  `MAX_CHARS_FOR_EXTRACTION` (40,000 characters) before being sent to the
-  model; a longer annual report gets its first ~40K characters extracted,
-  not the whole thing. A real multi-pass/chunked extraction is future work,
-  not built.
-- **Entity resolution is name-string matching, not identity resolution** — a
   real company can end up with two separate `Company`-type entity rows: one
   from the model naming it in the extracted text (e.g. "SBFC Finance
   Limited"), one from the `COMPANY` placeholder resolving to the internal
@@ -1291,12 +1311,6 @@ pre-existing test failure.
   Genuinely graph-shaped multi-hop traversal is future work, not attempted
   here — `research/investigation_planner.py` queries the graph the
   same single-hop way everything else does.
-- **Not wired into Q&A or Signals reports yet** — `research/assistant.py`/
-  `signals_report.py` don't query the Research Knowledge Graph at all; a
-  question can't yet be answered from a cross-company claim connection the
-  way it can from `canonical_financials` or a sector-peer investigation.
-  Building that integration point is a later step, not attempted when the
-  Research Knowledge Graph itself shipped.
 - **Investigation Orchestrator (`research/investigation.py`) has
   the iterative evidence-sufficiency loop the guardrails call for, but no
   cost/token budget control** — an `INSUFFICIENT_EVIDENCE` verdict triggers

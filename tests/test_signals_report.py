@@ -121,6 +121,24 @@ def test_generate_signals_report_sends_evidence_and_signals_prompt(
     assert "Signals" in captured[0]["system"]
 
 
+def test_generate_signals_report_includes_knowledge_graph_claims_for_a_single_company(
+    ingested_conn: sqlite3.Connection, tmp_path: Path, monkeypatch
+) -> None:
+    """research/knowledge_evidence.py wiring — a Step 2B claim connected to
+    this company's own Company node reaches the report prompt, the same
+    cross-company claim connection research/investigation_planner.py's
+    structured investigations already surface."""
+    from tests.test_knowledge_graph import _extract_for
+
+    _extract_for(ingested_conn, tmp_path, "HDFCBANK", monkeypatch, filename="report.pdf")
+    captured = _install_fake_client(monkeypatch)
+
+    generate_signals_report(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"])
+
+    sent = _content_text(captured[0]["messages"][0]["content"])
+    assert "Knowledge graph claim" in sent
+
+
 def test_generate_signals_report_without_any_data_skips_the_api_call(
     db_conn: sqlite3.Connection, monkeypatch
 ) -> None:

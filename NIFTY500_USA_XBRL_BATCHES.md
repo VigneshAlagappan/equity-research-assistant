@@ -1,9 +1,12 @@
 # NSE XBRL / Price Batches — Nifty 500 and USA
 
-## Nifty 500 Batches (449 companies)
+## Nifty 500 Batches (448 companies)
 
 Nifty 500 constituents minus the 50 Nifty 50 companies (tracked/ingested
-separately) and minus IDFCFIRSTB (already ingested). Batch size 10, same
+separately) and minus IDFCFIRSTB (already ingested) — 500 - 50 - 1 = 449 by
+that arithmetic, but the 45 batches below sum to 448 tickers; one
+constituent isn't accounted for in this list (not yet root-caused — worth
+checking before treating this as the complete set). Batch size 10, same
 fetch+ingest pipeline as Nifty 50 (quarterly + Q4-derived annual + balance
 sheet, both statement types; real usable NSE XBRL data realistically starts
 ~mid-2022 regardless of the fetch window requested). Not started — fetching

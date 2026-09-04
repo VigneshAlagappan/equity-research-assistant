@@ -391,6 +391,13 @@ identity; malformed data is rejected with a warning, never silently accepted.
 
 ## Retrieval Architecture
 
+**Historical proposal, since implemented** — the diagram and "not yet built"
+language below reflect this document's original drafting-time plan, kept
+for its design rationale. Semantic retrieval, Qdrant, and a real
+`hybrid_search.py` module all exist today — see [architecture.md's Hybrid
+Document Retrieval](architecture.md#hybrid-document-retrieval-retrievalhybrid_searchpy)
+and [Open Decisions](#open-decisions) below for current state.
+
 ```
 structured_search.py   SQL over canonical_financials/financial_observations,
                         filtered by company/metric/period
@@ -407,9 +414,10 @@ here — `research/documents.py` does direct PDF extraction per question, no
 caching (see [architecture.md's Known gaps](architecture.md#documents--docs-tab)).
 Page-scoped chunking + FTS5 keyword search were since built as their own
 standalone capability (`research/document_chunker.py`, `retrieval/document_search.py`
-— see [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy))
-but are deliberately not wired into that evidence path yet; no `hybrid_search.py`
-module exists.
+— see [architecture.md's Document Retrieval](architecture.md#document-retrieval-retrievaldocument_searchpy)),
+and — unlike when this section was first drafted — `retrieval/hybrid_search.py`
+now exists too, combining FTS5 with Qdrant-backed semantic search and wired
+into both Q&A and the Investigation Planner (see Open Decisions below).
 
 Retrieval never calls the LLM. Full company archives are never sent to the model —
 only retrieved, filtered evidence. The LLM client is a thin, swappable interface, so

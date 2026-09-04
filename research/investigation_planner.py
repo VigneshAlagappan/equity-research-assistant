@@ -36,7 +36,7 @@ from __future__ import annotations
 from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
-from context.knowledge_graph import KnowledgeClaimView
+from context.knowledge_graph import KnowledgeClaimView, mentioned_entities
 from research.capabilities import PlannerCapabilities, default_capabilities
 from research.evidence import Evidence
 from research.hypothesis_generator import Hypothesis
@@ -62,20 +62,6 @@ class InvestigationPlan:
     passages: list[DocumentPassage] = field(default_factory=list)
     sources_queried: list[str] = field(default_factory=list)
 
-
-def _mentioned_entities(
-    conn: DBConnection, company_ids: list[str], text: str, fact_store: FactStore
-) -> list[tuple[str, str]]:
-    """Which already-extracted entities (any type) this hypothesis's own
-    text names — simple case-insensitive substring match against
-    knowledge_entities.name, the same lightweight approach
-    context/graph.py's _metrics_mentioned() already uses for its own
-    keyword matching. Not a fuzzy match — a real, if narrow, connection."""
-    if not company_ids:
-        return []
-    rows = fact_store.list_knowledge_entities_for_companies(conn, company_ids)
-    text_lower = text.lower()
-    return [(r["entity_type"], r["name"]) for r in rows if r["name"] and r["name"].lower() in text_lower]
 
 
 def plan_and_gather(
@@ -130,7 +116,7 @@ def plan_and_gather(
             plan.knowledge_claims.extend(caps.knowledge_graph(conn, "Company", company_id))
 
     search_text = f"{question} {hypothesis.statement} {hypothesis.mechanism}"
-    for entity_type, entity_name in _mentioned_entities(conn, hypothesis.companies, search_text, fs)[:_MAX_KNOWLEDGE_GRAPH_ENTITIES]:
+    for entity_type, entity_name in mentioned_entities(conn, hypothesis.companies, search_text, fact_store=fs)[:_MAX_KNOWLEDGE_GRAPH_ENTITIES]:
         plan.knowledge_claims.extend(caps.knowledge_graph(conn, entity_type, entity_name))
         plan.sources_queried.append(f"knowledge_graph:{entity_type}:{entity_name}")
     if plan.knowledge_claims:
