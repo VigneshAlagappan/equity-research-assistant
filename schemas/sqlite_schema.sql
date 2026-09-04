@@ -679,6 +679,7 @@ CREATE TABLE IF NOT EXISTS knowledge_relationships (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_relationships_source ON knowledge_relationships(source_entity_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_relationships_target ON knowledge_relationships(target_entity_id);
 
 CREATE TABLE IF NOT EXISTS knowledge_evidence (
   evidence_id INTEGER PRIMARY KEY AUTOINCREMENT,

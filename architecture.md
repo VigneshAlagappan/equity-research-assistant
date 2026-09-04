@@ -503,6 +503,104 @@ with automatic fallback to SQLite if unreachable.
   today's edge is the coarser but always-available `Company --STATES-->
   Claim` (a `speaker` string like "CEO" is stored on the `Claim` node
   itself, not resolved to a specific `ManagementPerson` entity node).
+- **Entity resolution — an exact-match identity policy, not name-string
+  matching** (`context/entity_resolution.py::is_same_company_identity()`) —
+  a real company can otherwise end up with two separate `Company`-type
+  `knowledge_entities` rows: one from the model naming it in a document's
+  free text (e.g. "HDFC Bank Limited"), one from the `COMPANY` placeholder
+  resolving to the internal `company_id` (e.g. "HDFCBANK"). A read-only
+  query against the live database found 127 companies with duplicate
+  `Company`-type rows — but most of those duplicates are NOT spelling
+  variants of the same company: `ADANIPOWER` had 17 rows including genuine,
+  distinct subsidiaries ("Korba West Power Company Limited", "Adani Power
+  Dahej Ltd."), and `ADANIENT` included an auditor ("M/s. Dharmesh Parikh &
+  Co.") and garbled extraction noise. `is_same_company_identity()` is
+  deliberately narrow because of that: normalizes both sides (lowercase,
+  strip punctuation, collapse whitespace, strip one trailing corporate
+  suffix) and requires an **exact** match against the company's own
+  `legal_name`, `display_name`, `nse_symbol`, `bse_code`, or `company_id` —
+  never a similarity score. Under-merging (leaving a genuine duplicate
+  unmerged) is the accepted, safe failure mode; over-merging a real
+  subsidiary into its parent is not. Wired in two places: the extraction-time
+  intercept in `research/knowledge_builder.py::_persist()` (a matching
+  free-form `Company`-type entity is aliased to the already-resolved
+  canonical entity instead of inserted as a second row, so a relationship
+  naming the company by its extracted legal name still resolves to the one
+  real `entity_id`), and the one-off `main.py entity-resolution-backfill
+  [--company-id ID ...] [--apply]` command for the 127 pre-existing
+  companies — same `BatchRun`/`batch_job_runs` audit pattern as
+  `graph-backfill`/`vector-backfill`, defaults to a dry run, `--apply`
+  required to actually repoint `knowledge_relationships` and delete the
+  duplicate row (`storage/repositories.py::merge_knowledge_entities()`, one
+  transaction). A dry run against the real database confirmed the same 127
+  companies (99 with at least one exact-match merge candidate, 28 with
+  left-alone-only duplicates) and produced sensible splits, e.g. `AMBUJACEM`
+  merges its 3 legal-name spellings but correctly leaves `ACC`/`Holcim`
+  alone (genuinely different companies), and `ADANIPOWER` merges 2 ticker-
+  style duplicates while leaving 14 real subsidiaries/group-entity names
+  untouched. **Known gap**: `context/graph_neo4j.py::sync_knowledge_graph()`
+  is pure-MERGE and never prunes, so under `GRAPH_BACKEND=neo4j` a merged-
+  away duplicate's Neo4j node is left orphaned until a fresh `graph-backfill`
+  (or a manual Cypher `DETACH DELETE`) cleans it up — the backfill command's
+  own docstring says this explicitly.
+- **Multi-hop traversal** (`context/knowledge_graph.py::find_multi_hop_claims()`)
+  — answers what `find_claims_about_entity()` above structurally cannot:
+  "which claims, from any company, are connected to an entity reached by
+  walking OUTWARD from this one" (e.g. a claim about the `Metric` "Gross
+  Margin" that some `Risk` `MAY_AFFECT`, even though that claim never
+  mentions the risk itself). A separate, additive function, never a
+  replacement — `find_claims_about_entity()` still owns every
+  `hop_distance == 1` claim (one touching the queried entity directly);
+  `find_multi_hop_claims()` only ever returns `hop_distance >= 2`, and
+  excludes any claim that also touches the queried entity directly even if
+  a longer path also reaches it, so the two functions' results never
+  overlap. `KnowledgeClaimView` carries the new `hop_distance`/`path` fields
+  (defaulting to `1`/`""`, so every existing construction site stays
+  backward compatible) — `path` is a human-readable relationship chain,
+  e.g. `"Risk:Input cost inflation --MAY_AFFECT--> Metric:Gross Margin"`,
+  the same chain-of-reasoning convention `context/graph.py::GraphCandidate.path`
+  already established. The SQLite path is a BFS, one batched query per hop
+  across the whole frontier (`storage/repositories.py::list_entity_neighbors()`/
+  `find_knowledge_claims_for_entity_ids()`, keyed by
+  `idx_knowledge_relationships_target` — a new index this feature also
+  added, since only the source direction had one before), bounded by
+  `max_hops` (default 2) and a 50-entity-per-hop frontier cap (truncated
+  deterministically with a logged warning, never an unbounded query on a
+  highly-connected entity). Because a `knowledge_entities` row is scoped per
+  `(entity_type, name, company_id)` — the same generic entity name gets its
+  own row per company that extracts it — the BFS pools every entity_id
+  sharing an `(entity_type, name)` key together at each hop, the same
+  cross-company name matching `find_claims_about_entity()`'s own query
+  already does; a pure single-`entity_id` graph walk would never cross a
+  company boundary at all. The Neo4j path
+  (`context/graph_neo4j.py::find_multi_hop_claims()`) is a variable-length
+  Cypher match (`[*1..N]`) constrained to `KGNode`-labeled nodes at every
+  step (keeps the walk off `:Claim`/`:Evidence`/`:TimePeriod` nodes), ranked
+  by hop count, joined to claims via the existing `:ABOUT` edge — `max_hops`
+  is interpolated directly (Cypher's variable-length range has no parameter
+  syntax), safe because it's always an app-controlled int, same
+  justification `_sync_knowledge_relationships()`'s `relationship_type`
+  interpolation already uses. Wired only into
+  `research/investigation_planner.py` (`InvestigationPlan.inferred_connections`,
+  a new `KnowledgeGraphPathsCapability` on `PlannerCapabilities` alongside
+  the existing single-hop `knowledge_graph` one, same neutral no-op default
+  pattern as `indicator_evidence`), deduped by `claim_id` against itself and
+  against `plan.knowledge_claims`, and capped at 10 — a real check against
+  the live database during this feature's verification found a single
+  popular entity's multi-hop result can reach into the hundreds of claims
+  (724, for one `MacroFactor` whose edge happened to land on a `Company`
+  node, which fans out to nearly every claim that company has ever made),
+  which would otherwise blow up the evaluator prompt's token budget.
+  `research/hypothesis_evaluator.py::_render_plan()` renders it as its own
+  "Multi-hop knowledge graph connections" block, modeled directly on
+  `context/graph.py::render_related_investigations()`'s wording and citation
+  rule — explicit that it's a chain, not a direct claim, cited
+  `[INFERENCE]` only, never `[FACT]`/`[CALCULATION]`. Deliberately **not**
+  wired into `research/knowledge_evidence.py`/Q&A/Signals reports in this
+  pass — those surfaces fold single-hop claims directly into `[FACT]`-grade
+  Evidence lines, and lack the Planner's evidence-sufficiency loop to
+  sanity-check a weak multi-hop chain; that wiring is a deliberate,
+  separate follow-up decision, not an oversight.
 
 ### Document Retrieval (`retrieval/document_search.py`)
 
@@ -1294,23 +1392,6 @@ pre-existing test failure.
   whole thing. `research/document_chunker.py` *does* chunk the
   full document for search — the two gaps are different: extraction is
   still single-pass and length-capped, search indexes everything.
-- **Entity resolution is name-string matching, not identity resolution** — a
-  real company can end up with two separate `Company`-type entity rows: one
-  from the model naming it in the extracted text (e.g. "SBFC Finance
-  Limited"), one from the `COMPANY` placeholder resolving to the internal
-  `company_id` (e.g. "SBFCFINANCE"). Both rows are individually correct and
-  correctly scoped; they're just not unified into one canonical entity.
-  Worth resolving before anything downstream assumes exactly one `Company`
-  entity per company.
-- **The Research Knowledge Graph (`context/knowledge_graph.py`) only answers
-  single-hop "what's connected to this entity" queries** — real multi-hop
-  reasoning (e.g. "which companies have a claim `ABOUT` a `Risk` that
-  `MAY_AFFECT` a `Metric` another company also has a claim about") isn't
-  built; `find_claims_about_entity()` returns one entity's directly-connected
-  claims and their immediate neighbors, not a chain across several hops.
-  Genuinely graph-shaped multi-hop traversal is future work, not attempted
-  here — `research/investigation_planner.py` queries the graph the
-  same single-hop way everything else does.
 - **Investigation Orchestrator (`research/investigation.py`) has
   the iterative evidence-sufficiency loop the guardrails call for, but no
   cost/token budget control** — an `INSUFFICIENT_EVIDENCE` verdict triggers

@@ -153,6 +153,97 @@ def test_claims_are_scoped_to_the_company(company_conn: sqlite3.Connection, tmp_
     assert list_knowledge_claims_for_company(company_conn, "ICICIBANK") == []
 
 
+_SAME_COMPANY_RESPONSE = """{
+  "entities": [
+    {"type": "Company", "name": "HDFC Bank Limited"}
+  ],
+  "claims": [
+    {
+      "text": "The bank reported strong deposit growth.",
+      "claim_type": "FACT",
+      "category": "fact",
+      "speaker": null,
+      "confidence": 0.9,
+      "quote": "Deposits grew strongly this quarter.",
+      "relationships": [
+        {"relationship_type": "OPERATES_IN", "source_entity": "HDFC Bank Limited", "target_entity": "HDFC Bank Limited"}
+      ]
+    }
+  ]
+}"""
+
+
+def test_matching_company_name_is_aliased_not_duplicated(
+    company_conn: sqlite3.Connection, tmp_path: Path, monkeypatch
+) -> None:
+    """context/entity_resolution.py's extraction-time intercept: a
+    free-form Company-type entity whose name is an EXACT match (after
+    normalization) against the document's own company row ("HDFC Bank
+    Limited" for HDFCBANK's legal_name) is aliased to the already-resolved
+    canonical entity instead of inserted as a second row -- and a
+    relationship naming the company by that extracted legal name still
+    resolves correctly to the one real entity_id."""
+    doc = _add_pdf_document(company_conn, tmp_path)
+    _install_fake_client(monkeypatch, _SAME_COMPANY_RESPONSE)
+
+    result = extract_document_knowledge(company_conn, doc)
+
+    assert result.entities_created == 0  # aliased, not inserted as a new entity row
+    company_type_rows = company_conn.execute(
+        "SELECT * FROM knowledge_entities WHERE entity_type = 'Company' AND company_id = 'HDFCBANK'"
+    ).fetchall()
+    assert len(company_type_rows) == 1
+    assert company_type_rows[0]["name"] == "HDFCBANK"  # the canonical row, never overwritten
+
+    claims = list_knowledge_claims_for_document(company_conn, doc["document_id"])
+    relationships = list_knowledge_relationships_for_claim(company_conn, claims[0]["claim_id"])
+    assert len(relationships) == 1
+    assert relationships[0]["source_name"] == "HDFCBANK"  # resolved to the canonical entity, not a second node
+    assert relationships[0]["target_name"] == "HDFCBANK"
+
+
+_SUBSIDIARY_RESPONSE = """{
+  "entities": [
+    {"type": "Company", "name": "HDFC Securities Limited"}
+  ],
+  "claims": [
+    {
+      "text": "The subsidiary expanded its broking business.",
+      "claim_type": "FACT",
+      "category": "fact",
+      "speaker": null,
+      "confidence": 0.8,
+      "quote": "HDFC Securities Limited expanded its broking business this year.",
+      "relationships": [
+        {"relationship_type": "OPERATES_IN", "source_entity": "HDFC Securities Limited", "target_entity": "HDFC Securities Limited"}
+      ]
+    }
+  ]
+}"""
+
+
+def test_a_genuinely_different_company_shaped_name_still_gets_its_own_row(
+    company_conn: sqlite3.Connection, tmp_path: Path, monkeypatch
+) -> None:
+    """Regression guard against over-merging: "HDFC Securities Limited" is
+    NOT an exact match against HDFCBANK's own legal_name/display_name/
+    ticker/company_id (it's a different, if related, real entity) -- it
+    must still create its own knowledge_entities row, the same real-data
+    shape context/entity_resolution.py's module docstring documents for
+    ADANIPOWER's genuine subsidiaries."""
+    doc = _add_pdf_document(company_conn, tmp_path)
+    _install_fake_client(monkeypatch, _SUBSIDIARY_RESPONSE)
+
+    result = extract_document_knowledge(company_conn, doc)
+
+    assert result.entities_created == 1
+    company_type_rows = company_conn.execute(
+        "SELECT * FROM knowledge_entities WHERE entity_type = 'Company' AND company_id = 'HDFCBANK'"
+    ).fetchall()
+    names = {row["name"] for row in company_type_rows}
+    assert names == {"HDFCBANK", "HDFC Securities Limited"}
+
+
 def test_a_second_document_adds_claims_without_touching_the_first(
     company_conn: sqlite3.Connection, tmp_path: Path, monkeypatch
 ) -> None:

@@ -52,6 +52,14 @@ _MACRO_RELEVANT_CATEGORIES = frozenset({"macro", "regulatory"})
 
 _MAX_KNOWLEDGE_GRAPH_ENTITIES = 5
 _MAX_DOCUMENT_PASSAGES = 8
+#: A multi-hop edge that happens to land on a Company node (e.g.
+#: "MacroFactor:X --MAY_AFFECT--> Company:Y") pulls in EVERY claim that
+#: company has ever made — a real, verified-against-production-data case
+#: returned 724 claims for one entity (see this feature's implementation
+#: plan's Verification section). Capped the same way _MAX_DOCUMENT_PASSAGES
+#: already bounds document_search results, so one popular entity can't blow
+#: up the hypothesis evaluator's prompt/token budget.
+_MAX_INFERRED_CONNECTIONS = 10
 
 
 @dataclass
@@ -59,6 +67,13 @@ class InvestigationPlan:
     hypothesis_id: str
     evidence: list[Evidence] = field(default_factory=list)
     knowledge_claims: list[KnowledgeClaimView] = field(default_factory=list)
+    #: Multi-hop knowledge-graph connections (context/knowledge_graph.py::
+    #: find_multi_hop_claims(), hop_distance >= 2 only) — kept in its own
+    #: list, never merged into knowledge_claims, so research/hypothesis_evaluator.py
+    #: can render it as its own clearly-labeled, [INFERENCE]-only block
+    #: rather than folding a multi-step reasoning chain in among direct,
+    #: hop-1 claims.
+    inferred_connections: list[KnowledgeClaimView] = field(default_factory=list)
     passages: list[DocumentPassage] = field(default_factory=list)
     sources_queried: list[str] = field(default_factory=list)
 
@@ -119,6 +134,11 @@ def plan_and_gather(
     for entity_type, entity_name in mentioned_entities(conn, hypothesis.companies, search_text, fact_store=fs)[:_MAX_KNOWLEDGE_GRAPH_ENTITIES]:
         plan.knowledge_claims.extend(caps.knowledge_graph(conn, entity_type, entity_name))
         plan.sources_queried.append(f"knowledge_graph:{entity_type}:{entity_name}")
+        # Same cap, same (absent) retry-skip logic as the single-hop call
+        # right above — a hop-2+ result off an unchanged entity is exactly
+        # as retry-invariant as the per-company single-hop call, so there's
+        # nothing to gain from special-casing retry here either.
+        plan.inferred_connections.extend(caps.knowledge_graph_paths(conn, entity_type, entity_name))
     if plan.knowledge_claims:
         plan.sources_queried.append("knowledge_graph")
         # De-dupe — a claim can be reachable via more than one entity match above.
@@ -130,6 +150,22 @@ def plan_and_gather(
             seen_claim_ids.add(claim.claim_id)
             deduped.append(claim)
         plan.knowledge_claims = deduped
+
+    if plan.inferred_connections:
+        plan.sources_queried.append("knowledge_graph_paths")
+        # De-duped against itself (a claim reachable via more than one
+        # mentioned entity) AND against the final knowledge_claims set — a
+        # claim already surfaced at hop 1 must never also appear in the
+        # hop-2+ block.
+        hop1_claim_ids = {claim.claim_id for claim in plan.knowledge_claims}
+        seen_inferred_ids: set[int] = set()
+        deduped_inferred: list[KnowledgeClaimView] = []
+        for claim in plan.inferred_connections:
+            if claim.claim_id in hop1_claim_ids or claim.claim_id in seen_inferred_ids:
+                continue
+            seen_inferred_ids.add(claim.claim_id)
+            deduped_inferred.append(claim)
+        plan.inferred_connections = deduped_inferred[:_MAX_INFERRED_CONNECTIONS]
 
     if hypothesis.category in _MACRO_RELEVANT_CATEGORIES:
         macro = caps.macro_evidence(conn, question)

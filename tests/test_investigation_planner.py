@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from companies.registry import seed_companies
+from context.knowledge_graph import KnowledgeClaimView
 from ingestion.pipeline import ingest_file
 from research.capabilities import PlannerCapabilities
 from research.evidence import Evidence
@@ -208,6 +209,75 @@ def test_retry_skips_capabilities_that_cannot_change(db_conn: sqlite3.Connection
     # nothing to query either — "graph": 0 here reflects the skipped
     # "Company" lookup, not a second, separately-gated behavior.
     assert calls == {"financial": 0, "indicator": 0, "document": 1, "macro": 1, "search": 1, "graph": 0}
+
+
+def test_inferred_connections_are_populated_and_deduped_against_hop_one(
+    ingested_conn: sqlite3.Connection, monkeypatch
+) -> None:
+    """research/capabilities.py::KnowledgeGraphPathsCapability wiring — a
+    claim the injected multi-hop fake also returns that duplicates a hop-1
+    claim (same claim_id) must never appear in inferred_connections too,
+    per the plan's "a claim already surfaced at hop 1 must never also
+    appear in the hop-2+ block.\""""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pdf_path = Path(tmp) / "report.pdf"
+        _make_minimal_pdf(pdf_path, "some report text")
+        doc = save_company_document(
+            ingested_conn, "HDFCBANK", document_type="annual_report", fiscal_year="FY2024", quarter=None,
+            added_by_user="tester", raw_file_path=str(pdf_path),
+        )
+        _install_fake_llm_client(monkeypatch, _VALID_RESPONSE)  # extracts "Widget Pro" (Product)
+        extract_document_knowledge(ingested_conn, doc)
+
+    hop1_claim = KnowledgeClaimView(
+        claim_id=101, company_id="HDFCBANK", claim_text="hop1 claim", claim_type="FACT", category="fact",
+        speaker=None, fiscal_year="FY2024", quarter=None, confidence=0.9, document_id=1,
+    )
+    inferred_duplicate_of_hop1 = KnowledgeClaimView(
+        claim_id=101, company_id="HDFCBANK", claim_text="hop1 claim", claim_type="FACT", category="fact",
+        speaker=None, fiscal_year="FY2024", quarter=None, confidence=0.9, document_id=1,
+        hop_distance=2, path="dup",
+    )
+    genuinely_inferred = KnowledgeClaimView(
+        claim_id=202, company_id="ICICIBANK", claim_text="Gross margin expanded.", claim_type="FACT",
+        category="fact", speaker=None, fiscal_year="FY2024", quarter=None, confidence=0.8, document_id=2,
+        hop_distance=2, path="Risk:Input cost inflation --MAY_AFFECT--> Metric:Gross Margin",
+    )
+
+    caps = PlannerCapabilities(
+        financial_evidence=lambda conn, company_id: [],
+        document_evidence=lambda conn, company_id, question: [],
+        macro_evidence=lambda conn, question: [],
+        document_search=lambda conn, query, *, company_id, limit: [],
+        knowledge_graph=lambda conn, entity_type, entity_name: [hop1_claim] if entity_type == "Company" else [],
+        knowledge_graph_paths=lambda conn, entity_type, entity_name: [inferred_duplicate_of_hop1, genuinely_inferred],
+    )
+
+    hypothesis = _hypothesis(statement="Widget Pro sales drove growth.", mechanism="Widget Pro adoption increased.")
+    plan = plan_and_gather(ingested_conn, hypothesis, "question", capabilities=caps)
+
+    assert [c.claim_id for c in plan.inferred_connections] == [202]
+    assert "knowledge_graph_paths" in plan.sources_queried
+
+
+def test_inferred_connections_stays_empty_when_capability_is_the_default(db_conn: sqlite3.Connection) -> None:
+    """An omitted knowledge_graph_paths falls back to the neutral
+    _no_knowledge_graph_paths default (research/capabilities.py) —
+    contributes nothing, never an error."""
+    caps = PlannerCapabilities(
+        financial_evidence=lambda conn, company_id: [],
+        document_evidence=lambda conn, company_id, question: [],
+        macro_evidence=lambda conn, question: [],
+        document_search=lambda conn, query, *, company_id, limit: [],
+        knowledge_graph=lambda conn, entity_type, entity_name: [],
+    )
+
+    plan = plan_and_gather(db_conn, _hypothesis(), "question", capabilities=caps)
+
+    assert plan.inferred_connections == []
+    assert "knowledge_graph_paths" not in plan.sources_queried
 
 
 def test_gathers_document_passages(ingested_conn: sqlite3.Connection) -> None:

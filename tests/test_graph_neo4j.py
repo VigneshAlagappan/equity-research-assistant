@@ -239,6 +239,72 @@ def test_find_claims_about_entity_company_skips_the_lookup(monkeypatch) -> None:
     assert query_calls == ["company:HDFCBANK"]
 
 
+def test_find_multi_hop_claims_neo4j_backend(monkeypatch) -> None:
+    """Same mocked-driver convention as the single-hop tests above —
+    _query_multi_hop_claims is monkeypatched so this proves the entity_key
+    resolution / result-mapping / hop_distance / path shape, not the actual
+    Cypher execution (never run against a real server, same as every other
+    Neo4j path in this codebase)."""
+    driver, session, tx = _fake_driver()
+    monkeypatch.setattr(graph_neo4j, "_query_entity_id_by_name", lambda tx, entity_type, entity_name: {"id": 7})
+    monkeypatch.setattr(
+        graph_neo4j, "_query_multi_hop_claims",
+        lambda tx, entity_key, max_hop_range: [
+            {
+                "claim_id": 42, "company_id": "ICICIBANK", "claim_text": "Gross margin expanded.",
+                "claim_type": "FACT", "category": "fact", "speaker": None, "fiscal_year": "FY2024", "quarter": None,
+                "confidence": 0.9, "document_id": 501, "evidence_quotes": ["quote"],
+                "related_entities": [["Company", "ICICIBANK"]],
+                "hop_distance": 2,
+                "path_nodes": ["Risk:Input cost inflation", "Metric:Gross Margin"],
+                "path_rel_types": ["MAY_AFFECT"],
+            }
+        ],
+    )
+
+    results = graph_neo4j.find_multi_hop_claims(driver, "Risk", "Input cost inflation")
+
+    assert len(results) == 1
+    view = results[0]
+    assert view.backend == "neo4j"
+    assert view.claim_id == 42
+    assert view.hop_distance == 2
+    assert view.path == "Risk:Input cost inflation --MAY_AFFECT--> Metric:Gross Margin"
+
+
+def test_find_multi_hop_claims_neo4j_max_hop_range_is_max_hops_minus_one(monkeypatch) -> None:
+    driver, session, tx = _fake_driver()
+    monkeypatch.setattr(graph_neo4j, "_query_entity_id_by_name", lambda tx, entity_type, entity_name: {"id": 7})
+    captured = []
+    monkeypatch.setattr(
+        graph_neo4j, "_query_multi_hop_claims",
+        lambda tx, entity_key, max_hop_range: captured.append((entity_key, max_hop_range)) or [],
+    )
+
+    graph_neo4j.find_multi_hop_claims(driver, "Risk", "Input cost inflation", max_hops=3)
+
+    assert captured == [("entity:7", 2)]
+
+
+def test_find_multi_hop_claims_neo4j_returns_empty_for_unknown_entity(monkeypatch) -> None:
+    driver, session, tx = _fake_driver()
+    monkeypatch.setattr(graph_neo4j, "_query_entity_id_by_name", lambda tx, entity_type, entity_name: None)
+
+    assert graph_neo4j.find_multi_hop_claims(driver, "Risk", "Nonexistent") == []
+
+
+def test_find_multi_hop_claims_neo4j_max_hops_of_one_is_a_noop(monkeypatch) -> None:
+    """max_hops=1 means no BFS expansion at all -- never even resolves the
+    entity_key or issues a query, same "hop 1 is find_claims_about_entity()'s
+    job" contract the SQLite path enforces."""
+    driver, session, tx = _fake_driver()
+    lookup_calls = []
+    monkeypatch.setattr(graph_neo4j, "_query_entity_id_by_name", lambda tx, *a: lookup_calls.append(a) or {"id": 7})
+
+    assert graph_neo4j.find_multi_hop_claims(driver, "Risk", "Input cost inflation", max_hops=1) == []
+    assert lookup_calls == []
+
+
 def test_find_related_investigations_keeps_best_score_per_investigation(monkeypatch) -> None:
     driver, session, tx = _fake_driver()
     monkeypatch.setattr(

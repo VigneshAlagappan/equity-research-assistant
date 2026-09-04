@@ -456,6 +456,102 @@ def find_claims_about_entity(driver: Driver, entity_type: str, entity_name: str)
     ]
 
 
+def _render_path(path_nodes: list[str], path_rel_types: list[str]) -> str:
+    """"Company:HDFCBANK", ["MAY_AFFECT"], "Metric:Gross Margin" ->
+    "Company:HDFCBANK --MAY_AFFECT--> Metric:Gross Margin" — same
+    human-readable chain-of-reasoning convention context/graph.py's
+    GraphCandidate.path already uses, built here in Python from the raw
+    node-label/relationship-type lists Cypher hands back (path rendering,
+    same as find_related_investigations() above, stays Python's job even
+    though the traversal itself is Cypher's)."""
+    if not path_nodes:
+        return ""
+    parts = [path_nodes[0]]
+    for relationship_type, node in zip(path_rel_types, path_nodes[1:]):
+        parts.append(f"--{relationship_type}-->")
+        parts.append(node)
+    return " ".join(parts)
+
+
+def _query_multi_hop_claims(tx, entity_key: str, max_hop_range: int):
+    # max_hop_range is always an app-controlled int (find_multi_hop_claims()
+    # below computes it from max_hops, never user input) — Cypher's
+    # variable-length relationship range has no parameter syntax, same
+    # justification _sync_knowledge_relationships()'s relationship_type
+    # interpolation above already uses.
+    query = (
+        "MATCH (n:KGNode {kg_key: $entity_key}) "
+        f"MATCH p = (n)-[*1..{max_hop_range}]-(m:KGNode) "
+        # ALL(...) keeps every node along the path KGNode-labeled — the
+        # walk never passes through a :Claim/:Evidence/:TimePeriod node,
+        # same reasoning the plan gives for why no relationship-type
+        # exclusion is separately needed (only Company/Entity nodes carry
+        # :KGNode at all).
+        "WHERE m <> n AND ALL(x IN nodes(p) WHERE x:KGNode) "
+        "WITH m, p, length(p) AS hops "
+        "ORDER BY hops ASC "
+        # collect(p) after an ORDER BY preserves that order (documented
+        # Neo4j aggregation behavior) -- collect(p)[0] is the shortest path
+        # to this particular neighbor, the same "keep the shortest-worded
+        # path" tie-break the SQLite BFS applies in Python.
+        "WITH m, collect(p)[0] AS best_path, min(hops) AS hop_edges "
+        "MATCH (m)<-[:ABOUT]-(cl:Claim) "
+        # A claim that ALSO touches the originally-queried entity (n)
+        # directly is find_claims_about_entity()'s job (hop_distance == 1),
+        # never double-surfaced here even if a longer path also reaches it.
+        "WHERE NOT (cl)-[:ABOUT]->(n) "
+        "OPTIONAL MATCH (cl)-[:SUPPORTED_BY]->(ev:Evidence) "
+        "OPTIONAL MATCH (cl)-[:ABOUT]->(other:KGNode) WHERE other <> m "
+        "RETURN cl.id AS claim_id, cl.company_id AS company_id, cl.text AS claim_text, "
+        "       cl.claim_type AS claim_type, cl.category AS category, cl.speaker AS speaker, "
+        "       cl.fiscal_year AS fiscal_year, cl.quarter AS quarter, cl.confidence AS confidence, "
+        "       cl.document_id AS document_id, "
+        "       collect(DISTINCT ev.quote) AS evidence_quotes, "
+        "       collect(DISTINCT [coalesce(other.type, 'Company'), coalesce(other.name, other.id)]) AS related_entities, "
+        "       hop_edges + 1 AS hop_distance, "
+        "       [nd IN nodes(best_path) | CASE WHEN 'Company' IN labels(nd) THEN 'Company:' + nd.id "
+        "           ELSE coalesce(nd.type, 'Entity') + ':' + coalesce(nd.name, toString(nd.id)) END] AS path_nodes, "
+        "       [rel IN relationships(best_path) | type(rel)] AS path_rel_types"
+    )
+    return list(tx.run(query, entity_key=entity_key))
+
+
+def find_multi_hop_claims(driver: Driver, entity_type: str, entity_name: str, *, max_hops: int = 2):
+    """Neo4j-backed implementation of context/knowledge_graph.py's
+    find_multi_hop_claims() — same contract, KnowledgeClaimView shape, and
+    hop_distance>=2-only guarantee as its SQLite counterpart; a variable-
+    length Cypher match does the BFS in one query instead of the SQLite
+    path's per-hop batched round trips."""
+    from context.knowledge_graph import KnowledgeClaimView
+
+    if max_hops < 2:
+        return []
+
+    entity_key = f"company:{entity_name}" if entity_type == "Company" else None
+    if entity_key is None:
+        with driver.session() as session:
+            row = session.execute_read(_query_entity_id_by_name, entity_type, entity_name)
+        if row is None:
+            return []
+        entity_key = f"entity:{row['id']}"
+
+    with driver.session() as session:
+        rows = session.execute_read(_query_multi_hop_claims, entity_key, max_hops - 1)
+
+    return [
+        KnowledgeClaimView(
+            claim_id=row["claim_id"], company_id=row["company_id"], claim_text=row["claim_text"],
+            claim_type=row["claim_type"], category=row["category"], speaker=row["speaker"],
+            fiscal_year=row["fiscal_year"], quarter=row["quarter"], confidence=row["confidence"],
+            document_id=row["document_id"], evidence_quotes=[q for q in row["evidence_quotes"] if q],
+            related_entities=sorted({tuple(pair) for pair in row["related_entities"] if pair[1] is not None}),
+            backend="neo4j", hop_distance=row["hop_distance"],
+            path=_render_path(row["path_nodes"], row["path_rel_types"]),
+        )
+        for row in rows
+    ]
+
+
 # ============================================================
 # Financial figures (TRIAL) — projects canonical_financials, the
 # deterministic layer architecture.md calls out as "SQLite knows the

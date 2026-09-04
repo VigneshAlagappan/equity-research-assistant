@@ -48,12 +48,21 @@ class KnowledgeGraphCapability(Protocol):
     def __call__(self, conn: DBConnection, entity_type: str, entity_name: str) -> list[KnowledgeClaimView]: ...
 
 
+class KnowledgeGraphPathsCapability(Protocol):
+    def __call__(self, conn: DBConnection, entity_type: str, entity_name: str) -> list[KnowledgeClaimView]: ...
+
+
 class IndicatorEvidenceCapability(Protocol):
     def __call__(self, conn: DBConnection, company_id: str) -> list[Evidence]: ...
 
 
 def _no_indicator_evidence(conn: DBConnection, company_id: str) -> list[Evidence]:
     """The neutral IndicatorEvidenceCapability — see PlannerCapabilities."""
+    return []
+
+
+def _no_knowledge_graph_paths(conn: DBConnection, entity_type: str, entity_name: str) -> list[KnowledgeClaimView]:
+    """The neutral KnowledgeGraphPathsCapability — see PlannerCapabilities."""
     return []
 
 
@@ -82,6 +91,13 @@ class PlannerCapabilities:
     #: — a test double, a backend that has no indicator engine — stays valid.
     #: default_capabilities() always binds it explicitly.
     indicator_evidence: IndicatorEvidenceCapability = _no_indicator_evidence
+    #: Multi-hop knowledge graph traversal (context/knowledge_graph.py::
+    #: find_multi_hop_claims()) — a separate capability from `knowledge_graph`
+    #: above (single-hop), same "neutral no-op default" pattern as
+    #: indicator_evidence so every existing PlannerCapabilities(...) test
+    #: construction that predates this field keeps working unchanged.
+    #: default_capabilities() always binds it explicitly.
+    knowledge_graph_paths: KnowledgeGraphPathsCapability = _no_knowledge_graph_paths
 
 
 def default_capabilities(
@@ -111,7 +127,7 @@ def default_capabilities(
     get_investigation_cost_summary), same as the generation/evaluation/
     synthesis calls research/investigation.py tags directly.
     """
-    from context.knowledge_graph import find_claims_about_entity
+    from context.knowledge_graph import find_claims_about_entity, find_multi_hop_claims
     from research.documents import get_document_evidence
     from research.indicator_evidence import get_indicator_evidence
     from research.macro_evidence import get_macro_evidence
@@ -142,6 +158,9 @@ def default_capabilities(
             conn, query, company_id=company_id, limit=limit, fact_store=fs, as_of=cutoff
         ),
         knowledge_graph=lambda conn, entity_type, entity_name: find_claims_about_entity(
+            conn, entity_type, entity_name, fact_store=fs, as_of=cutoff
+        ),
+        knowledge_graph_paths=lambda conn, entity_type, entity_name: find_multi_hop_claims(
             conn, entity_type, entity_name, fact_store=fs, as_of=cutoff
         ),
         indicator_evidence=(

@@ -507,6 +507,107 @@ def cmd_graph_backfill(args: argparse.Namespace) -> None:
     logger.info("graph-backfill done.")
 
 
+def cmd_entity_resolution_backfill(args: argparse.Namespace) -> None:
+    """One-off backfill (context/entity_resolution.py, Step 2B follow-up):
+    for each company, find its duplicate `Company`-type knowledge_entities
+    rows (a free-form extracted name alongside the canonical row named
+    after the company_id itself) and merge any that are an EXACT match,
+    after normalization, against this company's own known identifiers
+    (is_same_company_identity()) — never a fuzzy/similarity guess. A
+    read-only query against the real database (this feature's implementation
+    plan) found 127 companies with duplicate Company-type rows, but most
+    duplicates are genuinely distinct subsidiaries/auditors/extraction noise
+    sharing the company's company_id scope, not spelling variants of the
+    same company — leaving those alone (not merging) is the intended,
+    correct outcome, not a shortfall of this command.
+
+    Defaults to a dry run (report-only, no writes) — pass --apply to
+    actually repoint knowledge_relationships and delete the duplicate rows
+    (storage/repositories.py::merge_knowledge_entities()). --company-id
+    (repeatable) scopes to specific companies; omitted, every registered
+    company (including archived ones — a duplicate doesn't stop existing
+    just because the company was archived) is considered.
+
+    Each company is recorded as one batch_job_runs/batch_job_items item
+    (ingestion/batch_log.py) — the same durable, queryable audit trail
+    scripts/batch_fetch_nse.py and main.py graph-backfill/vector-backfill
+    already use — with item.detail spelling out exactly what was merged and
+    what was deliberately left alone (e.g. "merged=1 (AMBUJA CEMENTS
+    LIMITED); left_alone=1 (ACC)"), queryable forever via
+    `main.py show-batch-run <id>` — the human-reviewable report this gap
+    calls for, no separate report file needed.
+
+    KNOWN GAP: if GRAPH_BACKEND=neo4j, this only merges the SQLite side —
+    context/graph_neo4j.py::sync_knowledge_graph() is pure-MERGE and never
+    prunes, so a merged-away duplicate's Neo4j node is left orphaned until a
+    fresh `main.py graph-backfill` (or a manual Cypher DETACH DELETE) cleans
+    it up. Building a real prune step is a bigger, separate change."""
+    setup_logging()
+    conn = init_db()
+
+    from context.entity_resolution import is_same_company_identity
+    from ingestion.batch_log import BatchRun
+    from storage.repositories import list_company_type_knowledge_entities, merge_knowledge_entities
+
+    if args.company_id:
+        company_ids = args.company_id
+    else:
+        company_ids = [c["company_id"] for c in list_companies(conn, include_archived=True)]
+
+    scope_label = f"company_id={','.join(args.company_id) if args.company_id else 'all'} apply={args.apply}"
+    companies_with_merges = 0
+    companies_left_alone_only = 0
+
+    with BatchRun(conn, "entity_resolution_backfill", scope_label) as run:
+        for company_id in company_ids:
+            with run.item(company_id) as item:
+                company_row = get_company(conn, company_id)
+                if company_row is None:
+                    item.detail = "no such company, skipped"
+                    continue
+
+                entities = list_company_type_knowledge_entities(conn, company_id)
+                canonical = next((e for e in entities if e["name"] == company_id), None)
+                if canonical is None:
+                    item.detail = "no canonical Company-type entity on file, nothing to merge"
+                    continue
+
+                merged_names: list[str] = []
+                left_alone_names: list[str] = []
+                for entity in entities:
+                    if entity["entity_id"] == canonical["entity_id"]:
+                        continue
+                    if is_same_company_identity(entity["name"], company_row):
+                        merged_names.append(entity["name"])
+                        if args.apply:
+                            merge_knowledge_entities(
+                                conn, from_entity_id=entity["entity_id"], into_entity_id=canonical["entity_id"]
+                            )
+                    else:
+                        left_alone_names.append(entity["name"])
+
+                if not merged_names and not left_alone_names:
+                    item.detail = "no duplicate Company-type entities found"
+                    continue
+                item.detail = (
+                    f"merged={len(merged_names)} ({', '.join(merged_names)}); "
+                    f"left_alone={len(left_alone_names)} ({', '.join(left_alone_names)})"
+                )
+                if merged_names:
+                    companies_with_merges += 1
+                elif left_alone_names:
+                    companies_left_alone_only += 1
+
+    conn.close()
+    logger.info(
+        "entity-resolution-backfill done (dry_run=%s): %d compan(y/ies) considered, "
+        "%d with a merge candidate, %d with left-alone-only duplicates. "
+        "Run `main.py show-batch-run <run_id>` for the per-company detail%s.",
+        not args.apply, len(company_ids), companies_with_merges, companies_left_alone_only,
+        "" if args.apply else " (nothing was written — pass --apply to actually merge)",
+    )
+
+
 def cmd_archive_company(args: argparse.Namespace) -> None:
     """Archive a company (metadata flip only — observations/documents untouched)."""
     setup_logging()
@@ -947,6 +1048,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sync canonical_financials for every registered company, not just --company-id",
     )
     graph_backfill_parser.set_defaults(func=cmd_graph_backfill)
+
+    entity_resolution_backfill_parser = subparsers.add_parser(
+        "entity-resolution-backfill",
+        help="One-off backfill: merge a company's duplicate Company-type knowledge_entities rows into the "
+             "canonical one, but ONLY on an exact match (never fuzzy) against the company's own known identifiers",
+    )
+    entity_resolution_backfill_parser.add_argument(
+        "--company-id", action="append",
+        help="Only consider this company (repeatable). Omitted: every registered company, including archived ones",
+    )
+    entity_resolution_backfill_parser.add_argument(
+        "--apply", action="store_true",
+        help="Actually repoint knowledge_relationships and delete the duplicate rows (default: dry run, report only)",
+    )
+    entity_resolution_backfill_parser.set_defaults(func=cmd_entity_resolution_backfill)
 
     serve_parser = subparsers.add_parser(
         "serve", help="Run the local web viewer (renders the same analyze report in-browser)"

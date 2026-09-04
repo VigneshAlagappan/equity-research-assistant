@@ -54,6 +54,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_investigation_companies(conn)
     _migrate_document_chunks_embedding_columns(conn)
     _migrate_generated_reports_question_embedding_columns(conn)
+    _migrate_knowledge_relationships_target_index(conn)
     _seed_sources(conn)
     _migrate_source_trust_ranks(conn)
     _seed_sectors_and_industries(conn)
@@ -253,6 +254,24 @@ def _migrate_generated_reports_question_embedding_columns(conn: sqlite3.Connecti
         conn.execute("ALTER TABLE generated_reports ADD COLUMN question_embedding TEXT")
     if "question_embedding_model" not in columns:
         conn.execute("ALTER TABLE generated_reports ADD COLUMN question_embedding_model TEXT")
+
+
+def _migrate_knowledge_relationships_target_index(conn: sqlite3.Connection) -> None:
+    """`CREATE INDEX IF NOT EXISTS` in schemas/sqlite_schema.sql only takes
+    effect via `conn.executescript(schema_sql)` above on a database that
+    doesn't already have knowledge_relationships from before this index was
+    added — SQLite's schema script re-execution is a no-op for anything
+    already created, index included, on a genuinely fresh database, but an
+    existing database's on-disk schema was captured before this index
+    existed and never automatically picks up an addition to the .sql file.
+    Same idempotent `CREATE INDEX IF NOT EXISTS` shape as every other
+    _migrate_* function here — the multi-hop BFS
+    (context/knowledge_graph.py::find_multi_hop_claims()) needs this reverse-
+    direction lookup on knowledge_relationships(target_entity_id) or every
+    "who points AT this entity" neighbor query full-scans the table."""
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_relationships_target ON knowledge_relationships(target_entity_id)"
+    )
 
 
 def _migrate_users_theme_column(conn: sqlite3.Connection) -> None:

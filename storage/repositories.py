@@ -1610,6 +1610,113 @@ def list_knowledge_relationships_for_claim(conn: sqlite3.Connection, claim_id: i
     ).fetchall()
 
 
+# ------------------------------------------------------------------
+# Entity resolution (context/entity_resolution.py) — merging a duplicate
+# Company-type knowledge_entities row into the canonical one, and the
+# multi-hop BFS primitives context/knowledge_graph.py::find_multi_hop_claims()
+# needs. See the implementation plan's Phase 1/Phase 2 for the full context.
+# ------------------------------------------------------------------
+
+
+def list_company_type_knowledge_entities(conn: sqlite3.Connection, company_id: str) -> list[sqlite3.Row]:
+    """Every Company-type knowledge_entities row scoped to this company_id —
+    normally exactly one (the canonical row get_or_create_knowledge_entity
+    creates, named after the company_id itself), but a document naming the
+    company by its own extracted legal/display name before entity
+    resolution existed (or before it was applied to a company's earlier
+    documents) can leave a second, duplicate row here. main.py
+    entity-resolution-backfill is the one-off reader/writer of this."""
+    return conn.execute(
+        "SELECT * FROM knowledge_entities WHERE entity_type = 'Company' AND company_id = ? ORDER BY entity_id",
+        (company_id,),
+    ).fetchall()
+
+
+def merge_knowledge_entities(conn: sqlite3.Connection, *, from_entity_id: int, into_entity_id: int) -> None:
+    """Repoints every knowledge_relationships row referencing the duplicate
+    entity (from_entity_id) to the canonical one (into_entity_id), then
+    deletes the duplicate row — one transaction, so a merge is never left
+    half-done (a relationship pointing at an entity_id that no longer
+    exists). Only ever called by main.py entity-resolution-backfill's
+    --apply path, and only after context/entity_resolution.py's
+    is_same_company_identity() has already confirmed this is a genuine
+    exact-match duplicate, never a fuzzy/similarity guess."""
+    conn.execute(
+        "UPDATE knowledge_relationships SET source_entity_id = ? WHERE source_entity_id = ?",
+        (into_entity_id, from_entity_id),
+    )
+    conn.execute(
+        "UPDATE knowledge_relationships SET target_entity_id = ? WHERE target_entity_id = ?",
+        (into_entity_id, from_entity_id),
+    )
+    conn.execute("DELETE FROM knowledge_entities WHERE entity_id = ?", (from_entity_id,))
+    conn.commit()
+
+
+def list_knowledge_entity_ids_by_type_and_name(conn: sqlite3.Connection, entity_type: str, name: str) -> list[int]:
+    """Resolve a (entity_type, name) pair to every matching entity_id — the
+    starting frontier for context/knowledge_graph.py::find_multi_hop_claims()'s
+    BFS. Not scoped to one company_id (same as find_knowledge_claims_about_entity),
+    since a generic entity name (e.g. a Risk) can legitimately be extracted
+    once per company that mentions it, each its own entity row."""
+    rows = conn.execute(
+        "SELECT entity_id FROM knowledge_entities WHERE entity_type = ? AND name = ?", (entity_type, name)
+    ).fetchall()
+    return [row["entity_id"] for row in rows]
+
+
+def list_entity_neighbors(conn: sqlite3.Connection, entity_ids: list[int]) -> list[sqlite3.Row]:
+    """Every relationship edge touching any of the given entities, either
+    direction, joined to both endpoint entities — the batched-per-hop
+    primitive find_multi_hop_claims()'s BFS needs (one query per hop across
+    the whole frontier, not one query per node, which would be a real
+    N+1 cost on a highly-connected entity)."""
+    if not entity_ids:
+        return []
+    placeholders = ",".join("?" for _ in entity_ids)
+    return conn.execute(
+        f"""
+        SELECT r.relationship_id, r.claim_id, r.source_entity_id, r.relationship_type, r.target_entity_id,
+               se.entity_type AS source_type, se.name AS source_name,
+               te.entity_type AS target_type, te.name AS target_name
+        FROM knowledge_relationships r
+        JOIN knowledge_entities se ON se.entity_id = r.source_entity_id
+        JOIN knowledge_entities te ON te.entity_id = r.target_entity_id
+        WHERE r.source_entity_id IN ({placeholders}) OR r.target_entity_id IN ({placeholders})
+        """,
+        [*entity_ids, *entity_ids],
+    ).fetchall()
+
+
+def find_knowledge_claims_for_entity_ids(conn: sqlite3.Connection, entity_ids: list[int]) -> list[sqlite3.Row]:
+    """Same shape as find_knowledge_claims_about_entity, but keyed by a batch
+    of entity_ids directly (find_multi_hop_claims()'s BFS already resolved
+    the frontier to entity_ids and has no name to look up by). Each result
+    row also carries `matched_entity_id` — which entity in the requested
+    batch this claim was reached through — since a caller doing a BFS needs
+    that to attribute the right hop_distance/path to the claim; a plain
+    DISTINCT c.* the way find_knowledge_claims_about_entity returns would
+    lose exactly that information."""
+    if not entity_ids:
+        return []
+    placeholders = ",".join("?" for _ in entity_ids)
+    return conn.execute(
+        f"""
+        SELECT DISTINCT c.*, x.entity_id AS matched_entity_id
+        FROM (
+            SELECT claim_id, source_entity_id AS entity_id FROM knowledge_relationships
+            WHERE source_entity_id IN ({placeholders})
+            UNION
+            SELECT claim_id, target_entity_id AS entity_id FROM knowledge_relationships
+            WHERE target_entity_id IN ({placeholders})
+        ) x
+        JOIN knowledge_claims c ON c.claim_id = x.claim_id
+        ORDER BY c.fiscal_year, c.quarter, c.claim_id
+        """,
+        [*entity_ids, *entity_ids],
+    ).fetchall()
+
+
 def _row_to_generated_report(row: sqlite3.Row) -> dict:
     return {
         "thread_id": row["thread_id"],

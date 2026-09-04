@@ -35,6 +35,8 @@ from config.settings import ANTHROPIC_MODEL, KNOWLEDGE_EXTRACTION_MAX_CHARS
 from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
+from companies.registry import get_company
+from context.entity_resolution import is_same_company_identity
 from research.documents import document_text
 from storage.repositories import (
     get_or_create_knowledge_entity,
@@ -143,8 +145,17 @@ def _persist(
     # COMPANY is resolved once per document to a real Company-type entity —
     # auto-created if this is the first extraction ever to reference it.
     company_entity = None
+    company_row: Row | None = None
     if company_id is not None:
         company_entity = get_or_create_knowledge_entity(conn, "Company", company_id, company_id)
+        # Fetched once per document (not per entity) — entity_resolution's
+        # is_same_company_identity() needs the company's own known
+        # identifiers (legal_name/display_name/nse_symbol/bse_code) to
+        # decide whether a free-form extracted name is this same company,
+        # not a real, distinct subsidiary/auditor/noise row sharing the
+        # same company_id scope (context/entity_resolution.py's module
+        # docstring has the real duplicate examples this guards against).
+        company_row = get_company(conn, company_id)
 
     named_entities: dict[str, Row] = {}
     for raw_entity in parsed.get("entities") or []:
@@ -152,6 +163,19 @@ def _persist(
         name = (raw_entity.get("name") or "").strip()
         if entity_type not in ENTITY_TYPES or not name:
             continue  # not trusted blindly — validated against config/knowledge_ontology.py
+        if (
+            entity_type == "Company"
+            and company_entity is not None
+            and company_row is not None
+            and is_same_company_identity(name, company_row)
+        ):
+            # An exact-match identity, not a second entity row — critically,
+            # this keeps _resolve_entity() below correct for any
+            # relationship that names the company by this extracted legal
+            # name/ticker rather than the COMPANY placeholder: it still
+            # resolves to the one real entity_id, never a second graph node.
+            named_entities[name] = company_entity
+            continue
         row = get_or_create_knowledge_entity(conn, entity_type, name, company_id)
         named_entities[name] = row
         result.entities_created += 1
