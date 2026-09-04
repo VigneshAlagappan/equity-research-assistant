@@ -55,6 +55,9 @@
     {%- if investigation.as_of %} &middot;
     <span class="tag tag-outline" title="Point-in-time investigation: every evidence source was restricted to what was on file on this date (research/temporal.py). No later data was retrievable.">evidence as of {{ investigation.as_of }}</span>
     {%- endif %}
+    {%- if cost and cost.calls %} &middot;
+    <span class="tag tag-outline" title="{{ cost.calls }} LLM call{{ '' if cost.calls == 1 else 's' }} ({{ cost.input_tokens }} in / {{ cost.output_tokens }} out tokens) across hypothesis generation, evaluation, and synthesis — see /admin/usage for site-wide totals.">${{ "%.4f"|format(cost.cost_usd) }} spent</span>
+    {%- endif %}
   </div>
 
   {% if investigation.strongest_explanation %}

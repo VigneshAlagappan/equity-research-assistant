@@ -199,7 +199,7 @@ def run_investigation(
     investigation_id = uuid.uuid4().hex[:12]
     fs = fact_store or default_fact_store()
     cutoff = normalize_as_of(as_of)
-    caps = capabilities or default_capabilities(fact_store=fs, as_of=cutoff)
+    caps = capabilities or default_capabilities(fact_store=fs, as_of=cutoff, investigation_id=investigation_id)
 
     try:
         hypotheses = generate_hypotheses(

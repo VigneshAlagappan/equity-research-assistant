@@ -187,7 +187,7 @@ def evaluate_hypothesis(
 
     observability.record(
         conn, task_name="hypothesis_evaluation", company_ids=hypothesis.companies,
-        question=hypothesis.statement, result=result,
+        question=hypothesis.statement, result=result, investigation_id=hypothesis.investigation_id,
     )
 
     response = result.response

@@ -47,6 +47,42 @@ def test_split_into_chunks_blank_text_is_empty() -> None:
     assert _split_into_chunks("   ") == []
 
 
+def test_split_into_chunks_never_splits_a_word_across_a_boundary() -> None:
+    """Regression: the old character-offset chunker split real words across
+    chunk boundaries — a real Infosys annual report chunk ended
+    '...necessitate building en' with the next chunk starting 'ndeavor can
+    be...', splitting "endeavor" in half. Sentence-aware packing must never
+    let a chunk start or end mid-word."""
+    filler = "This is filler content padding out each sentence to a reasonable length for testing. "
+    text = (filler * 20) + "This endeavor can be multi tiered and complex in scope."
+
+    pieces = _split_into_chunks(text)
+
+    assert len(pieces) > 1
+    assert any("endeavor" in p for p in pieces)  # the word itself survives whole, in some chunk
+
+    normalized = " ".join(text.split())
+    for piece in pieces:
+        start = normalized.index(piece)
+        end = start + len(piece)
+        assert start == 0 or normalized[start - 1] == " ", f"chunk starts mid-word: {piece[:30]!r}"
+        assert end == len(normalized) or normalized[end] == " ", f"chunk ends mid-word: {piece[-30:]!r}"
+
+
+def test_split_into_chunks_oversized_single_sentence_falls_back_to_raw_slicing() -> None:
+    """A single unpunctuated run longer than CHUNK_SIZE (e.g. a table/list
+    block _split_into_sentences() has no boundary to break on) must still be
+    bounded, not produce one unbounded chunk — same fallback the old
+    character-slicing behavior always used, now scoped to just this one
+    oversized piece instead of the whole document."""
+    text = "x" * (CHUNK_SIZE * 2)  # no . ! ? anywhere -- one giant "sentence"
+
+    pieces = _split_into_chunks(text)
+
+    assert len(pieces) == 2
+    assert all(len(p) == CHUNK_SIZE for p in pieces)
+
+
 def test_chunk_and_index_document_writes_chunks_with_page_number(
     company_conn: sqlite3.Connection, tmp_path: Path
 ) -> None:

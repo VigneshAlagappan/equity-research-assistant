@@ -135,13 +135,23 @@ def find_related_investigations(
     config.settings.GRAPH_BACKEND="neo4j", falling back to this module's own
     SQLite/Python traversal if Neo4j isn't reachable — same
     graceful-degradation pattern as llm/router.py's provider fallback: a
-    graph backend being down never fails the investigation itself."""
+    graph backend being down never fails the investigation itself.
+
+    Also where canonical_financials auto-syncs to Neo4j (graph_neo4j.py::
+    sync_financials_if_changed() — fingerprint-guarded, a no-op unless the
+    data has actually changed since last sync) — its own try/except, so a
+    financials-sync failure degrades that one thing, not the sector-peer
+    traversal this function actually exists for."""
     fs = fact_store or default_fact_store()
     if GRAPH_BACKEND == "neo4j":
         try:
             from context import graph_neo4j
             driver = graph_neo4j.get_driver()
             graph_neo4j.sync_graph(conn, driver, fact_store=fs)
+            try:
+                graph_neo4j.sync_financials_if_changed(conn, driver, fact_store=fs)
+            except Exception:
+                logger.warning("Neo4j financials auto-sync failed (non-fatal)", exc_info=True)
             return graph_neo4j.find_related_investigations(driver, question, company_ids)
         except Exception:
             logger.warning("Neo4j graph backend unavailable, falling back to SQLite traversal", exc_info=True)

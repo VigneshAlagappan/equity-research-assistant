@@ -53,6 +53,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_investigations_as_of_column(conn)
     _migrate_investigation_companies(conn)
     _migrate_document_chunks_embedding_columns(conn)
+    _migrate_generated_reports_question_embedding_columns(conn)
     _seed_sources(conn)
     _migrate_source_trust_ranks(conn)
     _seed_sectors_and_industries(conn)
@@ -163,6 +164,19 @@ def _migrate_llm_call_log_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE llm_call_log ADD COLUMN reuse_hit INTEGER NOT NULL DEFAULT 0")
     if "reused_thread_id" not in columns:
         conn.execute("ALTER TABLE llm_call_log ADD COLUMN reused_thread_id TEXT")
+    if "cache_creation_input_tokens" not in columns:
+        conn.execute("ALTER TABLE llm_call_log ADD COLUMN cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0")
+    if "cache_read_input_tokens" not in columns:
+        conn.execute("ALTER TABLE llm_call_log ADD COLUMN cache_read_input_tokens INTEGER NOT NULL DEFAULT 0")
+    if "graph_hit" not in columns:
+        conn.execute("ALTER TABLE llm_call_log ADD COLUMN graph_hit INTEGER NOT NULL DEFAULT 0")
+    if "graph_hit_thread_id" not in columns:
+        conn.execute("ALTER TABLE llm_call_log ADD COLUMN graph_hit_thread_id TEXT")
+    if "graph_hit_score" not in columns:
+        conn.execute("ALTER TABLE llm_call_log ADD COLUMN graph_hit_score REAL")
+    if "investigation_id" not in columns:
+        conn.execute("ALTER TABLE llm_call_log ADD COLUMN investigation_id TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_call_log_investigation_id ON llm_call_log(investigation_id)")
 
 
 def _migrate_shareholding_observations_columns(conn: sqlite3.Connection) -> None:
@@ -222,6 +236,23 @@ def _migrate_document_chunks_embedding_columns(conn: sqlite3.Connection) -> None
         conn.execute("ALTER TABLE document_chunks ADD COLUMN embedding_model TEXT")
     if "embedded_at" not in columns:
         conn.execute("ALTER TABLE document_chunks ADD COLUMN embedded_at TEXT")
+
+
+def _migrate_generated_reports_question_embedding_columns(conn: sqlite3.Connection) -> None:
+    """`CREATE TABLE IF NOT EXISTS` is a no-op on a generated_reports table
+    that already existed before context/reuse.py's semantic reuse-matching
+    layer was added -- ALTER TABLE backfills every existing report to
+    question_embedding=NULL (embedding_model NULL too), which is exactly
+    right: a report saved before this existed was, correctly, never
+    embedded. find_reusable_report() falls back to word-overlap-only for a
+    NULL-embedding report, same as if the embedding provider were down."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(generated_reports)")}
+    if not columns:
+        return
+    if "question_embedding" not in columns:
+        conn.execute("ALTER TABLE generated_reports ADD COLUMN question_embedding TEXT")
+    if "question_embedding_model" not in columns:
+        conn.execute("ALTER TABLE generated_reports ADD COLUMN question_embedding_model TEXT")
 
 
 def _migrate_users_theme_column(conn: sqlite3.Connection) -> None:

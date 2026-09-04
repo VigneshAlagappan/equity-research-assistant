@@ -198,7 +198,10 @@ def generate_hypotheses(
     except AllProvidersUnavailableError as exc:
         raise HypothesisGenerationError(f"all configured models failed: {exc}") from exc
 
-    observability.record(conn, task_name="hypothesis_generation", company_ids=company_ids, question=question, result=result)
+    observability.record(
+        conn, task_name="hypothesis_generation", company_ids=company_ids, question=question, result=result,
+        investigation_id=investigation_id,
+    )
 
     response = result.response
     if response.stop_reason == "refusal" or not response.text:

@@ -85,7 +85,7 @@ class PlannerCapabilities:
 
 
 def default_capabilities(
-    *, fact_store: FactStore | None = None, as_of: str | None = None
+    *, fact_store: FactStore | None = None, as_of: str | None = None, investigation_id: str | None = None
 ) -> PlannerCapabilities:
     """The only place that imports the concrete implementations directly —
     everywhere else routes through the PlannerCapabilities seam instead.
@@ -102,6 +102,14 @@ def default_capabilities(
     cannot — indicator rules evaluate against the latest facts on file and
     have no historical mode — is disabled entirely under a cutoff rather than
     allowed to leak post-cutoff findings into a historical investigation.
+
+    `investigation_id` is bound the same way, purely for cost attribution:
+    macro_evidence is the only capability here that can make its own LLM
+    call (get_macro_evidence's internal retrieval planner), so tagging it
+    here is what lets that call's llm_call_log row count toward the
+    investigation's total cost (storage/repositories.py::
+    get_investigation_cost_summary), same as the generation/evaluation/
+    synthesis calls research/investigation.py tags directly.
     """
     from context.knowledge_graph import find_claims_about_entity
     from research.documents import get_document_evidence
@@ -120,7 +128,9 @@ def default_capabilities(
         document_evidence=lambda conn, company_id, question: get_document_evidence(
             conn, company_id, question, fact_store=fs, as_of=cutoff
         ),
-        macro_evidence=lambda conn, question: get_macro_evidence(conn, question, fact_store=fs, as_of=cutoff),
+        macro_evidence=lambda conn, question: get_macro_evidence(
+            conn, question, fact_store=fs, as_of=cutoff, investigation_id=investigation_id
+        ),
         # Hybrid (FTS5/BM25 keyword + embedding/vector semantic) retrieval,
         # not FTS5 alone (section 8) — retrieval/hybrid_search.py degrades to
         # FTS5-only by itself (section 10) whenever the vector layer is

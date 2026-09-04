@@ -342,20 +342,21 @@ def get_canonical_series(
 def list_canonical_financials_for_companies(conn: sqlite3.Connection, company_ids: list[str]) -> list[sqlite3.Row]:
     """Every canonical_financials row for the given companies in one query,
     joined with metrics_dictionary for a human-readable display_name/
-    category -- the bulk read context/graph_neo4j.py's sync_financials()
-    (trial: projects canonical_financials into Neo4j) needs. Deliberately
-    company-scoped, not a list-everything query: canonical_financials runs
-    to 1000+ rows per company, and get_canonical_series() above is
-    per-metric/per-company by design (retrieval/structured_search.py's
-    normal access pattern) -- this is the one place a bulk multi-metric
-    read is actually needed."""
+    category -- the bulk read context/graph_neo4j.py's sync_financials()/
+    sync_financials_if_changed() need to project canonical_financials into
+    Neo4j (decided_at included for the latter's change-detection
+    fingerprint). Deliberately company-scoped, not a list-everything query:
+    canonical_financials runs to 1000+ rows per company, and
+    get_canonical_series() above is per-metric/per-company by design
+    (retrieval/structured_search.py's normal access pattern) -- this is the
+    one place a bulk multi-metric read is actually needed."""
     if not company_ids:
         return []
     placeholders = ",".join("?" * len(company_ids))
     return conn.execute(
         f"""
         SELECT cf.company_id, cf.metric_key, cf.period_type, cf.fiscal_year, cf.quarter,
-               cf.statement_type, cf.canonical_value, cf.unit,
+               cf.statement_type, cf.canonical_value, cf.unit, cf.decided_at,
                md.display_name, md.category
         FROM canonical_financials cf
         LEFT JOIN metrics_dictionary md ON md.metric_key = cf.metric_key
@@ -1418,9 +1419,13 @@ def replace_document_chunks(conn: sqlite3.Connection, document_id: int, chunks: 
         conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (document_id,))
     for chunk in chunks:
         cursor = conn.execute(
-            "INSERT INTO document_chunks (document_id, company_id, page_number, chunk_index, text, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (chunk["document_id"], chunk["company_id"], chunk["page_number"], chunk["chunk_index"], chunk["text"], now),
+            "INSERT INTO document_chunks "
+            "(document_id, company_id, page_number, chunk_index, text, section_heading, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                chunk["document_id"], chunk["company_id"], chunk["page_number"], chunk["chunk_index"],
+                chunk["text"], chunk.get("section_heading"), now,
+            ),
         )
         conn.execute(
             "INSERT INTO document_chunks_fts (rowid, text) VALUES (?, ?)", (cursor.lastrowid, chunk["text"])
@@ -1613,6 +1618,8 @@ def _row_to_generated_report(row: sqlite3.Row) -> dict:
         "statement_type": row["statement_type"],
         "report_markdown": row["report_markdown"],
         "generated_at": row["generated_at"],
+        "question_embedding": json.loads(row["question_embedding"]) if row["question_embedding"] else None,
+        "question_embedding_model": row["question_embedding_model"],
     }
 
 
@@ -1623,15 +1630,31 @@ def save_generated_report(
     company_ids: list[str],
     statement_type: str,
     report_markdown: str,
+    *,
+    question_embedding: list[float] | None = None,
+    question_embedding_model: str | None = None,
 ) -> None:
     """Persist a full Signals report (research/signals_report.py, via
     /research/thread/generate) so it survives a server restart — unlike the
-    short /research/ask answers, which stay ephemeral by design."""
+    short /research/ask answers, which stay ephemeral by design.
+
+    question_embedding/question_embedding_model are optional (this module
+    never imports retrieval/research code — architecture guardrail #3 — so
+    the caller computes the embedding and hands it in already-made, same
+    "storage stays a passive persistence layer" discipline
+    retrieval/semantic_indexer.py's VectorRecord handoff already follows).
+    Left NULL when the caller couldn't get one (embedding provider down) —
+    context/reuse.py falls back to word-overlap-only for that report."""
     conn.execute(
         "INSERT INTO generated_reports "
-        "(thread_id, question, company_ids, statement_type, report_markdown, generated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (thread_id, question, json.dumps(company_ids), statement_type, report_markdown, utcnow_iso()),
+        "(thread_id, question, company_ids, statement_type, report_markdown, generated_at, "
+        " question_embedding, question_embedding_model) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            thread_id, question, json.dumps(company_ids), statement_type, report_markdown, utcnow_iso(),
+            json.dumps(question_embedding) if question_embedding is not None else None,
+            question_embedding_model,
+        ),
     )
     conn.commit()
 
@@ -1715,6 +1738,12 @@ def insert_llm_call_log(
     context_items_dropped: int | None = None,
     reuse_hit: bool = False,
     reused_thread_id: str | None = None,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
+    graph_hit: bool = False,
+    graph_hit_thread_id: str | None = None,
+    graph_hit_score: float | None = None,
+    investigation_id: str | None = None,
 ) -> None:
     """Persist one llm/router.py route() outcome, or one context/reuse.py
     reuse hit (llm/observability.py) — the Context Optimization + Model
@@ -1724,13 +1753,17 @@ def insert_llm_call_log(
         "(created_at, task_name, company_ids, question, thread_id, complexity_tier, complexity_level, "
         "complexity_reason, model_used, provider_used, fallback_used, attempts_json, input_tokens, "
         "output_tokens, estimated_cost_usd, latency_ms, stop_reason, context_tokens_before, "
-        "context_tokens_after, context_items_dropped, reuse_hit, reused_thread_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "context_tokens_after, context_items_dropped, reuse_hit, reused_thread_id, "
+        "cache_creation_input_tokens, cache_read_input_tokens, graph_hit, graph_hit_thread_id, "
+        "graph_hit_score, investigation_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             utcnow_iso(), task_name, company_ids, question, thread_id, complexity_tier, complexity_level,
             complexity_reason, model_used, provider_used, int(fallback_used), attempts_json, input_tokens,
             output_tokens, estimated_cost_usd, latency_ms, stop_reason, context_tokens_before,
             context_tokens_after, context_items_dropped, int(reuse_hit), reused_thread_id,
+            cache_creation_input_tokens, cache_read_input_tokens, int(graph_hit), graph_hit_thread_id,
+            graph_hit_score, investigation_id,
         ),
     )
     conn.commit()
@@ -1784,6 +1817,24 @@ def get_llm_usage_summary(conn: sqlite3.Connection) -> dict:
         "by_task": [dict(row) for row in by_task],
         "by_model": [dict(row) for row in by_model],
     }
+
+
+def get_investigation_cost_summary(conn: sqlite3.Connection, investigation_id: str) -> dict:
+    """Total cost/tokens/calls for one research/investigation.py run — every
+    llm_call_log row tagged with this investigation_id (hypothesis
+    generation, per-hypothesis evaluation, research synthesis, and any
+    macro-retrieval-plan call made while gathering evidence for it), so the
+    Investigations tab can show a single investigation's own spend instead
+    of only the site-wide total on /admin/usage."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS calls, "
+        "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
+        "COALESCE(SUM(output_tokens), 0) AS output_tokens, "
+        "COALESCE(SUM(estimated_cost_usd), 0) AS cost_usd "
+        "FROM llm_call_log WHERE investigation_id = ?",
+        (investigation_id,),
+    ).fetchone()
+    return dict(row)
 
 
 def get_latest_data_timestamp(conn: sqlite3.Connection, company_ids: list[str]) -> str | None:

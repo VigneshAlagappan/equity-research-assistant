@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 from config.settings import ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL
 from context.graph import render_related_investigations
-from context.optimizer import optimize
+from context.optimizer import OptimizedContext, optimize
 from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
@@ -164,6 +164,16 @@ def generate_signals_report(
     someone else's reasoning pattern rather than evidence about this
     question's own companies — and appends it as its own labeled block
     when found.
+
+    Prompt caching (llm/providers/anthropic_provider.py): Financials
+    evidence (get_comparison_evidence) is the same for every question about
+    these companies; Docs evidence isn't, since get_document_evidence/
+    get_document_passage_evidence both take `question` itself. Financials is
+    rendered and optimized separately (empty question — uniform relevance,
+    see context/optimizer.py's _relevance()) and sent as `cacheable_prefix`
+    — byte-identical across different questions about the same companies,
+    which is what actually makes it cacheable — same split
+    research/assistant.py::answer_question() uses, for the same reason.
     """
     mem = investigation_memory or default_investigation_memory()
     reused = mem.reusable_report(conn, question, company_ids, statement_type)
@@ -178,16 +188,18 @@ def generate_signals_report(
         ]
         return SignalsReport(report_markdown=reused.report_markdown, evidence=evidence, followups=reused.followups)
 
-    evidence = get_comparison_evidence(conn, company_ids, statement_type)
+    financial_evidence = get_comparison_evidence(conn, company_ids, statement_type)  # cacheable
+    variable_evidence: list[Evidence] = []
     if len(company_ids) == 1:
         # Uploaded-document evidence (Docs tab) only has single-company
         # attribution today — see research/documents.py.
-        evidence = evidence + get_document_evidence(conn, company_ids[0], question)  # whole document
+        variable_evidence += get_document_evidence(conn, company_ids[0], question)  # whole document
         # Additive (feature spec section 9): hybrid (FTS5+semantic) retrieval's
         # top-K passages, alongside the whole-document evidence above — same
         # reasoning as research/assistant.py::answer_question()'s identical
         # addition. Never replaces the whole-document evidence.
-        evidence = evidence + get_document_passage_evidence(conn, company_ids[0], question)  # targeted passages
+        variable_evidence += get_document_passage_evidence(conn, company_ids[0], question)  # targeted passages
+    evidence = financial_evidence + variable_evidence
     if not evidence:
         return SignalsReport(
             report_markdown=(
@@ -197,8 +209,24 @@ def generate_signals_report(
         )
 
     hardness = fixed(Tier.DEEP, "full investigation report")
-    optimized = optimize(question, evidence, hardness.tier)
-    user_message = f"Evidence:\n{render_evidence_block(optimized.evidence)}\n\nQuestion: {question}"
+    optimized_financial = optimize("", financial_evidence, hardness.tier)
+    optimized_variable = optimize(question, variable_evidence, hardness.tier)
+    optimized = OptimizedContext(
+        evidence=optimized_financial.evidence + optimized_variable.evidence,
+        dropped=optimized_financial.dropped + optimized_variable.dropped,
+        total_tokens_before=optimized_financial.total_tokens_before + optimized_variable.total_tokens_before,
+        total_tokens_after=optimized_financial.total_tokens_after + optimized_variable.total_tokens_after,
+        budget=optimized_financial.budget + optimized_variable.budget,
+    )
+    cacheable_prefix = (
+        f"Evidence (Financials):\n{render_evidence_block(optimized_financial.evidence)}"
+        if optimized_financial.evidence else None
+    )
+    variable_block = render_evidence_block(optimized_variable.evidence)
+    user_message = (
+        f"Evidence (Docs):\n{variable_block}\n\nQuestion: {question}" if variable_block
+        else f"Question: {question}"
+    )
 
     related = mem.related_investigations(conn, question, company_ids)
     if related:
@@ -207,7 +235,7 @@ def generate_signals_report(
     try:
         result = route(
             system=SIGNALS_SYSTEM_PROMPT, user_message=user_message, hardness=hardness,
-            max_tokens=MAX_TOKENS, pinned_model=model,
+            max_tokens=MAX_TOKENS, pinned_model=model, cacheable_prefix=cacheable_prefix,
         )
     except AllProvidersUnavailableError:
         return SignalsReport(
@@ -217,6 +245,8 @@ def generate_signals_report(
     observability.record(
         conn, task_name="signals_report", company_ids=company_ids, question=question,
         result=result, optimized=optimized,
+        graph_hit_thread_id=related[0].thread_id if related else None,
+        graph_hit_score=related[0].score if related else None,
     )
 
     response = result.response

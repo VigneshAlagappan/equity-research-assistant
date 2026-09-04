@@ -126,7 +126,10 @@ def synthesize(
     except AllProvidersUnavailableError as exc:
         raise ResearchSynthesisError(f"all configured models failed: {exc}") from exc
 
-    observability.record(conn, task_name="research_synthesis", company_ids=[], question=question, result=result)
+    observability.record(
+        conn, task_name="research_synthesis", company_ids=[], question=question, result=result,
+        investigation_id=hypotheses[0].investigation_id if hypotheses else None,
+    )
 
     response = result.response
     if response.stop_reason == "refusal" or not response.text:

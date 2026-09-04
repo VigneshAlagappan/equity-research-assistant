@@ -474,12 +474,17 @@ def find_claims_about_entity(driver: Driver, entity_type: str, entity_name: str)
 # say during the same quarter this ratio moved" becomes a real 2-hop
 # traversal instead of a separate SQL join you'd have to write yourself.
 #
-# Deliberately NOT wired into sync_graph()/sync_knowledge_graph() or their
-# callers' automatic resync -- canonical_financials is 1000+ rows per
-# company, so syncing every registered company (2,500+) on every traversal
-# is a real scale/cost decision to make deliberately later, not a trial
-# default. Call sync_financials() directly, scoped to whichever
-# company_ids you actually want in the graph right now.
+# sync_financials() itself stays explicit/manually-scoped (main.py
+# graph-backfill --company-id/--all-financials) -- syncing every registered
+# company (2,500+) unconditionally on every traversal was the real scale/cost
+# risk. sync_financials_if_changed() (below) is what closes that: it's wired
+# into context/graph.py's automatic resync, but fingerprinted the same way
+# sync_knowledge_graph() is (row count + a change signal) -- so financials
+# only re-sync to Neo4j when canonical_financials has genuinely changed
+# since last time, not on every single graph read. The first sync after a
+# real change is still the full-corpus cost the comment above used to warn
+# about (that part hasn't gone away); every read after that, until the next
+# change, is a cheap fingerprint check with no Neo4j write at all.
 # ============================================================
 
 
@@ -540,12 +545,52 @@ def _sync_observations(tx, rows: list[Row]) -> None:
 
 
 def sync_financials(conn: DBConnection, driver: Driver, *, fact_store: FactStore, company_ids: list[str]) -> int:
-    """TRIAL. Full, idempotent (re)sync of canonical_financials for exactly
-    these companies -- see the module comment above for the graph shape and
-    why this isn't wired into the automatic resync path yet. Returns the
-    row count synced, for a caller to report back."""
+    """Full, idempotent (re)sync of canonical_financials for exactly these
+    companies -- see the module comment above for the graph shape. Returns
+    the row count synced, for a caller to report back. Explicit/manually-
+    scoped by design (main.py graph-backfill); sync_financials_if_changed()
+    below is the automatic, fingerprint-guarded counterpart."""
     rows = fact_store.list_canonical_financials_for_companies(conn, company_ids)
     with driver.session() as session:
         session.execute_write(_sync_metrics, rows)
         session.execute_write(_sync_observations, rows)
+    return len(rows)
+
+
+_last_financials_sync: tuple | None = None
+
+
+def sync_financials_if_changed(conn: DBConnection, driver: Driver, *, fact_store: FactStore) -> int:
+    """The automatic counterpart to sync_financials() -- every company with
+    at least one canonical_financials row (fact_store.
+    list_company_ids_with_financial_data(), not every registered company;
+    most have nothing ingested), but only actually written to Neo4j when
+    the data has genuinely changed since the last sync in THIS process.
+
+    Fingerprint is (row count, latest decided_at) -- canonical_financials
+    is NOT append-only like knowledge_claims (a reconciled value can be
+    UPDATEd in place, storage/repositories.py's canonical-financials upsert
+    path), so row count alone would miss an in-place revision; decided_at is
+    set on both INSERT and UPDATE, so MAX(decided_at) catches that too. Same
+    per-process, in-memory caching as sync_knowledge_graph() -- a fresh
+    process always syncs at least once, never serves another process's
+    stale idea of the data. Returns the row count synced (0 when skipped
+    because nothing changed)."""
+    global _last_financials_sync
+
+    company_ids = fact_store.list_company_ids_with_financial_data(conn)
+    if not company_ids:
+        return 0
+    rows = fact_store.list_canonical_financials_for_companies(conn, company_ids)
+    if not rows:
+        return 0
+
+    fingerprint = (id(driver), len(rows), max(r["decided_at"] for r in rows))
+    if fingerprint == _last_financials_sync:
+        return 0
+
+    with driver.session() as session:
+        session.execute_write(_sync_metrics, rows)
+        session.execute_write(_sync_observations, rows)
+    _last_financials_sync = fingerprint
     return len(rows)

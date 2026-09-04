@@ -190,7 +190,9 @@ def _render_catalog(candidates: list[tuple[str, str, str, str]]) -> str:
     return "\n".join(f"{key} ({source}, {earliest}-{latest})" for key, source, earliest, latest in candidates)
 
 
-def _plan_retrieval(conn: DBConnection, question: str, fact_store: FactStore) -> tuple[list[str], int, int] | None:
+def _plan_retrieval(
+    conn: DBConnection, question: str, fact_store: FactStore, investigation_id: str | None = None
+) -> tuple[list[str], int, int] | None:
     """Ask the LLM which catalog series (if any) and what year range apply to
     this question. Returns None — the caller falls back to _matching_series/
     _year_range — if there's no catalog to choose from, the call fails, or
@@ -214,7 +216,10 @@ def _plan_retrieval(conn: DBConnection, question: str, fact_store: FactStore) ->
         logger.warning("macro retrieval planner unavailable — falling back to keyword heuristic")
         return None
 
-    observability.record(conn, task_name="macro_retrieval_plan", company_ids=[], question=question, result=result)
+    observability.record(
+        conn, task_name="macro_retrieval_plan", company_ids=[], question=question, result=result,
+        investigation_id=investigation_id,
+    )
 
     text = result.response.text
     series_match = _SERIES_LINE_RE.search(text)
@@ -237,7 +242,8 @@ def _plan_retrieval(conn: DBConnection, question: str, fact_store: FactStore) ->
 
 
 def get_macro_evidence(
-    conn: DBConnection, question: str, *, fact_store: FactStore | None = None, as_of: str | None = None
+    conn: DBConnection, question: str, *, fact_store: FactStore | None = None, as_of: str | None = None,
+    investigation_id: str | None = None,
 ) -> list[Evidence]:
     """Gather Evidence for the (at most MAX_SERIES) national macro series
     the LLM planner (_plan_retrieval) picks as relevant to this question,
@@ -249,9 +255,12 @@ def get_macro_evidence(
 
     `as_of` (ISO date) drops every observation whose period falls after the
     cutoff — research/temporal.py — so a point-in-time investigation is
-    grounded only in macro data that had actually been published by then."""
+    grounded only in macro data that had actually been published by then.
+    `investigation_id`, when this call is made while gathering evidence for
+    a research/investigation.py run, tags the resulting llm_call_log row so
+    it counts toward that investigation's own cost."""
     fs = fact_store or default_fact_store()
-    planned = _plan_retrieval(conn, question, fs)
+    planned = _plan_retrieval(conn, question, fs, investigation_id)
     if planned is not None:
         series_keys, start_year, end_year = planned
     else:

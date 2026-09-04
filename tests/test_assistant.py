@@ -32,6 +32,17 @@ class _FakeClient:
         self.messages = _FakeMessages(content, stop_reason, captured)
 
 
+def _content_text(content) -> str:
+    """Flattens a message's `content` into one string regardless of shape —
+    a plain string (no cacheable_prefix) or a list of content blocks (one
+    per text block, cache_control marked or not — llm/providers/
+    anthropic_provider.py). Lets prompt-content assertions stay shape-
+    agnostic instead of caring which form a given call happened to use."""
+    if isinstance(content, str):
+        return content
+    return "\n".join(block["text"] for block in content)
+
+
 def _install_fake_client(monkeypatch, text: str = "answer", stop_reason: str = "end_turn"):
     captured: list = []
     content = [SimpleNamespace(type="text", text=text)] if text else []
@@ -65,7 +76,7 @@ def test_answer_question_sends_evidence_in_the_prompt(ingested_conn: sqlite3.Con
     answer_question(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"])
 
     assert len(captured) == 1
-    sent = captured[0]["messages"][0]["content"]
+    sent = _content_text(captured[0]["messages"][0]["content"])
     assert "Net Profit FY2024" in sent
     assert "20,500.00" in sent
     assert "Question: What was net profit in FY2024?" in sent
@@ -135,9 +146,41 @@ def test_answer_question_comparison_includes_both_companies(
     captured = _install_fake_client(monkeypatch)
     answer_question(ingested_conn, "Compare these banks", ["HDFCBANK", "ICICIBANK"])
 
-    sent = captured[0]["messages"][0]["content"]
+    sent = _content_text(captured[0]["messages"][0]["content"])
     assert "HDFCBANK —" in sent
     assert "ICICIBANK —" in sent
+
+
+def test_financial_evidence_is_sent_as_a_stable_cacheable_prefix(
+    ingested_conn: sqlite3.Connection, monkeypatch
+) -> None:
+    """The whole point of the Financials/Docs-Macro evidence split
+    (research/assistant.py's docstring): the Financials block must be
+    marked cache_control AND byte-identical across two different questions
+    about the same company, since that's what actually makes Anthropic's
+    prompt cache hit on the second call — a block that changes every call
+    would never cache regardless of the marker."""
+    captured = _install_fake_client(monkeypatch)
+
+    answer_question(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"])
+    answer_question(ingested_conn, "How did the CASA ratio trend?", ["HDFCBANK"])
+
+    assert len(captured) == 2
+    for call in captured:
+        content = call["messages"][0]["content"]
+        assert isinstance(content, list)  # split into blocks, not one flat string
+        financial_block, rest_block = content
+        assert financial_block.get("cache_control") == {"type": "ephemeral"}
+        assert "cache_control" not in rest_block
+        assert financial_block["text"].startswith("Evidence (Financials):")
+
+    first_financial_text = captured[0]["messages"][0]["content"][0]["text"]
+    second_financial_text = captured[1]["messages"][0]["content"][0]["text"]
+    assert first_financial_text == second_financial_text  # byte-identical -> actually cacheable
+
+    first_question_text = captured[0]["messages"][0]["content"][1]["text"]
+    second_question_text = captured[1]["messages"][0]["content"][1]["text"]
+    assert first_question_text != second_question_text  # the variable part still varies
 
 
 # ------------------------------------------------------------------

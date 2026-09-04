@@ -15,6 +15,7 @@ import pytest
 from companies.registry import seed_companies
 from context import graph_neo4j
 from ingestion.pipeline import ingest_file
+from storage.database import utcnow_iso
 from storage.fact_store import default_fact_store
 from storage.repositories import save_company_document, save_generated_report, save_report_evidence
 from tests.test_screener_adapter import _make_screener_workbook
@@ -67,6 +68,56 @@ def test_sync_graph_syncs_each_generated_report_as_an_investigation(two_bank_con
     investigation_calls = [c for c in tx.run.call_args_list if "MERGE (inv:Investigation" in c.args[0]]
     assert len(investigation_calls) == 1
     assert investigation_calls[0].kwargs["thread_id"] == "t1"
+
+
+def test_sync_financials_if_changed_writes_then_skips_when_unchanged(two_bank_conn: sqlite3.Connection) -> None:
+    """The automatic counterpart to sync_financials() — a caller (context/
+    graph.py's find_related_investigations) can call this on every graph
+    read without paying for a Neo4j write when nothing has changed."""
+    driver, session, tx = _fake_driver()
+    fs = default_fact_store()
+
+    first = graph_neo4j.sync_financials_if_changed(two_bank_conn, driver, fact_store=fs)
+    assert first > 0
+    calls_after_first = tx.run.call_count
+
+    second = graph_neo4j.sync_financials_if_changed(two_bank_conn, driver, fact_store=fs)
+
+    assert second == 0
+    assert tx.run.call_count == calls_after_first  # no new Cypher — fingerprint matched, skipped
+
+
+def test_sync_financials_if_changed_resyncs_after_a_value_is_revised(two_bank_conn: sqlite3.Connection) -> None:
+    """canonical_financials is NOT append-only like knowledge_claims — a
+    reconciled value can be UPDATEd in place (storage/repositories.py's
+    upsert path), same row count, so row count alone can't be the whole
+    fingerprint; decided_at (set on both INSERT and UPDATE) is what actually
+    catches this."""
+    driver, session, tx = _fake_driver()
+    fs = default_fact_store()
+    graph_neo4j.sync_financials_if_changed(two_bank_conn, driver, fact_store=fs)
+    calls_after_first = tx.run.call_count
+
+    two_bank_conn.execute(
+        "UPDATE canonical_financials SET canonical_value = canonical_value + 1, decided_at = ? "
+        "WHERE canonical_id = (SELECT canonical_id FROM canonical_financials LIMIT 1)",
+        (utcnow_iso(),),
+    )
+    two_bank_conn.commit()
+
+    resynced = graph_neo4j.sync_financials_if_changed(two_bank_conn, driver, fact_store=fs)
+
+    assert resynced > 0
+    assert tx.run.call_count > calls_after_first
+
+
+def test_sync_financials_if_changed_is_a_noop_with_no_financial_data(db_conn: sqlite3.Connection) -> None:
+    driver, session, tx = _fake_driver()
+
+    result = graph_neo4j.sync_financials_if_changed(db_conn, driver, fact_store=default_fact_store())
+
+    assert result == 0
+    tx.run.assert_not_called()
 
 
 def test_find_related_investigations_scores_and_labels_neo4j_backend(monkeypatch) -> None:

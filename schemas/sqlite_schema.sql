@@ -283,7 +283,15 @@ CREATE TABLE IF NOT EXISTS generated_reports (
   company_ids TEXT NOT NULL,     -- JSON array of company_id
   statement_type TEXT NOT NULL,
   report_markdown TEXT NOT NULL,
-  generated_at TEXT NOT NULL
+  generated_at TEXT NOT NULL,
+  question_embedding TEXT,       -- JSON array of floats (context/reuse.py's semantic
+                                  -- reuse-matching layer) -- NULL when the embedding
+                                  -- provider was unavailable at save time; reuse
+                                  -- matching then falls back to word-overlap only for
+                                  -- this report, same graceful-degradation spirit as
+                                  -- retrieval/hybrid_search.py
+  question_embedding_model TEXT  -- which model produced it, so a later model/provider
+                                  -- change can't silently compare incompatible vectors
 );
 
 -- ============================================================
@@ -362,10 +370,33 @@ CREATE TABLE IF NOT EXISTS llm_call_log (
   -- in which case model_used/provider_used above read "reused"/"cache" and
   -- input_tokens/output_tokens/estimated_cost_usd are all 0.
   reuse_hit INTEGER NOT NULL DEFAULT 0,
-  reused_thread_id TEXT
+  reused_thread_id TEXT,
+  -- Anthropic prompt caching (llm/providers/anthropic_provider.py's
+  -- cacheable_prefix) -- both 0 for a call that didn't use it, or ran
+  -- against a provider that doesn't support it (Ollama). A nonzero
+  -- cache_read_input_tokens is the actual evidence caching paid off on this
+  -- call, not just that it was attempted.
+  cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
+  -- context/graph.py sector-peer match appended to this call's prompt (set
+  -- on the same row as the real LLM call it accompanied, not a second row —
+  -- a graph hit never replaces a call the way a reuse hit does).
+  graph_hit INTEGER NOT NULL DEFAULT 0,
+  graph_hit_thread_id TEXT,
+  graph_hit_score REAL,
+  -- Set when this call was part of a research/investigation.py structured
+  -- investigation (hypothesis generation/evaluation, research synthesis, or
+  -- a macro-retrieval-plan call made while gathering evidence for one) --
+  -- lets the Investigations tab show one investigation's own total cost.
+  investigation_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_llm_call_log_created_at ON llm_call_log(created_at);
+-- idx_llm_call_log_investigation_id is created by
+-- _migrate_llm_call_log_columns (storage/database.py), not here — this
+-- script runs unconditionally via executescript() before migrations patch
+-- an existing table, so an index on a column that table doesn't have yet
+-- would fail on every pre-existing database.
 
 -- ============================================================
 -- Hybrid retrieval diagnostics (retrieval/observability.py) -- one row per
