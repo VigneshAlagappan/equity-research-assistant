@@ -20,16 +20,19 @@ import main
 from companies.registry import seed_companies
 from research.document_chunker import chunk_and_index_document
 from storage.database import init_db
-from storage.repositories import save_company_document
+from storage.repositories import list_batch_job_items, list_batch_job_runs, save_company_document
 from tests.conftest import FakeEmbeddingProvider, FakeVectorStore
 from tests.test_documents import _make_minimal_pdf
 
 
-def _prepare_processed_document(conn: sqlite3.Connection, tmp_path: Path, company_id: str, text: str, filename: str):
+def _prepare_processed_document(
+    conn: sqlite3.Connection, tmp_path: Path, company_id: str, text: str, filename: str, *,
+    document_type: str = "annual_report",
+):
     pdf_path = tmp_path / filename
     _make_minimal_pdf(pdf_path, text)
     doc = save_company_document(
-        conn, company_id, document_type="annual_report", fiscal_year="FY2024", quarter="Q1",
+        conn, company_id, document_type=document_type, fiscal_year="FY2024", quarter="Q1",
         added_by_user="tester", raw_file_path=str(pdf_path),
     )
     chunk_and_index_document(conn, doc)
@@ -56,10 +59,15 @@ def backfill_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     conn.close()
 
 
-def _run_backfill(*, company_id: str | None = None, limit: int | None = None, force: bool = False) -> None:
+def _run_backfill(
+    *, company_id: str | None = None, document_type: str | None = None, limit: int | None = None,
+    force: bool = False,
+) -> None:
     flags = ["vector-backfill"]
     if company_id:
         flags += ["--company-id", company_id]
+    if document_type:
+        flags += ["--document-type", document_type]
     if limit is not None:
         flags += ["--limit", str(limit)]
     if force:
@@ -78,6 +86,30 @@ def test_backfill_embeds_every_processed_document(backfill_env) -> None:
     assert len(fake_store._records) == 2
     statuses = conn.execute("SELECT embedding_status FROM document_chunks").fetchall()
     assert statuses and all(r["embedding_status"] == "indexed" for r in statuses)
+
+
+def test_backfill_records_a_queryable_audit_run(backfill_env) -> None:
+    """Every backfill run and its per-document outcome must land in
+    batch_job_runs/batch_job_items (ingestion/batch_log.py) — the same
+    durable audit trail scripts/batch_fetch_nse.py uses — not just
+    stdout/logs/app.log, so `main.py list-batch-runs`/`show-batch-run` can
+    answer "did this actually run, and what happened" after the fact."""
+    conn, tmp_path, fake_store, _provider = backfill_env
+    _prepare_processed_document(conn, tmp_path, "HDFCBANK", "Revenue grew twelve percent", "a.pdf")
+
+    _run_backfill(document_type="annual_report")
+
+    runs = list_batch_job_runs(conn)
+    assert runs and runs[0]["job_name"] == "vector_backfill"
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["items_succeeded"] == 1
+    assert "document_type=annual_report" in runs[0]["scope_label"]
+
+    items = list_batch_job_items(conn, runs[0]["run_id"])
+    assert len(items) == 1
+    assert items[0]["company_id"] == "HDFCBANK"
+    assert items[0]["status"] == "ok"
+    assert "embedded=" in items[0]["detail"]
 
 
 def test_backfill_is_idempotent_no_duplicate_vectors_on_rerun(backfill_env) -> None:
@@ -115,6 +147,27 @@ def test_backfill_respects_company_id_filter(backfill_env) -> None:
     assert len(fake_store._records) == 1
     (record,) = fake_store._records.values()
     assert record.company_id == "HDFCBANK"
+
+
+def test_backfill_respects_document_type_filter(backfill_env) -> None:
+    conn, tmp_path, fake_store, _provider = backfill_env
+    _prepare_processed_document(
+        conn, tmp_path, "HDFCBANK", "Management discussed margins on the call", "a.pdf",
+        document_type="transcript",
+    )
+    _prepare_processed_document(
+        conn, tmp_path, "HDFCBANK", "Full-year results and balance sheet", "b.pdf",
+        document_type="annual_report",
+    )
+
+    _run_backfill(document_type="transcript")
+
+    assert len(fake_store._records) == 1
+    (record,) = fake_store._records.values()
+    embedded_doc = conn.execute(
+        "SELECT document_type FROM documents WHERE document_id = ?", (record.document_id,)
+    ).fetchone()
+    assert embedded_doc["document_type"] == "transcript"
 
 
 def test_backfill_respects_limit_as_the_cost_guardrail(backfill_env) -> None:

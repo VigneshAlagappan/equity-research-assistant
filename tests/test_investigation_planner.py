@@ -162,6 +162,54 @@ def test_injected_capabilities_are_used_instead_of_defaults(db_conn: sqlite3.Con
     assert plan.evidence == [Evidence(kind="FACT", company_id="HDFCBANK", label="fake evidence", value="1", citation="test")]
 
 
+def test_retry_skips_capabilities_that_cannot_change(db_conn: sqlite3.Connection) -> None:
+    """A gap-driven retry (retry=True, research/investigation.py's
+    gap-driven re-pass) must skip capabilities keyed purely off (hypothesis,
+    company_id) — financial_evidence, indicator_evidence, and the per-company
+    "Company" knowledge_graph lookup — since a retry only ever changes the
+    query text, and those three would return exactly what the first pass
+    already got. Capabilities actually driven by the query text
+    (document_evidence, macro_evidence, document_search) must still run."""
+    calls = {"financial": 0, "indicator": 0, "document": 0, "macro": 0, "search": 0, "graph": 0}
+
+    def fake_financial(conn, company_id):
+        calls["financial"] += 1
+        return []
+
+    def fake_indicator(conn, company_id):
+        calls["indicator"] += 1
+        return []
+
+    def fake_document(conn, company_id, question):
+        calls["document"] += 1
+        return []
+
+    def fake_macro(conn, question):
+        calls["macro"] += 1
+        return []
+
+    def fake_search(conn, query, *, company_id, limit):
+        calls["search"] += 1
+        return []
+
+    def fake_graph(conn, entity_type, entity_name):
+        calls["graph"] += 1
+        return []
+
+    caps = PlannerCapabilities(
+        financial_evidence=fake_financial, indicator_evidence=fake_indicator, document_evidence=fake_document,
+        macro_evidence=fake_macro, document_search=fake_search, knowledge_graph=fake_graph,
+    )
+
+    plan_and_gather(db_conn, _hypothesis(category="macro"), "gap query", capabilities=caps, retry=True)
+
+    # db_conn has no ingested knowledge_entities, so the entity-mention
+    # knowledge_graph lookup (query-sensitive, stays live on retry) finds
+    # nothing to query either — "graph": 0 here reflects the skipped
+    # "Company" lookup, not a second, separately-gated behavior.
+    assert calls == {"financial": 0, "indicator": 0, "document": 1, "macro": 1, "search": 1, "graph": 0}
+
+
 def test_gathers_document_passages(ingested_conn: sqlite3.Connection) -> None:
     import tempfile
     from research.document_chunker import chunk_and_index_document

@@ -46,6 +46,7 @@ from pathlib import Path
 import ingestion.workers  # noqa: F401 -- registers built-in workers (knowledge_builder, chunk_indexer, ...)
 from companies.registry import get_company
 from config import settings
+from ingestion.batch_log import BatchRun
 from ingestion.detector import (
     PathConventionError,
     detect_from_path,
@@ -315,67 +316,76 @@ def process_documents(conn, document_ids: list[int]) -> ProcessSummary:
     link) still succeeds with zero claims, same "absence isn't an error"
     rule research/documents.py already follows; an extraction that raises
     (LLM unavailable, unparseable response) marks the document FAILED with
-    the error recorded, retryable via retry_failed_documents()."""
+    the error recorded, retryable via retry_failed_documents().
+
+    Each document's outcome is also recorded to batch_job_runs/batch_job_items
+    (ingestion/batch_log.py) — the same durable, queryable audit trail
+    scripts/batch_fetch_nse.py and main.py's vector-backfill/graph-backfill
+    use — so every caller (Admin -> Ingest queue, retry_failed_documents(),
+    process_all_pending_documents()) gets this for free without its own
+    wiring, since they all funnel through this one function."""
     summary = ProcessSummary()
-    for document_id in document_ids:
-        # get_company_document (storage/repositories.py) is company-scoped;
-        # the queue view isn't, so get_document() (also company-agnostic)
-        # is used here instead.
-        row = get_document(conn, document_id)
-        if row is None:
-            continue
-        summary.attempted += 1
-        file_hash = None
-        if row["raw_file_path"]:
-            path = settings.from_repo_relative(row["raw_file_path"])
-            if path.exists():
-                file_hash = _content_hash(path)
+    with BatchRun(conn, "document_processing", f"{len(document_ids)} document(s)") as run:
+        for document_id in document_ids:
+            # get_company_document (storage/repositories.py) is company-scoped;
+            # the queue view isn't, so get_document() (also company-agnostic)
+            # is used here instead.
+            row = get_document(conn, document_id)
+            if row is None:
+                continue
+            summary.attempted += 1
+            with run.item(row["company_id"]) as item:
+                file_hash = None
+                if row["raw_file_path"]:
+                    path = settings.from_repo_relative(row["raw_file_path"])
+                    if path.exists():
+                        file_hash = _content_hash(path)
 
-        event = DatasetIngestedEvent(
-            dataset_id=f"document:{document_id}",
-            dataset_type="document",
-            source=row["source"] or "document",
-            scope={"document_id": document_id, "company_id": row["company_id"]},
-            storage_reference={"table": "documents", "document_id": document_id},
-            ingestion_id=str(uuid.uuid4()),
-        )
-        outcomes = {outcome.worker_name: outcome.result for outcome in publish(conn, event)}
+                event = DatasetIngestedEvent(
+                    dataset_id=f"document:{document_id}",
+                    dataset_type="document",
+                    source=row["source"] or "document",
+                    scope={"document_id": document_id, "company_id": row["company_id"]},
+                    storage_reference={"table": "documents", "document_id": document_id},
+                    ingestion_id=str(uuid.uuid4()),
+                )
+                outcomes = {outcome.worker_name: outcome.result for outcome in publish(conn, event)}
 
-        kb_result = outcomes.get("knowledge_builder")
-        if kb_result is None or kb_result.status == "failed":
-            error = kb_result.error if kb_result is not None else "knowledge_builder worker not registered"
-            logger.warning("Knowledge extraction failed for document %s: %s", document_id, error)
-            mark_document_processing_status(conn, document_id, status="failed", error_message=error)
-            summary.failed += 1
-            summary.outcomes.append(ProcessOutcome(document_id, ok=False, detail=error))
-            continue
+                kb_result = outcomes.get("knowledge_builder")
+                if kb_result is None or kb_result.status == "failed":
+                    error = kb_result.error if kb_result is not None else "knowledge_builder worker not registered"
+                    logger.warning("Knowledge extraction failed for document %s: %s", document_id, error)
+                    mark_document_processing_status(conn, document_id, status="failed", error_message=error)
+                    summary.failed += 1
+                    summary.outcomes.append(ProcessOutcome(document_id, ok=False, detail=error))
+                    raise RuntimeError(error)  # re-raised so run.item() records this item as failed too
 
-        # Chunking/indexing (Step 2D) is best-effort on top of an already-
-        # successful extraction — deterministic and low-risk (no LLM call),
-        # but a failure here shouldn't undo a real, already-persisted
-        # knowledge-extraction success. Same graceful-degradation spirit as
-        # the Neo4j/Ollama fallbacks elsewhere in this app; the two workers
-        # dispatch independently, so a chunk_indexer failure never touches
-        # the knowledge_builder outcome above.
-        chunk_result = outcomes.get("chunk_indexer")
-        if chunk_result is not None and chunk_result.status == "failed":
-            logger.warning(
-                "Chunk indexing failed for document %s (extraction still succeeded): %s",
-                document_id, chunk_result.error,
-            )
-        chunk_count = chunk_result.data.get("chunk_count", 0) if chunk_result and chunk_result.status == "ok" else 0
-        claims_created = kb_result.data.get("claims_created", 0)
+                # Chunking/indexing (Step 2D) is best-effort on top of an already-
+                # successful extraction — deterministic and low-risk (no LLM call),
+                # but a failure here shouldn't undo a real, already-persisted
+                # knowledge-extraction success. Same graceful-degradation spirit as
+                # the Neo4j/Ollama fallbacks elsewhere in this app; the two workers
+                # dispatch independently, so a chunk_indexer failure never touches
+                # the knowledge_builder outcome above.
+                chunk_result = outcomes.get("chunk_indexer")
+                if chunk_result is not None and chunk_result.status == "failed":
+                    logger.warning(
+                        "Chunk indexing failed for document %s (extraction still succeeded): %s",
+                        document_id, chunk_result.error,
+                    )
+                chunk_count = (
+                    chunk_result.data.get("chunk_count", 0) if chunk_result and chunk_result.status == "ok" else 0
+                )
+                claims_created = kb_result.data.get("claims_created", 0)
 
-        mark_document_processing_status(
-            conn, document_id, status="processed", file_hash=file_hash, processed_at=utcnow_iso(), error_message=None
-        )
-        summary.succeeded += 1
-        summary.outcomes.append(
-            ProcessOutcome(
-                document_id, ok=True,
-                detail=f"registered, {claims_created} claim(s) extracted, {chunk_count} chunk(s) indexed",
-            )
-        )
+                mark_document_processing_status(
+                    conn, document_id, status="processed", file_hash=file_hash, processed_at=utcnow_iso(),
+                    error_message=None,
+                )
+                summary.succeeded += 1
+                detail = f"document_id={document_id} registered, {claims_created} claim(s) extracted, {chunk_count} chunk(s) indexed"
+                summary.outcomes.append(ProcessOutcome(document_id, ok=True, detail=detail))
+                item.detail = detail
     return summary
 
 
@@ -397,25 +407,36 @@ def archive_documents(conn, document_ids: list[int]) -> int:
     failing extraction (or just aren't worth processing yet): excluded from
     Ingest All Pending/Retry Failed (both filter by processing_status)
     without losing the row or its history. Reversible via
-    unarchive_documents()."""
+    unarchive_documents().
+
+    Recorded to batch_job_runs/batch_job_items (ingestion/batch_log.py) —
+    same audit trail as process_documents() above — one item per document
+    actually archived."""
     archived = 0
-    for document_id in document_ids:
-        row = get_document(conn, document_id)
-        if row is None or row["processing_status"] == "archived":
-            continue
-        set_document_processing_status(conn, document_id, "archived")
-        archived += 1
+    with BatchRun(conn, "document_archive", f"{len(document_ids)} document(s)") as run:
+        for document_id in document_ids:
+            row = get_document(conn, document_id)
+            if row is None or row["processing_status"] == "archived":
+                continue
+            with run.item(row["company_id"]) as item:
+                set_document_processing_status(conn, document_id, "archived")
+                archived += 1
+                item.detail = f"document_id={document_id} archived (was {row['processing_status']})"
     return archived
 
 
 def unarchive_documents(conn, document_ids: list[int]) -> int:
     """Unarchive — back to pending, so it's picked up by Ingest All Pending/
-    the normal queue again."""
+    the normal queue again. Recorded to batch_job_runs/batch_job_items same
+    as archive_documents() above."""
     unarchived = 0
-    for document_id in document_ids:
-        row = get_document(conn, document_id)
-        if row is None or row["processing_status"] != "archived":
-            continue
-        set_document_processing_status(conn, document_id, "pending")
-        unarchived += 1
+    with BatchRun(conn, "document_unarchive", f"{len(document_ids)} document(s)") as run:
+        for document_id in document_ids:
+            row = get_document(conn, document_id)
+            if row is None or row["processing_status"] != "archived":
+                continue
+            with run.item(row["company_id"]) as item:
+                set_document_processing_status(conn, document_id, "pending")
+                unarchived += 1
+                item.detail = f"document_id={document_id} unarchived, back to pending"
     return unarchived

@@ -42,6 +42,19 @@ from storage.fact_store import FactStore, default_fact_store
 REQUEST_TIMEOUT_SECONDS = 15
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 
+# BSE (a common Docs-tab source per the module docstring above) 403s a
+# fetch with no User-Agent/requests' default one — confirmed by hand
+# against a real bseindia.com corpfiling link. Without this, that fetch
+# fails silently (requests.HTTPError caught below, same as any other
+# unreachable link) and the document just never has extractable text —
+# no error, no log line pointing at why.
+_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    )
+}
+
 # Keeps one long filing from crowding out the financial FACT/CALCULATION
 # evidence in the prompt — a rough cap, not a real chunking/relevance pass.
 MAX_CHARS_PER_DOCUMENT = 12_000
@@ -128,7 +141,7 @@ def _fetch_url_bytes(url: str) -> bytes | None:
     # can't stall an entire batch ingestion run.
     deadline = time.monotonic() + REQUEST_TIMEOUT_SECONDS * 4
     try:
-        response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS, stream=True)
+        response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS, stream=True, headers=_FETCH_HEADERS)
         response.raise_for_status()
         content = bytearray()
         for chunk in response.iter_content(chunk_size=65_536):

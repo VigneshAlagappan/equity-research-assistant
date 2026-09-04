@@ -215,21 +215,32 @@ def test_insufficient_evidence_triggers_a_retry_that_then_succeeds(
     later verdict resolves it. Injected capabilities always surface fresh
     evidence on retry so the no-new-evidence control can't be what's
     (accidentally) making this pass — company_conn has no ingested data, so
-    the default capabilities would return an empty plan every time."""
+    the default capabilities would return an empty plan every time.
+
+    Uses document_search, not financial_evidence, as the "ever new evidence"
+    vehicle — plan_and_gather()'s `retry=True` now skips financial_evidence
+    (company-scoped, provably identical on a gap-driven retry), so only a
+    query-sensitive capability can make the retry pass produce something new."""
     from research.capabilities import PlannerCapabilities
-    from research.evidence import Evidence
+    from retrieval.document_search import DocumentPassage
 
-    counters = {"financial": 0}
+    counters = {"search": 0}
 
-    def ever_new_evidence(conn, company_id):
-        counters["financial"] += 1
-        return [Evidence(kind="FACT", company_id=company_id, label="metric", value=str(counters["financial"]), citation="t")]
+    def ever_new_passages(conn, query, *, company_id, limit):
+        counters["search"] += 1
+        return [
+            DocumentPassage(
+                chunk_id=counters["search"], document_id=1, company_id=company_id, text="passage text",
+                page_number=1, document_type="annual_report", fiscal_year="FY2024", quarter=None,
+                source="test", published_at=None,
+            )
+        ]
 
     caps = PlannerCapabilities(
-        financial_evidence=ever_new_evidence,
+        financial_evidence=lambda conn, company_id: [],
         document_evidence=lambda conn, company_id, question: [],
         macro_evidence=lambda conn, question: [],
-        document_search=lambda conn, query, *, company_id, limit: [],
+        document_search=ever_new_passages,
         knowledge_graph=lambda conn, entity_type, entity_name: [],
     )
 
@@ -264,22 +275,32 @@ def test_persistent_insufficient_evidence_stops_at_max_iterations(
     """Even if the evidence gap never closes, the loop must not run forever —
     MAX_EVIDENCE_ITERATIONS bounds it. Uses injected capabilities that always
     surface fresh (never-before-seen) evidence, so the no-new-evidence
-    control can't be what stops it — only the max-iterations control can."""
+    control can't be what stops it — only the max-iterations control can.
+
+    Uses document_search, not financial_evidence, as the "ever new evidence"
+    vehicle — see test_insufficient_evidence_triggers_a_retry_that_then_succeeds
+    for why: retry=True now skips financial_evidence entirely."""
     from research.investigation import MAX_EVIDENCE_ITERATIONS
     from research.capabilities import PlannerCapabilities
-    from research.evidence import Evidence
+    from retrieval.document_search import DocumentPassage
 
-    counters = {"financial": 0}
+    counters = {"search": 0}
 
-    def ever_new_evidence(conn, company_id):
-        counters["financial"] += 1
-        return [Evidence(kind="FACT", company_id=company_id, label="metric", value=str(counters["financial"]), citation="t")]
+    def ever_new_passages(conn, query, *, company_id, limit):
+        counters["search"] += 1
+        return [
+            DocumentPassage(
+                chunk_id=counters["search"], document_id=1, company_id=company_id, text="passage text",
+                page_number=1, document_type="annual_report", fiscal_year="FY2024", quarter=None,
+                source="test", published_at=None,
+            )
+        ]
 
     caps = PlannerCapabilities(
-        financial_evidence=ever_new_evidence,
+        financial_evidence=lambda conn, company_id: [],
         document_evidence=lambda conn, company_id, question: [],
         macro_evidence=lambda conn, question: [],
-        document_search=lambda conn, query, *, company_id, limit: [],
+        document_search=ever_new_passages,
         knowledge_graph=lambda conn, entity_type, entity_name: [],
     )
 

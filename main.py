@@ -330,10 +330,18 @@ def cmd_vector_backfill(args: argparse.Namespace) -> None:
     EMBEDDING_PROVIDER). --company-id/--limit are the cost guardrail this
     feature's spec calls for -- point this at a small/synthetic dataset (see
     tests/test_vector_backfill.py) or a small handful of real documents
-    before ever running it unbounded against the real document archive."""
+    before ever running it unbounded against the real document archive.
+    --document-type narrows to one document_type (e.g. 'transcript' for
+    concall transcripts only), combinable with --company-id/--limit.
+
+    Each document's outcome is recorded to batch_job_runs/batch_job_items
+    (ingestion/batch_log.py) — the same durable, queryable audit trail
+    scripts/batch_fetch_nse.py uses — not just this process's own stdout/
+    logs/app.log. `main.py list-batch-runs`/`show-batch-run` read it back."""
     setup_logging()
     conn = init_db()
 
+    from ingestion.batch_log import BatchRun
     from retrieval.embedding_provider import EmbeddingProviderUnavailable, default_embedding_provider
     from retrieval.semantic_indexer import embed_and_index_document_chunks
     from retrieval.vector_store import VectorStoreUnavailable, default_vector_store
@@ -359,32 +367,47 @@ def cmd_vector_backfill(args: argparse.Namespace) -> None:
     documents = list_documents_by_status(conn, "processed")
     if args.company_id:
         documents = [d for d in documents if d["company_id"] == args.company_id]
+    if args.document_type:
+        documents = [d for d in documents if d["document_type"] == args.document_type]
     if args.limit is not None:
         documents = documents[: args.limit]
 
     logger.info("vector-backfill: %d eligible document(s), embedding_model=%s", len(documents), provider.model_id)
 
+    scope_label = (
+        f"company_id={args.company_id or 'all'} document_type={args.document_type or 'all'} "
+        f"limit={args.limit if args.limit is not None else 'none'} force={args.force}"
+    )
     documents_embedded = 0
     chunks_embedded = 0
     chunks_already_indexed = 0
     failed = 0
-    for doc in documents:
-        try:
-            result = embed_and_index_document_chunks(
-                conn, doc, embedding_provider=provider, vector_store=store, force=args.force
-            )
-        except (VectorStoreUnavailable, EmbeddingProviderUnavailable) as exc:
-            logger.warning("document %s: %s", doc["document_id"], exc)
-            failed += 1
-            continue
-        chunks_already_indexed += result.chunks_already_indexed
-        if result.chunks_embedded:
-            documents_embedded += 1
-            chunks_embedded += result.chunks_embedded
-        logger.info(
-            "document %-6s chunks_total=%-4d embedded=%-4d already_indexed=%-4d",
-            doc["document_id"], result.chunks_total, result.chunks_embedded, result.chunks_already_indexed,
-        )
+    with BatchRun(conn, "vector_backfill", scope_label) as run:
+        for doc in documents:
+            doc_failed = False
+            with run.item(doc["company_id"]) as item:
+                try:
+                    result = embed_and_index_document_chunks(
+                        conn, doc, embedding_provider=provider, vector_store=store, force=args.force
+                    )
+                except (VectorStoreUnavailable, EmbeddingProviderUnavailable) as exc:
+                    logger.warning("document %s: %s", doc["document_id"], exc)
+                    doc_failed = True
+                    raise  # re-raise so run.item() records this item as failed too
+                chunks_already_indexed += result.chunks_already_indexed
+                if result.chunks_embedded:
+                    documents_embedded += 1
+                    chunks_embedded += result.chunks_embedded
+                item.detail = (
+                    f"document_id={doc['document_id']} chunks_total={result.chunks_total} "
+                    f"embedded={result.chunks_embedded} already_indexed={result.chunks_already_indexed}"
+                )
+                logger.info(
+                    "document %-6s chunks_total=%-4d embedded=%-4d already_indexed=%-4d",
+                    doc["document_id"], result.chunks_total, result.chunks_embedded, result.chunks_already_indexed,
+                )
+            if doc_failed:
+                failed += 1
 
     conn.close()
     logger.info(
@@ -392,6 +415,96 @@ def cmd_vector_backfill(args: argparse.Namespace) -> None:
         "chunks_embedded=%d chunks_already_indexed=%d failed=%d",
         len(documents), documents_embedded, chunks_embedded, chunks_already_indexed, failed,
     )
+
+
+def cmd_graph_backfill(args: argparse.Namespace) -> None:
+    """One-time, explicit full (re)sync of SQLite's facts into Neo4j
+    (context/graph_neo4j.py) — company/sector/investigation nodes
+    (sync_graph), knowledge-graph entities/claims/relationships/evidence
+    (sync_knowledge_graph), and optionally canonical_financials observations
+    (sync_financials). SQLite stays the source of truth throughout; every
+    sync here is idempotent (MERGE, never duplicates) and is otherwise done
+    lazily/automatically on the first graph read once GRAPH_BACKEND=neo4j —
+    this command exists to prime the graph explicitly (e.g. right after
+    switching backends, or after a large ingestion run) instead of paying
+    for that sync on whichever request happens to trigger it first.
+
+    sync_financials is TRIAL and deliberately NOT part of the automatic
+    resync path (context/graph_neo4j.py's module comment: 1000+ rows per
+    company makes "sync everything" a real scale/cost decision) — so it's
+    opt-in here too: pass --company-id (repeatable) to scope it, or
+    --all-financials to sync every registered company. Neither flag touches
+    sync_graph/sync_knowledge_graph, which always run in full — those are
+    already the automatic-resync default and cheap at this app's scale.
+
+    Each phase is recorded as one item to batch_job_runs/batch_job_items
+    (ingestion/batch_log.py) — the same durable, queryable audit trail
+    scripts/batch_fetch_nse.py uses — not just this process's own stdout/
+    logs/app.log. `main.py list-batch-runs`/`show-batch-run` read it back."""
+    setup_logging()
+
+    from config.settings import GRAPH_BACKEND
+
+    if GRAPH_BACKEND != "neo4j":
+        raise SystemExit(
+            "GRAPH_BACKEND=sqlite — Neo4j is disabled, nothing to backfill. Set GRAPH_BACKEND=neo4j "
+            "(config/settings.py) and start Neo4j, then retry."
+        )
+
+    from context import graph_neo4j
+
+    try:
+        driver = graph_neo4j.get_driver()
+        driver.verify_connectivity()
+    except Exception as exc:
+        raise SystemExit(
+            f"Neo4j unreachable ({exc}) — start it (see context/graph_neo4j.py's module docstring for the "
+            "docker run command) and retry."
+        ) from exc
+
+    conn = init_db()
+    from ingestion.batch_log import BatchRun
+    from storage.fact_store import default_fact_store
+
+    fs = default_fact_store()
+
+    if args.company_id:
+        financial_company_ids = args.company_id
+    elif args.all_financials:
+        financial_company_ids = [c["company_id"] for c in list_companies(conn)]
+    else:
+        financial_company_ids = []
+
+    scope_label = f"financials={','.join(financial_company_ids) if financial_company_ids else 'none'}"
+
+    with BatchRun(conn, "graph_backfill", scope_label) as run:
+        logger.info("graph-backfill: syncing companies/sectors/investigations...")
+        with run.item(None) as item:
+            graph_neo4j.sync_graph(conn, driver, fact_store=fs)
+            item.detail = "companies/sectors/investigations synced"
+
+        logger.info("graph-backfill: syncing knowledge entities/claims/relationships...")
+        with run.item(None) as item:
+            graph_neo4j.sync_knowledge_graph(conn, driver, fact_store=fs)
+            item.detail = "knowledge entities/claims/relationships/evidence synced"
+
+        if financial_company_ids:
+            logger.info(
+                "graph-backfill: syncing canonical_financials for %d company(ies)...", len(financial_company_ids)
+            )
+            with run.item(None) as item:
+                synced = graph_neo4j.sync_financials(conn, driver, fact_store=fs, company_ids=financial_company_ids)
+                item.detail = f"{synced} financial observation(s) synced for {len(financial_company_ids)} company(ies)"
+                logger.info("graph-backfill: %d financial observation(s) synced", synced)
+        else:
+            logger.info(
+                "graph-backfill: skipping canonical_financials sync (pass --company-id or --all-financials to "
+                "include it — see context/graph_neo4j.py's TRIAL comment on sync_financials for why this isn't "
+                "automatic)"
+            )
+
+    conn.close()
+    logger.info("graph-backfill done.")
 
 
 def cmd_archive_company(args: argparse.Namespace) -> None:
@@ -565,8 +678,29 @@ def cmd_list_watchlist(_args: argparse.Namespace) -> None:
 
 def cmd_serve(args: argparse.Namespace) -> None:
     """Run the local Flask viewer. Import is deferred so `flask` is only
-    required if you actually use this command, not for the rest of the CLI."""
+    required if you actually use this command, not for the rest of the CLI.
+
+    The vector store is a hard dependency of `serve` (unlike every other
+    command, where it's optional/degrades gracefully per section 10) — checked
+    and failed fast, before any other startup work, rather than left to fail
+    later/silently on the first hybrid_search_documents() call."""
     setup_logging()
+
+    from retrieval.vector_store import default_vector_store
+
+    store = default_vector_store()
+    if store is None:
+        raise SystemExit(
+            "VECTOR_STORE_BACKEND=none — the vector layer is disabled, but `serve` requires it. "
+            "Set VECTOR_STORE_BACKEND=qdrant (config/settings.py) and start Qdrant, then retry."
+        )
+    if not store.health_check():
+        raise SystemExit(
+            "Vector store unreachable (config.settings.QDRANT_URL) — start it (see config/settings.py's "
+            "VECTOR_STORE_BACKEND comment for the docker run command) and retry. `serve` will not start "
+            "without it."
+        )
+
     ensure_data_dirs()
     conn = init_db()
     ensure_metric_vocabulary(conn)
@@ -784,6 +918,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vector_backfill_parser.add_argument("--company-id", help="Only backfill this company's documents")
     vector_backfill_parser.add_argument(
+        "--document-type",
+        help="Only backfill documents of this type (e.g. 'transcript' for concall transcripts — see "
+             "research/documents.py's _DOCUMENT_TYPE_LABELS for the full set of stored values)",
+    )
+    vector_backfill_parser.add_argument(
         "--limit", type=int,
         help="Only process the first N eligible documents — the cost guardrail for a real-data demo run",
     )
@@ -792,6 +931,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Re-embed every chunk even if already indexed under the current embedding model (default: skip)",
     )
     vector_backfill_parser.set_defaults(func=cmd_vector_backfill)
+
+    graph_backfill_parser = subparsers.add_parser(
+        "graph-backfill",
+        help="One-time, explicit full sync of SQLite facts into Neo4j — company/sector/investigation "
+             "graph, knowledge-graph entities/relationships, and (opt-in) financial observations",
+    )
+    graph_backfill_parser.add_argument(
+        "--company-id", action="append",
+        help="Include this company's canonical_financials in the sync (repeatable). Only affects the "
+             "TRIAL financials sync — the company/sector/knowledge graph always syncs in full",
+    )
+    graph_backfill_parser.add_argument(
+        "--all-financials", action="store_true",
+        help="Sync canonical_financials for every registered company, not just --company-id",
+    )
+    graph_backfill_parser.set_defaults(func=cmd_graph_backfill)
 
     serve_parser = subparsers.add_parser(
         "serve", help="Run the local web viewer (renders the same analyze report in-browser)"

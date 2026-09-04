@@ -25,6 +25,10 @@ hypothesis, by research/investigation.py's evidence-sufficiency loop
 (Step 2G returning INSUFFICIENT_EVIDENCE triggers another pass here with the
 gap it named) — plan_and_gather() itself stays a single deterministic pass;
 the looping decision belongs to the Orchestrator, not this module.
+
+A gap-driven retry (`retry=True`) is capability-targeted, not a blind
+repeat of the first pass: it skips whichever capabilities can only ever
+return what the first pass already got — see plan_and_gather()'s docstring.
 """
 
 from __future__ import annotations
@@ -76,7 +80,7 @@ def _mentioned_entities(
 
 def plan_and_gather(
     conn: DBConnection, hypothesis: Hypothesis, question: str, *, capabilities: PlannerCapabilities | None = None,
-    fact_store: FactStore | None = None,
+    fact_store: FactStore | None = None, retry: bool = False,
 ) -> InvestigationPlan:
     """capabilities defaults to the real in-process implementations
     (research/capabilities.py::default_capabilities) — pass a different
@@ -85,24 +89,36 @@ def plan_and_gather(
     logic below. fact_store is a separate, lower-level seam
     (storage/fact_store.py) — when capabilities isn't explicitly supplied, it
     also gets threaded into the default capability bindings, so one injected
-    FactStore reaches every layer from this single call."""
+    FactStore reaches every layer from this single call.
+
+    `retry` marks a gap-driven re-pass (research/investigation.py, after an
+    INSUFFICIENT_EVIDENCE verdict) rather than the hypothesis's first pass.
+    A retry only ever changes `question` (Step 2G's missing_evidence, not a
+    new hypothesis or company set) — so any capability keyed purely off
+    (hypothesis, company_id) would return exactly what the first pass
+    already retrieved, and is skipped: financial_evidence, indicator_evidence,
+    and the per-company "Company" knowledge_graph lookup. Everything actually
+    driven by `question`/search_text — document_evidence, entity-mention
+    knowledge_graph, macro_evidence, document_search — stays live, since
+    that's the only thing a retry can plausibly surface that's new."""
     fs = fact_store or default_fact_store()
     caps = capabilities or default_capabilities(fact_store=fs)
     plan = InvestigationPlan(hypothesis_id=hypothesis.hypothesis_id)
 
     for company_id in hypothesis.companies:
-        plan.evidence.extend(caps.financial_evidence(conn, company_id))
-        plan.sources_queried.append(f"financial_engine:{company_id}")
+        if not retry:
+            plan.evidence.extend(caps.financial_evidence(conn, company_id))
+            plan.sources_queried.append(f"financial_engine:{company_id}")
 
-        # Deterministic, rule-based, versioned findings over the same
-        # canonical facts (indicators/, via research/indicator_evidence.py).
-        # Retrieved per company like every other evidence source, so a
-        # comparison hypothesis sees each company's own triggered indicators
-        # and Step 2G can cite the rule rather than re-deriving it.
-        indicator_evidence = caps.indicator_evidence(conn, company_id)
-        if indicator_evidence:
-            plan.evidence.extend(indicator_evidence)
-            plan.sources_queried.append(f"indicators:{company_id}")
+            # Deterministic, rule-based, versioned findings over the same
+            # canonical facts (indicators/, via research/indicator_evidence.py).
+            # Retrieved per company like every other evidence source, so a
+            # comparison hypothesis sees each company's own triggered indicators
+            # and Step 2G can cite the rule rather than re-deriving it.
+            indicator_evidence = caps.indicator_evidence(conn, company_id)
+            if indicator_evidence:
+                plan.evidence.extend(indicator_evidence)
+                plan.sources_queried.append(f"indicators:{company_id}")
 
         if len(hypothesis.companies) == 1:
             # Single-company attribution only, same constraint
@@ -110,7 +126,8 @@ def plan_and_gather(
             plan.evidence.extend(caps.document_evidence(conn, company_id, question))
             plan.sources_queried.append(f"documents:{company_id}")
 
-        plan.knowledge_claims.extend(caps.knowledge_graph(conn, "Company", company_id))
+        if not retry:
+            plan.knowledge_claims.extend(caps.knowledge_graph(conn, "Company", company_id))
 
     search_text = f"{question} {hypothesis.statement} {hypothesis.mechanism}"
     for entity_type, entity_name in _mentioned_entities(conn, hypothesis.companies, search_text, fs)[:_MAX_KNOWLEDGE_GRAPH_ENTITIES]:
