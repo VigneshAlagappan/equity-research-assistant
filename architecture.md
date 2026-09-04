@@ -59,8 +59,12 @@ answering a different question and never doing another layer's job:
   [Golden Research Loop validation](#golden-research-loop-validation) for
   what this closed (cross-company association, point-in-time `as_of`
   scoping, indicator evidence) and [Known gaps](#ingestion-coordinator-knowledge-builder-research-knowledge-graph--document-retrieval)
-  for what's still open (no cost/token budget control; a retry re-runs the
-  same broad evidence-gathering pass rather than targeting one capability).
+  for what's still open (no cost/token budget control — the loop's other 3
+  termination controls are enforced, cost/tokens aren't one of them). A
+  retry is capability-targeted, not a blind repeat: `plan_and_gather()`'s
+  `retry=True` skips whatever can only ever return what the first pass
+  already got (financial/indicator evidence, the per-company knowledge-graph
+  lookup), re-querying only what the new gap text can actually change.
   Every hypothesis, its evidence, verdict, and rank persists to
   `investigations`/`investigation_hypotheses`/`investigation_hypothesis_evidence`
   and stays individually queryable — distinct from `research/signals_report.py`'s
@@ -406,14 +410,19 @@ ingestion/coordinator.py         ┴──▶  event_bus.publish(DatasetIngested
 - **CLI surface**: `main.py replay-events` (re-dispatch stored events to
   registered workers — recovery/backfill/audit, filterable by `--event-id`/
   `--dataset-type`/`--worker`/`--since`, with `--force`), `list-batch-runs`/
-  `show-batch-run` (audit log for `scripts/`'s bulk-fetch batch jobs —
-  `batch_job_runs`/`batch_job_items`, a related but separate audit trail from
-  the event store).
+  `show-batch-run` (audit log — `batch_job_runs`/`batch_job_items`, a related
+  but separate audit trail from the event store; not just `scripts/`'s
+  bulk-fetch batch jobs anymore — `main.py vector-backfill`/`graph-backfill`
+  and `ingestion/coordinator.py::process_documents()`/`archive_documents()`/
+  `unarchive_documents()` all record here too, via the same
+  `ingestion/batch_log.py::BatchRun` wrapper).
 - **Backing tables**: `dataset_events` (the Event Store), `worker_processing_log`
   (one row per worker × event, `ok`/`skipped`/`failed` with an
-  `output_reference`), `batch_job_runs`/`batch_job_items` (bulk-script audit
-  log, `scripts/batch_fetch_nse.py` and similar — logged via
-  `ingestion/batch_log.py`, not itself a worker/event-bus concept).
+  `output_reference`), `batch_job_runs`/`batch_job_items` (the general-purpose
+  bulk-operation audit log — `scripts/batch_fetch_nse.py`, `main.py`'s
+  `vector-backfill`/`graph-backfill`, and `ingestion/coordinator.py`'s
+  document processing/archive functions all write here via
+  `ingestion/batch_log.py::BatchRun`, not itself a worker/event-bus concept).
 
 ### Research Knowledge Graph (`context/knowledge_graph.py`)
 
@@ -568,11 +577,16 @@ Fusion) -> Ranked Top-K Evidence -> Planner / research/assistant.py
   future document ingestion embeds and upserts automatically, through the
   existing ingestion pipeline, not a parallel one.
 - **One-time backfill**: `python main.py vector-backfill [--company-id ...]
-  [--limit N] [--force]` — idempotent (a chunk already indexed under the
-  current embedding model is skipped; re-running costs nothing extra),
-  reusing the exact same `retrieval/semantic_indexer.py::
+  [--document-type ...] [--limit N] [--force]` — idempotent (a chunk already
+  indexed under the current embedding model is skipped; re-running costs
+  nothing extra), reusing the exact same `retrieval/semantic_indexer.py::
   embed_and_index_document_chunks()` the worker calls, not a second
-  implementation.
+  implementation. `--document-type` scopes to one `documents.document_type`
+  (e.g. `transcript` for concall transcripts only), combinable with
+  `--company-id`/`--limit`. Every run — one item per document, ok/failed —
+  is recorded to `batch_job_runs`/`batch_job_items` (`ingestion/batch_log.py`),
+  queryable via `list-batch-runs`/`show-batch-run`, same as the CLI's other
+  bulk/backfill commands.
 - **Observability**: `retrieval_diagnostics` (one row per hybrid retrieval
   call) — candidate counts per method, embedding/vector-store/keyword
   latency, degradation flag+reason, and a compact per-passage summary
@@ -938,13 +952,24 @@ Thin argparse wrapper calling the same modules as the web app — `init`,
 from FRED, e.g. `FEDFUNDS`/`DGS10`), `list-companies`, `archive-company`,
 `restore-company`, `add-stock-action`/`list-stock-actions` (record/list a
 split, bonus, or rights issue), `analyze`, `ask`, `watchlist-add/remove`,
-`list-watchlist`, `list-batch-runs`/`show-batch-run` (audit log for
-`scripts/`'s bulk-fetch batch jobs), `vector-backfill` (one-time/idempotent
-embedding backfill over already-processed documents — section 11; the same
-`retrieval/semantic_indexer.py` function every future document ingestion
-also calls), and `replay-events` (re-dispatch stored
-`DatasetIngestedEvent`s to registered workers) — both tied to the event bus,
-see [Dataset-centric ingestion: the event
+`list-watchlist`, `list-batch-runs`/`show-batch-run` (audit log —
+`batch_job_runs`/`batch_job_items`, originally just `scripts/`'s bulk-fetch
+jobs, now also `vector-backfill`/`graph-backfill` and every path through
+`ingestion/coordinator.py::process_documents()`/`archive_documents()`/
+`unarchive_documents()`, i.e. Admin → Ingest queue too — one `BatchRun`
+(`ingestion/batch_log.py`) per run, one item per document/company),
+`vector-backfill` (one-time/idempotent embedding backfill over
+already-processed documents, optionally scoped by `--document-type` — section
+11; the same `retrieval/semantic_indexer.py` function every future document
+ingestion also calls), `graph-backfill` (one-time, explicit full sync of
+SQLite facts into Neo4j when `GRAPH_BACKEND=neo4j` — company/sector/
+investigation graph and knowledge-graph entities/relationships always sync in
+full; `canonical_financials` observations are opt-in via `--company-id`/
+`--all-financials` since that sync is TRIAL/expensive, see
+`context/graph_neo4j.py`'s module comment — fails fast if Neo4j is disabled
+or unreachable), and `replay-events`
+(re-dispatch stored `DatasetIngestedEvent`s to registered workers) — both
+tied to the event bus, see [Dataset-centric ingestion: the event
 bus](#dataset-centric-ingestion-the-event-bus-ingestionevent_buspy) — and
 `serve` (launches the Flask dev server). Useful for bulk/scripted ingestion
 and quick terminal Q&A without the browser.
@@ -1080,7 +1105,7 @@ data feeds — noted in each file's header comment.
 - **Companies**: `companies` (per-company `country`/`currency`/`fiscal_year_end_month`, not global), `company_identifier_history`, `company_index_membership`, `company_list_column_settings`, `overview_ratio_settings` (global `ratio_key` → `enabled` toggle — which ratios the company page's Overview tab shows, Admin-configurable, same shape/spirit as `company_list_column_settings` but for the Overview tab instead of the company list), `stock_actions` (discrete corporate events — splits/bonus/rights issues — recorded as raw events only; no split-adjustment of historical shares/EPS/price series yet), `sectors`/`industries`/`index_definitions` (Admin-editable lookup vocabularies backing the sector/industry/index-tag dropdowns, seeded from whatever's already in use).
 - **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — 158,759 rows (IITM 116,187 + RBI 42,572); MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet), `bank_infrastructure_observations` (RBI's monthly bank×metric ATM/NEFT/RTGS bulletins — a separate shape from `macro_observations`' flat series). Daily OHLCV price/volume history lives separately, in its own db file — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below.
 - **Ingestion tracking**: `ingestion_queue_items` — the Admin → Ingest panel's discovery/status tracking for financial/macro files under `data/raw/` (content-hash keyed); orchestration metadata only, never the source of truth for parsed data itself.
-- **Event bus & batch audit**: `dataset_events`, `worker_processing_log`, `batch_job_runs`, `batch_job_items` — the Event Store, per-worker processing log, and bulk-script audit trail behind ingestion's event-driven layer; see [Dataset-centric ingestion: the event bus](#dataset-centric-ingestion-the-event-bus-ingestionevent_buspy) for the full shape of each.
+- **Event bus & batch audit**: `dataset_events`, `worker_processing_log`, `batch_job_runs`, `batch_job_items` — the Event Store, per-worker processing log, and general-purpose bulk-operation audit trail (`scripts/`, `vector-backfill`/`graph-backfill`, document processing/archive) behind ingestion's event-driven layer; see [Dataset-centric ingestion: the event bus](#dataset-centric-ingestion-the-event-bus-ingestionevent_buspy) for the full shape of each.
 - **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` + `document_chunks_fts` (page-scoped chunks, FTS5-indexed by `research/document_chunker.py`; `embedding_status`/`embedding_model`/`embedded_at` track semantic-indexing state per chunk — the actual vectors live in the VectorStore, not this table, which stays the rebuildable authoritative source — see [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy)).
 - **Shareholding Pattern**: `shareholding_observations` (one row per company/fiscal_year/quarter — promoter/public/employee-trust holding percentages, plus an FII/DII/Government/public-non-institutional breakdown read off the SHP XBRL's own category-rollup contexts rather than hand-aggregated), `shareholding_holders` (one row per named holder within a category — `side` promoter/public, `category`, `holder_name`, `num_shares`/`percent_of_shares`, sourced from NSE filings). Backs the company page's Shareholding Pattern tab, rendered by `web/static/js/shareholding_panel.js` against `web/shareholding_feed.py`'s `/companies/<id>/shareholding-feed.json` — not otherwise described elsewhere in this doc.
 - **Knowledge Builder**: `knowledge_entities` (deduped named things — Company/Product/Risk/ManagementPerson/...), `knowledge_claims` (one extracted statement per row, with its own provenance — document, fiscal period, speaker, `claim_type`, confidence — additive, never overwritten), `knowledge_relationships` (typed edges between two entities, optionally traced to the claim that asserted them), `knowledge_evidence` (the supporting quote for one claim). SQLite is the source of truth for all four; `context/knowledge_graph.py`/`context/graph_neo4j.py` project them into the same Neo4j graph the sector-peer traversal uses, sharing `Company` nodes rather than duplicating them — see [Research Knowledge Graph](#research-knowledge-graph-contextknowledge_graphpy).
@@ -1205,20 +1230,32 @@ pre-existing test failure.
   Building that integration point is a later step, not attempted when the
   Research Knowledge Graph itself shipped.
 - **Investigation Orchestrator (`research/investigation.py`) has
-  the iterative evidence-sufficiency loop the guardrails call for, but it's
-  narrower than a full Planner-controlled loop** — an `INSUFFICIENT_EVIDENCE`
-  verdict does trigger one gap-targeted retry (bounded by 4 termination
-  controls: evidence sufficiency, `MAX_EVIDENCE_ITERATIONS`, a wall-clock
-  deadline, a no-new-evidence check — see [The four-layer
-  split](#the-four-layer-split) and [Golden Research Loop
-  validation](#golden-research-loop-validation)), but two things are still
-  missing: no cost/token budget is one of those termination controls, and a
-  retry re-runs the same broad evidence-gathering pass across every capability
-  rather than targeting just the one capability the named evidence gap
-  actually points at. The Knowledge Builder itself still only extracts and
-  persists what a document already states — it's `research/investigation.py`
-  that does the hypothesis generation/planning/evaluation/synthesis
-  reasoning, not the Knowledge Builder.
+  the iterative evidence-sufficiency loop the guardrails call for, but no
+  cost/token budget control** — an `INSUFFICIENT_EVIDENCE` verdict triggers
+  one gap-targeted retry, bounded by 4 termination controls: evidence
+  sufficiency, `MAX_EVIDENCE_ITERATIONS`, a wall-clock deadline, a
+  no-new-evidence check (see [The four-layer split](#the-four-layer-split)
+  and [Golden Research Loop validation](#golden-research-loop-validation)).
+  `llm/observability.py` already logs real per-call `input_tokens`/
+  `output_tokens`/`estimated_cost_usd` to `llm_call_log`, but nothing
+  aggregates that back into the loop or caps against it — a hypothesis with
+  several retries (each potentially triggering `research/macro_evidence.py`'s
+  own internal LLM call) can spend real money before the wall-clock deadline
+  trips. The Knowledge Builder itself still only extracts and persists what a
+  document already states — it's `research/investigation.py` that does the
+  hypothesis generation/planning/evaluation/synthesis reasoning, not the
+  Knowledge Builder.
+- **~~A retry re-runs the same broad evidence-gathering pass across every
+  capability rather than targeting just the one capability the named
+  evidence gap points at~~ — resolved.** `research/investigation_planner.py::
+  plan_and_gather()`'s `retry=True` (passed by `research/investigation.py`'s
+  gap-driven retry) skips capabilities keyed purely off `(hypothesis,
+  company_id)` — financial evidence, indicator evidence, the per-company
+  `"Company"` knowledge-graph lookup — since a retry only ever changes the
+  query text, so those three would provably return exactly what the first
+  pass already got. Everything actually driven by the query text
+  (document evidence, entity-mention knowledge-graph lookups, macro
+  evidence, document search) stays live on retry.
 - **No UI to browse extracted claims** — `knowledge_claims`/
   `knowledge_entities`/`knowledge_relationships` are real, queryable data
   (`storage/repositories.py::list_knowledge_claims_for_company()` etc.), but
@@ -1234,12 +1271,14 @@ pre-existing test failure.
   search together (RRF-fused) for both the Investigation Planner's
   `document_search` capability and `research/assistant.py`'s Q&A path — see
   [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy).
-  What remains genuinely unbuilt: `retrieval/vector_store_qdrant.py` has only
-  been exercised against a mocked `qdrant_client` in this environment, not a
-  live Qdrant server (the Docker container available here has no published
-  host port) — see
-  [SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md](SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md)'s
-  disclosure for exactly what that gap is and how to close it.
+  `retrieval/vector_store_qdrant.py` has since been exercised against a real,
+  locally-running Qdrant server (not just the mocked `qdrant_client` this
+  gap originally referred to) — a full `vector-backfill` run across every
+  document type (transcripts, investor presentations, annual reports)
+  embedded 96,000+ real chunks with zero failures, browsable in Qdrant's own
+  dashboard at `/dashboard`. See
+  [SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md](SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md)
+  for the original mocked-only disclosure this superseded.
 - **Chunking is fixed-size, not paragraph/section-aware** — 1500 characters
   with 150 overlap, page-scoped; a chunk boundary can land mid-paragraph or
   mid-table. `document_chunks.section_heading` exists in the schema but is
