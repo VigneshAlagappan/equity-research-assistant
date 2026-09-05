@@ -28,7 +28,7 @@ The platform deliberately separates:
 
 ### Architecture Visuals
 
-- [Open Product / Investor Architecture Visual](Architecture-Visual-Investor.png) — product capability and executive view
+- [Open Product / Executive Architecture Visual](Architecture-Visual-Executive.png) — product capability and executive view
 - [Open Technical Architecture Visual](Architecture-Visual-Technical.png) — detailed system architecture view
 
 ---
