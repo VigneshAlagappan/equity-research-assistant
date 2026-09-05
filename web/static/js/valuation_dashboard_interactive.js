@@ -598,4 +598,10 @@
     const root = document.getElementById("valuation-dashboard-interactive");
     if (root) init(root);
   });
+
+  // Exposed so web/static/js/compare_valuation.js (Compare's own Valuation
+  // Model tab) can re-run this on a freshly-built root every time the
+  // selected company changes, rather than this file needing to know
+  // anything about Compare's multi-company picker.
+  window.SignalsValuationInteractive = { init: init };
 })();

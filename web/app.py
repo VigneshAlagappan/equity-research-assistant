@@ -2093,6 +2093,13 @@ def create_app() -> Flask:
             # params live in one place (this url_for call), not hardcoded
             # a second time in JS.
             charts_url_template=url_for("company_charts_feed", company_id="__ID__", statement_type="consolidated"),
+            # Same __ID__-substitution convention, for Compare's Valuation
+            # Model tab (web/static/js/compare_valuation.js) -- one company
+            # at a time, picked from whichever companies are currently
+            # selected in Quick Comparison, reusing company_valuation_feed
+            # (the same live feed the company page's own Valuation Model
+            # tab calls) rather than a second valuation computation.
+            valuation_url_template=url_for("company_valuation_feed", company_id="__ID__"),
         )
 
     @app.route("/companies/<company_id>/docs/add", methods=["POST"])

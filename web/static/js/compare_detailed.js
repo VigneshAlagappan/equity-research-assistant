@@ -28,25 +28,35 @@
       tableRoot.innerHTML = '<div class="empty-state">Could not load the comparison engine (charts_overlay.js).</div>';
       return;
     }
-    const searchUrl = panel.dataset.searchUrl;
     const chartsUrlTemplate = panel.dataset.chartsUrlTemplate;
     const MAX_COMPANIES = C.MAX_COMPARISONS || 4;
 
     const pillsRoot = document.getElementById("cmp-pills");
-    const addInput = document.getElementById("cmp-add-input");
-    const addResults = document.getElementById("cmp-add-results");
     const attrsBtn = document.getElementById("cmp-attrs-btn");
     const attrsPanel = document.getElementById("cmp-attrs-panel");
     const attrsCount = document.getElementById("cmp-attrs-count");
     const periodBtns = Array.prototype.slice.call(document.querySelectorAll("[data-cmp-period]"));
 
     const state = {
-      companies: [], // [{id, name}], insertion order
+      // [{id, name}], driven entirely by window.CompareShared (Quick
+      // Comparison's own selection, see syncFromQuick below) -- this tab
+      // has no add/remove of its own; capped to MAX_COMPANIES defensively,
+      // though Quick Comparison's own slot count already enforces that.
+      companies: [],
       periodType: "annual",
       selectedAttrs: new Set(), // attrId strings, e.g. "incomeStatement:netProfit"
       cache: {}, // cacheKey(companyId, periodType) -> ds {PERIODS, PERIOD_KEYS, CURRENCY, attributes, byId}
       attrsOpen: false,
-      search: { items: [], activeIndex: -1, requestId: 0 },
+      fxRate: null, // {rate, as_of} once fetched via window.CompareShared, or {rate: null} if unavailable
+      // Sections the user has explicitly collapsed -- tracked separately
+      // from the <details> DOM nodes themselves because renderTable()
+      // rebuilds the whole table's innerHTML on every state change (a new
+      // company, a toggled attribute); without this, every rebuild would
+      // silently re-expand anything the user had just collapsed. A
+      // section not in this set defaults open -- every section shown here
+      // has at least one attribute the user explicitly checked, so
+      // "hidden until proven interesting" would be backwards.
+      collapsedSections: new Set(),
     };
 
     function cacheKey(companyId, periodType) {
@@ -93,24 +103,12 @@
       });
     }
 
+    // Read-only labels -- company selection lives entirely in Quick
+    // Comparison now (see syncFromQuick), so there's nothing to remove here.
     function renderPills() {
-      pillsRoot.innerHTML = state.companies.map((c) => (
-        '<span class="cmp-pill">' + escapeHtml(c.name) +
-          ' <button type="button" data-remove-company="' + escapeHtml(c.id) + '" title="Remove ' + escapeHtml(c.name) + '">&times;</button>' +
-        "</span>"
-      )).join("");
-      pillsRoot.querySelectorAll("[data-remove-company]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          state.companies = state.companies.filter((c) => c.id !== btn.dataset.removeCompany);
-          renderPills();
-          renderAttrsPanel();
-          renderTable();
-        });
-      });
-      addInput.placeholder = state.companies.length >= MAX_COMPANIES
-        ? "Maximum " + MAX_COMPANIES + " companies"
-        : "+ Add company from NSE 500…";
-      addInput.disabled = state.companies.length >= MAX_COMPANIES;
+      pillsRoot.innerHTML = state.companies.length
+        ? state.companies.map((c) => '<span class="cmp-pill">' + escapeHtml(c.name) + "</span>").join("")
+        : '<span class="muted">Select companies in Quick Comparison to see them here.</span>';
     }
 
     function renderAttrsPanel() {
@@ -156,13 +154,31 @@
 
     function fmtValue(value, unit, currency) {
       if (value === null || value === undefined || Number.isNaN(value) || !Number.isFinite(value)) {
-        return '<span class="cmp-not-reported">Not reported</span>';
+        return '<span class="cmp-not-reported">-</span>';
       }
       const V = window.SignalsValuation;
       return V ? escapeHtml(V.fmt(value, unit, currency)) : escapeHtml(String(value));
     }
 
-    function renderTable() {
+    // unit -> which of the two conversion formulas applies (see
+    // compare.js's toUsdContext(), where both were first built and
+    // verified against real HDFC-Bank-vs-Apple figures). "rupee" (Price &
+    // Volume's Close Price row) is deliberately excluded: valuation_
+    // dashboard.js's fmt() treats "rupee" as a legacy case that always
+    // renders "₹" regardless of the currency argument, so converting the
+    // number without also fixing that formatter would show a USD-scaled
+    // figure under a rupee sign -- worse than leaving it unconverted. Left
+    // as a known gap, not silently patched around here.
+    const CONVERTIBLE_UNITS = { big: true, perShare: true, sharesCount: true };
+
+    function convertToUsd(value, unit, fxRate) {
+      if (value === null || value === undefined || !CONVERTIBLE_UNITS[unit]) return value;
+      if (unit === "big") return (value * 10) / fxRate; // Crore -> USD million
+      if (unit === "sharesCount") return value * 10; // Crore -> Million, no fx division -- a share count isn't money
+      return value / fxRate; // perShare: raw rupees -> dollars
+    }
+
+    async function renderTable() {
       const loaded = loadedDatasets();
       if (loaded.length === 0) {
         tableRoot.innerHTML = '<p class="muted">Add at least one company above to see its history.</p>';
@@ -176,106 +192,126 @@
         return;
       }
 
+      const currencies = Array.from(new Set(loaded.map((x) => x.ds.CURRENCY || "INR")));
+      const mixed = currencies.length > 1;
+      if (mixed && state.fxRate === null) state.fxRate = await window.CompareShared.getUsdInrRate();
+      const conversionUnavailable = mixed && (!state.fxRate || !state.fxRate.rate);
+
       const headerCells = union.PERIODS.map((p) => "<th>" + escapeHtml(p) + "</th>").join("");
-      let bodyRows = "", lastSection = null;
+
+      // Group the selected attributes by section (still SECTION_ORDER'd,
+      // since `selected` is a filter over `unionAttrs`) -- one <details>
+      // per section instead of one continuous table mixing every
+      // section's rows, so P&L/Balance Sheet/Cash Flow can each be
+      // skimmed as a self-contained grid or collapsed out of the way.
+      const bySection = [];
       selected.forEach((attr) => {
-        if (attr.section !== lastSection) {
-          bodyRows += '<tr class="cmp-section-row"><th colspan="' + (union.PERIODS.length + 2) + '">' +
-            escapeHtml(C.SECTION_TITLES[attr.section] || attr.section) + "</th></tr>";
-          lastSection = attr.section;
+        let group = bySection[bySection.length - 1];
+        if (!group || group.section !== attr.section) {
+          group = { section: attr.section, attrs: [] };
+          bySection.push(group);
         }
-        loaded.forEach((entry, i) => {
-          const a = entry.ds.byId[C.attrId(attr.section, attr.key)];
-          const labelCell = i === 0 ? "<td>" + escapeHtml(attr.label) + "</td>" : "<td></td>";
-          const cells = union.PERIOD_KEYS.map((pk) => {
-            if (!a) return "<td>" + fmtValue(null) + "</td>";
-            const idx = entry.ds.PERIOD_KEYS.findIndex((k) => k[0] === pk[0] && k[1] === pk[1]);
-            const value = idx === -1 ? null : a.values[idx];
-            return "<td>" + fmtValue(value, attr.unit, entry.ds.CURRENCY) + "</td>";
-          }).join("");
-          bodyRows += (
-            '<tr class="' + (i === 0 ? "cmp-attr-label-row" : "") + '">' +
-              labelCell +
-              '<td class="cmp-company-cell">' + escapeHtml(entry.company.name) + "</td>" +
-              cells +
-            "</tr>"
-          );
-        });
+        group.attrs.push(attr);
       });
+
+      const sectionsHtml = bySection.map((group) => {
+        let bodyRows = "";
+        group.attrs.forEach((attr) => {
+          loaded.forEach((entry, i) => {
+            const a = entry.ds.byId[C.attrId(attr.section, attr.key)];
+            const labelCell = i === 0 ? "<td>" + escapeHtml(attr.label) + "</td>" : "<td></td>";
+            const needsConversion = mixed && !conversionUnavailable && entry.ds.CURRENCY !== "USD";
+            const displayCurrency = needsConversion ? "USD" : entry.ds.CURRENCY;
+            const cells = union.PERIOD_KEYS.map((pk) => {
+              if (!a) return "<td>" + fmtValue(null) + "</td>";
+              const idx = entry.ds.PERIOD_KEYS.findIndex((k) => k[0] === pk[0] && k[1] === pk[1]);
+              let value = idx === -1 ? null : a.values[idx];
+              if (needsConversion) value = convertToUsd(value, attr.unit, state.fxRate.rate);
+              return "<td>" + fmtValue(value, attr.unit, displayCurrency) + "</td>";
+            }).join("");
+            bodyRows += (
+              '<tr class="' + (i === 0 ? "cmp-attr-label-row" : "") + '">' +
+                labelCell +
+                '<td class="cmp-company-cell">' + escapeHtml(entry.company.name) + "</td>" +
+                cells +
+              "</tr>"
+            );
+          });
+        });
+        const isOpen = !state.collapsedSections.has(group.section);
+        const title = escapeHtml(C.SECTION_TITLES[group.section] || group.section);
+        const metricWord = group.attrs.length === 1 ? "metric" : "metrics";
+        return (
+          '<details class="cmp-section" data-section="' + escapeHtml(group.section) + '"' + (isOpen ? " open" : "") + ">" +
+            '<summary class="cmp-section-summary">' +
+              '<span class="cmp-section-title">' + title + "</span>" +
+              '<span class="cmp-section-meta" data-section-meta>' + group.attrs.length + " " + metricWord + " &middot; " +
+                (isOpen ? "expanded" : "collapsed") + "</span>" +
+            "</summary>" +
+            '<div class="compare-table-wrap"><table class="cmp-detailed-table">' +
+              "<thead><tr><th>Metric</th><th>Company</th>" + headerCells + "</tr></thead>" +
+              "<tbody>" + bodyRows + "</tbody>" +
+            "</table></div>" +
+          "</details>"
+        );
+      }).join("");
+
+      const warning = conversionUnavailable
+        ? '<p class="cmp-detailed-footnote">These companies use different currencies, but a live USD/INR rate ' +
+          "isn't available right now — monetary figures below are each shown in their own native currency.</p>"
+        : "";
+      const fxNote = mixed && !conversionUnavailable
+        ? '<p class="cmp-detailed-footnote">Monetary figures converted to USD at 1 USD = &#8377;' +
+          state.fxRate.rate.toFixed(2) + " (rate as of " + escapeHtml(state.fxRate.as_of) + "). Ratios and " +
+          "percentages need no conversion and are shown as-is.</p>"
+        : "";
 
       tableRoot.innerHTML =
-        '<div class="compare-table-wrap"><table class="cmp-detailed-table">' +
-          "<thead><tr><th>Attribute</th><th>Company</th>" + headerCells + "</tr></thead>" +
-          "<tbody>" + bodyRows + "</tbody>" +
-        "</table></div>" +
+        '<div class="cmp-sections-card">' + sectionsHtml + "</div>" +
+        warning + fxNote +
         '<p class="cmp-detailed-footnote">Full recorded history per company, not a fixed window. ' +
-        '"Not reported" cells reflect a real gap in the source filings, never an estimate.</p>';
-    }
+        '"-" reflects a real gap in the source filings, never an estimate.</p>';
 
-    function addCompany(companyId, displayName) {
-      if (state.companies.some((c) => c.id === companyId) || state.companies.length >= MAX_COMPANIES) return;
-      state.companies.push({ id: companyId, name: displayName });
-      renderPills();
-      loadCompany(companyId, state.periodType)
-        .then((ds) => {
-          pickDefaultAttrs(ds);
-          renderAttrsPanel();
-          renderTable();
-        })
-        .catch(() => {
-          state.companies = state.companies.filter((c) => c.id !== companyId);
-          renderPills();
-        });
-    }
-
-    // — Search (same debounced-typeahead shape as header_search.js /
-    // web/static/js/compare.js's slot search, single instance here since
-    // there's one shared add-box rather than N independent slots). —
-    let searchDebounce = null;
-    addInput.addEventListener("input", () => {
-      const q = addInput.value.trim();
-      clearTimeout(searchDebounce);
-      if (!q) { addResults.hidden = true; addResults.innerHTML = ""; return; }
-      searchDebounce = setTimeout(() => runSearch(q), 150);
-    });
-    function runSearch(query) {
-      const thisRequest = ++state.search.requestId;
-      fetch(searchUrl + "?q=" + encodeURIComponent(query))
-        .then((r) => r.json())
-        .then((data) => {
-          if (thisRequest !== state.search.requestId) return;
-          const usedIds = state.companies.map((c) => c.id);
-          state.search.items = (data.results || []).filter((c) => usedIds.indexOf(c.company_id) === -1);
-          renderSearchResults();
-        })
-        .catch(() => {});
-    }
-    function renderSearchResults() {
-      if (state.search.items.length === 0) {
-        addResults.innerHTML = '<div class="site-search-empty">No matching companies.</div>';
-      } else {
-        addResults.innerHTML = state.search.items.map((c) => (
-          '<button type="button" class="site-search-result" data-select-company="' + escapeHtml(c.company_id) + '" data-select-name="' + escapeHtml(c.display_name) + '">' +
-            '<div class="site-search-result-name">' + escapeHtml(c.display_name) + "</div>" +
-            '<div class="site-search-result-meta">' + escapeHtml(c.company_id) + (c.sector ? " &middot; " + escapeHtml(c.sector) : "") + "</div>" +
-          "</button>"
-        )).join("");
-      }
-      addResults.hidden = false;
-      addResults.querySelectorAll("[data-select-company]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          addCompany(btn.dataset.selectCompany, btn.dataset.selectName);
-          addInput.value = "";
-          addResults.hidden = true;
-          addResults.innerHTML = "";
+      // Native <details> already toggles its own open/closed visuals; this
+      // only needs to (a) remember the choice past the next full
+      // re-render (state.collapsedSections) and (b) flip the "expanded" /
+      // "collapsed" word in that section's own summary line to match.
+      tableRoot.querySelectorAll(".cmp-section").forEach((el) => {
+        el.addEventListener("toggle", () => {
+          const section = el.dataset.section;
+          if (el.open) state.collapsedSections.delete(section);
+          else state.collapsedSections.add(section);
+          const meta = el.querySelector("[data-section-meta]");
+          meta.textContent = meta.textContent.replace(/expanded|collapsed/, el.open ? "expanded" : "collapsed");
         });
       });
     }
-    document.addEventListener("click", (e) => {
-      if (!addInput.contains(e.target) && !addResults.contains(e.target)) {
-        addResults.hidden = true;
-      }
-    });
+
+    // window.CompareShared.subscribeQuickCompanies -- this tab has no
+    // company selection of its own; it always mirrors Quick Comparison's
+    // current slots (capped defensively to MAX_COMPANIES), loading/caching
+    // each company's dataset and dropping any that fails to load.
+    function syncFromQuick(quickList) {
+      const capped = quickList.slice(0, MAX_COMPANIES);
+      state.companies = capped.map((c) => ({ id: c.id, name: c.name }));
+      renderPills();
+      capped.forEach((c) => {
+        loadCompany(c.id, state.periodType)
+          .then((ds) => {
+            pickDefaultAttrs(ds);
+            renderAttrsPanel();
+            renderTable();
+          })
+          .catch(() => {
+            state.companies = state.companies.filter((x) => x.id !== c.id);
+            renderPills();
+            renderAttrsPanel();
+            renderTable();
+          });
+      });
+      renderAttrsPanel();
+      renderTable();
+    }
 
     // — Attributes dropdown open/close —
     attrsBtn.addEventListener("click", () => {
@@ -308,6 +344,12 @@
     renderPills();
     renderAttrsPanel();
     renderTable();
+
+    // Pick up whatever's already selected in Quick Comparison (e.g. the
+    // user picked companies there first, then switched tabs) and keep
+    // following it from here on.
+    window.CompareShared.subscribeQuickCompanies(syncFromQuick);
+    syncFromQuick(window.CompareShared.getQuickCompanies());
   }
 
   document.addEventListener("DOMContentLoaded", init);

@@ -163,6 +163,15 @@
       }
     }
 
+    // Published to window.CompareShared after every slot change so the
+    // Detailed Comparison tab starts from the same companies without the
+    // user picking them a second time -- see compare_shared.js's own
+    // docstring for why this is one-directional (Quick -> Detailed only).
+    function publishQuickSelection() {
+      const list = slots.filter(Boolean).map((s) => ({ id: s.meta.company_id, name: s.meta.display_name }));
+      window.CompareShared.setQuickCompanies(list);
+    }
+
     async function fillSlot(i, companyId) {
       closeResults(i);
       slotEl(i).innerHTML = '<p class="muted">Loading&hellip;</p>';
@@ -183,6 +192,7 @@
       }
       renderSlotContainer(i);
       renderTable();
+      publishQuickSelection();
     }
 
     function removeSlot(i) {
@@ -190,6 +200,7 @@
       search[i] = { items: [], activeIndex: -1, requestId: 0 };
       renderSlotContainer(i);
       renderTable();
+      publishQuickSelection();
     }
 
     function currentCurrencies() {
@@ -204,14 +215,11 @@
       }
       const currencies = currentCurrencies();
       const mixed = currencies.length > 1;
-      if (mixed && fxRate === null) {
-        try {
-          const resp = await fetch("/fx/usdinr.json");
-          fxRate = resp.ok ? await resp.json() : { rate: null };
-        } catch (e) {
-          fxRate = { rate: null };
-        }
-      }
+      // window.CompareShared caches this fetch across both Compare tabs --
+      // Detailed Comparison needs the exact same rate for its own
+      // cross-currency conversion, and a session that visits both
+      // shouldn't hit /fx/usdinr.json twice for one page load.
+      if (mixed && fxRate === null) fxRate = await window.CompareShared.getUsdInrRate();
       const conversionUnavailable = mixed && (!fxRate || !fxRate.rate);
 
       const contexts = slots.map((slot) => {

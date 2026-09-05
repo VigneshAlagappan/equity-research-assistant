@@ -117,8 +117,38 @@ def _new_session() -> requests.Session:
 
 
 def _bootstrap(session: requests.Session) -> None:
-    response = session.get(f"{_BASE}{_BOOTSTRAP_PATH}", timeout=_REQUEST_TIMEOUT_SECONDS)
-    response.raise_for_status()
+    """Establish NSE's session cookies (a plain homepage GET) before any
+    real request -- _new_session() calls this once per company (no shared
+    session across a batch run's companies, see refresh_company_filings()'s
+    own `session or _new_session()`), so a single unprotected timeout here
+    used to kill that company's *entire* fetch immediately, with none of
+    the exponential-backoff retrying every other NSE call in this module
+    already gets via _get_with_retries(). This was a real, observed gap,
+    not a hypothetical one -- verified live: a batch run hitting a period
+    NSE is slow/rate-limiting fails EVERY company identically at this
+    exact step, each after exactly one bare 20s timeout (retried) 0 times,
+    which is also why "certain companies" failing was the wrong framing --
+    it's not company-specific at all, it's this one unprotected call.
+    Its own small retry loop rather than reusing _get_with_retries()
+    itself: that function's 403-rebootstrap-once and 429 handling don't
+    apply to bootstrapping itself, and its extra headers (Accept/Referer)
+    are meant for the actual data endpoints, not the homepage."""
+    last_exc: Exception | None = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            response = session.get(f"{_BASE}{_BOOTSTRAP_PATH}", timeout=_REQUEST_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            return
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt < _MAX_ATTEMPTS:
+                backoff = _BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+                logger.warning(
+                    "NSE session bootstrap failed (attempt %d/%d): %s — retrying in %.1fs",
+                    attempt, _MAX_ATTEMPTS, exc, backoff,
+                )
+                time.sleep(backoff)
+    raise NSEFetchError(f"exhausted {_MAX_ATTEMPTS} attempts bootstrapping NSE session") from last_exc
 
 
 def _get_with_retries(session: requests.Session, url: str, *, params: dict | None = None) -> requests.Response:
