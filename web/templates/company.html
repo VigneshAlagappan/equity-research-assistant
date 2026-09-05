@@ -688,19 +688,22 @@
      one linear scale. See charts_overlay.js for the auto-assign heuristic
      and the per-attribute toggle that overrides it.
 
-     Capped and centered, not stretched to the page-wide (up to 1800px)
-     container's full width -- a wide monitor was stretching one line
-     chart edge to edge, which reads worse than a contained, centered chart
-     at a normal reading width. Compare bar/toolbar/chart share this cap so
-     the whole section reads as one centered column, not a full-width
-     toolbar over a narrower chart. */
+     Previously capped at 1040px and centered rather than stretched to the
+     page-wide (up to 1800px) container's full width -- reverted: a quarterly
+     "Max"-range chart can carry 15-17+ x-axis labels (Q# FYnnnn strings),
+     and charts_overlay.js's renderChart() now sizes its SVG viewBox to this
+     element's own measured width (see render()'s chartWidth), so a narrower
+     container was directly capping how much horizontal room existed per
+     label -- not just a cosmetic "reads better centered" choice like it was
+     when this cap was first added. Full width gives every label genuine
+     breathing room instead of the labels overlapping into unreadable
+     clutter (verified live: IDFCFIRSTB quarterly/Max was unreadable at
+     1040px, legible at full page-wide). */
   .chart-overlay {
     --chart-series-1: var(--color-accent-700); --chart-series-2: #2563eb;
     --chart-series-3: #16a34a; --chart-series-4: #9333ea;
     --chart-series-5: #dc2626; --chart-series-6: #0891b2;
     --chart-series-7: #db2777; --chart-series-8: #64748b;
-    max-width: 1040px;
-    margin: 0 auto;
   }
   .chart-overlay-controls { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   /* One horizontal toolbar (period/range toggle + one dropdown pill per

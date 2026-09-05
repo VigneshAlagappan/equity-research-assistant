@@ -384,11 +384,26 @@
     return units.size === 1 ? seriesList[0].unit : null;
   }
 
-  function renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames) {
+  function renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames, chartWidth) {
     if (leftSeries.length === 0 && rightSeries.length === 0) {
       return '<div class="chart-overlay-empty">Select any number of attributes on the left to see them plotted over time.</div>';
     }
-    const w = 720, h = 320;
+    // The SVG viewBox width now matches the container's actual measured
+    // width (render()'s chartWidth, from #charts-overlay's own
+    // getBoundingClientRect() -- company.html's .chart-overlay no longer
+    // caps that at 1040px) rather than a fixed 720 -- with an explicit
+    // CSS height on <svg> (below) but no explicit width, a viewBox
+    // narrower than the rendered box only stretches the *content*
+    // pixel-for-pixel via preserveAspectRatio's default "meet" scaling,
+    // it doesn't add real horizontal room: the maxTicks/maxLabels math
+    // below is all in viewBox units, so a wider *physical* chart with the
+    // same 720-unit-wide internal layout would still crowd the same
+    // number of x-axis labels into the same relative space. Matching w to
+    // the real width means more labels genuinely fit before crowding.
+    // 720 remains the floor/fallback (first paint before layout settles,
+    // or an unusually narrow viewport) -- never render a chart narrower
+    // than the size this was originally designed at.
+    const w = Math.max(720, Math.round(chartWidth) || 720), h = 320;
     const padLeft = leftSeries.length ? 62 : 16;
     const padRight = rightSeries.length ? 62 : 16;
     const padTop = 16, padBottom = 32;
@@ -611,15 +626,22 @@
       // Compare With on its own row, then one horizontal toolbar (period/
       // range toggle + attribute-picker pills, each a <details> dropdown
       // rather than an always-visible sidebar list) above the chart --
-      // .chart-overlay in company.html caps and centers all three at a
-      // fixed reading width, not the page-wide container's full breadth.
+      // .chart-overlay in company.html now stretches all three to the
+      // page-wide container's full breadth (see its own comment for why),
+      // so renderChart() needs to know how wide that actually rendered to.
+      // Measured on `root` itself (#charts-overlay, not a child of the
+      // innerHTML being replaced below) so it reflects the *current*
+      // layout width, not whatever the chart happened to render at last
+      // time -- root's own width doesn't change as a side effect of
+      // overwriting its innerHTML.
+      const chartWidth = root.getBoundingClientRect().width;
       root.innerHTML =
         renderCompareBar(state) +
         '<div class="chart-overlay-toolbar">' +
           renderControls(state.periodType, state.range) +
           renderPicker(unionAttrs, state.order, state.sides, colorOf) +
         "</div>" +
-        '<div class="chart-overlay-chart">' + renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames) + "</div>";
+        '<div class="chart-overlay-chart">' + renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames, chartWidth) + "</div>";
 
       root.querySelectorAll("[data-attr-id]").forEach((checkbox) => {
         checkbox.addEventListener("change", () => {

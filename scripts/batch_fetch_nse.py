@@ -132,23 +132,30 @@ def _resolve_companies(conn, args: argparse.Namespace) -> list[str]:
     raise SystemExit("one of --companies / --companies-file / --index is required")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("kind", choices=sorted(_RUNNERS))
-    parser.add_argument("--companies", help="comma-separated company_id list")
-    parser.add_argument("--companies-file", help="path to a file, one company_id per line")
-    parser.add_argument("--index", help='company_index_membership index_name, e.g. "Nifty 50"')
-    parser.add_argument("--scope", help="human label for the audit log (defaults to the kind + count)")
-    args = parser.parse_args()
+def run_nse_batch(conn, kind: str, companies: list[str], scope_label: str | None = None, job_name: str | None = None) -> int:
+    """The actual company-list loop, factored out of main() so the Settings >
+    Data Operations > Schedule panel's "Run now" button (web/app.py) can
+    drive the exact same batch -- one capability (loop a company list
+    through the NSE financials/shareholding fetch, with a BatchRun audit
+    trail), two triggers (this CLI's main() below, and the admin route) --
+    same reuse shape as admin_refresh_company()'s own docstring describes
+    for the single-company refresh action. Returns the BatchRun's run_id so
+    the caller can report/link back to it (e.g. a flash message pointing at
+    Audit Log -> Job Runs).
 
-    conn = init_db()
-    companies = _resolve_companies(conn, args)
+    `job_name` defaults to `_JOB_NAMES[kind]` (the CLI never needs to
+    override it), but the Schedule panel passes a distinct value for its
+    "Nifty 500 remaining" jobs -- those run the same `kind` as the Nifty 50
+    jobs, and get_latest_batch_job_run() looks "last run" up by job_name
+    alone, so two scopes sharing one job_name would make each Schedule row
+    show whichever scope happened to run more recently instead of its own
+    history."""
     if not companies:
-        raise SystemExit("resolved company list is empty")
+        raise ValueError("company list is empty")
 
-    scope_label = args.scope or f"{args.kind} ({len(companies)} companies)"
-    runner = _RUNNERS[args.kind]
-    job_name = _JOB_NAMES[args.kind]
+    scope_label = scope_label or f"{kind} ({len(companies)} companies)"
+    runner = _RUNNERS[kind]
+    job_name = job_name or _JOB_NAMES[kind]
 
     print(f"{job_name}: {len(companies)} companies, scope={scope_label!r}", flush=True)
     ok = failed = 0
@@ -165,8 +172,26 @@ def main() -> None:
                     print(f"{company_id}: FAILED -- {exc}", flush=True)
                     raise
 
-    conn.close()
     print(f"\nDone. run_id={run.run_id} ok={ok} failed={failed}", flush=True)
+    return run.run_id
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("kind", choices=sorted(_RUNNERS))
+    parser.add_argument("--companies", help="comma-separated company_id list")
+    parser.add_argument("--companies-file", help="path to a file, one company_id per line")
+    parser.add_argument("--index", help='company_index_membership index_name, e.g. "Nifty 50"')
+    parser.add_argument("--scope", help="human label for the audit log (defaults to the kind + count)")
+    args = parser.parse_args()
+
+    conn = init_db()
+    companies = _resolve_companies(conn, args)
+    if not companies:
+        raise SystemExit("resolved company list is empty")
+
+    run_nse_batch(conn, args.kind, companies, scope_label=args.scope)
+    conn.close()
 
 
 if __name__ == "__main__":

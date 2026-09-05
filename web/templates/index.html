@@ -35,13 +35,30 @@
   }
   .companies-filters select.input { min-height: 36px; }
 
-  /* Same pagination pattern as the Admin Ingest panel / Investigations /
-     Watchlist (web/templates/admin.html and friends). */
-  .admin-pagination {
+  /* Bottom bar: "Rows per page" lives here now, not up in .companies-filters
+     with the search/sector/etc. filters -- it's not a filter (it doesn't
+     narrow which companies match), it's a pagination control, so it reads
+     more naturally next to Previous/Next than next to Search. Always
+     visible (unlike the nav half below), since "switch back from All to a
+     fixed page size" has to stay reachable even when there's currently
+     nothing to page through. Same visual pattern (border-top separator,
+     space-between, 13px) the Admin Ingest panel / Investigations /
+     Watchlist pagination footers already use. */
+  .companies-bottom-bar {
     display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
     gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-3);
     border-top: 1px solid var(--color-divider); font-size: 13px;
   }
+  .companies-page-size-field { display: flex; align-items: center; gap: var(--space-2); }
+  .companies-page-size-field label {
+    font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-muted);
+    margin-bottom: 0; /* override .field > label's default margin-bottom -- this label sits
+                          beside the select, not above it */
+  }
+  .companies-page-size-field select.input { width: auto; min-height: 32px; }
+  /* The Previous/summary/Next half -- hidden on its own (not the whole
+     bottom bar) when there's nothing to page through. */
+  .companies-pagination-nav { display: flex; align-items: center; gap: var(--space-3); }
   .admin-pagination-links { display: flex; align-items: center; gap: var(--space-2); }
 
   /* Column picker: a small icon button + popover, positioned to line up
@@ -165,25 +182,15 @@
         {% for i in industries %}<option value="{{ i }}">{{ i }}</option>{% endfor %}
       </select>
     </div>
-    {% set tags_column_enabled = columns|selectattr('key', 'equalto', 'tags')|list|length > 0 %}
-    {% if tags_column_enabled and index_tag_options %}
+    {% if index_tag_options %}
     <div class="field">
-      <label for="companies-tag">Index tag</label>
+      <label for="companies-tag">Index</label>
       <select class="input" id="companies-tag">
         <option value="">All indices</option>
         {% for t in index_tag_options %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
       </select>
     </div>
     {% endif %}
-    <div class="field">
-      <label for="companies-page-size">Rows per page</label>
-      <select class="input" id="companies-page-size">
-        <option value="25">25</option>
-        <option value="50">50</option>
-        <option value="100">100</option>
-        <option value="all">All</option>
-      </select>
-    </div>
     {% if columns %}
     <div class="companies-column-picker">
       <button type="button" class="btn btn-ghost companies-columns-btn" id="companies-columns-btn"
@@ -252,7 +259,7 @@
             {% else %}—{% endif %}
           </td>
             {% elif col['key'] == 'market_cap' %}
-          <td data-col="market_cap" class="price">{% if c['market_cap_cr'] is not none %}{{ '$' if c['currency'] == 'USD' else '₹' }}{{ '{:,.0f}'.format(c['market_cap_cr']) }} Cr{% else %}—{% endif %}</td>
+          <td data-col="market_cap" class="price">{{ c['market_cap_display'] or '—' }}</td>
             {% elif col['key'] == 'week52' %}
           <td data-col="week52" class="price range-cell">
             {% if c['week52_low'] is not none %}
@@ -301,12 +308,23 @@
   <div class="empty-state" id="companies-no-matches" style="display:none;">
     No companies match these filters.
   </div>
-  <div class="admin-pagination" id="companies-pagination" style="display:none;">
-    <span class="muted" id="companies-pagination-summary"></span>
-    <div class="admin-pagination-links">
-      <button type="button" class="btn btn-ghost" id="companies-page-prev">&larr; Previous</button>
-      <span class="muted" id="companies-pagination-pages"></span>
-      <button type="button" class="btn btn-ghost" id="companies-page-next">Next &rarr;</button>
+  <div class="companies-bottom-bar" id="companies-pagination">
+    <div class="field companies-page-size-field">
+      <label for="companies-page-size">Rows per page</label>
+      <select class="input" id="companies-page-size">
+        <option value="25">25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="all">All</option>
+      </select>
+    </div>
+    <div class="companies-pagination-nav" id="companies-pagination-nav" style="display:none;">
+      <span class="muted" id="companies-pagination-summary"></span>
+      <div class="admin-pagination-links">
+        <button type="button" class="btn btn-ghost" id="companies-page-prev">&larr; Previous</button>
+        <span class="muted" id="companies-pagination-pages"></span>
+        <button type="button" class="btn btn-ghost" id="companies-page-next">Next &rarr;</button>
+      </div>
     </div>
   </div>
 
@@ -321,7 +339,11 @@
       const rows = Array.from(document.querySelectorAll('#companies-tbody tr'));
       const noMatchesEl = document.getElementById('companies-no-matches');
       const wrapEl = document.querySelector('.companies-wrap');
-      const paginationEl = document.getElementById('companies-pagination');
+      // The outer bottom bar (companies-pagination) always stays visible now
+      // that it also hosts the Rows per page field -- only its nav half
+      // (summary + Previous/Next) hides when there's nothing to page
+      // through (0 results, or "All" selected).
+      const paginationNavEl = document.getElementById('companies-pagination-nav');
       const paginationSummary = document.getElementById('companies-pagination-summary');
       const paginationPages = document.getElementById('companies-pagination-pages');
       const prevBtn = document.getElementById('companies-page-prev');
@@ -379,7 +401,7 @@
 
         wrapEl.style.display = total === 0 ? 'none' : '';
         noMatchesEl.style.display = total === 0 ? '' : 'none';
-        paginationEl.style.display = total === 0 || pageSize === 'all' ? 'none' : '';
+        paginationNavEl.style.display = total === 0 || pageSize === 'all' ? 'none' : '';
         if (total > 0 && pageSize !== 'all') {
           paginationSummary.textContent = `Showing ${start + 1}–${Math.min(end, total)} of ${total}`;
           paginationPages.textContent = `Page ${currentPage} of ${totalPages}`;

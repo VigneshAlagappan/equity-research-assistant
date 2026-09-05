@@ -26,6 +26,36 @@ import yfinance as yf
 logger = logging.getLogger(__name__)
 
 
+# A handful of US companies' company_id doesn't match Yahoo Finance's own
+# ticker symbol -- company_id is a plain alphanumeric identifier used as a
+# primary key/foreign key throughout this app (financials, price history,
+# ...), so it can't carry the punctuation some real tickers do. Berkshire
+# Hathaway's Class B shares trade on Yahoo as "BRK-B" (verified: "BRKB" and
+# "BRK.B" both return zero rows, "BRK-B" returns real data), but this app's
+# company_id for it is "BRKB" -- confirmed root cause of a real production
+# gap (Settings > Data Operations > Schedule's "Price history — USA" job,
+# run_id 17, silently recorded "no data" for BRKB every day since it never
+# fails, it just legitimately finds nothing for the wrong symbol).
+# resolve_yfinance_ticker() is the one place this override applies --
+# web/live_quote.py's own price-badge lookup imports it too, so the two
+# don't drift into resolving the same company_id two different ways.
+# Extend this table if another US company_id/ticker mismatch turns up;
+# a dedicated db column would only be worth it if this list grows past a
+# handful.
+US_TICKER_OVERRIDES = {"BRKB": "BRK-B"}
+
+
+def resolve_yfinance_ticker(ticker: str, country: str = "IN") -> str:
+    """The literal string yfinance needs for this company_id/nse_symbol --
+    NSE-listed tickers get ".NS" appended (country="IN", the default);
+    anything else is looked up in US_TICKER_OVERRIDES first, falling back
+    to the ticker unchanged when there's no override (true for all but
+    Berkshire today)."""
+    if country == "IN":
+        return f"{ticker}.NS"
+    return US_TICKER_OVERRIDES.get(ticker, ticker)
+
+
 @dataclass(frozen=True)
 class PriceBar:
     trade_date: str  # ISO date, e.g. "2026-08-27"
@@ -64,7 +94,7 @@ def fetch_daily_bars(
     if not period and not start:
         period = "1y"
 
-    yf_ticker = f"{nse_symbol}.NS" if country == "IN" else nse_symbol
+    yf_ticker = resolve_yfinance_ticker(nse_symbol, country)
     try:
         frame = yf.Ticker(yf_ticker).history(period=period, start=start, interval="1d", auto_adjust=True)
     except Exception:

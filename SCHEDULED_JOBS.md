@@ -25,8 +25,32 @@ scheduling policy and gap analysis only.
   pilot would only ever produce annual data.
 - **Cadence note**: run ~6–8 weeks after each quarter-end, not right at it
   (SEBI gives companies 45/60 days to file).
+- **Update (2026-09-01):** the company-list batch loop this section implied
+  was still missing now exists — `scripts/batch_fetch_nse.py` (`kind=
+  "financials"`, `job_name="nse_xbrl_fetch"`) loops a company list (by
+  explicit list, file, or `company_index_membership` index name) through
+  the same per-company fetch+ingest logic above, with a `BatchRun` audit
+  trail (`batch_job_runs`/`batch_job_items`). Closes this gap for India;
+  the USA gap above is unrelated and still open.
+- **Update (2026-09-05):** the "planned for Nifty 500" scope mentioned
+  above is now also schedulable, initially as one "Nifty 500 remaining"
+  Schedule row (the ~449 constituents not already covered by the Nifty 50
+  job), then split further the same day into three smaller rows along
+  NSE's own standard tiering — Nifty Next 50 (50) + Nifty Midcap 150 (150)
+  + Nifty Smallcap 250 (249) is a verified, non-overlapping partition of
+  that exact same 449-company pool (Nifty 100 = Nifty 50 + Nifty Next 50,
+  and Nifty 500 = Nifty 100 + Midcap 150 + Smallcap 250 — NSE's own tier
+  composition), so one "Run now" click is at most 150 companies instead of
+  449 in a single blocking synchronous request. Each tier resolves via the
+  plain `storage.company_repository.select_company_ids_by_index()` (no
+  set-difference query needed — Next 50/Midcap 150/Smallcap 250 don't
+  overlap Nifty 50 or each other), fed through the same `run_nse_batch()`
+  this section's earlier update describes, each with its own `job_name`
+  (`nse_xbrl_fetch_nifty_next50`/`..._nifty_midcap150`/`..._nifty_
+  smallcap250`) so none of the four India Financials rows' audit-log
+  history collides with another's.
 
-**Verdict — India: ready to schedule. USA: gap, needs the fiscal-quarter mapping built first.**
+**Verdict — India: ready to schedule (Nifty 50, Next 50, Midcap 150, and Smallcap 250 as four separate Schedule rows). USA: gap, needs the fiscal-quarter mapping built first.**
 
 ## 2. Shareholding pattern — quarterly (India)
 
@@ -53,12 +77,21 @@ scheduling policy and gap analysis only.
   invocation is one company. Whatever wires the quarterly cron actually
   loops over a company list needs to call this per company (or a thin
   batch-loop script gets written first, `fetch_daily_prices.py`-shaped).
+- **Update (2026-09-01):** as with Financials above, this gap is now
+  closed — `scripts/batch_fetch_nse.py` (`kind="shareholding"`, `job_name=
+  "nse_shareholding_fetch"`) is the same batch-loop script, covering both
+  jobs from one module since they share the company-list-resolution and
+  `BatchRun` bookkeeping shape.
+- **Update (2026-09-05):** same three-tier Schedule-row split as
+  Financials section 1's matching update above — `job_name=
+  "nse_shareholding_fetch_nifty_next50"`/`..._nifty_midcap150`/`..._nifty_
+  smallcap250`, same three `select_company_ids_by_index()` company lists.
 - **Cadence note**: SEBI LODR Regulation 31 gives 21 days from quarter-end
   to file shareholding pattern — tighter than the 45/60-day financial-
   results window above, so this can run closer to quarter-end than the
   Financials job.
 
-**Verdict — ready to schedule per-company, same as Financials (India). Needs the same company-list batch loop as Financials if one doesn't already exist for that job either.**
+**Verdict — ready to schedule (Nifty 50 and the remaining Nifty 500 constituents, as two separate Schedule rows), same as Financials (India).**
 
 ## 3. Historical price data — weekly (India + USA)
 
@@ -73,8 +106,17 @@ scheduling policy and gap analysis only.
   universe query is NSE-500-specific — it never loops over the 12 US
   companies on file. Needs a US-scoped sibling script or a parameterized
   universe query.
+- **Update (2026-09-05):** this gap is now closed —
+  `scripts/fetch_daily_prices_usa.py` is exactly the US-scoped sibling
+  described above: same 5-day self-healing fetch, same `BatchRun`
+  bookkeeping (`job_name="price_history_usa"`), reading its universe from
+  `storage.company_repository.select_active_companies_by_country(conn,
+  "US")` instead of `company_index_membership` — a `company_id` *is* the
+  yfinance ticker for a US company (no NSE-symbol-style join needed), and
+  `sources/yfinance_prices.py`'s existing `country="US"` parameter
+  already did the rest (no suffix appended, unlike `.NS` for India).
 
-**Verdict — India: ready (already running, daily). USA: gap, needs a US-scoped fetch script.**
+**Verdict — India: ready (already running, daily). USA: ready to schedule (Settings > Data Operations > Schedule's "Run now", or `python -m scripts.fetch_daily_prices_usa`).**
 
 ## 4. Uploaded PDF analysis — quarterly (transcripts, concall presentations, annual report docs)
 
@@ -194,16 +236,20 @@ scheduling policy and gap analysis only.
 |---|---|---|---|
 | Financials | Quarterly | Ready | Gap (fiscal-quarter mapping) |
 | Shareholding pattern | Quarterly | Ready | N/A (SEBI LODR Reg 31 — India-only regulation) |
-| Price history | Weekly | Ready (already daily) | Gap (no US-scoped script) |
+| Price history | Weekly | Ready (already daily) | Ready (`fetch_daily_prices_usa.py`) |
 | Doc analysis (transcripts/concalls) | Quarterly | Partial (typing exists, extraction is real, no trigger, no fetch source) | Same |
 | Analytics/insights — companies | Monthly | Gap (no batch script; generation fn reusable) | Same |
 | Analytics/insights — macro | Monthly | Gap (generation fn doesn't exist yet) | Same |
 | Macro data | Weekly | FRED ready; RBI/IITM/DBIE gap | N/A (US macro not in scope here) |
 | DB sharding | Daily | Ready (shard step only) | Commit+push needs a separate explicit decision |
 
-Price history (India), financials (India), shareholding pattern (India),
-and the DB sharding step are ready to actually put on a schedule today.
-Everything else needs real implementation work first — not just a cron
-entry. And even for sharding, "ready" is the local file-writing part
-only — turning that into an actual git backup still needs the
-commit+push decision above made explicitly.
+Price history (India and USA), financials (India), shareholding pattern
+(India), and the DB sharding step are ready to actually put on a schedule
+today — all four are also wired into Settings > Data Operations >
+Schedule's manual "Run now" trigger (11 rows total: 2 price-history + 1
+sharding + 4 each for financials/shareholding — Nifty 50, Next 50, Midcap
+150, Smallcap 250), with every run's status visible in Audit Log > Job
+Runs. Everything else needs real implementation work first — not just a
+cron entry. And even for sharding, "ready" is the local file-writing part
+only — turning that into an actual git backup still needs the commit+push
+decision above made explicitly.
