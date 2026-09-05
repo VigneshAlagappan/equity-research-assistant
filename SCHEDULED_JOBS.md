@@ -86,6 +86,23 @@ scheduling policy and gap analysis only.
   Financials section 1's matching update above — `job_name=
   "nse_shareholding_fetch_nifty_next50"`/`..._nifty_midcap150`/`..._nifty_
   smallcap250`, same three `select_company_ids_by_index()` company lists.
+- **Update (2026-09-05):** a repeat "Run now" used to re-fetch the
+  per-quarter detail page (named holders + FII/DII breakdown, one HTTP
+  call per quarter) for *every* quarter NSE's master listing returns, even
+  ones already fully on file — the master listing itself is cheap (one
+  call total) and was already being re-upserted harmlessly, but the
+  detail step wasn't skip-aware at all, so re-clicking a Schedule row for
+  a company with, say, 20 quarters on file re-did all 20 every time.
+  `shareholding_observations.detail_fetched_at` (new column) now records
+  when that step last ran for a quarter, and `_run_shareholding()` skips
+  any quarter already carrying that timestamp — verified live: a second
+  run against ICICIBANK went from 20 detail fetches to `skipped=20
+  (already fetched)`, zero. Set on any successful fetch regardless of
+  whether a breakdown came back (an older-taxonomy quarter's "no FII/DII
+  split to parse" is a stable, real answer — see the taxonomy-gap note
+  above — not a failure to keep retrying), so this doesn't accidentally
+  paper over a genuine transient fetch error (those don't get marked, and
+  are retried next run same as before).
 - **Cadence note**: SEBI LODR Regulation 31 gives 21 days from quarter-end
   to file shareholding pattern — tighter than the 45/60-day financial-
   results window above, so this can run closer to quarter-end than the

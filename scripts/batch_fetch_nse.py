@@ -35,8 +35,10 @@ from sources.nse_shareholding import fetch_shareholding_detail, fetch_shareholdi
 from storage.company_repository import select_company_ids_by_index
 from storage.database import init_db
 from storage.repositories import (
+    get_shareholding_detail_fetched_periods,
     insert_shareholding_holders,
     insert_shareholding_observations,
+    mark_shareholding_detail_fetched,
     update_shareholding_category_breakdown,
 )
 
@@ -79,11 +81,25 @@ def _run_shareholding(conn, company_id: str) -> str:
     if not summaries:
         return "no shareholding submissions on NSE for this symbol"
     summaries.sort(key=lambda s: s.period_end)
+    # Cheap, local, always upserted regardless of the skip logic below --
+    # just the master listing NSE already returned in this same call, no
+    # extra HTTP request per quarter (that's the detail step next).
     insert_shareholding_observations(conn, company_id, summaries)
 
-    holder_total, quarter_errors = 0, 0
+    # The master listing above is one HTTP call total; fetch_shareholding_
+    # detail() below is one *more* HTTP call per quarter it runs for --
+    # on a repeat "Run now" (Settings > Data Operations > Schedule),
+    # skipping whichever quarters already have a detail_fetched_at
+    # timestamp turns an N-quarter re-click back into "however many are
+    # actually new since last time", not N all over again.
+    already_fetched = get_shareholding_detail_fetched_periods(conn, company_id)
+
+    holder_total = quarter_errors = skipped = 0
     for s in summaries:
         if not s.source_url:
+            continue
+        if (s.fiscal_year, s.quarter) in already_fetched:
+            skipped += 1
             continue
         try:
             holdings, breakdown = fetch_shareholding_detail(s.source_url)
@@ -96,6 +112,11 @@ def _run_shareholding(conn, company_id: str) -> str:
         )
         if breakdown is not None:
             update_shareholding_category_breakdown(conn, company_id, s.fiscal_year, s.quarter, breakdown)
+        # Marked after processing regardless of whether breakdown came back
+        # None -- an older-taxonomy quarter genuinely has no FII/DII split
+        # to parse (SCHEDULED_JOBS.md section 2), and that's a real,
+        # stable answer worth remembering, not a failure to retry forever.
+        mark_shareholding_detail_fetched(conn, company_id, s.fiscal_year, s.quarter)
 
     publish(
         conn,
@@ -111,6 +132,8 @@ def _run_shareholding(conn, company_id: str) -> str:
     )
 
     detail = f"summaries={len(summaries)} named_holders={holder_total}"
+    if skipped:
+        detail += f" skipped={skipped} (already fetched)"
     if quarter_errors:
         detail += f" quarter_errors={quarter_errors}"
     return detail

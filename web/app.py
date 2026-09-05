@@ -184,6 +184,7 @@ from storage.repositories import (
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
 from web.shareholding_feed import build_shareholding_feed
 from web.fixtures import EXAMPLES, THREADS
+from web.fx_rate import get_usd_inr_rate
 from web.live_quote import get_live_quote, peek_cached_quote
 from web.news import fetch_company_news, google_news_last_24h_url
 from web.rich_text import sanitize_note_html
@@ -2008,6 +2009,84 @@ def create_app() -> Flask:
         if get_company(db, company_id) is None:
             abort(404, f"No company registered with company_id={company_id!r}")
         return jsonify(build_shareholding_feed(db, company_id))
+
+    @app.route("/companies/<company_id>/compare-meta.json")
+    def company_compare_meta(company_id: str):
+        """Everything the Compare page (web/static/js/compare.js) needs
+        about one company besides its financial-statement time series
+        (already covered by company_charts_feed below) -- the same live
+        price / shares-outstanding resolution company_report() does for its
+        own Overview tab (right down to the same nse_symbol-or-company_id
+        ticker convention and the same shares-outstanding staleness gate
+        the Companies list uses, _is_shares_outstanding_current, since a
+        confidently-wrong decade-old market cap is worse in a side-by-side
+        comparison than in a single company's own page), just exposed here
+        so a company *other* than the one currently on screen can be
+        added/swapped into a comparison without a full page load."""
+        db = get_db()
+        company = get_company(db, company_id)
+        if company is None:
+            abort(404, f"No company registered with company_id={company_id!r}")
+
+        latest_price = _latest_price(company["valuation_model_file"]) if company["valuation_model_file"] else None
+        live_quote = get_live_quote(
+            company["nse_symbol"] or (company_id if company["country"] != "IN" else None),
+            company["country"],
+        )
+        price = live_quote["price"] if live_quote else latest_price
+
+        shares_outstanding_entry = list_latest_shares_outstanding(db).get(company_id)
+        shares_outstanding = shares_outstanding_fy = None
+        if shares_outstanding_entry is not None and _is_shares_outstanding_current(shares_outstanding_entry[1]):
+            shares_outstanding = shares_outstanding_entry[0]
+            shares_outstanding_fy = int(shares_outstanding_entry[1][2:])
+
+        return jsonify(
+            company_id=company_id,
+            display_name=company["display_name"],
+            nse_symbol=company["nse_symbol"],
+            country=company["country"],
+            currency=company["currency"],
+            price=price,
+            shares_outstanding=shares_outstanding,
+            shares_outstanding_fy=shares_outstanding_fy,
+            financials_url=url_for("company_charts_feed", company_id=company_id, statement_type="consolidated"),
+        )
+
+    @app.route("/fx/usdinr.json")
+    def fx_usdinr():
+        """USD/INR spot rate for the Compare page's cross-currency
+        conversion footnote (web/fx_rate.py) -- a plain JSON endpoint
+        rather than baking a rate into every page load, since most visits
+        never compare a US company against an Indian one and shouldn't pay
+        for a yfinance call they'll never use."""
+        rate = get_usd_inr_rate()
+        if rate is None:
+            return jsonify(error="USD/INR rate unavailable right now"), 502
+        return jsonify(rate)
+
+    @app.route("/compare")
+    def compare():
+        """Car/product-comparison-style spec sheet -- pick up to
+        COMPARE_MAX_COMPANIES companies (web/templates/compare.html), see
+        them side by side across the same Overview Ratios catalog
+        (OVERVIEW_RATIO_CATALOG) a company's own Overview tab already
+        uses, one metric catalog reused a second time rather than a
+        parallel one maintained just for this page. All the actual company
+        data is fetched and rendered client-side (web/static/js/
+        compare.js) via company_compare_meta()/company_charts_feed() per
+        selected company -- this route only renders the page shell plus
+        which ratio rows are currently enabled (the same admin setting,
+        Settings > Data & Classification > Overview Ratios, the Overview
+        tab itself respects, so the two never show a different metric set
+        for the same company)."""
+        db = get_db()
+        ratio_settings = get_overview_ratio_settings(db)
+        return render_template(
+            "compare.html",
+            ratio_catalog=[r for r in OVERVIEW_RATIO_CATALOG if ratio_settings[r["key"]]],
+            search_url=url_for("companies_search"),
+        )
 
     @app.route("/companies/<company_id>/docs/add", methods=["POST"])
     def company_add_document(company_id: str):

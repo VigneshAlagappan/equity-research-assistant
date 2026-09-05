@@ -2429,6 +2429,39 @@ def update_shareholding_category_breakdown(
     conn.commit()
 
 
+def mark_shareholding_detail_fetched(conn: sqlite3.Connection, company_id: str, fiscal_year: str, quarter: str) -> None:
+    """Records *when* the per-quarter detail step (sources/
+    nse_shareholding.py's fetch_shareholding_detail(), one extra HTTP call
+    per quarter) last ran for this quarter -- separate from whether it
+    found a named-holder/FII-DII breakdown to parse, so scripts/
+    batch_fetch_nse.py's shareholding job can tell "we tried, this quarter
+    genuinely has none" apart from "we haven't tried yet" (see
+    detail_fetched_at's own migration comment in storage/database.py).
+    Call this once per quarter right after a *successful* detail fetch,
+    whether or not the returned breakdown was None -- never after an
+    NSEFetchError, so a transient failure still gets retried next run."""
+    conn.execute(
+        "UPDATE shareholding_observations SET detail_fetched_at = ? WHERE company_id = ? AND fiscal_year = ? AND quarter = ?",
+        (utcnow_iso(), company_id, fiscal_year, quarter),
+    )
+    conn.commit()
+
+
+def get_shareholding_detail_fetched_periods(conn: sqlite3.Connection, company_id: str) -> set[tuple[str, str]]:
+    """{(fiscal_year, quarter), ...} already carrying a detail_fetched_at
+    timestamp for this company -- scripts/batch_fetch_nse.py's
+    shareholding job skips the expensive per-quarter detail HTTP call for
+    any of these on a repeat "Run now" (Settings > Data Operations >
+    Schedule), instead of re-fetching every quarter NSE's master listing
+    returns on every single click."""
+    rows = conn.execute(
+        "SELECT fiscal_year, quarter FROM shareholding_observations "
+        "WHERE company_id = ? AND detail_fetched_at IS NOT NULL",
+        (company_id,),
+    ).fetchall()
+    return {(row["fiscal_year"], row["quarter"]) for row in rows}
+
+
 def insert_shareholding_holders(
     conn: sqlite3.Connection,
     company_id: str,

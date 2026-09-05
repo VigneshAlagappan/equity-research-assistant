@@ -828,6 +828,15 @@ CREATE TABLE IF NOT EXISTS shareholding_observations (
   submission_date TEXT,
   retrieved_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  -- When the per-quarter detail fetch (fetch_shareholding_detail(), one
+  -- extra HTTP call per quarter beyond the master listing above) last ran
+  -- for this quarter -- set on ANY successful fetch, whether or not it
+  -- found a named-holder/FII-DII breakdown to parse, so a repeat
+  -- scripts/batch_fetch_nse.py "Run now" can skip a quarter it already
+  -- has, rather than re-fetching every quarter NSE's listing returns on
+  -- every single click. NULL both for "not tried yet" and for a company
+  -- whose row predates this column.
+  detail_fetched_at TEXT,
   UNIQUE(company_id, fiscal_year, quarter)
 );
 CREATE INDEX IF NOT EXISTS idx_shareholding_company ON shareholding_observations(company_id, fiscal_year, quarter);
