@@ -7,6 +7,20 @@
 {% block extra_style %}
   .compare-intro { max-width: 68ch; margin-bottom: var(--space-5); }
 
+  /* — Tabs: Quick Comparison / Detailed Comparison — same underline-active
+     convention as _header.html's .site-nav-link/.current and the company
+     page's own tab bar, kept as its own page-local copy since neither of
+     those is a shared, importable rule. */
+  .compare-tabs { display: flex; gap: var(--space-5); border-bottom: 1px solid var(--color-divider); margin-bottom: var(--space-5); }
+  .compare-tab {
+    background: none; border: none; font: inherit; cursor: pointer;
+    padding: 0 2px var(--space-2); font-size: 14px; color: var(--ink-muted);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .compare-tab:hover { color: var(--ink); }
+  .compare-tab.active { color: var(--color-accent); border-bottom-color: var(--color-accent); font-weight: 600; }
+  .compare-panel[hidden] { display: none; }
+
   .compare-slots {
     display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3);
     margin-bottom: var(--space-6);
@@ -46,22 +60,137 @@
   .compare-table tbody tr:hover td, .compare-table tbody tr:hover th { background: var(--row-hover); }
 
   .compare-fx-note { font-size: 12px; margin-top: var(--space-3); }
+
+  /* — Detailed Comparison toolbar: period pill-toggle + Attributes
+     dropdown + add-company search, one row, matching the Charts tab's own
+     toolbar rhythm (web/templates/company.html's .chart-overlay-toolbar)
+     without importing that page's page-scoped rules. */
+  .cmp-toolbar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4); }
+  .cmp-period-toggle { display: flex; border: 1px solid var(--color-divider); border-radius: var(--radius-sm); overflow: hidden; flex: none; }
+  .cmp-period-btn { font: inherit; font-size: 13px; padding: 6px 12px; border: none; background: none; color: var(--ink-muted); cursor: pointer; }
+  .cmp-period-btn + .cmp-period-btn { border-left: 1px solid var(--color-divider); }
+  .cmp-period-btn.active { background: var(--color-accent-700); color: #fff; }
+
+  .cmp-attrs { position: relative; flex: none; }
+  .cmp-attrs-btn {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 0.04em;
+    text-transform: uppercase; padding: 6px 10px; border: 1px solid var(--color-divider);
+    border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); cursor: pointer;
+  }
+  .cmp-attrs-count {
+    background: var(--color-accent-100); color: var(--color-accent-800); border-radius: 999px;
+    padding: 0 6px; font-size: 11px; font-weight: 600;
+  }
+  .cmp-attrs-panel {
+    position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 20;
+    width: 260px; max-height: 340px; overflow-y: auto; padding: var(--space-2);
+    background: var(--bg); border: 1px solid var(--color-divider); border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+  }
+  .cmp-attrs-panel[hidden] { display: none; }
+  .cmp-attrs-section-title {
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-accent);
+    margin: var(--space-2) 4px 2px; font-weight: 600;
+  }
+  .cmp-attrs-section-title:first-child { margin-top: 2px; }
+  .cmp-attr-item { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px; border-radius: var(--radius-sm); cursor: pointer; }
+  .cmp-attr-item:hover { background: var(--row-hover); }
+  .cmp-attr-item input { accent-color: var(--color-accent-700); }
+
+  .cmp-add-company { position: relative; flex: 1 1 240px; max-width: 320px; }
+  .cmp-add-company .site-search-input { width: 100%; padding-left: 10px; }
+  .cmp-add-company .site-search-input:focus { width: 100%; }
+  .cmp-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-3); }
+  .cmp-pill {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 8px;
+    border: 1px solid var(--color-divider); border-radius: 999px; background: var(--surface);
+  }
+  .cmp-pill button { border: none; background: none; color: var(--ink-muted); cursor: pointer; font: inherit; padding: 0; line-height: 1; }
+  .cmp-pill button:hover { color: var(--ink); }
+
+  /* — Detailed table: one bold attribute-label row per selected metric,
+     then one indented sub-row per company sharing that label cell (left
+     blank on the sub-rows rather than a real rowspan -- simpler to
+     generate and re-render on every state change, and reads the same
+     visually). "Not reported" (not just an em dash) is deliberate here --
+     this table is explicitly the "deterministic facts only, no inference"
+     view, so a gap in the source filing should read as a sentence, not a
+     symbol easy to skim past. */
+  .cmp-detailed-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .cmp-detailed-table th, .cmp-detailed-table td { padding: 6px 12px; text-align: right; white-space: nowrap; }
+  .cmp-detailed-table th:first-child, .cmp-detailed-table td:first-child { text-align: left; white-space: normal; }
+  .cmp-detailed-table td:nth-child(2), .cmp-detailed-table th:nth-child(2) { text-align: left; }
+  .cmp-section-row th { padding-top: var(--space-4); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-accent); border-bottom: 1px solid var(--color-divider); }
+  .cmp-attr-label-row td:first-child, .cmp-attr-label-row th:first-child { font-weight: 600; padding-top: var(--space-2); }
+  .cmp-company-cell { color: var(--ink-muted); font-size: 12px; }
+  .cmp-not-reported { color: var(--ink-muted); font-style: italic; }
+  .cmp-detailed-footnote { font-size: 12px; color: var(--ink-muted); margin-top: var(--space-3); }
 {% endblock %}
 
 {% block content %}
   <h1>Compare</h1>
   <p class="compare-intro muted">
-    Pick up to 4 companies to see them side by side across the same ratios shown on each company's own Overview
-    tab. Mixing an Indian and a US company automatically converts monetary figures to USD, using a live exchange
-    rate noted below the table — ratios and percentages (P/E, ROE, margins, growth, ...) need no conversion and
-    are shown as-is either way.
+    Companies as columns, one metric catalog, deterministic financial facts only — no LLM inference.
   </p>
 
-  <div id="compare-slots" class="compare-slots" data-search-url="{{ search_url }}"></div>
+  <div class="compare-tabs" role="tablist">
+    <button type="button" class="compare-tab active" data-compare-tab="quick">Quick Comparison</button>
+    <button type="button" class="compare-tab" data-compare-tab="detailed">Detailed Comparison</button>
+  </div>
 
-  <div id="compare-table"></div>
+  <div class="compare-panel" id="compare-panel-quick" data-compare-panel="quick">
+    <p class="compare-intro muted">
+      Pick up to 4 companies to see them side by side across the same ratios shown on each company's own Overview
+      tab, one period (the latest) per company. Mixing an Indian and a US company automatically converts monetary
+      figures to USD, using a live exchange rate noted below the table — ratios and percentages (P/E, ROE, margins,
+      growth, ...) need no conversion and are shown as-is either way.
+    </p>
+    <div id="compare-slots" class="compare-slots" data-search-url="{{ search_url }}"></div>
+    <div id="compare-table"></div>
+  </div>
+
+  <div class="compare-panel" id="compare-panel-detailed" data-compare-panel="detailed"
+       data-search-url="{{ search_url }}" data-charts-url-template="{{ charts_url_template }}" hidden>
+    <p class="compare-intro muted">
+      Pick any number of attributes and up to {{ 4 }} companies to see the full recorded history side by side —
+      not a spec-sheet snapshot, the same per-period series the Charts tab plots, laid out as a table instead.
+    </p>
+    <div class="cmp-toolbar">
+      <div class="cmp-period-toggle" role="group" aria-label="Period">
+        <button type="button" class="cmp-period-btn active" data-cmp-period="annual">Annual</button>
+        <button type="button" class="cmp-period-btn" data-cmp-period="quarterly">Quarterly</button>
+      </div>
+      <div class="cmp-attrs">
+        <button type="button" class="cmp-attrs-btn" id="cmp-attrs-btn" aria-haspopup="true" aria-expanded="false">
+          Attributes <span class="cmp-attrs-count" id="cmp-attrs-count">0</span> &rsaquo;
+        </button>
+        <div class="cmp-attrs-panel" id="cmp-attrs-panel" hidden></div>
+      </div>
+      <div class="cmp-add-company">
+        <input type="text" class="site-search-input" id="cmp-add-input" autocomplete="off" placeholder="+ Add company from NSE 500…">
+        <div class="site-search-results" id="cmp-add-results" hidden></div>
+      </div>
+    </div>
+    <div class="cmp-pills" id="cmp-pills"></div>
+    <div id="cmp-detailed-table"></div>
+  </div>
 
   <script>window.COMPARE_RATIO_CATALOG = {{ ratio_catalog|tojson }};</script>
   <script src="{{ static_url('js/valuation_dashboard.js') }}"></script>
+  <script src="{{ static_url('js/charts_overlay.js') }}"></script>
   <script src="{{ static_url('js/compare.js') }}"></script>
+  <script src="{{ static_url('js/compare_detailed.js') }}"></script>
+  <script>
+    (function () {
+      const tabs = document.querySelectorAll('[data-compare-tab]');
+      tabs.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          tabs.forEach((b) => b.classList.toggle('active', b === btn));
+          document.querySelectorAll('[data-compare-panel]').forEach((panel) => {
+            panel.hidden = panel.dataset.comparePanel !== btn.dataset.compareTab;
+          });
+        });
+      });
+    })();
+  </script>
 {% endblock %}

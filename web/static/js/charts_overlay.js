@@ -831,4 +831,22 @@
     const root = document.getElementById("charts-overlay");
     if (root) init(root);
   });
+
+  // Minimal export surface for web/static/js/compare.js's Detailed
+  // Comparison view -- it needs the exact same period/attribute-union
+  // machinery this file already built for the Charts tab's "Compare With"
+  // overlay (same METRICS feed, same multi-company merge problem, just
+  // rendered as a table instead of an SVG chart), not a second copy that
+  // could drift out of sync with it. Everything else in this IIFE stays
+  // private.
+  window.SignalsCharts = {
+    SECTION_ORDER: SECTION_ORDER,
+    SECTION_TITLES: SECTION_TITLES,
+    MAX_COMPARISONS: MAX_COMPARISONS,
+    attrId: attrId,
+    periodKeyStr: periodKeyStr,
+    flattenAttributes: flattenAttributes,
+    unionAttributes: unionAttributes,
+    unionPeriods: unionPeriods,
+  };
 })();

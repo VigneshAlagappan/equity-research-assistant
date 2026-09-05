@@ -2086,6 +2086,13 @@ def create_app() -> Flask:
             "compare.html",
             ratio_catalog=[r for r in OVERVIEW_RATIO_CATALOG if ratio_settings[r["key"]]],
             search_url=url_for("companies_search"),
+            # web/static/js/compare_detailed.js substitutes __ID__ itself --
+            # same server-builds-the-template, client-fills-the-id
+            # convention company.html's own data-compare-url-template
+            # already uses for charts_overlay.js, so the route path/query
+            # params live in one place (this url_for call), not hardcoded
+            # a second time in JS.
+            charts_url_template=url_for("company_charts_feed", company_id="__ID__", statement_type="consolidated"),
         )
 
     @app.route("/companies/<company_id>/docs/add", methods=["POST"])
