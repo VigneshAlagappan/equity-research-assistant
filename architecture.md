@@ -59,12 +59,26 @@ answering a different question and never doing another layer's job:
   [Golden Research Loop validation](#golden-research-loop-validation) for
   what this closed (cross-company association, point-in-time `as_of`
   scoping, indicator evidence) and [Known gaps](#ingestion-coordinator-knowledge-builder-research-knowledge-graph--document-retrieval)
-  for what's still open (no cost/token budget control; a retry re-runs the
-  same broad evidence-gathering pass rather than targeting one capability).
+  for what's still open (no cost/token budget control — the loop's other 3
+  termination controls are enforced, cost/tokens aren't one of them). A
+  retry is capability-targeted, not a blind repeat: `plan_and_gather()`'s
+  `retry=True` skips whatever can only ever return what the first pass
+  already got (financial/indicator evidence, the per-company knowledge-graph
+  lookup), re-querying only what the new gap text can actually change.
   Every hypothesis, its evidence, verdict, and rank persists to
   `investigations`/`investigation_hypotheses`/`investigation_hypothesis_evidence`
   and stays individually queryable — distinct from `research/signals_report.py`'s
-  one-narrative Signals reports.
+  one-narrative Signals reports. Every LLM call the loop makes (hypothesis
+  generation, each hypothesis's evaluation, research synthesis, and any
+  macro-retrieval-plan call along the way) is tagged with `llm_call_log.
+  investigation_id` — bound once at `default_capabilities(investigation_id=...)`
+  construction time, the same seam `fact_store`/`as_of` already use — so
+  `storage/repositories.py::get_investigation_cost_summary()` can total one
+  investigation's own spend, shown on its `/investigate/<id>` page
+  alongside the `as_of` tag. This is visibility only, not a budget: it
+  totals what the loop already spent, it doesn't cap what the loop is
+  allowed to spend (see [Known gaps](#ingestion-coordinator-knowledge-builder-research-knowledge-graph--document-retrieval)
+  above for that still-open control).
 
 ## Tech stack
 
@@ -406,14 +420,19 @@ ingestion/coordinator.py         ┴──▶  event_bus.publish(DatasetIngested
 - **CLI surface**: `main.py replay-events` (re-dispatch stored events to
   registered workers — recovery/backfill/audit, filterable by `--event-id`/
   `--dataset-type`/`--worker`/`--since`, with `--force`), `list-batch-runs`/
-  `show-batch-run` (audit log for `scripts/`'s bulk-fetch batch jobs —
-  `batch_job_runs`/`batch_job_items`, a related but separate audit trail from
-  the event store).
+  `show-batch-run` (audit log — `batch_job_runs`/`batch_job_items`, a related
+  but separate audit trail from the event store; not just `scripts/`'s
+  bulk-fetch batch jobs anymore — `main.py vector-backfill`/`graph-backfill`
+  and `ingestion/coordinator.py::process_documents()`/`archive_documents()`/
+  `unarchive_documents()` all record here too, via the same
+  `ingestion/batch_log.py::BatchRun` wrapper).
 - **Backing tables**: `dataset_events` (the Event Store), `worker_processing_log`
   (one row per worker × event, `ok`/`skipped`/`failed` with an
-  `output_reference`), `batch_job_runs`/`batch_job_items` (bulk-script audit
-  log, `scripts/batch_fetch_nse.py` and similar — logged via
-  `ingestion/batch_log.py`, not itself a worker/event-bus concept).
+  `output_reference`), `batch_job_runs`/`batch_job_items` (the general-purpose
+  bulk-operation audit log — `scripts/batch_fetch_nse.py`, `main.py`'s
+  `vector-backfill`/`graph-backfill`, and `ingestion/coordinator.py`'s
+  document processing/archive functions all write here via
+  `ingestion/batch_log.py::BatchRun`, not itself a worker/event-bus concept).
 
 ### Research Knowledge Graph (`context/knowledge_graph.py`)
 
@@ -427,6 +446,27 @@ a real join, not a stub), a real Neo4j graph when `GRAPH_BACKEND=neo4j`
 (`context/graph_neo4j.py::sync_knowledge_graph()`/`find_claims_about_entity()`),
 with automatic fallback to SQLite if unreachable.
 
+- **Wired into Q&A and Signals reports** (`research/knowledge_evidence.py`,
+  single-company only) — `research/assistant.py::answer_question()` and
+  `research/signals_report.py::generate_signals_report()` now query every
+  claim connected to the company's own `Company` node, plus every claim
+  connected to any known entity the question names by substring match
+  (`mentioned_entities()` below), the same cross-company claim connection
+  `research/investigation_planner.py`'s structured investigations already
+  use. Each `KnowledgeClaimView` is folded into a plain `Evidence` line —
+  not a separate labeled block the way `context/graph.py`'s "Related prior
+  investigations" is — since a claim extracted from this company's own
+  documents (Step 2A) genuinely is evidence about this question's company,
+  not another company's borrowed reasoning; `_CLAIM_KIND_MAP` narrows the
+  ontology's 7-value `CLAIM_TYPES` down to `research/evidence.py`'s 4-value
+  `EVIDENCE_KINDS` (`MANAGEMENT_OPINION`→`MANAGEMENT_STATEMENT`,
+  `PREDICTION`/`CORRELATION`/`CAUSATION`→`INFERENCE`), asserted complete at
+  import time so a future ontology addition fails a test run rather than a
+  live request. `mentioned_entities()` (the substring-match entity
+  detector) was promoted out of `research/investigation_planner.py`'s
+  private `_mentioned_entities()` into a shared function here, so the
+  Planner and this module detect "does this text name a known entity" the
+  same way rather than maintaining two copies.
 - **Company nodes are shared with the sector-peer graph, not duplicated** —
   a `knowledge_entities` row of type `Company` merges into the *exact same*
   `(:Company {id: ...})` node `context/graph_neo4j.py::sync_graph()` already
@@ -437,6 +477,20 @@ with automatic fallback to SQLite if unreachable.
 - **Full idempotent resync before every query**, not incremental sync —
   same philosophy `sync_graph()` already uses for sector-peer data: SQLite
   stays the source of truth, cheap to fully rebuild at today's scale.
+- **`canonical_financials` also auto-syncs to Neo4j now**
+  (`context/graph_neo4j.py::sync_financials_if_changed()`, called from
+  `context/graph.py::find_related_investigations()`'s own resync step) —
+  every company with at least one reconciled financial row, but
+  fingerprint-guarded (row count + latest `decided_at`, since a reconciled
+  value can be revised in place, not just appended) so a graph read is a
+  cheap no-op unless the data has genuinely changed since the last sync in
+  this process. Its own try/except: a financials-sync failure degrades that
+  one thing, never the sector-peer traversal the caller actually needs.
+  `main.py graph-backfill --company-id`/`--all-financials`
+  (`sync_financials()`) stays for an explicit one-off pass — the first
+  sync after a real change is still the full-corpus cost that made this
+  TRIAL and manual-only before; every read after that, until the next
+  change, is free.
 - **`Claim --VALID_DURING--> TimePeriod`, `Claim --SUPPORTED_BY--> Evidence`,
   `Claim --ABOUT--> (every entity its relationships touch)`, and `Company
   --STATES--> Claim`** are added on top of the claim's own extracted
@@ -449,6 +503,104 @@ with automatic fallback to SQLite if unreachable.
   today's edge is the coarser but always-available `Company --STATES-->
   Claim` (a `speaker` string like "CEO" is stored on the `Claim` node
   itself, not resolved to a specific `ManagementPerson` entity node).
+- **Entity resolution — an exact-match identity policy, not name-string
+  matching** (`context/entity_resolution.py::is_same_company_identity()`) —
+  a real company can otherwise end up with two separate `Company`-type
+  `knowledge_entities` rows: one from the model naming it in a document's
+  free text (e.g. "HDFC Bank Limited"), one from the `COMPANY` placeholder
+  resolving to the internal `company_id` (e.g. "HDFCBANK"). A read-only
+  query against the live database found 127 companies with duplicate
+  `Company`-type rows — but most of those duplicates are NOT spelling
+  variants of the same company: `ADANIPOWER` had 17 rows including genuine,
+  distinct subsidiaries ("Korba West Power Company Limited", "Adani Power
+  Dahej Ltd."), and `ADANIENT` included an auditor ("M/s. Dharmesh Parikh &
+  Co.") and garbled extraction noise. `is_same_company_identity()` is
+  deliberately narrow because of that: normalizes both sides (lowercase,
+  strip punctuation, collapse whitespace, strip one trailing corporate
+  suffix) and requires an **exact** match against the company's own
+  `legal_name`, `display_name`, `nse_symbol`, `bse_code`, or `company_id` —
+  never a similarity score. Under-merging (leaving a genuine duplicate
+  unmerged) is the accepted, safe failure mode; over-merging a real
+  subsidiary into its parent is not. Wired in two places: the extraction-time
+  intercept in `research/knowledge_builder.py::_persist()` (a matching
+  free-form `Company`-type entity is aliased to the already-resolved
+  canonical entity instead of inserted as a second row, so a relationship
+  naming the company by its extracted legal name still resolves to the one
+  real `entity_id`), and the one-off `main.py entity-resolution-backfill
+  [--company-id ID ...] [--apply]` command for the 127 pre-existing
+  companies — same `BatchRun`/`batch_job_runs` audit pattern as
+  `graph-backfill`/`vector-backfill`, defaults to a dry run, `--apply`
+  required to actually repoint `knowledge_relationships` and delete the
+  duplicate row (`storage/repositories.py::merge_knowledge_entities()`, one
+  transaction). A dry run against the real database confirmed the same 127
+  companies (99 with at least one exact-match merge candidate, 28 with
+  left-alone-only duplicates) and produced sensible splits, e.g. `AMBUJACEM`
+  merges its 3 legal-name spellings but correctly leaves `ACC`/`Holcim`
+  alone (genuinely different companies), and `ADANIPOWER` merges 2 ticker-
+  style duplicates while leaving 14 real subsidiaries/group-entity names
+  untouched. **Known gap**: `context/graph_neo4j.py::sync_knowledge_graph()`
+  is pure-MERGE and never prunes, so under `GRAPH_BACKEND=neo4j` a merged-
+  away duplicate's Neo4j node is left orphaned until a fresh `graph-backfill`
+  (or a manual Cypher `DETACH DELETE`) cleans it up — the backfill command's
+  own docstring says this explicitly.
+- **Multi-hop traversal** (`context/knowledge_graph.py::find_multi_hop_claims()`)
+  — answers what `find_claims_about_entity()` above structurally cannot:
+  "which claims, from any company, are connected to an entity reached by
+  walking OUTWARD from this one" (e.g. a claim about the `Metric` "Gross
+  Margin" that some `Risk` `MAY_AFFECT`, even though that claim never
+  mentions the risk itself). A separate, additive function, never a
+  replacement — `find_claims_about_entity()` still owns every
+  `hop_distance == 1` claim (one touching the queried entity directly);
+  `find_multi_hop_claims()` only ever returns `hop_distance >= 2`, and
+  excludes any claim that also touches the queried entity directly even if
+  a longer path also reaches it, so the two functions' results never
+  overlap. `KnowledgeClaimView` carries the new `hop_distance`/`path` fields
+  (defaulting to `1`/`""`, so every existing construction site stays
+  backward compatible) — `path` is a human-readable relationship chain,
+  e.g. `"Risk:Input cost inflation --MAY_AFFECT--> Metric:Gross Margin"`,
+  the same chain-of-reasoning convention `context/graph.py::GraphCandidate.path`
+  already established. The SQLite path is a BFS, one batched query per hop
+  across the whole frontier (`storage/repositories.py::list_entity_neighbors()`/
+  `find_knowledge_claims_for_entity_ids()`, keyed by
+  `idx_knowledge_relationships_target` — a new index this feature also
+  added, since only the source direction had one before), bounded by
+  `max_hops` (default 2) and a 50-entity-per-hop frontier cap (truncated
+  deterministically with a logged warning, never an unbounded query on a
+  highly-connected entity). Because a `knowledge_entities` row is scoped per
+  `(entity_type, name, company_id)` — the same generic entity name gets its
+  own row per company that extracts it — the BFS pools every entity_id
+  sharing an `(entity_type, name)` key together at each hop, the same
+  cross-company name matching `find_claims_about_entity()`'s own query
+  already does; a pure single-`entity_id` graph walk would never cross a
+  company boundary at all. The Neo4j path
+  (`context/graph_neo4j.py::find_multi_hop_claims()`) is a variable-length
+  Cypher match (`[*1..N]`) constrained to `KGNode`-labeled nodes at every
+  step (keeps the walk off `:Claim`/`:Evidence`/`:TimePeriod` nodes), ranked
+  by hop count, joined to claims via the existing `:ABOUT` edge — `max_hops`
+  is interpolated directly (Cypher's variable-length range has no parameter
+  syntax), safe because it's always an app-controlled int, same
+  justification `_sync_knowledge_relationships()`'s `relationship_type`
+  interpolation already uses. Wired only into
+  `research/investigation_planner.py` (`InvestigationPlan.inferred_connections`,
+  a new `KnowledgeGraphPathsCapability` on `PlannerCapabilities` alongside
+  the existing single-hop `knowledge_graph` one, same neutral no-op default
+  pattern as `indicator_evidence`), deduped by `claim_id` against itself and
+  against `plan.knowledge_claims`, and capped at 10 — a real check against
+  the live database during this feature's verification found a single
+  popular entity's multi-hop result can reach into the hundreds of claims
+  (724, for one `MacroFactor` whose edge happened to land on a `Company`
+  node, which fans out to nearly every claim that company has ever made),
+  which would otherwise blow up the evaluator prompt's token budget.
+  `research/hypothesis_evaluator.py::_render_plan()` renders it as its own
+  "Multi-hop knowledge graph connections" block, modeled directly on
+  `context/graph.py::render_related_investigations()`'s wording and citation
+  rule — explicit that it's a chain, not a direct claim, cited
+  `[INFERENCE]` only, never `[FACT]`/`[CALCULATION]`. Deliberately **not**
+  wired into `research/knowledge_evidence.py`/Q&A/Signals reports in this
+  pass — those surfaces fold single-hop claims directly into `[FACT]`-grade
+  Evidence lines, and lack the Planner's evidence-sufficiency loop to
+  sanity-check a weak multi-hop chain; that wiring is a deliberate,
+  separate follow-up decision, not an oversight.
 
 ### Document Retrieval (`retrieval/document_search.py`)
 
@@ -466,9 +618,10 @@ research/documents.py::document_pages()      — same PDF/link resolution as
       │                                         document_text(), but keeping
       │                                         page boundaries intact
       ▼
-research/document_chunker.py                 — fixed-size, page-scoped
-      │  chunk_and_index_document()             chunks (1500 chars, 150
-      │                                         overlap) — no LLM call,
+research/document_chunker.py                 — sentence-packed, page-scoped
+      │  chunk_and_index_document()             chunks (~1500 chars, 150
+      │                                         char overlap by whole
+      │                                         sentence) — no LLM call,
       │                                         purely mechanical
       ▼
 document_chunks (+ document_chunks_fts, FTS5) — SQLite is the search index
@@ -568,11 +721,16 @@ Fusion) -> Ranked Top-K Evidence -> Planner / research/assistant.py
   future document ingestion embeds and upserts automatically, through the
   existing ingestion pipeline, not a parallel one.
 - **One-time backfill**: `python main.py vector-backfill [--company-id ...]
-  [--limit N] [--force]` — idempotent (a chunk already indexed under the
-  current embedding model is skipped; re-running costs nothing extra),
-  reusing the exact same `retrieval/semantic_indexer.py::
+  [--document-type ...] [--limit N] [--force]` — idempotent (a chunk already
+  indexed under the current embedding model is skipped; re-running costs
+  nothing extra), reusing the exact same `retrieval/semantic_indexer.py::
   embed_and_index_document_chunks()` the worker calls, not a second
-  implementation.
+  implementation. `--document-type` scopes to one `documents.document_type`
+  (e.g. `transcript` for concall transcripts only), combinable with
+  `--company-id`/`--limit`. Every run — one item per document, ok/failed —
+  is recorded to `batch_job_runs`/`batch_job_items` (`ingestion/batch_log.py`),
+  queryable via `list-batch-runs`/`show-batch-run`, same as the CLI's other
+  bulk/backfill commands.
 - **Observability**: `retrieval_diagnostics` (one row per hybrid retrieval
   call) — candidate counts per method, embedding/vector-store/keyword
   latency, degradation flag+reason, and a compact per-passage summary
@@ -723,8 +881,9 @@ Evidence retrieval (retrieval/structured_search.py + research/documents.py)
       │  — deterministic, always the same output for the same ingested data
       ▼
 context/reuse.py         — is there a fresh, near-duplicate prior
-                            (Signals reports only)   investigation already answering this? If so,
-                            return it directly — zero LLM calls.
+                            answer already answering this (Q&A or
+                            Signals alike)? If so, return it directly
+                            — zero LLM calls.
       │  (no reusable hit)
       ▼
 llm/hardness.py           — classify the question's complexity
@@ -759,8 +918,8 @@ llm/providers/{anthropic_provider,local_provider}.py  — the actual API call
       ▼
 llm/observability.py       — one log line + one llm_call_log row per call:
                             model/provider used, fallback used, tokens
-                            in/out, context tokens before/after
-                            optimization, estimated cost, latency
+                            in/out, cache write/read tokens, context tokens
+                            before/after optimization, estimated cost, latency
       │
       ▼
 Answer / report text, returned to web/app.py or main.py
@@ -771,12 +930,33 @@ replaceable):
 
 - **Context Optimizer** (`context/`) answers "what does this task need?" —
   never touches a model or provider. Within it, **reuse**
-  (`context/reuse.py`, exact-scope match) and **knowledge graph**
-  (`context/graph.py`, cross-company relationship match) are separate
-  mechanisms answering different questions — "has this exact question been
-  answered?" vs. "is a *different* company's reasoning relevant here?" — and
-  a graph hit is never treated as Evidence about the question's own
-  companies (see below).
+  (`context/reuse.py`, fused word-overlap + semantic match — see below) and
+  **knowledge graph** (`context/graph.py`, cross-company relationship match)
+  are separate mechanisms answering different questions — "has this exact
+  question been answered?" vs. "is a *different* company's reasoning
+  relevant here?" — and a graph hit is never treated as Evidence about the
+  question's own companies (see below).
+- **Reuse-before-recompute** (`context/reuse.py`) — "is this the same
+  question?" fuses two independent signals; clearing either threshold is
+  enough to reuse a prior answer instead of a new LLM call, the same fusion
+  spirit as [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy)
+  (FTS5 + semantic, neither replacing the other): word-overlap (Jaccard,
+  0.8, the original conservative check) plus cosine similarity over
+  `EmbeddingProvider` vectors (0.92 — calibrated against this app's real
+  local embedding model, set above every observed false-positive; several
+  genuinely-different questions on the same topic scored 0.6-0.71,
+  uncomfortably close to genuine paraphrases in the 0.6-0.89 range). A hard
+  period-hint gate (fiscal year/quarter extracted from both questions)
+  blocks reuse whenever they disagree, regardless of similarity score —
+  load-bearing, not a nicety: "Net profit Q1 FY24?" vs "Q1 FY25?" scores
+  0.968 cosine, indistinguishable from a real paraphrase without it.
+  `generated_reports.question_embedding`/`question_embedding_model` persist
+  the embedding once at save time (`web/app.py`); a report saved before
+  this shipped, or when the embedding provider was down, falls back to
+  Jaccard-only, same graceful-degradation shape as the vector layer
+  elsewhere. Still deliberately narrower than a general-purpose semantic
+  matcher — see `context/reuse.py`'s module docstring for the full
+  calibration reasoning.
 - **Hardness Evaluator** (`llm/hardness.py`) answers "how hard is this?" —
   a pure function of the question text and evidence volume.
 - **Model Router** (`llm/router.py`) answers "which available model handles
@@ -785,6 +965,26 @@ replaceable):
 - **Model Provider** (`llm/providers/`) answers "how do we talk to that
   model?" — one module per provider (Anthropic cloud, local Ollama), same
   `generate()` shape, so a new provider only has to implement that shape.
+  Both accept an optional `cacheable_prefix` (see prompt caching below);
+  Anthropic acts on it, Ollama accepts it for Protocol conformance and folds
+  it back into a plain message (no server-side cache to opt into there).
+- **Prompt caching** (`llm/providers/anthropic_provider.py`, `cache_control`)
+  — `research/assistant.py`/`research/signals_report.py` split Evidence into
+  Financials (`get_comparison_evidence` — the same for every question about
+  a given set of companies) and Docs/Macro (genuinely question-scoped:
+  `get_document_evidence`/`get_document_passage_evidence`/
+  `get_macro_evidence` all take `question`). Financials is optimized with an
+  empty question string (`context/optimizer.py`'s relevance scoring becomes
+  uniform, so its trim is stable too) and sent as `cacheable_prefix` — a
+  separate, `cache_control`-marked content block Anthropic caches
+  server-side; Docs/Macro plus the question ride in the normal variable
+  message. A second question about the same companies within the cache's
+  TTL reads that Financials block back at a fraction of the input-token
+  cost instead of resending it. `ProviderResponse.cache_creation_input_tokens`/
+  `cache_read_input_tokens` (and the matching `llm_call_log` columns) make
+  the effect directly inspectable — verified against the real API: one call
+  wrote 10,878 tokens to cache, the next (a different question, same
+  company) read that exact count back.
 
 `research/insights.py` and `research/signals_report.py`'s default model
 stays pinned (no cross-tier fallback beyond the pinned model) to preserve
@@ -938,13 +1138,25 @@ Thin argparse wrapper calling the same modules as the web app — `init`,
 from FRED, e.g. `FEDFUNDS`/`DGS10`), `list-companies`, `archive-company`,
 `restore-company`, `add-stock-action`/`list-stock-actions` (record/list a
 split, bonus, or rights issue), `analyze`, `ask`, `watchlist-add/remove`,
-`list-watchlist`, `list-batch-runs`/`show-batch-run` (audit log for
-`scripts/`'s bulk-fetch batch jobs), `vector-backfill` (one-time/idempotent
-embedding backfill over already-processed documents — section 11; the same
-`retrieval/semantic_indexer.py` function every future document ingestion
-also calls), and `replay-events` (re-dispatch stored
-`DatasetIngestedEvent`s to registered workers) — both tied to the event bus,
-see [Dataset-centric ingestion: the event
+`list-watchlist`, `list-batch-runs`/`show-batch-run` (audit log —
+`batch_job_runs`/`batch_job_items`, originally just `scripts/`'s bulk-fetch
+jobs, now also `vector-backfill`/`graph-backfill` and every path through
+`ingestion/coordinator.py::process_documents()`/`archive_documents()`/
+`unarchive_documents()`, i.e. Admin → Ingest queue too — one `BatchRun`
+(`ingestion/batch_log.py`) per run, one item per document/company),
+`vector-backfill` (one-time/idempotent embedding backfill over
+already-processed documents, optionally scoped by `--document-type` — section
+11; the same `retrieval/semantic_indexer.py` function every future document
+ingestion also calls), `graph-backfill` (one-time, explicit full sync of
+SQLite facts into Neo4j when `GRAPH_BACKEND=neo4j` — company/sector/
+investigation graph and knowledge-graph entities/relationships always sync in
+full; `canonical_financials` observations are opt-in via `--company-id`/
+`--all-financials` for an explicit one-off pass — see
+`context/graph_neo4j.py`'s module comment; day-to-day, financials now
+auto-sync too, see [Research Knowledge Graph](#research-knowledge-graph-contextknowledge_graphpy)
+below — fails fast if Neo4j is disabled or unreachable), and `replay-events`
+(re-dispatch stored `DatasetIngestedEvent`s to registered workers) — both
+tied to the event bus, see [Dataset-centric ingestion: the event
 bus](#dataset-centric-ingestion-the-event-bus-ingestionevent_buspy) — and
 `serve` (launches the Flask dev server). Useful for bulk/scripted ingestion
 and quick terminal Q&A without the browser.
@@ -968,7 +1180,7 @@ storage/price_repository.py — upsert_daily_bar()/upsert_daily_bars()
 data/price_history.db  — daily_prices, separate file from equity_research.db
       │
       ▼
-web/app.py:1683 — GET /companies/<company_id>/price-feed.json
+web/app.py:1702 — GET /companies/<company_id>/price-feed.json
 ```
 
 - **Why a separate db file**: `schemas/price_schema.sql`'s header comment
@@ -994,10 +1206,14 @@ web/app.py:1683 — GET /companies/<company_id>/price-feed.json
   yfinance's soft rate limits than one continuous loop over ~500 tickers.
   See `USER_GUIDE.md` §12/13 for the operator-facing version.
 - **Read back via `/companies/<company_id>/price-feed.json`**
-  (`web/app.py:1683`) — takes `period` (`1y`/`5y`/`10y`/`max`), resolves it
+  (`web/app.py:1702`) — takes `period` (`1y`/`5y`/`10y`/`max`), resolves it
   to a date range, and returns parallel `dates`/`open`/`high`/`low`/`close`/
   `volume` arrays read straight off `daily_prices` for that company and
-  window. Backs the Charts tab's price overlay.
+  window. **Not yet rendered anywhere in the UI** — the Charts tab's own
+  "Price & Volume" section is fed separately, through `web/charts_feed.py`'s
+  general charts feed (which reads `daily_prices` directly via its own
+  optional `price_conn`), not through this route. This route is a raw JSON
+  feed only today — see `USER_GUIDE.md` §12.
 - **`PriceStore`** (`storage/price_store.py`) is the same DI shape as
   `storage/fact_store.py`'s `FactStore` (architecture guardrail #3) — a
   frozen dataclass of plain callables matching the repository functions'
@@ -1080,13 +1296,13 @@ data feeds — noted in each file's header comment.
 - **Companies**: `companies` (per-company `country`/`currency`/`fiscal_year_end_month`, not global), `company_identifier_history`, `company_index_membership`, `company_list_column_settings`, `overview_ratio_settings` (global `ratio_key` → `enabled` toggle — which ratios the company page's Overview tab shows, Admin-configurable, same shape/spirit as `company_list_column_settings` but for the Overview tab instead of the company list), `stock_actions` (discrete corporate events — splits/bonus/rights issues — recorded as raw events only; no split-adjustment of historical shares/EPS/price series yet), `sectors`/`industries`/`index_definitions` (Admin-editable lookup vocabularies backing the sector/industry/index-tag dropdowns, seeded from whatever's already in use).
 - **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — 158,759 rows (IITM 116,187 + RBI 42,572); MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet), `bank_infrastructure_observations` (RBI's monthly bank×metric ATM/NEFT/RTGS bulletins — a separate shape from `macro_observations`' flat series). Daily OHLCV price/volume history lives separately, in its own db file — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below.
 - **Ingestion tracking**: `ingestion_queue_items` — the Admin → Ingest panel's discovery/status tracking for financial/macro files under `data/raw/` (content-hash keyed); orchestration metadata only, never the source of truth for parsed data itself.
-- **Event bus & batch audit**: `dataset_events`, `worker_processing_log`, `batch_job_runs`, `batch_job_items` — the Event Store, per-worker processing log, and bulk-script audit trail behind ingestion's event-driven layer; see [Dataset-centric ingestion: the event bus](#dataset-centric-ingestion-the-event-bus-ingestionevent_buspy) for the full shape of each.
+- **Event bus & batch audit**: `dataset_events`, `worker_processing_log`, `batch_job_runs`, `batch_job_items` — the Event Store, per-worker processing log, and general-purpose bulk-operation audit trail (`scripts/`, `vector-backfill`/`graph-backfill`, document processing/archive) behind ingestion's event-driven layer; see [Dataset-centric ingestion: the event bus](#dataset-centric-ingestion-the-event-bus-ingestionevent_buspy) for the full shape of each.
 - **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` + `document_chunks_fts` (page-scoped chunks, FTS5-indexed by `research/document_chunker.py`; `embedding_status`/`embedding_model`/`embedded_at` track semantic-indexing state per chunk — the actual vectors live in the VectorStore, not this table, which stays the rebuildable authoritative source — see [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy)).
 - **Shareholding Pattern**: `shareholding_observations` (one row per company/fiscal_year/quarter — promoter/public/employee-trust holding percentages, plus an FII/DII/Government/public-non-institutional breakdown read off the SHP XBRL's own category-rollup contexts rather than hand-aggregated), `shareholding_holders` (one row per named holder within a category — `side` promoter/public, `category`, `holder_name`, `num_shares`/`percent_of_shares`, sourced from NSE filings). Backs the company page's Shareholding Pattern tab, rendered by `web/static/js/shareholding_panel.js` against `web/shareholding_feed.py`'s `/companies/<id>/shareholding-feed.json` — not otherwise described elsewhere in this doc.
 - **Knowledge Builder**: `knowledge_entities` (deduped named things — Company/Product/Risk/ManagementPerson/...), `knowledge_claims` (one extracted statement per row, with its own provenance — document, fiscal period, speaker, `claim_type`, confidence — additive, never overwritten), `knowledge_relationships` (typed edges between two entities, optionally traced to the claim that asserted them), `knowledge_evidence` (the supporting quote for one claim). SQLite is the source of truth for all four; `context/knowledge_graph.py`/`context/graph_neo4j.py` project them into the same Neo4j graph the sector-peer traversal uses, sharing `Company` nodes rather than duplicating them — see [Research Knowledge Graph](#research-knowledge-graph-contextknowledge_graphpy).
 - **Research/investigations**: `generated_reports` (persisted Signals reports), `research_thread_evidence`, `research_thread_followups`, `company_insights` (Key Insights history, per-company); `system_insights` (the site-level counterpart — one row per cross-company insight, `company_ids` a JSON array, `source_claim_ids` tracing provenance back into `knowledge_claims`, `status` new/retained/archived — generated from the [`/tools` Insights panel](#web-layer-webapppy), not a single company page); The hypothesis-driven investigation pipeline's `investigations` (one row per structured investigation, including `as_of` — the point-in-time cutoff it ran under, if any — see [Golden Research Loop validation](#golden-research-loop-validation)), `investigation_hypotheses`, `investigation_hypothesis_evidence`; and `investigation_companies` — the investigation↔company join table a company page's Investigations section queries through (`storage/investigation_repository.py`), so a cross-company investigation is one row, listed under every company it covers, never duplicated.
 - **Configurable Indicator Framework**: `indicator_rule_config` (per-user Global/Sector/Company overrides, keyed `(user_id, rule_id, scope_type, scope_value)`, a NULL field meaning "inherit"), `indicator_evaluations` (append-only audit trail of triggered indicators, deduped by `result_hash`). The rules themselves are Python (`indicators/rules.py`), not rows — see [Configurable Indicator Framework](#configurable-indicator-framework-indicators) above.
-- **LLM observability**: `llm_call_log` — one row per `llm/router.py` call or `context/reuse.py` reuse hit (model/provider, fallback, tokens, cost, context-optimization accounting) — covers all four LLM call sites, including `research/knowledge_builder.py` (`task_name="knowledge_extraction"`).
+- **LLM observability**: `llm_call_log` — one row per `llm/router.py` call or `context/reuse.py` reuse hit (model/provider, fallback, tokens, cost, context-optimization accounting) — covers all four LLM call sites, including `research/knowledge_builder.py` (`task_name="knowledge_extraction"`). `graph_hit`/`graph_hit_thread_id`/`graph_hit_score` are set on the same row as the real call a `context/graph.py` sector-peer match was appended to (`research/signals_report.py`) — a graph hit augments a call rather than replacing it, unlike a reuse hit, so it's never a second row. `investigation_id` tags every call made while running one `research/investigation.py` investigation — see [The four-layer split](#the-four-layer-split) above.
 - **User content**: `company_notes`, `company_note_attachments`, `watchlist_items`.
 - **Auth**: `users`.
 
@@ -1176,49 +1392,22 @@ pre-existing test failure.
   whole thing. `research/document_chunker.py` *does* chunk the
   full document for search — the two gaps are different: extraction is
   still single-pass and length-capped, search indexes everything.
-- **Entity resolution is name-string matching, not identity resolution** — a
-  `MAX_CHARS_FOR_EXTRACTION` (40,000 characters) before being sent to the
-  model; a longer annual report gets its first ~40K characters extracted,
-  not the whole thing. A real multi-pass/chunked extraction is future work,
-  not built.
-- **Entity resolution is name-string matching, not identity resolution** — a
-  real company can end up with two separate `Company`-type entity rows: one
-  from the model naming it in the extracted text (e.g. "SBFC Finance
-  Limited"), one from the `COMPANY` placeholder resolving to the internal
-  `company_id` (e.g. "SBFCFINANCE"). Both rows are individually correct and
-  correctly scoped; they're just not unified into one canonical entity.
-  Worth resolving before anything downstream assumes exactly one `Company`
-  entity per company.
-- **The Research Knowledge Graph (`context/knowledge_graph.py`) only answers
-  single-hop "what's connected to this entity" queries** — real multi-hop
-  reasoning (e.g. "which companies have a claim `ABOUT` a `Risk` that
-  `MAY_AFFECT` a `Metric` another company also has a claim about") isn't
-  built; `find_claims_about_entity()` returns one entity's directly-connected
-  claims and their immediate neighbors, not a chain across several hops.
-  Genuinely graph-shaped multi-hop traversal is future work, not attempted
-  here — `research/investigation_planner.py` queries the graph the
-  same single-hop way everything else does.
-- **Not wired into Q&A or Signals reports yet** — `research/assistant.py`/
-  `signals_report.py` don't query the Research Knowledge Graph at all; a
-  question can't yet be answered from a cross-company claim connection the
-  way it can from `canonical_financials` or a sector-peer investigation.
-  Building that integration point is a later step, not attempted when the
-  Research Knowledge Graph itself shipped.
 - **Investigation Orchestrator (`research/investigation.py`) has
-  the iterative evidence-sufficiency loop the guardrails call for, but it's
-  narrower than a full Planner-controlled loop** — an `INSUFFICIENT_EVIDENCE`
-  verdict does trigger one gap-targeted retry (bounded by 4 termination
-  controls: evidence sufficiency, `MAX_EVIDENCE_ITERATIONS`, a wall-clock
-  deadline, a no-new-evidence check — see [The four-layer
-  split](#the-four-layer-split) and [Golden Research Loop
-  validation](#golden-research-loop-validation)), but two things are still
-  missing: no cost/token budget is one of those termination controls, and a
-  retry re-runs the same broad evidence-gathering pass across every capability
-  rather than targeting just the one capability the named evidence gap
-  actually points at. The Knowledge Builder itself still only extracts and
-  persists what a document already states — it's `research/investigation.py`
-  that does the hypothesis generation/planning/evaluation/synthesis
-  reasoning, not the Knowledge Builder.
+  the iterative evidence-sufficiency loop the guardrails call for, but no
+  cost/token budget control** — an `INSUFFICIENT_EVIDENCE` verdict triggers
+  one gap-targeted retry, bounded by 4 termination controls: evidence
+  sufficiency, `MAX_EVIDENCE_ITERATIONS`, a wall-clock deadline, a
+  no-new-evidence check (see [The four-layer split](#the-four-layer-split)
+  and [Golden Research Loop validation](#golden-research-loop-validation)).
+  `llm/observability.py` already logs real per-call `input_tokens`/
+  `output_tokens`/`estimated_cost_usd` to `llm_call_log`, but nothing
+  aggregates that back into the loop or caps against it — a hypothesis with
+  several retries (each potentially triggering `research/macro_evidence.py`'s
+  own internal LLM call) can spend real money before the wall-clock deadline
+  trips. The Knowledge Builder itself still only extracts and persists what a
+  document already states — it's `research/investigation.py` that does the
+  hypothesis generation/planning/evaluation/synthesis reasoning, not the
+  Knowledge Builder.
 - **No UI to browse extracted claims** — `knowledge_claims`/
   `knowledge_entities`/`knowledge_relationships` are real, queryable data
   (`storage/repositories.py::list_knowledge_claims_for_company()` etc.), but
@@ -1229,27 +1418,19 @@ pre-existing test failure.
   so `/admin/usage`'s task breakdown already includes it, but there's no
   Ingest-queue-specific cost view (e.g. "$X spent processing these N pending
   documents").
-- **~~Document search is keyword-only, not semantic~~ — resolved.**
-  `retrieval/hybrid_search.py` now runs FTS5 AND embedding/vector semantic
-  search together (RRF-fused) for both the Investigation Planner's
-  `document_search` capability and `research/assistant.py`'s Q&A path — see
-  [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy).
-  What remains genuinely unbuilt: `retrieval/vector_store_qdrant.py` has only
-  been exercised against a mocked `qdrant_client` in this environment, not a
-  live Qdrant server (the Docker container available here has no published
-  host port) — see
-  [SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md](SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md)'s
-  disclosure for exactly what that gap is and how to close it.
-- **Chunking is fixed-size, not paragraph/section-aware** — 1500 characters
-  with 150 overlap, page-scoped; a chunk boundary can land mid-paragraph or
-  mid-table. `document_chunks.section_heading` exists in the schema but is
-  never populated — no heading-detection logic exists. This limits both
-  FTS5 and semantic chunk quality equally; not specific to the vector layer.
-- **~~`retrieval/document_search.py` isn't wired into any evidence path~~ —
-  resolved** — see [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy)
-  above. `search_documents()` (FTS5-only) itself is still directly callable
-  and tested; what changed is that the Planner's/Q&A's evidence paths are
-  now bound to the hybrid composition rather than nothing.
+- **Chunking is not paragraph/section/table-aware** — `research/
+  document_chunker.py::_split_into_chunks()` packs whole sentences up to
+  ~1500 chars (`_split_into_sentences()` + `_pack_sentences()`), so a
+  boundary lands between sentences, not mid-word/mid-table.
+  `document_chunks.section_heading` still exists in the schema but is never
+  populated — a line-level heading-detection heuristic was tried and
+  reverted (see the module docstring): `pypdf`'s `extract_text()` inserts a
+  newline at every visual line wrap, not at paragraph/heading boundaries, so
+  ordinary wrapped body lines are indistinguishable from short headings by
+  that approach, and it fragmented a real page into 24 garbage "sections."
+  A real fix needs layout-aware extraction (pdfplumber, unstructured.io-style
+  block extraction), not a chunker-level heuristic. This limits both FTS5
+  and semantic chunk quality equally; not specific to the vector layer.
 
 ### Configurable Indicator Framework
 
@@ -1283,31 +1464,19 @@ pre-existing test failure.
 
 ### Research / AI layer (Context Optimizer + Model Router)
 
-- **No semantic/embedding-based matching** — `context/reuse.py`'s "is this the
-  same question?" check is plain word-overlap (Jaccard similarity),
-  deliberately conservative. It will miss genuine near-duplicates phrased
-  differently rather than risk a false-positive reuse.
-- ~~Reuse only covers Signals reports~~ — no longer true: every `/research/ask`,
-  `/chat`, and per-company Ask AI answer is now persisted to `generated_reports`
-  too (not just full Signals reports), and `research/assistant.py::answer_question()`
-  checks `context/reuse.py` first, same as `research/signals_report.py` always did.
 - **`research/insights.py` and `research/signals_report.py` don't auto-route
   by hardness** — both stay pinned to one fixed model (a deliberate choice to
   avoid changing their existing answer quality). Only `research/assistant.py`
   auto-routes across QUICK/STANDARD/DEEP tiers today, so Insights and Signals
   reports don't get tiering's cost savings yet.
-- **No Anthropic prompt caching** (`cache_control`) — the same company's
-  evidence block is rebuilt and resent in full on every call; nothing is
-  cached provider-side even though large portions repeat across questions
-  for the same company.
-- **Local Ollama fallback is untested against a real Ollama instance** — the
-  test suite mocks the HTTP layer; the fallback path has never been exercised
-  against an actually running local model.
-- **The Neo4j backend (`context/graph_neo4j.py`) is likewise untested against
-  a real server** — its tests mock the driver/session and verify the Cypher
-  parameters and result-scoring logic, not that the Cypher actually executes
-  correctly against a live Neo4j instance. Worth a manual smoke test the
-  first time it's pointed at a real server.
+- **`context/graph_neo4j.py`'s Cypher read path is unverified against a real
+  server** — `main.py graph-backfill --all-financials` has verified the
+  write path for real (companies/sectors/investigations, knowledge-graph
+  entities/relationships, and 52,688 `canonical_financials` observations
+  across 2,566 companies all synced against a locally running Neo4j
+  instance), but query correctness for the traversal/read side
+  (`find_related_investigations()`, `find_claims_about_entity()`) still
+  rests primarily on the mocked-driver unit tests.
 - **Cross-company reasoning-pattern reuse exists but is intentionally narrow**
   (`context/graph.py`) — it only connects a company to its *sector peers*
   (`companies.basic_industry`/`macro_economic_sector`) and only bridges
@@ -1329,14 +1498,6 @@ pre-existing test failure.
   variables (e.g. `rbi_repo_rate`) descriptively for keyword matching and
   the LLM prompt; they don't query `macro_observations` for the actual
   current repo-rate value. A natural next step, not yet built.
-- **Graph hits aren't logged to `llm_call_log`** — unlike a reuse hit
-  (`context/reuse.py`, which does get an `llm_call_log` row via
-  `observability.record_reuse`), a knowledge-graph match today is only
-  visible inside the rendered prompt itself, not in the observability table.
-- ~~No UI for `llm_call_log`~~ — no longer true: `/admin/usage` (profile menu →
-  Usage, admin-only) summarizes total spend/tokens/calls plus breakdowns by
-  task and by model. Still missing: per-investigation cost shown inline on
-  the Investigations tab itself.
 
 ### Frontend
 

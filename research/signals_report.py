@@ -6,7 +6,12 @@ short tagged answer.
 Financial evidence retrieval (get_comparison_evidence) grounds every report;
 single-company reports also pull MANAGEMENT_STATEMENT evidence extracted from
 this company's uploaded documents (research/documents.py — Docs tab annual
-reports, transcripts, investor presentations). The Signals report format also
+reports, transcripts, investor presentations), plus Knowledge Graph claims
+already extracted from those same documents and connected to the company or
+to a named entity the question mentions (research/knowledge_evidence.py,
+Step 2B — the same cross-company claim connection research/
+investigation_planner.py's structured investigations already use, now
+reachable from an ordinary Signals report too). The Signals report format also
 calls for customer/competitive/journalism evidence this app doesn't ingest at
 all — the system prompt below tells the model to say so in "What We Still
 Don't Know" rather than invent it, which is the same rule research/assistant.py
@@ -21,13 +26,14 @@ from dataclasses import dataclass, field
 
 from config.settings import ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL
 from context.graph import render_related_investigations
-from context.optimizer import optimize
+from context.optimizer import OptimizedContext, optimize
 from llm import observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
 from research.capabilities import InvestigationMemoryCapabilities, default_investigation_memory
 from research.documents import get_document_evidence, get_document_passage_evidence
 from research.evidence import Evidence, render_evidence_block
+from research.knowledge_evidence import get_knowledge_graph_evidence
 from retrieval.structured_search import get_comparison_evidence
 
 SIGNALS_SYSTEM_PROMPT = """You are Signals, a personal research analyst for individuals investigating \
@@ -48,7 +54,10 @@ with", "suggests".
 
 The evidence block contains financial-statement data (reported figures and deterministic \
 ratios/calculations from them) and, when investigating a single company, may also contain \
-MANAGEMENT_STATEMENT excerpts from that company's own uploaded documents. It never contains \
+MANAGEMENT_STATEMENT excerpts from that company's own uploaded documents, plus Knowledge Graph \
+claims already extracted from those same documents (connected to the company or to a named \
+entity the question mentions) — cite a Knowledge Graph claim the same as any other \
+FACT/CALCULATION/MANAGEMENT_STATEMENT/INFERENCE line, never as a separate category. It never contains \
 independent customer evidence, competitive intelligence, regulatory filings text, journalism, or \
 social sentiment — a management document's own framing of its competitors or customers is still just \
 that company's word, not independent evidence, so treat it as MANAGEMENT_STATEMENT, not FACT. \
@@ -164,6 +173,16 @@ def generate_signals_report(
     someone else's reasoning pattern rather than evidence about this
     question's own companies — and appends it as its own labeled block
     when found.
+
+    Prompt caching (llm/providers/anthropic_provider.py): Financials
+    evidence (get_comparison_evidence) is the same for every question about
+    these companies; Docs evidence isn't, since get_document_evidence/
+    get_document_passage_evidence both take `question` itself. Financials is
+    rendered and optimized separately (empty question — uniform relevance,
+    see context/optimizer.py's _relevance()) and sent as `cacheable_prefix`
+    — byte-identical across different questions about the same companies,
+    which is what actually makes it cacheable — same split
+    research/assistant.py::answer_question() uses, for the same reason.
     """
     mem = investigation_memory or default_investigation_memory()
     reused = mem.reusable_report(conn, question, company_ids, statement_type)
@@ -178,16 +197,23 @@ def generate_signals_report(
         ]
         return SignalsReport(report_markdown=reused.report_markdown, evidence=evidence, followups=reused.followups)
 
-    evidence = get_comparison_evidence(conn, company_ids, statement_type)
+    financial_evidence = get_comparison_evidence(conn, company_ids, statement_type)  # cacheable
+    variable_evidence: list[Evidence] = []
     if len(company_ids) == 1:
         # Uploaded-document evidence (Docs tab) only has single-company
         # attribution today — see research/documents.py.
-        evidence = evidence + get_document_evidence(conn, company_ids[0], question)  # whole document
+        variable_evidence += get_document_evidence(conn, company_ids[0], question)  # whole document
         # Additive (feature spec section 9): hybrid (FTS5+semantic) retrieval's
         # top-K passages, alongside the whole-document evidence above — same
         # reasoning as research/assistant.py::answer_question()'s identical
         # addition. Never replaces the whole-document evidence.
-        evidence = evidence + get_document_passage_evidence(conn, company_ids[0], question)  # targeted passages
+        variable_evidence += get_document_passage_evidence(conn, company_ids[0], question)  # targeted passages
+        # Cross-company Knowledge Graph claims (Step 2B) connected to this
+        # company's own Company node or to any known entity the question
+        # names — see research/knowledge_evidence.py. Single-company only,
+        # same constraint the Docs evidence above already has.
+        variable_evidence += get_knowledge_graph_evidence(conn, company_ids[0], question)
+    evidence = financial_evidence + variable_evidence
     if not evidence:
         return SignalsReport(
             report_markdown=(
@@ -197,8 +223,24 @@ def generate_signals_report(
         )
 
     hardness = fixed(Tier.DEEP, "full investigation report")
-    optimized = optimize(question, evidence, hardness.tier)
-    user_message = f"Evidence:\n{render_evidence_block(optimized.evidence)}\n\nQuestion: {question}"
+    optimized_financial = optimize("", financial_evidence, hardness.tier)
+    optimized_variable = optimize(question, variable_evidence, hardness.tier)
+    optimized = OptimizedContext(
+        evidence=optimized_financial.evidence + optimized_variable.evidence,
+        dropped=optimized_financial.dropped + optimized_variable.dropped,
+        total_tokens_before=optimized_financial.total_tokens_before + optimized_variable.total_tokens_before,
+        total_tokens_after=optimized_financial.total_tokens_after + optimized_variable.total_tokens_after,
+        budget=optimized_financial.budget + optimized_variable.budget,
+    )
+    cacheable_prefix = (
+        f"Evidence (Financials):\n{render_evidence_block(optimized_financial.evidence)}"
+        if optimized_financial.evidence else None
+    )
+    variable_block = render_evidence_block(optimized_variable.evidence)
+    user_message = (
+        f"Evidence (Docs):\n{variable_block}\n\nQuestion: {question}" if variable_block
+        else f"Question: {question}"
+    )
 
     related = mem.related_investigations(conn, question, company_ids)
     if related:
@@ -207,7 +249,7 @@ def generate_signals_report(
     try:
         result = route(
             system=SIGNALS_SYSTEM_PROMPT, user_message=user_message, hardness=hardness,
-            max_tokens=MAX_TOKENS, pinned_model=model,
+            max_tokens=MAX_TOKENS, pinned_model=model, cacheable_prefix=cacheable_prefix,
         )
     except AllProvidersUnavailableError:
         return SignalsReport(
@@ -217,6 +259,8 @@ def generate_signals_report(
     observability.record(
         conn, task_name="signals_report", company_ids=company_ids, question=question,
         result=result, optimized=optimized,
+        graph_hit_thread_id=related[0].thread_id if related else None,
+        graph_hit_score=related[0].score if related else None,
     )
 
     response = result.response

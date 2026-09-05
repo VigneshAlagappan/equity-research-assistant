@@ -18,25 +18,30 @@ from __future__ import annotations
 from storage.db_types import DBConnection
 
 from config.settings import ANTHROPIC_MODEL
-from context.optimizer import optimize
+from context.optimizer import OptimizedContext, optimize
 from llm import observability
 from llm.hardness import classify
 from llm.router import TIER_PREFERRED_MODEL, AllProvidersUnavailableError, route
 from research.capabilities import InvestigationMemoryCapabilities, default_investigation_memory
 from research.documents import get_document_evidence, get_document_passage_evidence
 from research.evidence import render_evidence_block
+from research.knowledge_evidence import get_knowledge_graph_evidence
 from research.macro_evidence import get_macro_evidence
 from retrieval.structured_search import get_comparison_evidence
 
 SYSTEM_PROMPT = """You are an equity research assistant for global listed companies, with a primary \
 focus on US and India markets.
 
-HARD RULE — evidence sources: the evidence block below is built ONLY from three \
+HARD RULE — evidence sources: the evidence block below is built ONLY from four \
 sources: the company's ingested Financials (reported metrics, ratios, YoY/CAGR \
 growth), its uploaded Docs (annual reports, transcripts, investor \
-presentations), and Macro/regulatory data for India and the US (RBI, IITM \
+presentations), Macro/regulatory data for India and the US (RBI, IITM \
 rainfall, FRED — labeled with company_id "INDIA" or "USA" rather than a \
-company ticker, since it isn't about any one company). You must answer using ONLY that evidence block — never from \
+company ticker, since it isn't about any one company), and Knowledge Graph \
+claims (statements already extracted from the company's own documents, \
+connected to the company or to a named entity the question mentions — cited \
+the same as any other FACT/CALCULATION/MANAGEMENT_STATEMENT/INFERENCE line, \
+never a separate category). You must answer using ONLY that evidence block — never from \
 your own training knowledge, never by estimating or guessing a number that \
 isn't in the evidence, and never by inventing a source, document, or figure \
 that isn't present. Do not hallucinate. If the evidence doesn't cover what the \
@@ -100,15 +105,20 @@ def answer_question(
     models/providers if the preferred one is unavailable — this is the
     default behavior.
 
-    Evidence-source rule: the calls below (Financials + Docs + Macro) are the
-    only evidence this function is allowed to gather — SYSTEM_PROMPT tells
-    the model to answer from this evidence alone, so widening it further
-    (e.g. pulling in Notes or News) changes what the model is allowed to
-    cite and must be a deliberate choice, not an incidental one.
-    get_document_passage_evidence() (hybrid FTS5+semantic retrieval,
-    research/documents.py) is exactly such a deliberate widening — still
-    "Docs" evidence, just the specific relevant passage instead of/alongside
-    each whole document's opening text, per this feature's spec section 9.
+    Evidence-source rule: the calls below (Financials + Docs + Macro +
+    Knowledge Graph) are the only evidence this function is allowed to
+    gather — SYSTEM_PROMPT tells the model to answer from this evidence
+    alone, so widening it further (e.g. pulling in Notes or News) changes
+    what the model is allowed to cite and must be a deliberate choice, not
+    an incidental one. get_document_passage_evidence() (hybrid
+    FTS5+semantic retrieval, research/documents.py) and
+    get_knowledge_graph_evidence() (research/knowledge_evidence.py,
+    single-company only) are exactly such deliberate widenings — the latter
+    surfaces a cross-company claim connection (Step 2B) touching this
+    company or an entity the question names by name, folded into an
+    ordinary FACT/CALCULATION/MANAGEMENT_STATEMENT/INFERENCE Evidence line
+    rather than a separate block, since it's genuine evidence about this
+    question's own company, not another company's reasoning.
 
     Reuse-before-recompute (context/reuse.py): first checked against
     generated_reports for a prior saved answer/report on these exact
@@ -121,6 +131,21 @@ def answer_question(
     this is what makes asking the same/near-same question twice free the
     second time, and is the mechanism that populates the Investigations list
     in the first place.
+
+    Prompt caching (llm/providers/anthropic_provider.py): Financials
+    evidence (get_comparison_evidence) is the same for every question about
+    these companies — Docs/Macro evidence isn't, since get_document_evidence/
+    get_document_passage_evidence/get_macro_evidence all take `question`
+    itself. So Financials is rendered and optimized SEPARATELY, with an
+    empty question string (uniform relevance — pure freshness/confidence/
+    token-cost ranking, see context/optimizer.py's _relevance()), and sent as
+    `cacheable_prefix` — byte-identical across different questions about the
+    same companies (until the underlying data changes), which is what
+    actually makes it cacheable. Docs/Macro evidence keeps the normal
+    question-scored optimize() pass and rides along in the variable
+    `user_message`. A second (or third, ...) question about the same
+    company within Anthropic's cache TTL reads that Financials block back at
+    a fraction of the input-token cost instead of paying full price again.
     """
     mem = investigation_memory or default_investigation_memory()
     reused = mem.reusable_report(conn, question, company_ids, statement_type)
@@ -131,18 +156,25 @@ def answer_question(
         )
         return reused.report_markdown
 
-    evidence = get_comparison_evidence(conn, company_ids, statement_type)  # Financials
+    financial_evidence = get_comparison_evidence(conn, company_ids, statement_type)  # Financials — cacheable
+    variable_evidence: list = []
     if len(company_ids) == 1:
         # Uploaded-document evidence (Docs tab) only has single-company
         # attribution today — see research/documents.py.
-        evidence = evidence + get_document_evidence(conn, company_ids[0], question)  # Docs (whole document)
+        variable_evidence += get_document_evidence(conn, company_ids[0], question)  # Docs (whole document)
         # Additive (section 9): the specific passage(s) hybrid retrieval
         # judges most relevant to THIS question, not just each document's
         # opening ~12,000 characters — finds a paraphrased answer buried
         # deep in a long filing that get_document_evidence() above would
         # never reach. Never removes the whole-document evidence above.
-        evidence = evidence + get_document_passage_evidence(conn, company_ids[0], question)  # Docs (targeted passages)
-    evidence = evidence + get_macro_evidence(conn, question)  # Macro (RBI, IITM, FRED, ...)
+        variable_evidence += get_document_passage_evidence(conn, company_ids[0], question)  # Docs (targeted passages)
+        # Cross-company Knowledge Graph claims (Step 2B) connected to this
+        # company's own Company node or to any known entity the question
+        # names — see research/knowledge_evidence.py. Single-company only,
+        # same constraint the Docs evidence above already has.
+        variable_evidence += get_knowledge_graph_evidence(conn, company_ids[0], question)  # Knowledge Graph
+    variable_evidence += get_macro_evidence(conn, question)  # Macro (RBI, IITM, FRED, ...)
+    evidence = financial_evidence + variable_evidence
     if not evidence:
         if company_ids:
             return (
@@ -156,14 +188,30 @@ def answer_question(
         )
 
     hardness = classify(question, company_ids, len(evidence))
-    optimized = optimize(question, evidence, hardness.tier)
+    optimized_financial = optimize("", financial_evidence, hardness.tier)
+    optimized_variable = optimize(question, variable_evidence, hardness.tier)
+    optimized = OptimizedContext(
+        evidence=optimized_financial.evidence + optimized_variable.evidence,
+        dropped=optimized_financial.dropped + optimized_variable.dropped,
+        total_tokens_before=optimized_financial.total_tokens_before + optimized_variable.total_tokens_before,
+        total_tokens_after=optimized_financial.total_tokens_after + optimized_variable.total_tokens_after,
+        budget=optimized_financial.budget + optimized_variable.budget,
+    )
     pinned_model = model or ANTHROPIC_MODEL
-    user_message = f"Evidence:\n{render_evidence_block(optimized.evidence)}\n\nQuestion: {question}"
+    cacheable_prefix = (
+        f"Evidence (Financials):\n{render_evidence_block(optimized_financial.evidence)}"
+        if optimized_financial.evidence else None
+    )
+    variable_block = render_evidence_block(optimized_variable.evidence)
+    user_message = (
+        f"Evidence (Docs/Macro):\n{variable_block}\n\nQuestion: {question}" if variable_block
+        else f"Question: {question}"
+    )
 
     try:
         result = route(
             system=SYSTEM_PROMPT, user_message=user_message, hardness=hardness,
-            max_tokens=MAX_TOKENS, pinned_model=pinned_model,
+            max_tokens=MAX_TOKENS, pinned_model=pinned_model, cacheable_prefix=cacheable_prefix,
         )
     except AllProvidersUnavailableError:
         return "The assistant is temporarily unavailable (all configured models failed). Try again shortly."

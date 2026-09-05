@@ -48,12 +48,21 @@ class KnowledgeGraphCapability(Protocol):
     def __call__(self, conn: DBConnection, entity_type: str, entity_name: str) -> list[KnowledgeClaimView]: ...
 
 
+class KnowledgeGraphPathsCapability(Protocol):
+    def __call__(self, conn: DBConnection, entity_type: str, entity_name: str) -> list[KnowledgeClaimView]: ...
+
+
 class IndicatorEvidenceCapability(Protocol):
     def __call__(self, conn: DBConnection, company_id: str) -> list[Evidence]: ...
 
 
 def _no_indicator_evidence(conn: DBConnection, company_id: str) -> list[Evidence]:
     """The neutral IndicatorEvidenceCapability — see PlannerCapabilities."""
+    return []
+
+
+def _no_knowledge_graph_paths(conn: DBConnection, entity_type: str, entity_name: str) -> list[KnowledgeClaimView]:
+    """The neutral KnowledgeGraphPathsCapability — see PlannerCapabilities."""
     return []
 
 
@@ -82,10 +91,17 @@ class PlannerCapabilities:
     #: — a test double, a backend that has no indicator engine — stays valid.
     #: default_capabilities() always binds it explicitly.
     indicator_evidence: IndicatorEvidenceCapability = _no_indicator_evidence
+    #: Multi-hop knowledge graph traversal (context/knowledge_graph.py::
+    #: find_multi_hop_claims()) — a separate capability from `knowledge_graph`
+    #: above (single-hop), same "neutral no-op default" pattern as
+    #: indicator_evidence so every existing PlannerCapabilities(...) test
+    #: construction that predates this field keeps working unchanged.
+    #: default_capabilities() always binds it explicitly.
+    knowledge_graph_paths: KnowledgeGraphPathsCapability = _no_knowledge_graph_paths
 
 
 def default_capabilities(
-    *, fact_store: FactStore | None = None, as_of: str | None = None
+    *, fact_store: FactStore | None = None, as_of: str | None = None, investigation_id: str | None = None
 ) -> PlannerCapabilities:
     """The only place that imports the concrete implementations directly —
     everywhere else routes through the PlannerCapabilities seam instead.
@@ -102,8 +118,16 @@ def default_capabilities(
     cannot — indicator rules evaluate against the latest facts on file and
     have no historical mode — is disabled entirely under a cutoff rather than
     allowed to leak post-cutoff findings into a historical investigation.
+
+    `investigation_id` is bound the same way, purely for cost attribution:
+    macro_evidence is the only capability here that can make its own LLM
+    call (get_macro_evidence's internal retrieval planner), so tagging it
+    here is what lets that call's llm_call_log row count toward the
+    investigation's total cost (storage/repositories.py::
+    get_investigation_cost_summary), same as the generation/evaluation/
+    synthesis calls research/investigation.py tags directly.
     """
-    from context.knowledge_graph import find_claims_about_entity
+    from context.knowledge_graph import find_claims_about_entity, find_multi_hop_claims
     from research.documents import get_document_evidence
     from research.indicator_evidence import get_indicator_evidence
     from research.macro_evidence import get_macro_evidence
@@ -120,7 +144,9 @@ def default_capabilities(
         document_evidence=lambda conn, company_id, question: get_document_evidence(
             conn, company_id, question, fact_store=fs, as_of=cutoff
         ),
-        macro_evidence=lambda conn, question: get_macro_evidence(conn, question, fact_store=fs, as_of=cutoff),
+        macro_evidence=lambda conn, question: get_macro_evidence(
+            conn, question, fact_store=fs, as_of=cutoff, investigation_id=investigation_id
+        ),
         # Hybrid (FTS5/BM25 keyword + embedding/vector semantic) retrieval,
         # not FTS5 alone (section 8) — retrieval/hybrid_search.py degrades to
         # FTS5-only by itself (section 10) whenever the vector layer is
@@ -132,6 +158,9 @@ def default_capabilities(
             conn, query, company_id=company_id, limit=limit, fact_store=fs, as_of=cutoff
         ),
         knowledge_graph=lambda conn, entity_type, entity_name: find_claims_about_entity(
+            conn, entity_type, entity_name, fact_store=fs, as_of=cutoff
+        ),
+        knowledge_graph_paths=lambda conn, entity_type, entity_name: find_multi_hop_claims(
             conn, entity_type, entity_name, fact_store=fs, as_of=cutoff
         ),
         indicator_evidence=(

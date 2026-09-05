@@ -39,6 +39,13 @@ class FactStore:
     list_all_knowledge_relationships: Callable[..., list[sqlite3.Row]]
     list_all_knowledge_evidence: Callable[..., list[sqlite3.Row]]
 
+    # Multi-hop knowledge graph traversal (context/knowledge_graph.py::
+    # find_multi_hop_claims(), Step 2B follow-up) — batched-per-hop BFS
+    # primitives, separate from the single-hop callables above.
+    list_knowledge_entity_ids_by_type_and_name: Callable[..., list[int]]
+    list_entity_neighbors: Callable[..., list[sqlite3.Row]]
+    find_knowledge_claims_for_entity_ids: Callable[..., list[sqlite3.Row]]
+
     # Documents (research/documents.py)
     list_company_documents: Callable[..., list[sqlite3.Row]]
 
@@ -94,6 +101,7 @@ def default_fact_store() -> FactStore:
     from companies.registry import get_company, list_companies_by_sector_field, list_companies_with_sector
     from storage.repositories import (
         find_knowledge_claims_about_entity,
+        find_knowledge_claims_for_entity_ids,
         get_canonical_series,
         get_latest_data_timestamp,
         get_macro_series,
@@ -104,8 +112,10 @@ def default_fact_store() -> FactStore:
         list_canonical_financials_for_companies,
         list_company_documents,
         list_company_ids_with_financial_data,
+        list_entity_neighbors,
         list_generated_reports,
         list_knowledge_entities_for_companies,
+        list_knowledge_entity_ids_by_type_and_name,
         list_knowledge_evidence_for_claim,
         list_knowledge_relationships_for_claim,
         list_macro_series_summary,
@@ -134,6 +144,9 @@ def default_fact_store() -> FactStore:
         list_all_knowledge_claims=list_all_knowledge_claims,
         list_all_knowledge_relationships=list_all_knowledge_relationships,
         list_all_knowledge_evidence=list_all_knowledge_evidence,
+        list_knowledge_entity_ids_by_type_and_name=list_knowledge_entity_ids_by_type_and_name,
+        list_entity_neighbors=list_entity_neighbors,
+        find_knowledge_claims_for_entity_ids=find_knowledge_claims_for_entity_ids,
         list_company_documents=list_company_documents,
         search_document_chunks=search_document_chunks,
         list_document_chunks=list_document_chunks,

@@ -25,6 +25,10 @@ hypothesis, by research/investigation.py's evidence-sufficiency loop
 (Step 2G returning INSUFFICIENT_EVIDENCE triggers another pass here with the
 gap it named) — plan_and_gather() itself stays a single deterministic pass;
 the looping decision belongs to the Orchestrator, not this module.
+
+A gap-driven retry (`retry=True`) is capability-targeted, not a blind
+repeat of the first pass: it skips whichever capabilities can only ever
+return what the first pass already got — see plan_and_gather()'s docstring.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ from __future__ import annotations
 from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
-from context.knowledge_graph import KnowledgeClaimView
+from context.knowledge_graph import KnowledgeClaimView, mentioned_entities
 from research.capabilities import PlannerCapabilities, default_capabilities
 from research.evidence import Evidence
 from research.hypothesis_generator import Hypothesis
@@ -48,6 +52,14 @@ _MACRO_RELEVANT_CATEGORIES = frozenset({"macro", "regulatory"})
 
 _MAX_KNOWLEDGE_GRAPH_ENTITIES = 5
 _MAX_DOCUMENT_PASSAGES = 8
+#: A multi-hop edge that happens to land on a Company node (e.g.
+#: "MacroFactor:X --MAY_AFFECT--> Company:Y") pulls in EVERY claim that
+#: company has ever made — a real, verified-against-production-data case
+#: returned 724 claims for one entity (see this feature's implementation
+#: plan's Verification section). Capped the same way _MAX_DOCUMENT_PASSAGES
+#: already bounds document_search results, so one popular entity can't blow
+#: up the hypothesis evaluator's prompt/token budget.
+_MAX_INFERRED_CONNECTIONS = 10
 
 
 @dataclass
@@ -55,28 +67,21 @@ class InvestigationPlan:
     hypothesis_id: str
     evidence: list[Evidence] = field(default_factory=list)
     knowledge_claims: list[KnowledgeClaimView] = field(default_factory=list)
+    #: Multi-hop knowledge-graph connections (context/knowledge_graph.py::
+    #: find_multi_hop_claims(), hop_distance >= 2 only) — kept in its own
+    #: list, never merged into knowledge_claims, so research/hypothesis_evaluator.py
+    #: can render it as its own clearly-labeled, [INFERENCE]-only block
+    #: rather than folding a multi-step reasoning chain in among direct,
+    #: hop-1 claims.
+    inferred_connections: list[KnowledgeClaimView] = field(default_factory=list)
     passages: list[DocumentPassage] = field(default_factory=list)
     sources_queried: list[str] = field(default_factory=list)
 
 
-def _mentioned_entities(
-    conn: DBConnection, company_ids: list[str], text: str, fact_store: FactStore
-) -> list[tuple[str, str]]:
-    """Which already-extracted entities (any type) this hypothesis's own
-    text names — simple case-insensitive substring match against
-    knowledge_entities.name, the same lightweight approach
-    context/graph.py's _metrics_mentioned() already uses for its own
-    keyword matching. Not a fuzzy match — a real, if narrow, connection."""
-    if not company_ids:
-        return []
-    rows = fact_store.list_knowledge_entities_for_companies(conn, company_ids)
-    text_lower = text.lower()
-    return [(r["entity_type"], r["name"]) for r in rows if r["name"] and r["name"].lower() in text_lower]
-
 
 def plan_and_gather(
     conn: DBConnection, hypothesis: Hypothesis, question: str, *, capabilities: PlannerCapabilities | None = None,
-    fact_store: FactStore | None = None,
+    fact_store: FactStore | None = None, retry: bool = False,
 ) -> InvestigationPlan:
     """capabilities defaults to the real in-process implementations
     (research/capabilities.py::default_capabilities) — pass a different
@@ -85,24 +90,36 @@ def plan_and_gather(
     logic below. fact_store is a separate, lower-level seam
     (storage/fact_store.py) — when capabilities isn't explicitly supplied, it
     also gets threaded into the default capability bindings, so one injected
-    FactStore reaches every layer from this single call."""
+    FactStore reaches every layer from this single call.
+
+    `retry` marks a gap-driven re-pass (research/investigation.py, after an
+    INSUFFICIENT_EVIDENCE verdict) rather than the hypothesis's first pass.
+    A retry only ever changes `question` (Step 2G's missing_evidence, not a
+    new hypothesis or company set) — so any capability keyed purely off
+    (hypothesis, company_id) would return exactly what the first pass
+    already retrieved, and is skipped: financial_evidence, indicator_evidence,
+    and the per-company "Company" knowledge_graph lookup. Everything actually
+    driven by `question`/search_text — document_evidence, entity-mention
+    knowledge_graph, macro_evidence, document_search — stays live, since
+    that's the only thing a retry can plausibly surface that's new."""
     fs = fact_store or default_fact_store()
     caps = capabilities or default_capabilities(fact_store=fs)
     plan = InvestigationPlan(hypothesis_id=hypothesis.hypothesis_id)
 
     for company_id in hypothesis.companies:
-        plan.evidence.extend(caps.financial_evidence(conn, company_id))
-        plan.sources_queried.append(f"financial_engine:{company_id}")
+        if not retry:
+            plan.evidence.extend(caps.financial_evidence(conn, company_id))
+            plan.sources_queried.append(f"financial_engine:{company_id}")
 
-        # Deterministic, rule-based, versioned findings over the same
-        # canonical facts (indicators/, via research/indicator_evidence.py).
-        # Retrieved per company like every other evidence source, so a
-        # comparison hypothesis sees each company's own triggered indicators
-        # and Step 2G can cite the rule rather than re-deriving it.
-        indicator_evidence = caps.indicator_evidence(conn, company_id)
-        if indicator_evidence:
-            plan.evidence.extend(indicator_evidence)
-            plan.sources_queried.append(f"indicators:{company_id}")
+            # Deterministic, rule-based, versioned findings over the same
+            # canonical facts (indicators/, via research/indicator_evidence.py).
+            # Retrieved per company like every other evidence source, so a
+            # comparison hypothesis sees each company's own triggered indicators
+            # and Step 2G can cite the rule rather than re-deriving it.
+            indicator_evidence = caps.indicator_evidence(conn, company_id)
+            if indicator_evidence:
+                plan.evidence.extend(indicator_evidence)
+                plan.sources_queried.append(f"indicators:{company_id}")
 
         if len(hypothesis.companies) == 1:
             # Single-company attribution only, same constraint
@@ -110,12 +127,18 @@ def plan_and_gather(
             plan.evidence.extend(caps.document_evidence(conn, company_id, question))
             plan.sources_queried.append(f"documents:{company_id}")
 
-        plan.knowledge_claims.extend(caps.knowledge_graph(conn, "Company", company_id))
+        if not retry:
+            plan.knowledge_claims.extend(caps.knowledge_graph(conn, "Company", company_id))
 
     search_text = f"{question} {hypothesis.statement} {hypothesis.mechanism}"
-    for entity_type, entity_name in _mentioned_entities(conn, hypothesis.companies, search_text, fs)[:_MAX_KNOWLEDGE_GRAPH_ENTITIES]:
+    for entity_type, entity_name in mentioned_entities(conn, hypothesis.companies, search_text, fact_store=fs)[:_MAX_KNOWLEDGE_GRAPH_ENTITIES]:
         plan.knowledge_claims.extend(caps.knowledge_graph(conn, entity_type, entity_name))
         plan.sources_queried.append(f"knowledge_graph:{entity_type}:{entity_name}")
+        # Same cap, same (absent) retry-skip logic as the single-hop call
+        # right above — a hop-2+ result off an unchanged entity is exactly
+        # as retry-invariant as the per-company single-hop call, so there's
+        # nothing to gain from special-casing retry here either.
+        plan.inferred_connections.extend(caps.knowledge_graph_paths(conn, entity_type, entity_name))
     if plan.knowledge_claims:
         plan.sources_queried.append("knowledge_graph")
         # De-dupe — a claim can be reachable via more than one entity match above.
@@ -127,6 +150,22 @@ def plan_and_gather(
             seen_claim_ids.add(claim.claim_id)
             deduped.append(claim)
         plan.knowledge_claims = deduped
+
+    if plan.inferred_connections:
+        plan.sources_queried.append("knowledge_graph_paths")
+        # De-duped against itself (a claim reachable via more than one
+        # mentioned entity) AND against the final knowledge_claims set — a
+        # claim already surfaced at hop 1 must never also appear in the
+        # hop-2+ block.
+        hop1_claim_ids = {claim.claim_id for claim in plan.knowledge_claims}
+        seen_inferred_ids: set[int] = set()
+        deduped_inferred: list[KnowledgeClaimView] = []
+        for claim in plan.inferred_connections:
+            if claim.claim_id in hop1_claim_ids or claim.claim_id in seen_inferred_ids:
+                continue
+            seen_inferred_ids.add(claim.claim_id)
+            deduped_inferred.append(claim)
+        plan.inferred_connections = deduped_inferred[:_MAX_INFERRED_CONNECTIONS]
 
     if hypothesis.category in _MACRO_RELEVANT_CATEGORIES:
         macro = caps.macro_evidence(conn, question)

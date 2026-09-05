@@ -301,6 +301,17 @@ TIER_MIN_REASONING_STRENGTH: dict[str, int] = {
 # experimentation: start it yourself when you want the fallback available).
 # LOCAL_MODEL_ENABLED lets it be turned off entirely (e.g. no Ollama
 # installed) without touching code.
+#
+# LOCAL_MODEL_ID must be a tag `ollama list` actually shows as pulled —
+# there's no startup check for this (the fallback is only ever reached after
+# every cloud model has already failed, so a bad tag here means the "last
+# resort" itself silently 404s at the worst possible moment). Confirmed real
+# in this app: the default below (llama3.1:8b) wasn't pulled in one real dev
+# environment that had gemma4:latest/gemma4:31b/deepseek-r1:8b instead —
+# fixed there via LOCAL_MODEL_ID in .env, not by changing this default (a
+# different environment may genuinely have llama3.1:8b pulled). The
+# mocked-HTTP test suite (tests/test_llm_providers.py) cannot catch this
+# class of bug at all — it never asks a real Ollama server which tags exist.
 # ------------------------------------------------------------------
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")

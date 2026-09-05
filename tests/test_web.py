@@ -658,7 +658,14 @@ def test_research_ask_without_company_uses_macro_evidence(client, monkeypatch) -
 
     assert response.status_code == 200
     assert response.get_json()["answer_html"]
-    evidence_call = next(c for c in captured if c["messages"][0]["content"].startswith("Evidence:"))
+    # "Evidence (Docs/Macro):", not "Evidence:" — research/assistant.py splits
+    # Financials (cacheable, its own content block) from Docs/Macro evidence
+    # (question-dependent, stays in the plain user_message); no company_ids
+    # here means no Financials evidence at all, so content stays a plain
+    # string rather than becoming a content-block list.
+    evidence_call = next(
+        c for c in captured if c["messages"][0]["content"].startswith("Evidence (Docs/Macro):")
+    )
     assert "Rainfall Regional 2020" in evidence_call["messages"][0]["content"]
 
 

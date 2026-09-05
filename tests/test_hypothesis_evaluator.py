@@ -10,8 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from context.knowledge_graph import KnowledgeClaimView
 from research.evidence import Evidence
-from research.hypothesis_evaluator import HypothesisEvaluationError, evaluate_hypothesis
+from research.hypothesis_evaluator import HypothesisEvaluationError, _render_plan, evaluate_hypothesis
 from research.hypothesis_generator import Hypothesis
 from research.investigation_planner import InvestigationPlan
 
@@ -67,6 +68,31 @@ _VALID_RESPONSE = """{
   "contradicting_evidence": [],
   "missing_evidence": ["Direct input cost / raw material price data"]
 }"""
+
+
+def test_render_plan_omits_the_multi_hop_block_when_empty() -> None:
+    rendered = _render_plan(_plan_with_evidence())
+
+    assert "Multi-hop knowledge graph connections" not in rendered
+
+
+def test_render_plan_includes_the_multi_hop_block_and_always_says_inference() -> None:
+    plan = _plan_with_evidence()
+    plan.inferred_connections = [
+        KnowledgeClaimView(
+            claim_id=202, company_id="ICICIBANK", claim_text="Gross margin expanded.", claim_type="FACT",
+            category="fact", speaker=None, fiscal_year="FY2024", quarter=None, confidence=0.8, document_id=2,
+            hop_distance=2, path="Risk:Input cost inflation --MAY_AFFECT--> Metric:Gross Margin",
+        )
+    ]
+
+    rendered = _render_plan(plan)
+
+    assert "Multi-hop knowledge graph connections" in rendered
+    assert "[INFERENCE] only, never [FACT] or [CALCULATION]" in rendered
+    assert "ICICIBANK" in rendered
+    assert "Gross margin expanded." in rendered
+    assert "Risk:Input cost inflation --MAY_AFFECT--> Metric:Gross Margin" in rendered
 
 
 def test_evaluates_and_parses_verdict_and_evidence(db_conn: sqlite3.Connection, monkeypatch) -> None:

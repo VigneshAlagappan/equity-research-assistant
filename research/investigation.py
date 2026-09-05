@@ -26,15 +26,20 @@ Per hypothesis, this module — the Orchestrator, per the architecture
 guardrails — controls an evidence-sufficiency loop, not just one
 plan-then-evaluate pass: an INSUFFICIENT_EVIDENCE verdict (Step 2G's own
 missing_evidence) triggers one more Step 2F retrieval pass targeted at the
-named gap, then a re-evaluation. The LLM only ever reports a verdict; this
-module decides whether that verdict means "loop again" — never a fresh LLM
-call asking "should I keep going?". Looping is bounded by 4 termination
-controls: evidence sufficiency (any verdict other than
-INSUFFICIENT_EVIDENCE), MAX_EVIDENCE_ITERATIONS per hypothesis, a wall-clock
-deadline (INVESTIGATION_TIMEOUT_SECONDS) shared across the whole
-investigation, and a no-new-evidence check (a retry that surfaces nothing
-beyond what the prior pass already had stops immediately rather than paying
-for an identical re-evaluation).
+named gap, then a re-evaluation. That retrieval pass is itself
+capability-targeted (research/investigation_planner.py::plan_and_gather's
+`retry=True`) — it skips the capabilities that only ever depend on
+(hypothesis, company_id) and so cannot return anything new a second time
+(financial/indicator evidence, the per-company knowledge-graph lookup),
+re-querying only what's actually driven by the new gap text. The LLM only
+ever reports a verdict; this module decides whether that verdict means
+"loop again" — never a fresh LLM call asking "should I keep going?".
+Looping is bounded by 4 termination controls: evidence sufficiency (any
+verdict other than INSUFFICIENT_EVIDENCE), MAX_EVIDENCE_ITERATIONS per
+hypothesis, a wall-clock deadline (INVESTIGATION_TIMEOUT_SECONDS) shared
+across the whole investigation, and a no-new-evidence check (a retry that
+surfaces nothing beyond what the prior pass already had stops immediately
+rather than paying for an identical re-evaluation).
 
 A single hypothesis failing evaluation (LLM hiccup, unparseable response)
 does not fail the whole investigation — it's recorded with verdict=None and
@@ -166,7 +171,9 @@ def _investigate_hypothesis(
             return plan, evaluation  # timeout control
 
         gap_query = " ".join(evaluation.missing_evidence) or question
-        retry_plan = plan_and_gather(conn, hypothesis, gap_query, capabilities=capabilities, fact_store=fact_store)
+        retry_plan = plan_and_gather(
+            conn, hypothesis, gap_query, capabilities=capabilities, fact_store=fact_store, retry=True
+        )
         merged = _merge_plans(plan, retry_plan)
         if _evidence_key(merged) == _evidence_key(plan):
             logger.info("No new evidence found for %s — stopping evidence loop", hypothesis.hypothesis_id)
@@ -192,7 +199,7 @@ def run_investigation(
     investigation_id = uuid.uuid4().hex[:12]
     fs = fact_store or default_fact_store()
     cutoff = normalize_as_of(as_of)
-    caps = capabilities or default_capabilities(fact_store=fs, as_of=cutoff)
+    caps = capabilities or default_capabilities(fact_store=fs, as_of=cutoff, investigation_id=investigation_id)
 
     try:
         hypotheses = generate_hypotheses(

@@ -25,7 +25,15 @@ PROVIDER_NAME = "ollama"
 _REQUEST_TIMEOUT_SECONDS = 600
 
 
-def generate(*, system: str, user_message: str, model: str, max_tokens: int) -> ProviderResponse:
+def generate(
+    *, system: str, user_message: str, model: str, max_tokens: int, cacheable_prefix: str | None = None,
+) -> ProviderResponse:
+    # Ollama has no Anthropic-style server-side prompt caching to opt into —
+    # cacheable_prefix is accepted only to satisfy llm/providers/base.py's
+    # Provider Protocol (llm/router.py calls every provider the same way) and
+    # folded back into one plain user turn, same shape this always sent.
+    if cacheable_prefix:
+        user_message = f"{cacheable_prefix}\n\n{user_message}"
     try:
         response = requests.post(
             f"{OLLAMA_BASE_URL}/api/chat",

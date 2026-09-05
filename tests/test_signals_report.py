@@ -31,6 +31,16 @@ class _FakeClient:
         self.messages = _FakeMessages(content, stop_reason, captured)
 
 
+def _content_text(content) -> str:
+    """Flattens a message's `content` into one string regardless of shape —
+    a plain string (no cacheable_prefix) or a list of content blocks (one
+    per text block, cache_control marked or not — llm/providers/
+    anthropic_provider.py)."""
+    if isinstance(content, str):
+        return content
+    return "\n".join(block["text"] for block in content)
+
+
 def _install_fake_client(monkeypatch, text: str = "report", stop_reason: str = "end_turn"):
     captured: list = []
     content = [SimpleNamespace(type="text", text=text)] if text else []
@@ -104,11 +114,29 @@ def test_generate_signals_report_sends_evidence_and_signals_prompt(
     generate_signals_report(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"])
 
     assert len(captured) == 1
-    sent = captured[0]["messages"][0]["content"]
+    sent = _content_text(captured[0]["messages"][0]["content"])
     assert "Net Profit FY2024" in sent
     assert "20,500.00" in sent
     assert "Question: What was net profit in FY2024?" in sent
     assert "Signals" in captured[0]["system"]
+
+
+def test_generate_signals_report_includes_knowledge_graph_claims_for_a_single_company(
+    ingested_conn: sqlite3.Connection, tmp_path: Path, monkeypatch
+) -> None:
+    """research/knowledge_evidence.py wiring — a Step 2B claim connected to
+    this company's own Company node reaches the report prompt, the same
+    cross-company claim connection research/investigation_planner.py's
+    structured investigations already surface."""
+    from tests.test_knowledge_graph import _extract_for
+
+    _extract_for(ingested_conn, tmp_path, "HDFCBANK", monkeypatch, filename="report.pdf")
+    captured = _install_fake_client(monkeypatch)
+
+    generate_signals_report(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"])
+
+    sent = _content_text(captured[0]["messages"][0]["content"])
+    assert "Knowledge graph claim" in sent
 
 
 def test_generate_signals_report_without_any_data_skips_the_api_call(
@@ -166,5 +194,31 @@ def test_injected_investigation_memory_capability_is_used(ingested_conn: sqlite3
 
     generate_signals_report(ingested_conn, "How did net profit change?", ["HDFCBANK"], investigation_memory=mem)
 
-    sent = captured[0]["messages"][0]["content"]
+    sent = _content_text(captured[0]["messages"][0]["content"])
     assert "fake injected path" in sent
+
+
+def test_financial_evidence_is_sent_as_a_stable_cacheable_prefix(
+    ingested_conn: sqlite3.Connection, monkeypatch
+) -> None:
+    """Same split as research/assistant.py::answer_question(), for the same
+    reason: the Financials block must be marked cache_control AND
+    byte-identical across two different questions about the same company —
+    otherwise Anthropic's prompt cache never actually hits on the second
+    call, regardless of the marker."""
+    captured = _install_fake_client(monkeypatch)
+
+    generate_signals_report(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"])
+    generate_signals_report(ingested_conn, "How did the CASA ratio trend?", ["HDFCBANK"])
+
+    assert len(captured) == 2
+    for call in captured:
+        content = call["messages"][0]["content"]
+        assert isinstance(content, list)
+        financial_block = content[0]
+        assert financial_block.get("cache_control") == {"type": "ephemeral"}
+        assert financial_block["text"].startswith("Evidence (Financials):")
+
+    first_financial_text = captured[0]["messages"][0]["content"][0]["text"]
+    second_financial_text = captured[1]["messages"][0]["content"][0]["text"]
+    assert first_financial_text == second_financial_text

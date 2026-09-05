@@ -11,15 +11,19 @@ import pytest
 
 from companies.registry import seed_companies
 from ingestion.coordinator import (
+    archive_documents,
     discover_pending_documents,
     discover_pending_financial_items,
     process_all_pending_documents,
     process_all_pending_financial_items,
     process_financial_items,
     retry_failed_financial_items,
+    unarchive_documents,
 )
 from storage.repositories import (
     get_ingestion_queue_item_by_path,
+    list_batch_job_items,
+    list_batch_job_runs,
     list_ingestion_queue_items,
     save_company_document,
 )
@@ -309,3 +313,110 @@ def test_extraction_failure_via_the_event_bus_marks_the_document_failed(
     ).fetchone()
     assert row["processing_status"] == "failed"
     assert row["error_message"]
+
+
+def test_process_documents_records_a_queryable_audit_run(
+    db_conn_with_companies: sqlite3.Connection, tmp_path: Path, monkeypatch
+) -> None:
+    """process_documents() (and everything that funnels through it --
+    Admin -> Ingest queue, retry_failed_documents(),
+    process_all_pending_documents()) must record every document's outcome to
+    batch_job_runs/batch_job_items (ingestion/batch_log.py) -- the same
+    durable audit trail scripts/batch_fetch_nse.py and main.py's
+    vector-backfill/graph-backfill use -- not just the in-memory
+    ProcessSummary this call returns."""
+    from tests.test_documents import _make_minimal_pdf
+    from tests.test_knowledge_builder import _VALID_RESPONSE, _install_fake_client
+
+    monkeypatch.setattr("config.settings.VECTOR_STORE_BACKEND", "none")
+    pdf_path = tmp_path / "report.pdf"
+    _make_minimal_pdf(pdf_path, "Revenue grew twelve percent this quarter")
+    doc = save_company_document(
+        db_conn_with_companies, "HDFCBANK", document_type="annual_report",
+        fiscal_year="FY2024", quarter=None, added_by_user="tester", raw_file_path=str(pdf_path),
+    )
+    _install_fake_client(monkeypatch, _VALID_RESPONSE)
+
+    process_all_pending_documents(db_conn_with_companies)
+
+    runs = list_batch_job_runs(db_conn_with_companies)
+    assert runs and runs[0]["job_name"] == "document_processing"
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["items_succeeded"] == 1
+
+    items = list_batch_job_items(db_conn_with_companies, runs[0]["run_id"])
+    assert len(items) == 1
+    assert items[0]["company_id"] == "HDFCBANK"
+    assert items[0]["status"] == "ok"
+    assert f"document_id={doc['document_id']}" in items[0]["detail"]
+    assert "chunk(s) indexed" in items[0]["detail"]
+
+
+def test_process_documents_records_a_failed_item_in_the_audit_run(
+    db_conn_with_companies: sqlite3.Connection, tmp_path: Path, monkeypatch
+) -> None:
+    """The audit trail must reflect a real failure, not just successes --
+    same document/error the in-memory ProcessSummary already reports."""
+    from tests.test_documents import _make_minimal_pdf
+    from tests.test_knowledge_builder import _install_fake_client
+
+    pdf_path = tmp_path / "report.pdf"
+    _make_minimal_pdf(pdf_path, "Revenue grew twelve percent this quarter")
+    save_company_document(
+        db_conn_with_companies, "HDFCBANK", document_type="annual_report",
+        fiscal_year="FY2024", quarter=None, added_by_user="tester", raw_file_path=str(pdf_path),
+    )
+    _install_fake_client(monkeypatch, "I'm not going to respond in JSON.")
+
+    process_all_pending_documents(db_conn_with_companies)
+
+    runs = list_batch_job_runs(db_conn_with_companies)
+    assert runs[0]["items_failed"] == 1
+    items = list_batch_job_items(db_conn_with_companies, runs[0]["run_id"])
+    assert items[0]["status"] == "failed"
+    assert items[0]["detail"]
+
+
+def test_archive_and_unarchive_documents_record_audit_runs(db_conn_with_companies: sqlite3.Connection) -> None:
+    """archive_documents()/unarchive_documents() must each land their own
+    queryable batch_job_runs entry -- these had zero test coverage of any
+    kind before this, core behavior included."""
+    doc = save_company_document(
+        db_conn_with_companies, "HDFCBANK", document_type="concall_recording",
+        fiscal_year="FY2025", quarter="Q1", added_by_user="tester", source_url="https://example.com/call.mp3",
+    )
+    document_id = doc["document_id"]
+
+    archived_count = archive_documents(db_conn_with_companies, [document_id])
+    assert archived_count == 1
+    status = db_conn_with_companies.execute(
+        "SELECT processing_status FROM documents WHERE document_id = ?", (document_id,)
+    ).fetchone()["processing_status"]
+    assert status == "archived"
+
+    archive_run = list_batch_job_runs(db_conn_with_companies)[0]
+    assert archive_run["job_name"] == "document_archive"
+    assert archive_run["items_succeeded"] == 1
+    archive_items = list_batch_job_items(db_conn_with_companies, archive_run["run_id"])
+    assert archive_items[0]["company_id"] == "HDFCBANK"
+    assert "archived" in archive_items[0]["detail"]
+
+    # Re-archiving an already-archived document is a no-op -- the row is
+    # skipped before ever reaching `with run.item(...)`, so this second run
+    # is recorded with zero items, not a phantom "archived" outcome.
+    assert archive_documents(db_conn_with_companies, [document_id]) == 0
+    no_op_run = list_batch_job_runs(db_conn_with_companies)[0]
+    assert no_op_run["items_total"] == 0
+
+    unarchived_count = unarchive_documents(db_conn_with_companies, [document_id])
+    assert unarchived_count == 1
+    status = db_conn_with_companies.execute(
+        "SELECT processing_status FROM documents WHERE document_id = ?", (document_id,)
+    ).fetchone()["processing_status"]
+    assert status == "pending"
+
+    runs = list_batch_job_runs(db_conn_with_companies)
+    unarchive_run = next(r for r in runs if r["job_name"] == "document_unarchive")
+    assert unarchive_run["items_succeeded"] == 1
+    unarchive_items = list_batch_job_items(db_conn_with_companies, unarchive_run["run_id"])
+    assert "unarchived" in unarchive_items[0]["detail"]

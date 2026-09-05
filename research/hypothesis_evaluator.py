@@ -122,6 +122,21 @@ def _render_plan(plan: InvestigationPlan) -> str:
             )
             if claim.evidence_quotes:
                 lines.append(f"    Quote: {claim.evidence_quotes[0][:_MAX_QUOTE_CHARS]}")
+    if plan.inferred_connections:
+        # Modeled directly on context/graph.py::render_related_investigations()'s
+        # wording and citation rule — this is a multi-hop CHAIN
+        # (context/knowledge_graph.py::find_multi_hop_claims(), hop_distance
+        # >= 2), not a claim that directly names the entity this hypothesis
+        # is about, so it must never be cited as [FACT] or [CALCULATION].
+        lines.append(
+            "\nMulti-hop knowledge graph connections (reached by walking OUTWARD from a mentioned entity, not a "
+            "direct claim about it — cite any use of this as [INFERENCE] only, never [FACT] or [CALCULATION]):"
+        )
+        for claim in plan.inferred_connections:
+            period = f"{claim.quarter} {claim.fiscal_year}" if claim.quarter else (claim.fiscal_year or "period unknown")
+            lines.append(
+                f"  [{claim.claim_type}] {claim.company_id} — {claim.claim_text} ({period}) — {claim.path}"
+            )
     if plan.passages:
         lines.append("\nDocument passages (keyword-matched, Step 2D):")
         for passage in plan.passages:
@@ -187,7 +202,7 @@ def evaluate_hypothesis(
 
     observability.record(
         conn, task_name="hypothesis_evaluation", company_ids=hypothesis.companies,
-        question=hypothesis.statement, result=result,
+        question=hypothesis.statement, result=result, investigation_id=hypothesis.investigation_id,
     )
 
     response = result.response

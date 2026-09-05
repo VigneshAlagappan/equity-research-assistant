@@ -191,13 +191,38 @@ def test_get_document_evidence_with_no_documents_returns_empty(company_conn: sql
     assert get_document_evidence(company_conn, "HDFCBANK", "How is it doing?") == []
 
 
+def test_fetch_url_bytes_sends_a_browser_user_agent(monkeypatch) -> None:
+    """BSE (a common Docs-tab link source) 403s a fetch with no
+    User-Agent/requests' bare default — confirmed by hand against a real
+    bseindia.com corpfiling link, which is what document_id=2 (a real
+    ingested document) silently failed against before this fix. Without a
+    User-Agent, that 403 is caught by _fetch_url_bytes' broad
+    requests.RequestException handler and looks identical to "link is
+    genuinely dead" — no error, no chunks, no evidence, and nothing in the
+    logs pointing at why."""
+    import research.documents as documents_module
+
+    captured_headers: list[dict | None] = []
+
+    def fake_get(url, timeout=None, stream=None, headers=None):
+        captured_headers.append(headers)
+        return _FakeResponse(b"%PDF-1.4 not a real pdf")
+
+    monkeypatch.setattr("research.documents.requests.get", fake_get)
+
+    documents_module._fetch_url_bytes("https://www.bseindia.com/xml-data/corpfiling/example.pdf")
+
+    assert captured_headers == [documents_module._FETCH_HEADERS]
+    assert "User-Agent" in documents_module._FETCH_HEADERS
+
+
 def test_get_document_evidence_fetches_a_pdf_from_a_link_only_document(
     company_conn: sqlite3.Connection, monkeypatch
 ) -> None:
     pdf_bytes = _make_minimal_pdf_bytes("Management commentary from the filed transcript")
     captured_urls: list[str] = []
 
-    def fake_get(url, timeout=None, stream=None):
+    def fake_get(url, timeout=None, stream=None, headers=None):
         captured_urls.append(url)
         return _FakeResponse(pdf_bytes)
 
@@ -247,7 +272,7 @@ def test_get_document_evidence_skips_a_download_over_the_size_cap(
 
     monkeypatch.setattr(documents_module, "MAX_DOWNLOAD_BYTES", 10)
 
-    def fake_get(url, timeout=None, stream=None):
+    def fake_get(url, timeout=None, stream=None, headers=None):
         return _FakeResponse(b"x" * 100)
 
     monkeypatch.setattr("research.documents.requests.get", fake_get)

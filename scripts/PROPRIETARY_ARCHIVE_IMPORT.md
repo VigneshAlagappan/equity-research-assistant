@@ -118,7 +118,12 @@ xlsx failures. Resuming means picking one of those, or extending
 `ProprietaryAdapter` to handle the older workbook template so the ~15 failed
 xlsx across every pass can be retried.
 
-### Scale survey (file counts only — no registry matching or classification yet)
+### Historical: pre-triage scale survey (superseded)
+
+Every folder listed below is now in **## Done** above — this table is the
+file-count survey taken *before* any of those folders were triaged, kept
+only for the original scope/pacing rationale it explains at the end. It is
+not a "what's left" list; don't read it as one.
 
 | Folder | Files | xlsx | PDF | Subfolders |
 |---|---|---|---|---|
@@ -174,9 +179,10 @@ xlsx across every pass can be retried.
 | Finance and Services | 0 | 0 | 0 | 0 (empty) |
 | Tea estates | 0 | 0 | 0 | 0 (empty) |
 
-**Total: ~934 files across the 51 remaining folders** (vs. 405 in Banks +
-Finance combined). Rough shape: 3 folders are empty, ~19 have 10 files or
-fewer (quick passes, similar effort to a single mid-sized Banks company),
-~16 are medium (11-30 files, roughly one sector-day each based on Banks/
-Finance pace), and 9 are large (30-98 files — Power and Tyres in particular
-are bigger than Banks was on their own).
+**Total at the time of this survey: ~934 files across these 51 folders**
+(vs. 405 in Banks + Finance combined). Rough shape: 3 folders were empty,
+~19 had 10 files or fewer (quick passes, similar effort to a single
+mid-sized Banks company), ~16 were medium (11-30 files, roughly one
+sector-day each based on Banks/Finance pace), and 9 were large (30-98
+files — Power and Tyres in particular were bigger than Banks was on its
+own). All 51 are now triaged — see **## Done** above for actual results.

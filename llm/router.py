@@ -107,6 +107,7 @@ def route(
     hardness: HardnessResult,
     max_tokens: int,
     pinned_model: str | None = None,
+    cacheable_prefix: str | None = None,
 ) -> RouteResult:
     chain, excluded = _fallback_chain(hardness.tier, pinned_model)
     attempts = [
@@ -121,7 +122,10 @@ def route(
     for spec in chain:
         provider_fn = _PROVIDER_MODULES[spec.provider].generate
         try:
-            response = provider_fn(system=system, user_message=user_message, model=spec.model_id, max_tokens=max_tokens)
+            response = provider_fn(
+                system=system, user_message=user_message, model=spec.model_id, max_tokens=max_tokens,
+                cacheable_prefix=cacheable_prefix,
+            )
         except ProviderUnavailable as exc:
             attempts.append(Attempt(spec.model_id, spec.provider, "unavailable", str(exc)))
             continue

@@ -18,6 +18,14 @@ class ProviderResponse:
     output_tokens: int
     model: str
     provider: str
+    #: Anthropic prompt caching (llm/providers/anthropic_provider.py) —
+    #: tokens written to/read from the cache on this call, both 0 for a
+    #: provider/call that doesn't support or use `cacheable_prefix`. A cache
+    #: read costs a fraction of a normal input token (Anthropic's pricing),
+    #: so cache_read_input_tokens > 0 is the signal caching actually paid off
+    #: on this call, not just that it was attempted.
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
 
 
 class ProviderUnavailable(Exception):
@@ -29,4 +37,7 @@ class ProviderUnavailable(Exception):
 
 
 class Provider(Protocol):
-    def __call__(self, *, system: str, user_message: str, model: str, max_tokens: int) -> ProviderResponse: ...
+    def __call__(
+        self, *, system: str, user_message: str, model: str, max_tokens: int,
+        cacheable_prefix: str | None = None,
+    ) -> ProviderResponse: ...

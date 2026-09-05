@@ -123,6 +123,7 @@ from storage.repositories import (
     get_all_company_index_tags,
     get_generated_report,
     get_investigation,
+    get_investigation_cost_summary,
     get_llm_usage_summary,
     get_macro_series,
     get_user_by_email,
@@ -297,6 +298,24 @@ def _render_markdown_with_tags(text: str) -> Markup:
         html_parts.append("</ul>")
 
     return Markup("\n".join(html_parts))
+
+
+def _embed_question_for_reuse(question: str) -> tuple[list[float] | None, str | None]:
+    """Best-effort (embedding, model_id) for a freshly-generated report's
+    question, so context/reuse.py's semantic reuse-matching layer has
+    something to compare future questions against — (None, None) when the
+    embedding provider is unavailable, same graceful-degradation shape
+    retrieval/hybrid_search.py uses; save_generated_report() already accepts
+    NULLs here, and find_reusable_report() already falls back to
+    word-overlap-only for a report with none. Never blocks saving the report
+    itself on this."""
+    from retrieval.embedding_provider import EmbeddingProviderUnavailable, default_embedding_provider
+
+    try:
+        provider = default_embedding_provider()
+        return provider.embed_text(question), provider.model_id
+    except EmbeddingProviderUnavailable:
+        return None, None
 
 
 def _split_index_tags(tags: list[str]) -> tuple[list[str], list[str], list[str]]:
@@ -2097,7 +2116,11 @@ def create_app() -> Flask:
             }
 
         thread_id = uuid.uuid4().hex[:12]
-        save_generated_report(db, thread_id, question, company_ids, statement_type, answer)
+        question_embedding, question_embedding_model = _embed_question_for_reuse(question)
+        save_generated_report(
+            db, thread_id, question, company_ids, statement_type, answer,
+            question_embedding=question_embedding, question_embedding_model=question_embedding_model,
+        )
         thread_url = url_for("research_thread", thread_id=thread_id)
 
         return jsonify(
@@ -2156,7 +2179,11 @@ def create_app() -> Flask:
             return jsonify(error=f"The assistant request failed: {exc}"), 502
 
         thread_id = uuid.uuid4().hex[:12]
-        save_generated_report(db, thread_id, question, company_ids, statement_type, result.report_markdown)
+        question_embedding, question_embedding_model = _embed_question_for_reuse(question)
+        save_generated_report(
+            db, thread_id, question, company_ids, statement_type, result.report_markdown,
+            question_embedding=question_embedding, question_embedding_model=question_embedding_model,
+        )
         if result.evidence:
             save_report_evidence(
                 db,
@@ -2284,6 +2311,7 @@ def create_app() -> Flask:
                 "additional_evidence_needed": json.loads(investigation["additional_evidence_needed"] or "[]"),
             },
             hypotheses=hypotheses,
+            cost=get_investigation_cost_summary(db, investigation_id),
         )
 
     INVESTIGATIONS_PAGE_SIZE = 20
