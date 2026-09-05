@@ -5,22 +5,66 @@
 {% block page_class %}page-wide{% endblock %}
 
 {% block extra_style %}
+  .investigation-top-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4); }
+
+  /* Report reads as a document: one comfortably-wide centered column
+     instead of every block separately clamped to 68ch and left-hugging
+     the page-wide (92%/1800px) container — that left a large dead strip
+     of margin on the right on anything wider than a laptop. The rail
+     (contents jump-nav) uses the width that strip used to waste. */
+  .report-shell { display: grid; grid-template-columns: 1fr; gap: var(--space-6); align-items: start; max-width: 1160px; margin: 0 auto; }
+  @media (min-width: 980px) {
+    .report-shell { grid-template-columns: minmax(0, 1fr) 220px; }
+    .report-rail { position: sticky; top: var(--space-4); max-height: calc(100vh - var(--space-8)); overflow-y: auto; }
+  }
+  .report-main { max-width: 760px; }
+
+  .report-toc { display: flex; flex-direction: column; gap: 2px; margin-top: var(--space-2); }
+  .report-toc-link {
+    display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12.5px;
+    text-decoration: none; color: var(--ink);
+  }
+  .report-toc-link:hover { color: var(--accent); }
+  /* Top-level entries (Summary, Hypotheses) mark real <h*>-less sections —
+     bold, own top rule, a little breathing room above each new group.
+     Sub entries (a hypothesis, "Still unanswered") nest under whichever
+     top entry precedes them, indented and lighter so the hierarchy reads
+     without needing a nested <ul>. */
+  .report-toc-top {
+    font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em;
+    padding-top: 10px; margin-top: 6px; border-top: 1px solid var(--color-divider);
+  }
+  .report-toc-top:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+  .report-toc-sub { padding-left: 14px; opacity: 0.85; }
+  .report-toc-rank { opacity: 0.5; font-variant-numeric: tabular-nums; width: 1.4em; flex-shrink: 0; }
+  .report-toc-label { flex: 1; text-transform: capitalize; }
+  .report-toc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .report-toc-dot.verdict-supported { background: var(--indicator-positive); }
+  .report-toc-dot.verdict-partially_supported { background: var(--indicator-warning); }
+  .report-toc-dot.verdict-refuted { background: var(--ink-muted); }
+  .report-toc-dot.verdict-insufficient_evidence, .report-toc-dot.verdict-none { background: var(--color-divider); }
+
+  #section-summary, #section-unanswered, #section-evidence-needed, #section-hypotheses {
+    scroll-margin-top: var(--space-4);
+  }
+  .report-section-heading { margin-bottom: var(--space-3); }
+
   .investigation-eyebrow {
     font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55;
   }
-  .investigation-question-block { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-5); max-width: 68ch; }
+  .investigation-question-block { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-5); }
   .investigation-question-block h2 { margin: 0; }
   .investigation-meta { font-size: 12px; opacity: 0.6; margin-bottom: var(--space-5); }
 
-  .investigation-synthesis { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-6); max-width: 68ch; }
+  .investigation-synthesis { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-6); }
   .investigation-synthesis p { text-align: justify; margin: 0; }
   .investigation-synthesis ul { margin: var(--space-1) 0 0; padding-left: 1.2em; }
   .investigation-synthesis li { margin: 3px 0; }
   .investigation-synthesis-section { margin-top: var(--space-3); }
   .investigation-synthesis-section .card-kicker { display: block; margin-bottom: var(--space-1); }
 
-  .hypothesis-list { display: flex; flex-direction: column; gap: var(--space-4); max-width: 68ch; }
-  .hypothesis-card { padding: var(--space-4); }
+  .hypothesis-list { display: flex; flex-direction: column; gap: var(--space-4); }
+  .hypothesis-card { padding: var(--space-4); scroll-margin-top: var(--space-4); }
   .hypothesis-top-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
   .hypothesis-tags { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
   .hypothesis-rank { font-size: 12px; opacity: 0.55; }
@@ -38,58 +82,99 @@
   .hyp-evidence-label { font-weight: 600; }
   .hyp-evidence-value { opacity: 0.85; margin-top: 2px; }
   .hyp-evidence-meta { opacity: 0.55; font-size: 11px; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.03em; }
+
+  /* Print / "export to PDF" (browser print dialog, no server-side
+     rendering needed): drop the app chrome and the two-column/sticky
+     layout, force every evidence <details> open (JS below, since a
+     closed <details> prints as just its <summary>), and give the report
+     its own letterhead-style masthead that isn't shown on screen. */
+  .print-masthead { display: none; }
+  @media print {
+    .no-print { display: none !important; }
+    .signals-sidebar, .signals-topbar { display: none !important; }
+    .signals-shell-main { margin-left: 0 !important; }
+    body, .page, .page.page-wide { background: #fff !important; color: #000 !important; width: auto !important; max-width: none !important; padding: 0 !important; }
+    .report-shell { display: block !important; max-width: none !important; }
+    .report-main { max-width: none !important; }
+    .report-rail { display: none !important; }
+    .print-masthead { display: block; margin-bottom: var(--space-5); padding-bottom: var(--space-3); border-bottom: 2px solid #000; }
+    .print-masthead-brand { font-family: var(--font-heading); font-weight: 700; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+    .print-masthead-note { font-size: 11px; opacity: 0.7; margin-top: 2px; }
+    .card { box-shadow: none !important; border: 1px solid #999 !important; background: #fff !important; }
+    .hypothesis-card { page-break-inside: avoid; break-inside: avoid; }
+    a { color: #000 !important; text-decoration: none !important; }
+    .hypothesis-evidence-group summary { list-style: none; }
+    .hypothesis-evidence-group summary::-webkit-details-marker { display: none; }
+    @page { margin: 0.75in; }
+  }
 {% endblock %}
 
 {% block content %}
-  <a class="btn btn-ghost" href="{{ url_for('research') }}">&larr; New question</a>
-
-  <div class="investigation-question-block" style="margin-top: var(--space-4);">
-    <div class="investigation-eyebrow">Investigation</div>
-    <h2>{{ investigation.question }}</h2>
-  </div>
-  <div class="investigation-meta">
-    <span class="local-time" data-utc="{{ investigation.generated_at }}">{{ investigation.generated_at }}</span> &middot;
-    {{ investigation.company_ids|join(', ') if investigation.company_ids else 'Macro/regulatory' }} &middot;
-    {{ investigation.statement_type }} &middot;
-    {{ hypotheses|length }} hypothes{{ 'is' if hypotheses|length == 1 else 'es' }}
-    {%- if investigation.as_of %} &middot;
-    <span class="tag tag-outline" title="Point-in-time investigation: every evidence source was restricted to what was on file on this date (research/temporal.py). No later data was retrievable.">evidence as of {{ investigation.as_of }}</span>
-    {%- endif %}
-    {%- if cost and cost.calls %} &middot;
-    <span class="tag tag-outline" title="{{ cost.calls }} LLM call{{ '' if cost.calls == 1 else 's' }} ({{ cost.input_tokens }} in / {{ cost.output_tokens }} out tokens) across hypothesis generation, evaluation, and synthesis — see /admin/usage for site-wide totals.">${{ "%.4f"|format(cost.cost_usd) }} spent</span>
-    {%- endif %}
+  <div class="investigation-top-row no-print">
+    <a class="btn btn-ghost" href="{{ url_for('research') }}">&larr; New question</a>
+    <button type="button" class="btn btn-secondary" id="print-investigation-btn">Print / Export PDF</button>
   </div>
 
-  {% if investigation.strongest_explanation %}
-  <div class="investigation-synthesis">
-    <span class="tag tag-accent" style="align-self: flex-start;">Strongest explanation</span>
-    <p>{{ investigation.strongest_explanation }}</p>
+  <div class="report-shell">
+    <div class="report-main">
+      <div class="print-masthead">
+        <div class="print-masthead-brand">Signals &middot; Deep Dive Investigation Report</div>
+        <div class="print-masthead-note">Generated {{ investigation.generated_at }} &middot; AI-assisted research, not investment advice.</div>
+      </div>
 
-    {% if investigation.unanswered_questions %}
-    <div class="investigation-synthesis-section">
-      <span class="card-kicker">Still unanswered</span>
-      <ul>{% for q in investigation.unanswered_questions %}<li>{{ q }}</li>{% endfor %}</ul>
-    </div>
-    {% endif %}
+      <div class="investigation-question-block" style="margin-top: var(--space-4);">
+        <div class="investigation-eyebrow">Investigation</div>
+        <h2>{{ investigation.question }}</h2>
+      </div>
+      <div class="investigation-meta">
+        <span class="local-time" data-utc="{{ investigation.generated_at }}">{{ investigation.generated_at }}</span> &middot;
+        {{ investigation.company_ids|join(', ') if investigation.company_ids else 'Macro/regulatory' }} &middot;
+        {{ investigation.statement_type }} &middot;
+        {{ hypotheses|length }} hypothes{{ 'is' if hypotheses|length == 1 else 'es' }}
+        {%- if investigation.as_of %} &middot;
+        <span class="tag tag-outline" title="Point-in-time investigation: every evidence source was restricted to what was on file on this date (research/temporal.py). No later data was retrievable.">evidence as of {{ investigation.as_of }}</span>
+        {%- endif %}
+        {%- if cost and cost.calls %} &middot;
+        <span class="tag tag-outline" title="{{ cost.calls }} LLM call{{ '' if cost.calls == 1 else 's' }} ({{ cost.input_tokens }} in / {{ cost.output_tokens }} out tokens) across hypothesis generation, evaluation, and synthesis — see /admin/usage for site-wide totals.">${{ "%.4f"|format(cost.cost_usd) }} spent</span>
+        {%- endif %}
+      </div>
 
-    {% if investigation.additional_evidence_needed %}
-    <div class="investigation-synthesis-section">
-      <span class="card-kicker">Additional evidence worth collecting</span>
-      <ul>{% for e in investigation.additional_evidence_needed %}<li>{{ e }}</li>{% endfor %}</ul>
-    </div>
-    {% endif %}
-  </div>
-  {% else %}
-  <p class="investigation-meta">Synthesis wasn't available for this investigation — individual hypothesis
-    evaluations below are still grounded in their own evidence.</p>
-  {% endif %}
+      {% if investigation.strongest_explanation %}
+      <div class="investigation-synthesis" id="section-summary">
+        <span class="tag tag-accent" style="align-self: flex-start;">Strongest explanation</span>
+        <p>{{ investigation.strongest_explanation }}</p>
 
-  <div class="hr" style="max-width:680px;margin:0 0 var(--space-6)"></div>
+        {% if investigation.unanswered_questions %}
+        <div class="investigation-synthesis-section" id="section-unanswered">
+          <span class="card-kicker">Still unanswered</span>
+          <ul>{% for q in investigation.unanswered_questions %}<li>{{ q }}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
 
-  <div class="hypothesis-list">
-    {% for h in hypotheses %}
-    <div class="card elev-sm hypothesis-card">
-      <div class="hypothesis-top-row">
+        {% if investigation.additional_evidence_needed %}
+        <div class="investigation-synthesis-section" id="section-evidence-needed">
+          <span class="card-kicker">Additional evidence worth collecting</span>
+          <ul>{% for e in investigation.additional_evidence_needed %}<li>{{ e }}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
+      </div>
+      {% else %}
+      <p class="investigation-meta">Synthesis wasn't available for this investigation — individual hypothesis
+        evaluations below are still grounded in their own evidence.</p>
+      {% endif %}
+
+      <div class="hr" style="margin:0 0 var(--space-5)"></div>
+
+      {% if hypotheses %}
+      <div class="report-section-heading" id="section-hypotheses">
+        <span class="card-kicker">Hypotheses evaluated ({{ hypotheses|length }})</span>
+      </div>
+      {% endif %}
+
+      <div class="hypothesis-list">
+        {% for h in hypotheses %}
+        <div class="card elev-sm hypothesis-card" id="hyp-{{ h.hypothesis_id }}">
+          <div class="hypothesis-top-row">
         <div class="hypothesis-tags">
           {% if h.synthesis_rank %}<span class="hypothesis-rank">#{{ h.synthesis_rank }}</span>{% endif %}
           <span class="tag tag-neutral">{{ h.category }}</span>
@@ -165,5 +250,55 @@
       {% endif %}
     </div>
     {% endfor %}
+      </div>
+    </div>
+
+    {% if hypotheses %}
+    <aside class="report-rail no-print">
+      <div class="report-rail-section">
+        <div class="card-kicker" style="margin-bottom: var(--space-2);">On this page</div>
+        <nav class="report-toc">
+          {% if investigation.strongest_explanation %}
+          <a class="report-toc-link report-toc-top" href="#section-summary">
+            <span class="report-toc-label">Summary</span>
+          </a>
+          {% if investigation.unanswered_questions %}
+          <a class="report-toc-link report-toc-sub" href="#section-unanswered">
+            <span class="report-toc-label">Still unanswered</span>
+          </a>
+          {% endif %}
+          {% if investigation.additional_evidence_needed %}
+          <a class="report-toc-link report-toc-sub" href="#section-evidence-needed">
+            <span class="report-toc-label">Additional evidence</span>
+          </a>
+          {% endif %}
+          {% endif %}
+
+          {% if hypotheses %}
+          <a class="report-toc-link report-toc-top" href="#section-hypotheses">
+            <span class="report-toc-label">Hypotheses</span>
+          </a>
+          {% for h in hypotheses %}
+          <a class="report-toc-link report-toc-sub" href="#hyp-{{ h.hypothesis_id }}">
+            <span class="report-toc-rank">{{ h.synthesis_rank or loop.index }}</span>
+            <span class="report-toc-label">{{ h.category }}</span>
+            <span class="report-toc-dot verdict-{{ h.verdict|lower }}"></span>
+          </a>
+          {% endfor %}
+          {% endif %}
+        </nav>
+      </div>
+    </aside>
+    {% endif %}
   </div>
+
+  <script>
+    document.getElementById('print-investigation-btn').addEventListener('click', () => window.print());
+    // A closed <details> prints as just its <summary> — force every evidence
+    // group open right before the print dialog opens so "Print / Export PDF"
+    // produces the full report, not a page of collapsed section headers.
+    window.addEventListener('beforeprint', () => {
+      document.querySelectorAll('.hypothesis-evidence-group').forEach((d) => { d.open = true; });
+    });
+  </script>
 {% endblock %}

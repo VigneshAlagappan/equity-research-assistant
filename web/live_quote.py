@@ -12,6 +12,8 @@ import time
 
 import yfinance as yf
 
+from sources.yfinance_prices import resolve_yfinance_ticker
+
 _CACHE_TTL_SECONDS = 60
 _cache: dict[str, tuple[float, dict | None]] = {}
 
@@ -54,7 +56,11 @@ def peek_cached_quote(ticker: str | None, country: str = "IN") -> dict | None:
 
 
 def _fetch(ticker: str, country: str) -> dict | None:
-    yf_ticker = f"{ticker}.NS" if country == "IN" else ticker
+    # resolve_yfinance_ticker() also covers the handful of US company_ids
+    # that don't match Yahoo's own ticker symbol (e.g. Berkshire Hathaway's
+    # company_id "BRKB" vs Yahoo's "BRK-B") -- see its docstring in
+    # sources/yfinance_prices.py for why that table lives there, not here.
+    yf_ticker = resolve_yfinance_ticker(ticker, country)
     try:
         fast_info = yf.Ticker(yf_ticker).fast_info
         price = fast_info["lastPrice"]

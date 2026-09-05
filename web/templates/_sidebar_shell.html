@@ -26,6 +26,10 @@
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="1"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M8 10h.01M8 14h.01M16 6h.01M16 10h.01M16 14h.01"/></svg>
       <span>Companies</span>
     </a>
+    <a class="signals-sidebar-link {{ 'is-active' if request.endpoint == 'compare' else '' }}" href="{{ url_for('compare') }}">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="16" rx="1"/><rect x="15" y="4" width="6" height="16" rx="1"/><path d="M11 8h2M11 12h2M11 16h2"/></svg>
+      <span>Compare</span>
+    </a>
     <a class="signals-sidebar-link {{ 'is-active' if request.endpoint == 'tools' else '' }}" href="{{ url_for('tools') }}">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="3" height="9"/><rect x="14" y="7" width="3" height="5"/><path d="M3 21h18"/></svg>
       <span>Tools</span>
@@ -37,10 +41,6 @@
     <a class="signals-sidebar-link {{ 'is-active' if request.endpoint == 'watchlist' else '' }}" href="{{ url_for('watchlist') }}">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
       <span>Watch</span>
-    </a>
-    <a class="signals-sidebar-link {{ 'is-active' if request.endpoint == 'docs' else '' }}" href="{{ url_for('docs') }}">
-      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-      <span>Docs</span>
     </a>
   </nav>
 

@@ -58,6 +58,27 @@ PARSER_VERSION = "yfinance-v1-annual"
 _UNIT_DIVISOR = 1_000_000
 _PER_UNIT_ROW_LABELS = {"Diluted EPS"}
 
+# Yahoo's "Ordinary Shares Number" balance-sheet line (-> shares_outstanding,
+# see normalization/financials.py's yfinance alias table) is, for Berkshire
+# specifically, reported in Class-A-equivalent units -- Berkshire's own 10-K
+# expresses total share count that way for EPS purposes. Every other figure
+# this app has for Berkshire (price, market cap math) is on the Class-B
+# ticker (sources/yfinance_prices.py's US_TICKER_OVERRIDES: company_id
+# "BRKB" -> yfinance ticker "BRK-B", the more liquid, retail-facing class).
+# Left unconverted, that's a real class mismatch, not just a display
+# quirk: B-share price x A-equivalent share count understates market cap by
+# the A:B conversion ratio -- verified against this exact bug: 1,438,223
+# (A-equivalent) shares x ~$504 (B price) = ~$728M, vs Berkshire's real
+# ~$1.08T (confirmed independently: BRK-A's own 1,427,140 shares x its own
+# ~$755,631 price also lands at ~$1.08T). Multiplying by the 1,500:1 A:B
+# conversion ratio here, once, at ingestion, keeps shares_outstanding on
+# the same class basis as the price it's paired with everywhere downstream
+# (market cap, any future per-share ratio). Company-specific because this
+# is Berkshire's own unusually wide split, not a general "US shares are
+# wrong" rule -- most dual-class companies (e.g. Alphabet's GOOGL/GOOG)
+# convert close enough to 1:1 that no correction is needed.
+_SHARES_OUTSTANDING_CLASS_RATIO = {"BRKB": 1500}
+
 
 class YFinanceAdapter:
     source_id = "yfinance"
@@ -80,8 +101,12 @@ class YFinanceAdapter:
                 continue
             for row_label, series in frame.iterrows():
                 divisor = 1 if str(row_label) in _PER_UNIT_ROW_LABELS else _UNIT_DIVISOR
+                class_ratio = (
+                    _SHARES_OUTSTANDING_CLASS_RATIO.get(company_id, 1)
+                    if str(row_label) == "Ordinary Shares Number" else 1
+                )
                 period_values = {
-                    (f"FY{period_end.year}", None): value / divisor
+                    (f"FY{period_end.year}", None): value * class_ratio / divisor
                     for period_end, value in series.items()
                     if value is not None and not (isinstance(value, float) and math.isnan(value))
                 }

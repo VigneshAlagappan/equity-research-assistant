@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Compare — Signals{% endblock %}
+
+{% block page_class %}page-wide{% endblock %}
+
+{% block extra_style %}
+  .compare-intro { max-width: 68ch; margin-bottom: var(--space-5); }
+
+  .compare-slots {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3);
+    margin-bottom: var(--space-6);
+  }
+  @media (max-width: 900px) {
+    .compare-slots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  .compare-slot {
+    min-height: 96px; padding: var(--space-3); border: 1px solid var(--color-divider);
+    border-radius: var(--radius-md); background: var(--surface);
+    display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  }
+  .compare-slot-empty { position: relative; justify-content: flex-start; }
+  /* .site-search-input reserves left padding for _header.html's search
+     icon (web/static/classical/styles.css) -- no icon here, so that space
+     would just read as an odd indent on the placeholder text. */
+  .compare-slot-empty .site-search-input { width: 100%; padding-left: 10px; }
+  .compare-slot-empty .site-search-input:focus { width: 100%; }
+  .compare-slot-name { font-weight: 600; font-size: 14px; }
+  .compare-slot-meta { font-size: 12px; color: var(--ink-muted); }
+  .compare-slot-actions { display: flex; gap: var(--space-2); margin-top: 4px; }
+  .compare-slot-actions .btn { font-size: 12px; padding: 2px 8px; }
+
+  .compare-table-wrap { overflow-x: auto; }
+  .compare-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .compare-table th, .compare-table td { padding: 8px 12px; border-bottom: 1px solid var(--color-divider); text-align: left; white-space: nowrap; }
+  /* Row label column pinned to the left edge while the company columns
+     scroll horizontally under it (.compare-table-wrap's own overflow-x) --
+     the one column every row needs to stay readable against, same as a
+     spreadsheet's frozen header column. */
+  .compare-table thead th { position: sticky; top: 0; background: var(--surface); z-index: 2; }
+  .compare-table tbody th {
+    position: sticky; left: 0; background: var(--surface); z-index: 1;
+    font-weight: 500; color: var(--ink-muted); white-space: normal; min-width: 160px;
+  }
+  .compare-table thead th:first-child { left: 0; z-index: 3; }
+  .compare-table tbody tr:hover td, .compare-table tbody tr:hover th { background: var(--row-hover); }
+
+  .compare-fx-note { font-size: 12px; margin-top: var(--space-3); }
+{% endblock %}
+
+{% block content %}
+  <h1>Compare</h1>
+  <p class="compare-intro muted">
+    Pick up to 4 companies to see them side by side across the same ratios shown on each company's own Overview
+    tab. Mixing an Indian and a US company automatically converts monetary figures to USD, using a live exchange
+    rate noted below the table — ratios and percentages (P/E, ROE, margins, growth, ...) need no conversion and
+    are shown as-is either way.
+  </p>
+
+  <div id="compare-slots" class="compare-slots" data-search-url="{{ search_url }}"></div>
+
+  <div id="compare-table"></div>
+
+  <script>window.COMPARE_RATIO_CATALOG = {{ ratio_catalog|tojson }};</script>
+  <script src="{{ static_url('js/valuation_dashboard.js') }}"></script>
+  <script src="{{ static_url('js/compare.js') }}"></script>
+{% endblock %}

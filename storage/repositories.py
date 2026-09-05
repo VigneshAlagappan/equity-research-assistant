@@ -2429,6 +2429,39 @@ def update_shareholding_category_breakdown(
     conn.commit()
 
 
+def mark_shareholding_detail_fetched(conn: sqlite3.Connection, company_id: str, fiscal_year: str, quarter: str) -> None:
+    """Records *when* the per-quarter detail step (sources/
+    nse_shareholding.py's fetch_shareholding_detail(), one extra HTTP call
+    per quarter) last ran for this quarter -- separate from whether it
+    found a named-holder/FII-DII breakdown to parse, so scripts/
+    batch_fetch_nse.py's shareholding job can tell "we tried, this quarter
+    genuinely has none" apart from "we haven't tried yet" (see
+    detail_fetched_at's own migration comment in storage/database.py).
+    Call this once per quarter right after a *successful* detail fetch,
+    whether or not the returned breakdown was None -- never after an
+    NSEFetchError, so a transient failure still gets retried next run."""
+    conn.execute(
+        "UPDATE shareholding_observations SET detail_fetched_at = ? WHERE company_id = ? AND fiscal_year = ? AND quarter = ?",
+        (utcnow_iso(), company_id, fiscal_year, quarter),
+    )
+    conn.commit()
+
+
+def get_shareholding_detail_fetched_periods(conn: sqlite3.Connection, company_id: str) -> set[tuple[str, str]]:
+    """{(fiscal_year, quarter), ...} already carrying a detail_fetched_at
+    timestamp for this company -- scripts/batch_fetch_nse.py's
+    shareholding job skips the expensive per-quarter detail HTTP call for
+    any of these on a repeat "Run now" (Settings > Data Operations >
+    Schedule), instead of re-fetching every quarter NSE's master listing
+    returns on every single click."""
+    rows = conn.execute(
+        "SELECT fiscal_year, quarter FROM shareholding_observations "
+        "WHERE company_id = ? AND detail_fetched_at IS NOT NULL",
+        (company_id,),
+    ).fetchall()
+    return {(row["fiscal_year"], row["quarter"]) for row in rows}
+
+
 def insert_shareholding_holders(
     conn: sqlite3.Connection,
     company_id: str,
@@ -2574,12 +2607,32 @@ def finish_batch_job_item(conn: sqlite3.Connection, item_id: int, *, status: str
     conn.commit()
 
 
-def list_batch_job_runs(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
-    """Most recent runs first -- Admin UI / CLI history view."""
-    rows = conn.execute(
-        "SELECT * FROM batch_job_runs ORDER BY started_at DESC LIMIT ?", (limit,)
-    ).fetchall()
+def list_batch_job_runs(conn: sqlite3.Connection, job_name: str | None = None, limit: int = 20) -> list[dict]:
+    """Most recent runs first -- Admin UI / CLI history view. job_name is
+    optional and keyword-compatible with every existing caller (main.py's
+    batch-log CLI command calls this positionally-conn/keyword-limit only) --
+    added so the Settings > Data Operations > Schedule panel's "last run"
+    display (get_latest_batch_job_run below) and the Audit Log > Job Runs
+    tab can each narrow to one job without a second, near-duplicate query."""
+    if job_name is not None:
+        rows = conn.execute(
+            "SELECT * FROM batch_job_runs WHERE job_name = ? ORDER BY started_at DESC LIMIT ?",
+            (job_name, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM batch_job_runs ORDER BY started_at DESC LIMIT ?", (limit,)
+        ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_latest_batch_job_run(conn: sqlite3.Connection, job_name: str) -> dict | None:
+    """Most recent run for one job, or None if it's never been triggered --
+    the Schedule panel's "last run" column. Thin wrapper over
+    list_batch_job_runs(job_name=..., limit=1) rather than a separate query,
+    so the two stay consistent by construction."""
+    rows = list_batch_job_runs(conn, job_name=job_name, limit=1)
+    return rows[0] if rows else None
 
 
 def list_batch_job_items(conn: sqlite3.Connection, run_id: int) -> list[dict]:
@@ -2589,6 +2642,35 @@ def list_batch_job_items(conn: sqlite3.Connection, run_id: int) -> list[dict]:
         "SELECT * FROM batch_job_items WHERE run_id = ? ORDER BY item_id ASC", (run_id,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_batch_job_run_live_progress(conn: sqlite3.Connection, run_id: int) -> dict:
+    """How far a run has gotten *right now*, computed live from
+    batch_job_items -- unlike batch_job_runs.items_total/succeeded/failed
+    (only written once, at the very end, by finish_batch_job_run()), so
+    those columns stay NULL for a run's entire duration and give the
+    Settings > Data Operations > Schedule panel / Audit Log > Job Runs tab
+    nothing to show for a `status='running'` row today, even mid-run --
+    e.g. someone navigating away from a long NSE batch fetch and back
+    sees only "running" with a start timestamp, no sense of whether it's
+    5% or 95% done. Safe to call on an already-finished run too (numbers
+    will just match the stored summary), but callers only need this for a
+    still-running one -- a finished run already has its own summary."""
+    row = conn.execute(
+        """
+        SELECT
+            COUNT(*) AS items_started,
+            SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS items_succeeded,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS items_failed
+        FROM batch_job_items WHERE run_id = ?
+        """,
+        (run_id,),
+    ).fetchone()
+    return {
+        "items_started": row["items_started"] or 0,
+        "items_succeeded": row["items_succeeded"] or 0,
+        "items_failed": row["items_failed"] or 0,
+    }
 
 
 # ============================================================

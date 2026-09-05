@@ -99,6 +99,16 @@ DEFAULT_SOURCES: list[dict[str, object]] = [
         "trust_rank": 3,
         "description": "Secondary data provider API — same trust tier as Screener. Non-Indian companies only; live-fetched, not an uploaded file.",
     },
+    {
+        "source_id": "sec_edgar",
+        "name": "SEC EDGAR (XBRL Company Facts API)",
+        "trust_rank": 0,
+        "description": (
+            "US SEC's own structured XBRL filing data (10-K/10-Q) — target source of truth for "
+            "US company financial facts, same tier as NSE/BSE XBRL. Ahead of yfinance (trust_rank 3) "
+            "once a period is validated here. Non-US companies only; live-fetched, not an uploaded file."
+        ),
+    },
     # Macro/regulatory sources — each its own row (trust-rankable and
     # describable individually) rather than one generic "macro" placeholder,
     # the same way NSE/BSE/Screener each get their own row above rather than
@@ -317,6 +327,14 @@ TIER_MIN_REASONING_STRENGTH: dict[str, int] = {
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 LOCAL_MODEL_ENABLED = os.environ.get("LOCAL_MODEL_ENABLED", "true").lower() != "false"
 LOCAL_MODEL_ID = os.environ.get("LOCAL_MODEL_ID", "llama3.1:8b")
+
+# sources/sec_edgar.py: SEC's fair-access policy requires every request
+# carry an identifying User-Agent ("Company Name contact@example.com") --
+# not an API key, but genuinely checked, and requests without one get
+# rate-limited/blocked over sustained use. The placeholder below is fine
+# for occasional/manual testing; set the real env var before putting the
+# USA Financials job on an actual schedule.
+SEC_EDGAR_USER_AGENT = os.environ.get("SEC_EDGAR_USER_AGENT", "Signals Equity Research Tool contact@example.com")
 
 # research/knowledge_builder.py truncates a document's text to this many
 # characters before sending it to the model — env-configurable because

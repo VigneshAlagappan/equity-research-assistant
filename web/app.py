@@ -15,8 +15,10 @@ import json
 import re
 from storage.db_types import DBConnection
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urlparse
 
 import anthropic
@@ -82,6 +84,11 @@ from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.investigation import InvestigationError, run_investigation
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
+from scripts.batch_fetch_nse import run_nse_batch
+from scripts.db_shard import run_db_shard_job
+from scripts.fetch_daily_prices import run_price_history_update
+from scripts.fetch_daily_prices_usa import run_price_history_update_usa
+from storage.company_repository import select_company_ids_by_index
 from storage.database import init_db
 from storage.investigation_repository import (
     count_investigation_hypotheses,
@@ -124,12 +131,16 @@ from storage.repositories import (
     get_generated_report,
     get_investigation,
     get_investigation_cost_summary,
+    get_batch_job_run_live_progress,
+    get_latest_batch_job_run,
     get_llm_usage_summary,
     get_macro_series,
     get_user_by_email,
     get_user_by_id,
     get_user_by_login,
     is_watchlisted,
+    list_batch_job_items,
+    list_batch_job_runs,
     list_company_insights,
     list_company_notes,
     list_documents_by_status,
@@ -173,6 +184,7 @@ from storage.repositories import (
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
 from web.shareholding_feed import build_shareholding_feed
 from web.fixtures import EXAMPLES, THREADS
+from web.fx_rate import get_usd_inr_rate
 from web.live_quote import get_live_quote, peek_cached_quote
 from web.news import fetch_company_news, google_news_last_24h_url
 from web.rich_text import sanitize_note_html
@@ -521,6 +533,35 @@ def create_app() -> Flask:
                 return None
             return max(0.0, min(100.0, (price - low) / (high - low) * 100))
 
+        def _format_market_cap(value, currency):
+            """`value` (== row["market_cap_cr"] below) is price times
+            list_latest_shares_outstanding()'s canonical_value -- and that
+            value is NOT always "in Cr" despite its docstring/the field's own
+            name: it's crore for an Indian company (NSE/screener-sourced
+            shares_outstanding), but millions for a US one (sources/
+            yfinance_financials.py divides by _UNIT_DIVISOR = 1_000_000, not
+            10_000_000, when normalizing yfinance's raw share count) -- both
+            conventions exist because each matches how that source already
+            expresses every other aggregate line item (reserves, revenue,
+            ...) for the same company, not a bug in the ingestion itself.
+            Multiplying price x shares therefore lands in the right currency
+            either way, just at a different real-world scale -- so a USD
+            company unconditionally labeled "Cr" here was wrong (verified:
+            Apple showed "$4,727,000 Cr", a rupee-crore unit slapped on a
+            number that's actually already in USD millions). INR keeps the
+            flat Cr convention this app uses everywhere else (no further
+            Lakh/Cr-of-Cr scaling); USD gets a normal T/B/M scale instead,
+            since "$4,727,000M" reads far worse than "$4.73T" for a mega-cap."""
+            if value is None:
+                return None
+            if currency != "USD":
+                return f"₹{value:,.0f} Cr"
+            if value >= 1_000_000:  # >= $1T, value is in millions
+                return f"${value / 1_000_000:,.2f}T"
+            if value >= 1_000:  # >= $1B
+                return f"${value / 1_000:,.1f}B"
+            return f"${value:,.0f}M"
+
         rows = []
         for c in list_companies(db):
             row = dict(c)
@@ -561,6 +602,7 @@ def create_app() -> Flask:
                 row["market_cap_cr"] = row["latest_price"] * shares_outstanding_entry[0]
             else:
                 row["market_cap_cr"] = None
+            row["market_cap_display"] = _format_market_cap(row["market_cap_cr"], row["currency"])
             week52 = week52_by_company.get(row["company_id"])
             row["week52_low"], row["week52_high"] = week52 if week52 else (None, None)
             row["week52_pct"] = _range_pct(row["latest_price"], row["week52_low"], row["week52_high"])
@@ -646,6 +688,174 @@ def create_app() -> Flask:
     def _distinct_values(rows: list, column: str) -> list[str]:
         return sorted({r[column] for r in rows if r[column]})
 
+    @dataclass
+    class ScheduledJob:
+        """One row of the Settings > Data Operations > Schedule panel's
+        registry -- see SCHEDULED_JOBS.md for the underlying gap analysis
+        this table is a UI over. `runner` is None for the seven jobs that
+        aren't wired to anything real yet (a design gap, a missing fetch
+        source, or a batch-loop script nobody's written) -- those render as
+        a disabled row with `reason` as subtext, pulled verbatim from
+        SCHEDULED_JOBS.md's own verdict so the UI can't drift from the
+        actual gap analysis by inventing softer wording. `job_name` is the
+        batch_job_runs.job_name to look up "last run" by (None for the
+        disabled rows, which have never run anything)."""
+
+        job_id: str
+        label: str
+        cadence: str
+        job_name: str | None
+        reason: str | None
+        runner: Callable[[DBConnection], int] | None
+
+    def _run_financials_india(conn) -> int:
+        """Nifty 50 constituents only (not the full Nifty 500 the doc-level
+        gap analysis mentions for "planned") -- matches the registry table
+        in this task's own spec, and keeps a manual "Run now" click from
+        accidentally kicking off a several-hundred-company NSE crawl."""
+        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
+        return run_nse_batch(conn, "financials", companies, scope_label=f"Nifty 50 ({len(companies)})")
+
+    def _run_shareholding_india(conn) -> int:
+        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
+        return run_nse_batch(conn, "shareholding", companies, scope_label=f"Nifty 50 ({len(companies)})")
+
+    # The other ~449 Nifty 500 constituents (everything not already covered
+    # by the Nifty 50 job above) used to be one "Nifty 500 remaining" job --
+    # replaced with three smaller ones along NSE's own standard tiering
+    # instead, so a single "Run now" click is a few dozen-to-150 companies,
+    # not 449 in one blocking synchronous request. Nifty Next 50 (50) +
+    # Nifty Midcap 150 (150) + Nifty Smallcap 250 (249) is a clean,
+    # verified, non-overlapping partition of exactly that same 449-company
+    # pool (Nifty 100 = Nifty 50 + Nifty Next 50, and Nifty 500 = Nifty 100
+    # + Midcap 150 + Smallcap 250 -- NSE's own tier composition, not
+    # something picked arbitrarily) -- deliberately Next 50, not the full
+    # Nifty 100 tier, so this doesn't re-fetch the 50 companies the
+    # standalone Nifty 50 job above already covers.
+    #
+    # One factory instead of six near-identical closures (financials x
+    # shareholding, each x 3 tiers) that would otherwise drift out of sync
+    # with each other if one got edited and the other five didn't.
+    def _make_nse_tier_runner(kind: str, index_name: str, job_name: str):
+        def _runner(conn) -> int:
+            companies = [r["company_id"] for r in select_company_ids_by_index(conn, index_name)]
+            return run_nse_batch(
+                conn, kind, companies,
+                scope_label=f"{index_name} ({len(companies)})", job_name=job_name,
+            )
+        return _runner
+
+    _run_financials_nifty_next50 = _make_nse_tier_runner(
+        "financials", "Nifty Next 50", "nse_xbrl_fetch_nifty_next50")
+    _run_financials_nifty_midcap150 = _make_nse_tier_runner(
+        "financials", "Nifty Midcap 150", "nse_xbrl_fetch_nifty_midcap150")
+    _run_financials_nifty_smallcap250 = _make_nse_tier_runner(
+        "financials", "Nifty Smallcap 250", "nse_xbrl_fetch_nifty_smallcap250")
+    _run_shareholding_nifty_next50 = _make_nse_tier_runner(
+        "shareholding", "Nifty Next 50", "nse_shareholding_fetch_nifty_next50")
+    _run_shareholding_nifty_midcap150 = _make_nse_tier_runner(
+        "shareholding", "Nifty Midcap 150", "nse_shareholding_fetch_nifty_midcap150")
+    _run_shareholding_nifty_smallcap250 = _make_nse_tier_runner(
+        "shareholding", "Nifty Smallcap 250", "nse_shareholding_fetch_nifty_smallcap250")
+
+    def _run_price_history_india(conn) -> int:
+        # run_price_history_update() opens its own main-db/price-db
+        # connections internally (see scripts/fetch_daily_prices.py's own
+        # refactor notes on why its BatchRun must live on the main db, not
+        # the price db) -- the `conn` this route hands every runner is
+        # ignored here, not reused, which is fine: it's the same main db
+        # underneath, just a second connection to it.
+        return run_price_history_update()
+
+    def _run_db_shard(conn) -> int:
+        return run_db_shard_job(conn)
+
+    def _run_price_history_usa(conn) -> int:
+        # Same shape as _run_price_history_india above: run_price_history_
+        # update_usa() opens its own main-db/price-db connections
+        # internally, so the `conn` this route hands every runner is
+        # ignored here rather than reused -- it's the same main db
+        # underneath either way.
+        return run_price_history_update_usa()
+
+    # Eleven jobs get a real "Run now" button; the other six render as a
+    # disabled row with `reason` as subtext (see ScheduledJob's docstring
+    # above). Order here is the display order in the Schedule panel table.
+    _SCHEDULED_JOBS: list[ScheduledJob] = [
+        ScheduledJob("price_history_india", "Price history — India", "Daily",
+                     "price_history_india", None, _run_price_history_india),
+        ScheduledJob("price_history_usa", "Price history — USA", "Weekly",
+                     "price_history_usa", None, _run_price_history_usa),
+        ScheduledJob("db_shard", "DB sharding", "Daily",
+                     "db_shard", None, _run_db_shard),
+        ScheduledJob("financials_india", "Financials — India (Nifty 50)", "Quarterly",
+                     "nse_xbrl_fetch", None, _run_financials_india),
+        ScheduledJob("financials_india_next50", "Financials — India (Nifty Next 50)", "Quarterly",
+                     "nse_xbrl_fetch_nifty_next50", None, _run_financials_nifty_next50),
+        ScheduledJob("financials_india_midcap150", "Financials — India (Nifty Midcap 150)", "Quarterly",
+                     "nse_xbrl_fetch_nifty_midcap150", None, _run_financials_nifty_midcap150),
+        ScheduledJob("financials_india_smallcap250", "Financials — India (Nifty Smallcap 250)", "Quarterly",
+                     "nse_xbrl_fetch_nifty_smallcap250", None, _run_financials_nifty_smallcap250),
+        ScheduledJob("shareholding_india", "Shareholding pattern — India (Nifty 50)", "Quarterly",
+                     "nse_shareholding_fetch", None, _run_shareholding_india),
+        ScheduledJob("shareholding_india_next50", "Shareholding pattern — India (Nifty Next 50)", "Quarterly",
+                     "nse_shareholding_fetch_nifty_next50", None, _run_shareholding_nifty_next50),
+        ScheduledJob("shareholding_india_midcap150", "Shareholding pattern — India (Nifty Midcap 150)", "Quarterly",
+                     "nse_shareholding_fetch_nifty_midcap150", None, _run_shareholding_nifty_midcap150),
+        ScheduledJob("shareholding_india_smallcap250", "Shareholding pattern — India (Nifty Smallcap 250)", "Quarterly",
+                     "nse_shareholding_fetch_nifty_smallcap250", None, _run_shareholding_nifty_smallcap250),
+        ScheduledJob("financials_usa", "Financials — USA", "Quarterly", None,
+                     "yfinance's quarterly data doesn't align to fiscal quarters — needs a "
+                     "per-company fiscal-quarter mapping first", None),
+        ScheduledJob("doc_analysis", "Document analysis (transcripts/concalls)", "Quarterly", None,
+                     "No scheduled trigger exists for the manual \"process pending documents\" "
+                     "action, and there's no automated fetch source — this would only ever "
+                     "process what's already been manually uploaded", None),
+        ScheduledJob("insights_companies", "Company insights", "Monthly", None,
+                     "Per-company generation exists but only as a one-click, one-company "
+                     "action — no batch-loop script yet", None),
+        ScheduledJob("insights_macro", "Macro insights", "Monthly", None,
+                     "The generation function itself doesn't exist yet — needs a design "
+                     "decision on what a macro insight is first", None),
+        ScheduledJob("fred_macro", "FRED macro data", "Weekly", None,
+                     "Live fetch works one series at a time — needs a loop over a configured "
+                     "series list", None),
+        ScheduledJob("rbi_macro", "RBI / IITM macro data", "Weekly", None,
+                     "These sources are file-based parsers over manually-downloaded files, "
+                     "not live fetchers — \"weekly\" here still means a human stages the file "
+                     "first", None),
+    ]
+
+    def _schedule_panel_context(db) -> dict:
+        """Only computed when the Schedule panel is actually being viewed,
+        same reasoning _ingest_panel_context()/_audit_panel_context() give
+        for their own panels -- get_latest_batch_job_run() is one query per
+        registered job, wasted work on every /settings load otherwise.
+
+        Each registry entry is turned into a plain dict (not the
+        ScheduledJob dataclass itself) merged with its `last_run` and a
+        `runner_available` flag, since the template needs to branch on
+        "does this job have a working Run now button" without importing
+        Callable-ness checks into Jinja. A still-`running` last_run also
+        gets `live_progress` attached (get_batch_job_run_live_progress()) --
+        otherwise a run in progress shows nothing but a start timestamp
+        until it finishes, since batch_job_runs' own items_total/succeeded/
+        failed columns are only written once, at the very end."""
+        scheduled_jobs = []
+        for job in _SCHEDULED_JOBS:
+            last_run = get_latest_batch_job_run(db, job.job_name) if job.job_name else None
+            if last_run is not None and last_run["status"] == "running":
+                last_run = {**last_run, "live_progress": get_batch_job_run_live_progress(db, last_run["run_id"])}
+            scheduled_jobs.append({
+                "job_id": job.job_id,
+                "label": job.label,
+                "cadence": job.cadence,
+                "reason": job.reason,
+                "runner_available": job.runner is not None,
+                "last_run": last_run,
+            })
+        return {"scheduled_jobs": scheduled_jobs}
+
     def _ingest_panel_context(db) -> dict:
         """Only computed when the Ingest panel is actually being viewed —
         discover_pending_financial_items() walks the whole data/raw/ tree,
@@ -730,7 +940,35 @@ def create_app() -> Flask:
         A free-text search (company id/name/NSE symbol) is layered on top
         of the status filter for the same reason Import Data's company
         field got a search box instead of a dropdown — 2,600 rows is too
-        many to page through by eye."""
+        many to page through by eye.
+
+        Also returns the "Job Runs" tab's data (audit_job_runs) -- every
+        Schedule-panel trigger (and any other BatchRun-wrapped job, present
+        or future) shows up here, same audit-trail idea as the
+        reconciliation table above but at the batch-run grain instead of
+        the per-metric grain. Items are eager-loaded per run rather than
+        lazily on expand-click (which would need its own endpoint) — 50
+        runs at a handful of items each is small, the same "just eager-load
+        it, it's cheap" call this function already makes for recent_log
+        above."""
+        active_tab = "job_runs" if request.args.get("al_tab") == "job_runs" else "reconciliation"
+        job_runs = list_batch_job_runs(db, limit=50)
+        for run in job_runs:
+            run["items"] = list_batch_job_items(db, run["run_id"])
+            # Derived from the already-eager-loaded items above, not
+            # run['items_total']/etc -- those columns are only written once,
+            # at the very end, by finish_batch_job_run(), so they're still
+            # NULL for the entire duration of a run that's still in
+            # progress (the row would otherwise show a misleading "0/0"
+            # instead of real live progress). For an already-finished run
+            # these come out identical to the stored summary, since
+            # batch_job_items reflects the final state exactly by then --
+            # so the template can just always use these instead of the
+            # stored columns, one code path either way.
+            run["items_started_live"] = len(run["items"])
+            run["items_succeeded_live"] = sum(1 for i in run["items"] if i["status"] == "ok")
+            run["items_failed_live"] = sum(1 for i in run["items"] if i["status"] == "failed")
+
         status_filter = request.args.get("al_status") or ""
         query = (request.args.get("al_q") or "").strip().lower()
         migration_rows = list_xbrl_migration_status(db)
@@ -766,6 +1004,8 @@ def create_app() -> Flask:
             "audit_query": request.args.get("al_q", ""),
             "audit_pending_count": sum(1 for r in migration_rows if r["migration_status"] == "pending"),
             "audit_not_started_count": sum(1 for r in migration_rows if r["migration_status"] == "not_started"),
+            "audit_active_tab": active_tab,
+            "audit_job_runs": job_runs,
         }
 
     @app.route("/admin")
@@ -898,6 +1138,7 @@ def create_app() -> Flask:
             ),
             **(_ingest_panel_context(db) if admin_sub == "ingest" else {}),
             **(_audit_panel_context(db) if admin_sub == "audit" else {}),
+            **(_schedule_panel_context(db) if admin_sub == "schedule" else {}),
         }
 
     @app.route("/admin/usage")
@@ -1094,6 +1335,36 @@ def create_app() -> Flask:
             flash(f"{result.error_count} request(s) to NSE failed during refresh — see server logs.", "error")
 
         return redirect(url_for("company_report", company_id=company_id))
+
+    @app.route("/admin/schedule/run/<job_id>", methods=["POST"])
+    def admin_schedule_run(job_id: str):
+        """Settings > Data Operations > Schedule's "Run now" button — the
+        manual-trigger stand-in for real cron scheduling, which doesn't
+        exist in this app yet (see SCHEDULED_JOBS.md). Every registered
+        job's runner already writes its own BatchRun audit trail (this
+        route doesn't do that bookkeeping itself), so all this does is look
+        the job up, call its runner with the current request-scoped db
+        connection, and turn the result into a flash message pointing at
+        where the details actually live.
+
+        Synchronous and blocking, same as every other admin action in this
+        file (see admin_refresh_company's own docstring above) — no
+        background-job infrastructure exists here to defer it to. That's
+        exactly why financials/shareholding/price-history (each a
+        several-minute, several-company live NSE/yfinance crawl) are real
+        buttons here at all, not queued: an admin clicking "Run now" is
+        expected to wait for the response, same tradeoff
+        admin_refresh_company already makes for one company at a time."""
+        job = next((j for j in _SCHEDULED_JOBS if j.job_id == job_id), None)
+        if job is None or job.runner is None:
+            abort(404)
+        db = get_db()
+        try:
+            run_id = job.runner(db)
+            flash(f"{job.label}: run #{run_id} finished — see Audit Log → Job Runs for details.", "success")
+        except Exception as exc:  # noqa: BLE001 -- surface any failure as a flash, not a 500
+            flash(f"{job.label} failed: {exc}", "error")
+        return redirect(url_for("settings", panel="admin-schedule"))
 
     @app.route("/admin/ingest/refresh", methods=["POST"])
     def admin_ingest_refresh():
@@ -1739,6 +2010,84 @@ def create_app() -> Flask:
             abort(404, f"No company registered with company_id={company_id!r}")
         return jsonify(build_shareholding_feed(db, company_id))
 
+    @app.route("/companies/<company_id>/compare-meta.json")
+    def company_compare_meta(company_id: str):
+        """Everything the Compare page (web/static/js/compare.js) needs
+        about one company besides its financial-statement time series
+        (already covered by company_charts_feed below) -- the same live
+        price / shares-outstanding resolution company_report() does for its
+        own Overview tab (right down to the same nse_symbol-or-company_id
+        ticker convention and the same shares-outstanding staleness gate
+        the Companies list uses, _is_shares_outstanding_current, since a
+        confidently-wrong decade-old market cap is worse in a side-by-side
+        comparison than in a single company's own page), just exposed here
+        so a company *other* than the one currently on screen can be
+        added/swapped into a comparison without a full page load."""
+        db = get_db()
+        company = get_company(db, company_id)
+        if company is None:
+            abort(404, f"No company registered with company_id={company_id!r}")
+
+        latest_price = _latest_price(company["valuation_model_file"]) if company["valuation_model_file"] else None
+        live_quote = get_live_quote(
+            company["nse_symbol"] or (company_id if company["country"] != "IN" else None),
+            company["country"],
+        )
+        price = live_quote["price"] if live_quote else latest_price
+
+        shares_outstanding_entry = list_latest_shares_outstanding(db).get(company_id)
+        shares_outstanding = shares_outstanding_fy = None
+        if shares_outstanding_entry is not None and _is_shares_outstanding_current(shares_outstanding_entry[1]):
+            shares_outstanding = shares_outstanding_entry[0]
+            shares_outstanding_fy = int(shares_outstanding_entry[1][2:])
+
+        return jsonify(
+            company_id=company_id,
+            display_name=company["display_name"],
+            nse_symbol=company["nse_symbol"],
+            country=company["country"],
+            currency=company["currency"],
+            price=price,
+            shares_outstanding=shares_outstanding,
+            shares_outstanding_fy=shares_outstanding_fy,
+            financials_url=url_for("company_charts_feed", company_id=company_id, statement_type="consolidated"),
+        )
+
+    @app.route("/fx/usdinr.json")
+    def fx_usdinr():
+        """USD/INR spot rate for the Compare page's cross-currency
+        conversion footnote (web/fx_rate.py) -- a plain JSON endpoint
+        rather than baking a rate into every page load, since most visits
+        never compare a US company against an Indian one and shouldn't pay
+        for a yfinance call they'll never use."""
+        rate = get_usd_inr_rate()
+        if rate is None:
+            return jsonify(error="USD/INR rate unavailable right now"), 502
+        return jsonify(rate)
+
+    @app.route("/compare")
+    def compare():
+        """Car/product-comparison-style spec sheet -- pick up to
+        COMPARE_MAX_COMPANIES companies (web/templates/compare.html), see
+        them side by side across the same Overview Ratios catalog
+        (OVERVIEW_RATIO_CATALOG) a company's own Overview tab already
+        uses, one metric catalog reused a second time rather than a
+        parallel one maintained just for this page. All the actual company
+        data is fetched and rendered client-side (web/static/js/
+        compare.js) via company_compare_meta()/company_charts_feed() per
+        selected company -- this route only renders the page shell plus
+        which ratio rows are currently enabled (the same admin setting,
+        Settings > Data & Classification > Overview Ratios, the Overview
+        tab itself respects, so the two never show a different metric set
+        for the same company)."""
+        db = get_db()
+        ratio_settings = get_overview_ratio_settings(db)
+        return render_template(
+            "compare.html",
+            ratio_catalog=[r for r in OVERVIEW_RATIO_CATALOG if ratio_settings[r["key"]]],
+            search_url=url_for("companies_search"),
+        )
+
     @app.route("/companies/<company_id>/docs/add", methods=["POST"])
     def company_add_document(company_id: str):
         db = get_db()
@@ -1894,7 +2243,7 @@ def create_app() -> Flask:
     # endpoint-name prefix (see settings() below).
     _ADMIN_SETTINGS_PANELS = (
         "companies", "taxonomy", "columns", "overview_ratios",
-        "import", "stock_actions", "ingest", "audit",
+        "import", "stock_actions", "ingest", "schedule", "audit",
     )
 
     @app.route("/settings", methods=["GET", "POST"])
