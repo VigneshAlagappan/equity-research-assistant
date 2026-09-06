@@ -42,6 +42,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import requests
@@ -92,13 +93,22 @@ _PERIOD_PATTERNS = [
 _YEAR_ONLY_PATTERN = re.compile(r"(20\d{2})")
 
 
+def _two_digit_year(year: int) -> int:
+    """"03" -> 2003, but "98" -> 1998, not 2098 -- a real bug this fixes,
+    not a hypothetical: Berkshire's own qtrly/1stqtr98.html etc. (1990s
+    filings, still live on their site) parsed as FY2098 under a naive
+    "always add 2000" rule. Pivots on the current year's own last two
+    digits: a two-digit year no greater than that is assumed current-
+    century, anything higher is assumed previous-century -- correct for
+    every source this module covers (nothing here predates 1994)."""
+    century_pivot = date.today().year % 100 + 1
+    return 2000 + year if year <= century_pivot else 1900 + year
+
+
 def _parse_fiscal_period(*texts: str) -> tuple[str | None, str | None]:
     """(fiscal_year, quarter) best-effort from whichever of the given
     strings (link text, URL) actually carries it -- tries each pattern
-    against each text in order, first match wins. Two-digit years are
-    assumed 20xx (every source this module covers only goes back to the
-    1990s at the very oldest, and those older links carry no parseable
-    period at all, so this ambiguity never actually bites)."""
+    against each text in order, first match wins."""
     for text in texts:
         if not text:
             continue
@@ -114,7 +124,7 @@ def _parse_fiscal_period(*texts: str) -> tuple[str | None, str | None]:
                 year, quarter = int(groups[0]), f"Q{groups[1]}"
             else:
                 quarter, year = f"Q{groups[0]}", int(groups[1])
-            year = year + 2000 if year < 100 else year
+            year = _two_digit_year(year) if year < 100 else year
             return f"FY{year}", quarter
     for text in texts:
         m = _YEAR_ONLY_PATTERN.search(text or "")
