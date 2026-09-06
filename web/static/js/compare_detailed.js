@@ -8,10 +8,16 @@
    attribute/period-union helpers) rather than a second implementation of
    that merge logic.
 
-   Deliberately no range selector (unlike Charts' Last N / Max toggle) --
-   this view's whole point is "full recorded history per company, not a
-   fixed window" (see the footnote this file renders), so it always shows
-   everything the union of loaded companies has. */
+   Deliberately no range selector for the table's own period columns
+   (unlike Charts' Last N / Max toggle) -- this view's whole point is
+   "full recorded history per company, not a fixed window" (see the
+   footnote this file renders), so the columns always show everything the
+   union of loaded companies has. The CAGR column (added alongside this
+   comment) is the one exception: CAGR is inherently a start/end-period
+   calculation, not a per-period one, so it gets its own From/To range
+   picker (#cmp-cagr-range) defaulting to the full available range but
+   user-adjustable -- narrowing it doesn't touch the table's own period
+   columns, only which two points the CAGR figure is computed between. */
 (function () {
   "use strict";
 
@@ -36,6 +42,9 @@
     const attrsPanel = document.getElementById("cmp-attrs-panel");
     const attrsCount = document.getElementById("cmp-attrs-count");
     const periodBtns = Array.prototype.slice.call(document.querySelectorAll("[data-cmp-period]"));
+    const cagrRangeRoot = document.getElementById("cmp-cagr-range");
+    const cagrFromSelect = document.getElementById("cmp-cagr-from");
+    const cagrToSelect = document.getElementById("cmp-cagr-to");
 
     const state = {
       // [{id, name}], driven entirely by window.CompareShared (Quick
@@ -57,7 +66,34 @@
       // has at least one attribute the user explicitly checked, so
       // "hidden until proven interesting" would be backwards.
       collapsedSections: new Set(),
+      // CAGR From/To -- period_keys (e.g. [2024, 0] for annual FY2024,
+      // [2024, 2] for quarterly Q2 FY2024), not indices: the union period
+      // list can change shape (a company added/removed, Annual/Quarterly
+      // toggled), and a key survives that where a plain array index
+      // wouldn't. null until the first renderCagrRangeControls() call
+      // populates them to the full available range (the "keep default"
+      // starting point); a user's explicit choice is preserved across
+      // re-renders as long as that period still exists in the new union.
+      cagrFromKey: null,
+      cagrToKey: null,
+      // False until the user actually touches a From/To select. While
+      // false, renderCagrRangeControls() always re-snaps to the full
+      // current union range on every render rather than "preserving" a
+      // key -- companies load asynchronously (syncFromQuick's per-company
+      // loadCompany().then()), so an early render with only one of two
+      // companies loaded would otherwise lock the default onto that one
+      // company's own (later) start period, "stillValid" or not, once a
+      // second company with earlier history finishes loading.
+      cagrRangeTouched: false,
     };
+
+    function keyOrdinal(k) { return k[0] * 4 + k[1]; }
+    function keyEq(a, b) { return !!a && !!b && a[0] === b[0] && a[1] === b[1]; }
+    // Updated on every renderCagrRangeControls() call -- the From/To
+    // <select> options are index-based (rebuilt fresh each render), so the
+    // change listeners need this to translate "option index N" back into
+    // the period_key it stood for at render time.
+    let lastUnionKeys = [];
 
     function cacheKey(companyId, periodType) {
       return companyId + "|" + periodType;
@@ -178,6 +214,66 @@
       return value / fxRate; // perShare: raw rupees -> dollars
     }
 
+    // Populates the From/To selects from the current union period list,
+    // preserving the user's existing choice if that period still exists,
+    // otherwise (first load, or the chosen period fell out of the union)
+    // defaulting to the full available range -- oldest at index 0 / newest
+    // last, per charts_overlay.js's unionPeriods() own sort order.
+    function renderCagrRangeControls(union) {
+      if (union.PERIOD_KEYS.length < 2) {
+        cagrRangeRoot.hidden = true;
+        return;
+      }
+      cagrRangeRoot.hidden = false;
+
+      function fillSelect(select, currentKey, defaultIdx) {
+        select.innerHTML = union.PERIODS.map((label, i) => '<option value="' + i + '">' + escapeHtml(label) + "</option>").join("");
+        const stillValid = state.cagrRangeTouched && currentKey && union.PERIOD_KEYS.some((k) => keyEq(k, currentKey));
+        const idx = stillValid ? union.PERIOD_KEYS.findIndex((k) => keyEq(k, currentKey)) : defaultIdx;
+        select.selectedIndex = idx;
+        return union.PERIOD_KEYS[idx];
+      }
+      state.cagrFromKey = fillSelect(cagrFromSelect, state.cagrFromKey, 0);
+      state.cagrToKey = fillSelect(cagrToSelect, state.cagrToKey, union.PERIOD_KEYS.length - 1);
+      lastUnionKeys = union.PERIOD_KEYS;
+    }
+
+    // CAGR between state.cagrFromKey/cagrToKey for one company+attribute,
+    // gap-tolerant within that window the same way valuation_dashboard.js's
+    // growthCagr() is gap-tolerant across a metric's *entire* history: the
+    // actual start/end points used are the first and last non-null values
+    // whose period falls within [cagrFromKey, cagrToKey], not necessarily
+    // those two boundary periods themselves (a company that doesn't report
+    // exactly on the chosen boundary still gets a real CAGR from whatever
+    // it does have in that window, "where possible" per this feature's own
+    // ask -- never fabricated for a period with no filing).
+    function cagrForRange(entry, attr) {
+      const V = window.SignalsValuation;
+      const a = entry.ds.byId[C.attrId(attr.section, attr.key)];
+      if (!V || !a || !state.cagrFromKey || !state.cagrToKey) return null;
+      const lo = keyOrdinal(state.cagrFromKey), hi = keyOrdinal(state.cagrToKey);
+      const idxInRange = [];
+      entry.ds.PERIOD_KEYS.forEach((k, i) => {
+        const ord = keyOrdinal(k);
+        if (ord >= lo && ord <= hi) idxInRange.push(i);
+      });
+      if (idxInRange.length < 2) return null;
+      const slice = idxInRange.map((i) => a.values[i]);
+      const sliceKeys = idxInRange.map((i) => entry.ds.PERIOD_KEYS[i]);
+      const first = V.firstNonNull(slice);
+      const last = V.lastNonNull(slice);
+      if (first.idx < 0 || last.idx < 0 || first.idx === last.idx) return null;
+      return V.cagr(first.val, last.val, V.elapsedYears(sliceKeys[first.idx], sliceKeys[last.idx]));
+    }
+
+    function fmtCagr(cagrValue) {
+      if (cagrValue === null || cagrValue === undefined || !Number.isFinite(cagrValue)) {
+        return '<span class="cmp-not-reported">-</span>';
+      }
+      const V = window.SignalsValuation;
+      return V ? escapeHtml(V.fmt(cagrValue, "pct", null)) : escapeHtml((cagrValue * 100).toFixed(1) + "%");
+    }
+
     async function renderTable() {
       const loaded = loadedDatasets();
       if (loaded.length === 0) {
@@ -185,6 +281,7 @@
         return;
       }
       const union = C.unionPeriods(loaded.map((x) => x.ds));
+      renderCagrRangeControls(union);
       const unionAttrs = C.unionAttributes(loaded.map((x) => x.ds));
       const selected = unionAttrs.filter((a) => state.selectedAttrs.has(C.attrId(a.section, a.key)));
       if (selected.length === 0) {
@@ -198,6 +295,15 @@
       const conversionUnavailable = mixed && (!state.fxRate || !state.fxRate.rate);
 
       const headerCells = union.PERIODS.map((p) => "<th>" + escapeHtml(p) + "</th>").join("");
+      // "Where possible" per this column's own ask -- a row for an
+      // attribute only one of the loaded companies reports still gets a
+      // CAGR cell for that company; the others just show "-" via
+      // fmtCagr(null), same as any other missing-data cell in this table.
+      const cagrHeaderCell = state.cagrFromKey && state.cagrToKey
+        ? '<th class="cmp-cagr-col">CAGR<br><span class="cmp-cagr-col-range">' +
+          escapeHtml(cagrFromSelect.options[cagrFromSelect.selectedIndex].text) + " &rarr; " +
+          escapeHtml(cagrToSelect.options[cagrToSelect.selectedIndex].text) + "</span></th>"
+        : "";
 
       // Group the selected attributes by section (still SECTION_ORDER'd,
       // since `selected` is a filter over `unionAttrs`) -- one <details>
@@ -229,11 +335,15 @@
               if (needsConversion) value = convertToUsd(value, attr.unit, state.fxRate.rate);
               return "<td>" + fmtValue(value, attr.unit, displayCurrency) + "</td>";
             }).join("");
+            const cagrCell = state.cagrFromKey && state.cagrToKey
+              ? '<td class="cmp-cagr-col">' + (a ? fmtCagr(cagrForRange(entry, attr)) : fmtCagr(null)) + "</td>"
+              : "";
             bodyRows += (
               '<tr class="' + (i === 0 ? "cmp-attr-label-row" : "") + '">' +
                 labelCell +
                 '<td class="cmp-company-cell">' + escapeHtml(entry.company.name) + "</td>" +
                 cells +
+                cagrCell +
               "</tr>"
             );
           });
@@ -249,7 +359,7 @@
                 (isOpen ? "expanded" : "collapsed") + "</span>" +
             "</summary>" +
             '<div class="compare-table-wrap"><table class="cmp-detailed-table">' +
-              "<thead><tr><th>Metric</th><th>Company</th>" + headerCells + "</tr></thead>" +
+              "<thead><tr><th>Metric</th><th>Company</th>" + headerCells + cagrHeaderCell + "</tr></thead>" +
               "<tbody>" + bodyRows + "</tbody>" +
             "</table></div>" +
           "</details>"
@@ -325,6 +435,18 @@
         attrsPanel.hidden = true;
         attrsBtn.setAttribute("aria-expanded", "false");
       }
+    });
+
+    // — CAGR From/To range —
+    cagrFromSelect.addEventListener("change", () => {
+      state.cagrRangeTouched = true;
+      state.cagrFromKey = lastUnionKeys[parseInt(cagrFromSelect.value, 10)] || null;
+      renderTable();
+    });
+    cagrToSelect.addEventListener("change", () => {
+      state.cagrRangeTouched = true;
+      state.cagrToKey = lastUnionKeys[parseInt(cagrToSelect.value, 10)] || null;
+      renderTable();
     });
 
     // — Annual/Quarterly toggle —

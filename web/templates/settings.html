@@ -1322,13 +1322,15 @@
          panel already uses for Financial Data / Documents, reused rather
          than inventing a second visual pattern for the same interaction. #}
       <div class="admin-audit-subnav">
-        <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab != 'job_runs' }}"
-           href="{{ url_for('settings', panel='admin-audit', al_tab='reconciliation') }}">Data Reconciliation</a>
+        <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab == 'reconciliation' }}"
+           href="{{ url_for('settings', panel='admin-audit', al_tab='reconciliation') }}">Data Reconciliation — India</a>
+        <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab == 'usa_reconciliation' }}"
+           href="{{ url_for('settings', panel='admin-audit', al_tab='usa_reconciliation') }}">Data Reconciliation — USA</a>
         <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab == 'job_runs' }}"
            href="{{ url_for('settings', panel='admin-audit', al_tab='job_runs') }}">Job Runs ({{ audit_job_runs|length }})</a>
       </div>
 
-      <div class="admin-audit-subpanel" id="admin-audit-subpanel-reconciliation" {{ 'hidden' if audit_active_tab == 'job_runs' }}>
+      <div class="admin-audit-subpanel" id="admin-audit-subpanel-reconciliation" {{ 'hidden' if audit_active_tab != 'reconciliation' }}>
       <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
         <input type="hidden" name="panel" value="admin-audit">
         <div class="field">
@@ -1345,8 +1347,17 @@
             <option value="no_data" {{ 'selected' if audit_status_filter == 'no_data' }}>No data</option>
           </select>
         </div>
+        <div class="field">
+          <label for="audit-index">Index</label>
+          <select class="input" id="audit-index" name="al_index" onchange="this.form.requestSubmit()">
+            <option value="">All indices</option>
+            {% for index_name in audit_index_options %}
+            <option value="{{ index_name }}" {{ 'selected' if audit_index_filter == index_name }}>{{ index_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
         <button type="submit" class="btn btn-ghost">Filter</button>
-        {% if audit_status_filter or audit_query %}
+        {% if audit_status_filter or audit_query or audit_index_filter %}
         <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-audit') }}">Clear</a>
         {% endif %}
       </form>
@@ -1406,7 +1417,7 @@
           of {{ audit_total }}
         </span>
         <div class="admin-pagination-links">
-          {% set audit_pagination_args = {'panel': 'admin-audit', 'al_status': audit_status_filter, 'al_q': audit_query} %}
+          {% set audit_pagination_args = {'panel': 'admin-audit', 'al_status': audit_status_filter, 'al_q': audit_query, 'al_index': audit_index_filter} %}
           {% if audit_page > 1 %}
           <a class="btn btn-ghost" href="{{ url_for('settings', al_page=audit_page - 1, **audit_pagination_args) }}">&larr; Previous</a>
           {% endif %}
@@ -1419,6 +1430,95 @@
       {% endif %}
       {% else %}
       <div class="empty-state">No NSE-listed active companies match this filter.</div>
+      {% endif %}
+      </div>
+
+      <div class="admin-audit-subpanel" id="admin-audit-subpanel-usa-reconciliation" {{ 'hidden' if audit_active_tab != 'usa_reconciliation' }}>
+      <p class="muted">
+        The USA equivalent of Data Reconciliation — India, just without a "legacy" era to migrate off: SEC
+        EDGAR's own structured XBRL data (<code>sources/sec_edgar.py</code>) has been the target source of
+        truth for every US company since it was built, unlike NSE's real migration off pre-XBRL filings.
+        "Pending" here means yfinance (a secondary provider) has a more recent quarter on file than SEC EDGAR
+        does for that company — worth re-running <code>ingest-sec-edgar</code> for.
+      </p>
+      <p class="muted" style="margin-top: 0;">
+        {{ audit_usa_pending_count }} compan{{ 'y' if audit_usa_pending_count == 1 else 'ies' }} with yfinance
+        data more recent than their SEC EDGAR coverage &middot; {{ audit_usa_not_started_count }} with no SEC
+        EDGAR coverage yet.
+      </p>
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-audit">
+        <input type="hidden" name="al_tab" value="usa_reconciliation">
+        <div class="field">
+          <label for="usa-audit-q">Search</label>
+          <input class="input" type="text" id="usa-audit-q" name="al_usa_q" placeholder="Name or company ID&hellip;" value="{{ audit_usa_query }}">
+        </div>
+        <div class="field">
+          <label for="usa-audit-status">Status</label>
+          <select class="input" id="usa-audit-status" name="al_usa_status" onchange="this.form.requestSubmit()">
+            <option value="">All statuses</option>
+            <option value="pending" {{ 'selected' if audit_usa_status_filter == 'pending' }}>Pending</option>
+            <option value="not_started" {{ 'selected' if audit_usa_status_filter == 'not_started' }}>Not started</option>
+            <option value="up_to_date" {{ 'selected' if audit_usa_status_filter == 'up_to_date' }}>Up to date</option>
+            <option value="no_data" {{ 'selected' if audit_usa_status_filter == 'no_data' }}>No data</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-ghost">Filter</button>
+        {% if audit_usa_status_filter or audit_usa_query %}
+        <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-audit', al_tab='usa_reconciliation') }}">Clear</a>
+        {% endif %}
+      </form>
+
+      {% if audit_usa_rows %}
+      <table class="table admin-audit-table">
+        <thead>
+          <tr><th></th><th>Company</th><th>Latest yfinance-or-any period</th><th>Latest SEC EDGAR period</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {% for row in audit_usa_rows %}
+          <tr class="admin-audit-row" data-audit-toggle>
+            <td><button type="button" class="admin-audit-expand" aria-expanded="false" aria-label="Show reconciliation history">&rsaquo;</button></td>
+            <td><a href="{{ url_for('company_report', company_id=row['company_id']) }}">{{ row['display_name'] }}</a> ({{ row['company_id'] }})</td>
+            <td>{{ row['latest_legacy_period'] or '—' }}</td>
+            <td>{{ row['latest_edgar_period'] or '—' }}</td>
+            <td>
+              <span class="tag {{ 'tag-outline' if row['migration_status'] == 'pending' else 'tag-neutral' if row['migration_status'] == 'not_started' else 'tag-success' if row['migration_status'] == 'up_to_date' else 'tag-neutral' }}">
+                {{ row['migration_status']|replace('_', ' ') }}
+              </span>
+            </td>
+          </tr>
+          <tr class="admin-audit-detail-row" hidden>
+            <td colspan="5">
+              {% if row['recent_log'] %}
+              <table class="table admin-audit-detail-table">
+                <thead>
+                  <tr><th>When</th><th>Metric</th><th>Period</th><th>Statement</th><th>Source</th><th>Chosen</th><th>Note</th></tr>
+                </thead>
+                <tbody>
+                  {% for log in row['recent_log'] %}
+                  <tr>
+                    <td><span class="local-time" data-utc="{{ log['considered_at'] }}">{{ log['considered_at'] }}</span></td>
+                    <td>{{ log['metric_key'] }}</td>
+                    <td>{{ log['fiscal_year'] }}{{ log['quarter'] or '' }}</td>
+                    <td>{{ log['statement_type'] or '—' }}</td>
+                    <td>{{ log['source'] }}</td>
+                    <td><span class="tag {{ 'tag-success' if log['was_chosen'] else 'tag-neutral' }}">{{ 'yes' if log['was_chosen'] else 'no' }}</span></td>
+                    <td>{{ log['note'] }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              {% else %}
+              <div class="empty-state">No reconciliation activity recorded for this company yet.</div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">No active US companies match this filter.</div>
       {% endif %}
       </div>
 

@@ -39,6 +39,7 @@ from __future__ import annotations
 from storage.db_types import DBConnection
 from collections import defaultdict
 
+from companies.registry import get_company
 from sources.nse_shareholding import classify_public_category
 from storage.repositories import list_shareholding_history, list_shareholding_holders_all
 
@@ -86,7 +87,18 @@ def build_shareholding_feed(conn: DBConnection, company_id: str) -> dict:
     table shows every quarter as its own column rather than one at a time)."""
     history = list_shareholding_history(conn, company_id)  # oldest first
     if not history:
-        return {"quarters": []}
+        # Distinguish "not applicable" from "not fetched yet": Shareholding
+        # Pattern is SEBI LODR Regulation 31, an NSE-listing requirement --
+        # meaningless for a company with no nse_symbol (every US company on
+        # file, e.g. GOOGL). Naming scripts/fetch_nse_shareholding for one
+        # of those is actively wrong, not just unhelpful (verified: a real
+        # bug, not hypothetical -- that script requires an nse_symbol and
+        # would immediately raise SystemExit for any of them). company can
+        # be None here in principle (the route checks first, but this
+        # function has no hard dependency on that ordering) -- treated the
+        # same as "no nse_symbol" rather than raising.
+        company = get_company(conn, company_id)
+        return {"quarters": [], "nse_listed": bool(company and company["nse_symbol"])}
 
     valid_periods = {(h["fiscal_year"], h["quarter"]) for h in history}
     holder_rows = [

@@ -42,6 +42,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_companies_fiscal_year_end_column(conn)
     _migrate_company_insights_history(conn)
     _migrate_users_theme_column(conn)
+    _migrate_case_visibility_columns(conn)
     _migrate_documents_table(conn)
     _migrate_documents_old_fk_references(conn)
     _migrate_document_chunks_fk_reference(conn)
@@ -315,6 +316,23 @@ def _migrate_users_theme_column(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
     if columns and "theme" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'schwab'")
+
+
+def _migrate_case_visibility_columns(conn: sqlite3.Connection) -> None:
+    """generated_reports/investigations both originally had no per-row
+    visibility state at all -- the Cases list (web/app.py's investigations())
+    always showed every row. hidden_at is reversible (an "Unhide" action
+    clears it back to NULL); deleted_at is not -- presented to the user as
+    permanent ("archived forever"), no UI ever clears it, but the row
+    itself is never actually DELETEd (same "never truly destroy data"
+    stance this app already takes for archived companies/append-only
+    observations) so the underlying data and any audit trail survive."""
+    for table in ("generated_reports", "investigations"):
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "hidden_at" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN hidden_at TEXT")
+        if "deleted_at" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT")
 
 
 def _migrate_documents_table(conn: sqlite3.Connection) -> None:

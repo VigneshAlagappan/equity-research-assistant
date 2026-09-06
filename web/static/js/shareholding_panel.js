@@ -275,8 +275,11 @@
         return;
       }
       if (!state.data || !state.data.quarters.length) {
-        root.innerHTML = `<div class="empty-state">No shareholding pattern data on file yet for this company &mdash; NSE's Regulation 31
-          filings, fetched via <code>python -m scripts.fetch_nse_shareholding ${escapeHtml(companyId)}</code>.</div>`;
+        root.innerHTML = state.data && state.data.nse_listed === false
+          ? `<div class="empty-state">Shareholding Pattern isn't applicable here &mdash; it's SEBI LODR Regulation 31, an
+             NSE-listing requirement, and this company isn't listed on NSE.</div>`
+          : `<div class="empty-state">No shareholding pattern data on file yet for this company &mdash; NSE's Regulation 31
+             filings, fetched via <code>python -m scripts.fetch_nse_shareholding ${escapeHtml(companyId)}</code>.</div>`;
         return;
       }
 

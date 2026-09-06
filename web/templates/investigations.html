@@ -6,14 +6,35 @@
 
 {% block extra_style %}
   .investigations-list { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-4); }
+  /* .investigation-row is now the outer card (link + actions stacked
+     inside it) rather than the link itself -- a <button> can't legally
+     nest inside an <a> (the Hide/Delete forms below need real buttons),
+     so the whole-card-is-a-link shape from before was split into a link
+     for the card body and a sibling row for actions, both inside one
+     plain (non-interactive) card container. */
   .investigation-row {
+    display: flex; flex-direction: column; gap: var(--space-2);
+  }
+  .investigation-row:hover { border-color: var(--color-accent); }
+  .investigation-row-link {
     display: flex; flex-direction: column; gap: var(--space-1);
     text-decoration: none; color: inherit;
   }
-  .investigation-row:hover { border-color: var(--color-accent); }
   .investigation-top-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
   .investigation-top-row .card-kicker { display: flex; align-items: center; gap: 8px; }
   .investigation-question { font-size: 13px; opacity: 0.75; }
+  .investigation-actions {
+    display: flex; gap: var(--space-3); padding-top: var(--space-1);
+    border-top: 1px solid var(--color-divider);
+  }
+  .investigation-actions form { margin: 0; }
+  .investigation-action-btn {
+    font: inherit; font-size: 12px; color: var(--ink-muted); background: none; border: none;
+    padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+  }
+  .investigation-action-btn:hover { color: var(--ink); }
+  .investigation-action-danger { color: #a33; } /* same red as .flash-error elsewhere in this app */
+  .investigation-action-danger:hover { opacity: 0.75; }
 
   .empty-state {
     padding: var(--space-6);
@@ -41,6 +62,8 @@
     border-top: 1px solid var(--color-divider); font-size: 13px;
   }
   .admin-pagination-links { display: flex; align-items: center; gap: var(--space-2); }
+  .iv-hidden-toggle { display: flex; align-items: flex-end; padding-bottom: 2px; }
+  .iv-hidden-toggle label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 {% endblock %}
 
 {% block content %}
@@ -58,33 +81,34 @@
         <option value="structured" {{ 'selected' if entries_type_filter == 'structured' }}>Deep Dive</option>
       </select>
     </div>
+    <div class="field">
+      <label for="iv-status">Status</label>
+      <select class="input" id="iv-status" name="iv_status" onchange="this.form.requestSubmit()">
+        <option value="">All statuses</option>
+        {% for key, label in status_options %}
+        <option value="{{ key }}" {{ 'selected' if entries_status_filter == key }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field iv-hidden-toggle">
+      <label for="iv-hidden">
+        <input type="checkbox" id="iv-hidden" name="iv_hidden" value="1" {{ 'checked' if entries_show_hidden }}
+               onchange="this.form.requestSubmit()">
+        Show hidden
+      </label>
+    </div>
     <button type="submit" class="btn btn-primary">Search</button>
-    {% if entries_query or entries_type_filter %}
+    {% if entries_query or entries_type_filter or entries_status_filter or entries_show_hidden %}
     <a class="btn btn-ghost" href="{{ url_for('investigations') }}">Clear</a>
     {% endif %}
   </form>
 
   {% if entries %}
-  <div class="investigations-list">
-    {% for entry in entries %}
-    <a class="card elev-sm investigation-row" href="{{ entry.href }}">
-      <div class="investigation-top-row">
-        <div class="card-kicker">
-          <span class="tag {{ 'tag-accent' if entry.type == 'generated' else 'tag-neutral' }}">{{ entry.type_label }}</span>
-          {{ entry.companies_label }}
-        </div>
-        <span class="tag tag-outline">{{ entry.right_tag }}</span>
-      </div>
-      <div class="card-title">{{ entry.title }}</div>
-      {% if entry.subtitle %}<div class="investigation-question">{{ entry.subtitle }}</div>{% endif %}
-    </a>
-    {% endfor %}
-  </div>
+  {% set iv_pagination_args = {'iv_q': entries_query, 'iv_type': entries_type_filter, 'iv_status': entries_status_filter, 'iv_hidden': '1' if entries_show_hidden else ''} %}
   {% if entries_total_pages > 1 %}
   <div class="admin-pagination">
     <span class="muted">Page {{ entries_page }} of {{ entries_total_pages }}</span>
     <div class="admin-pagination-links">
-      {% set iv_pagination_args = {'iv_q': entries_query, 'iv_type': entries_type_filter} %}
       {% if entries_page > 1 %}
       <a class="btn btn-ghost" href="{{ url_for('investigations', iv_page=entries_page - 1, **iv_pagination_args) }}">&larr; Previous</a>
       {% endif %}
@@ -94,8 +118,49 @@
     </div>
   </div>
   {% endif %}
-  {% elif entries_query or entries_type_filter %}
-  <div class="empty-state">No investigations match these filters.</div>
+  <div class="investigations-list">
+    {% for entry in entries %}
+    <div class="card elev-sm investigation-row">
+      <a class="investigation-row-link" href="{{ entry.href }}">
+        <div class="investigation-top-row">
+          <div class="card-kicker">
+            <span class="tag {{ 'tag-accent' if entry.type == 'generated' else 'tag-neutral' }}">{{ entry.type_label }}</span>
+            {{ entry.companies_label }}
+          </div>
+          <span class="tag tag-outline">{{ entry.right_tag }}</span>
+        </div>
+        <div class="card-title">{{ entry.title }}</div>
+        {% if entry.subtitle %}<div class="investigation-question">{{ entry.subtitle }}</div>{% endif %}
+      </a>
+      <div class="investigation-actions">
+        <form method="post" action="{{ url_for('case_hide', case_type=entry.type, case_id=entry.id) }}">
+          <input type="hidden" name="return_to" value="{{ request.full_path }}">
+          <button type="submit" class="investigation-action-btn">{{ 'Unhide' if entry.hidden else 'Hide' }}</button>
+        </form>
+        <form method="post" action="{{ url_for('case_delete', case_type=entry.type, case_id=entry.id) }}"
+              onclick="return confirm('Delete this case? It will be permanently hidden and cannot be restored from here.');">
+          <input type="hidden" name="return_to" value="{{ request.full_path }}">
+          <button type="submit" class="investigation-action-btn investigation-action-danger">Delete</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if entries_total_pages > 1 %}
+  <div class="admin-pagination">
+    <span class="muted">Page {{ entries_page }} of {{ entries_total_pages }}</span>
+    <div class="admin-pagination-links">
+      {% if entries_page > 1 %}
+      <a class="btn btn-ghost" href="{{ url_for('investigations', iv_page=entries_page - 1, **iv_pagination_args) }}">&larr; Previous</a>
+      {% endif %}
+      {% if entries_page < entries_total_pages %}
+      <a class="btn btn-ghost" href="{{ url_for('investigations', iv_page=entries_page + 1, **iv_pagination_args) }}">Next &rarr;</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% elif entries_query or entries_type_filter or entries_status_filter or entries_show_hidden %}
+  <div class="empty-state">{{ "No hidden cases." if entries_show_hidden else "No investigations match these filters." }}</div>
   {% else %}
   <div class="empty-state">No investigations yet. Start one from the Research tab.</div>
   {% endif %}
