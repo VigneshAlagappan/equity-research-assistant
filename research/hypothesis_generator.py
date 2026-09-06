@@ -35,13 +35,15 @@ HYPOTHESIS_CATEGORIES: frozenset[str] = frozenset({
 })
 
 MAX_HYPOTHESES = 6
-#: 6 hypotheses x {statement, mechanism, category, rationale,
+#: 6 hypotheses x {statement, mechanism, chain_steps[], category, rationale,
 #: known_relationships[], unknowns[]} is a genuinely large JSON object, and
 #: 3072 was not enough for it: real golden-loop runs came in at 2155 and 2221
-#: output tokens (so within a rounding error of the old cap), and a
-#: multi-clause question ("could Signal have detected deterioration before it
-#: became obvious? identify which indicators changed and evaluate competing
-#: explanations") truncated outright and failed the whole investigation —
+#: output tokens before chain_steps existed (so within a rounding error of
+#: the old cap, and comfortably inside the 8192 headroom below even with it
+#: added), and a multi-clause question ("could Signal have detected
+#: deterioration before it became obvious? identify which indicators changed
+#: and evaluate competing explanations") truncated outright and failed the
+#: whole investigation —
 #: generation failing is the one failure run_investigation() cannot degrade
 #: past, since there is then nothing to investigate. Same headroom, for the
 #: same measured reason, that research/hypothesis_evaluator.py's MAX_TOKENS
@@ -68,6 +70,13 @@ class Hypothesis:
     known_relationships: list[str] = field(default_factory=list)
     unknowns: list[str] = field(default_factory=list)
     generation_order: int = 0
+    #: Short causal-stage labels, cause -> observed effect (e.g. ["RBI repo
+    #: rate up", "Cost of funds up", "Spread compressed", "Profit impacted"])
+    #: — the same mechanism as `mechanism` above, broken into the discrete
+    #: steps a hypothesis-chain diagram renders, rather than one prose
+    #: sentence. Empty when the model didn't produce a usable one; the UI
+    #: falls back to `mechanism` prose in that case, never a fabricated chain.
+    chain_steps: list[str] = field(default_factory=list)
 
 
 HYPOTHESIS_GENERATOR_SYSTEM_PROMPT = """You generate multiple plausible, COMPETING explanations for a research \
@@ -85,6 +94,7 @@ Respond with ONLY a JSON array, no other text, in exactly this shape:
   {{
     "statement": "<one clear sentence stating the hypothesis>",
     "mechanism": "<how this would actually work — the causal chain, one or two sentences>",
+    "chain_steps": ["<the SAME causal chain as `mechanism`, broken into 3-5 short stage labels, 2-6 words each, in order from root cause to the observed effect in `statement` — e.g. 'RBI repo rate up' -> 'Cost of funds up' -> 'Spread compressed' -> 'Profit impacted'. Only include a step you can actually name from the mechanism; never pad to a fixed length.>"],
     "category": "<one of: {categories}>",
     "rationale": "<why this is plausible given what's already known — one or two sentences>",
     "known_relationships": ["<any already-known fact/relationship this hypothesis draws on, if any>"],
@@ -216,6 +226,7 @@ def generate_hypotheses(
         statement = (raw.get("statement") or "").strip()
         if category not in HYPOTHESIS_CATEGORIES or not statement:
             continue  # a hallucinated category or empty statement is dropped, not stored as-is
+        chain_steps = [str(s).strip() for s in (raw.get("chain_steps") or []) if str(s).strip()]
         hypotheses.append(
             Hypothesis(
                 hypothesis_id=f"{investigation_id}-h{order + 1}", investigation_id=investigation_id,
@@ -223,6 +234,7 @@ def generate_hypotheses(
                 companies=company_ids, rationale=(raw.get("rationale") or "").strip(),
                 known_relationships=[str(r) for r in (raw.get("known_relationships") or [])],
                 unknowns=[str(u) for u in (raw.get("unknowns") or [])], generation_order=order,
+                chain_steps=chain_steps,
             )
         )
 

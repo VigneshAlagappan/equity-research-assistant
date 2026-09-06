@@ -7,32 +7,30 @@
 {% block extra_style %}
   .compare-intro { max-width: 68ch; margin-bottom: var(--space-5); }
 
-  /* — Left nav: Quick Comparison / Detailed Comparison — same side-tab
-     pattern as Settings' own .settings-nav/.settings-nav-item
-     (web/templates/settings.html), kept as its own page-local copy since
-     that page's rules aren't a shared, importable component. A vertical
-     rail reads better than a top tab bar here because Detailed
-     Comparison's own toolbar (period toggle, attributes) already occupies
-     the horizontal band a tab bar would otherwise sit in. */
-  .compare-shell { display: flex; gap: var(--space-6); align-items: flex-start; }
-  .compare-nav { display: flex; flex-direction: column; width: 200px; flex: none; }
+  /* — Top nav: Quick Comparison / Detailed Comparison / Valuation Model —
+     a horizontal tab bar, not a side rail. Used to be a 200px vertical
+     rail (same side-tab pattern as Settings' own .settings-nav), but that
+     permanently gave up a fifth of the page's width to three tab labels on
+     every panel, including the Detailed/Valuation tables that most need
+     the room (verified: those tables scroll horizontally under real data,
+     so 200px back is real headroom, not cosmetic). Same underline-active
+     style #valuation-dashboard-interactive's own horizontal .vm-nav
+     already uses, reused here rather than inventing a second tab look. */
+  .compare-shell { display: block; }
+  .compare-nav {
+    display: flex; flex-direction: row; flex-wrap: wrap; gap: var(--space-6);
+    border-bottom: 1px solid var(--color-divider); margin-bottom: var(--space-4);
+  }
   .compare-nav-item {
-    display: block; width: 100%;
-    padding: 7px 10px; margin: 0; border-radius: var(--radius-lg);
-    border: 1px solid transparent; background: none; color: var(--ink);
+    display: inline-block;
+    padding: 8px 2px; margin: 0; border: none; border-bottom: 2px solid transparent; border-radius: 0;
+    background: none; color: var(--ink-muted);
     font: inherit; font-size: 14px; line-height: 1.3; text-align: left; cursor: pointer;
   }
-  .compare-nav-item:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
-  .compare-nav-item.active {
-    background: var(--surface); border-color: var(--border); color: var(--accent); font-weight: 600;
-  }
-  .compare-content { flex: 1; min-width: 0; }
+  .compare-nav-item:hover { color: var(--ink); }
+  .compare-nav-item.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--color-accent); }
+  .compare-content { min-width: 0; }
   .compare-panel[hidden] { display: none; }
-  @media (max-width: 760px) {
-    .compare-shell { flex-direction: column; }
-    .compare-nav { flex-direction: row; flex-wrap: wrap; width: auto; gap: 4px; }
-    .compare-nav-item { width: auto; flex: 1 1 auto; }
-  }
 
   .compare-slots {
     display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3);
@@ -146,14 +144,19 @@
   .cmp-section[open] > .cmp-section-summary .cmp-section-title::before { transform: rotate(90deg); }
   .cmp-section-meta { font-size: 12px; font-weight: 400; color: var(--ink-muted); white-space: nowrap; }
 
-  /* — Valuation Model tab: reuses the company page's own Growth Projection
-     widget verbatim (web/static/js/compare_valuation.js builds the same
-     #valuation-dashboard-interactive markup, valuation_dashboard_
-     interactive.js drives it) -- this include is the shared .vm-* CSS both
-     pages need, kept in one file so a future change to that widget's look
-     only needs one edit. */
+  /* — Valuation Model tab: a Detailed-Comparison-shaped side-by-side table
+     (own toolbar/pills/attrs-panel ids below, .cmp-* styles above already
+     cover the shared shell) reading web/valuation_feed.py's per-company
+     feed and projecting forward under one shared set of assumptions
+     (web/static/js/compare_valuation.js) -- this include pulls in the same
+     .vm-assumptions-card/.vm-assumptions-grid/.field/.vm-year-range markup
+     the single-company Valuation Model tab uses for its Assumptions card
+     (just one shared instance here instead of one per company), plus the
+     .vm-forecast-cell/.vm-forecast-col/.vm-group-header/.vm-cagr-col tint
+     and the tag-fact/tag-calculation badge styling the comparison table
+     itself reuses. */
   {% include "_valuation_model_styles.html" %}
-  .cmp-val-company-toggle:empty { display: none; }
+  .cmp-val-price-input { max-width: 140px; }
 
   .cmp-detailed-table { width: 100%; border-collapse: collapse; font-size: 13px; border-top: 1px solid var(--color-divider); }
   .cmp-detailed-table th, .cmp-detailed-table td { padding: 6px var(--space-4); text-align: right; white-space: nowrap; }
@@ -222,13 +225,22 @@
   <div class="compare-panel" id="compare-panel-valuation" data-compare-panel="valuation"
        data-valuation-url-template="{{ valuation_url_template }}" hidden>
     <p class="compare-intro muted">
-      The same assumptions-driven Growth Projection model as each company's own Valuation Model tab — adjust
-      required return, growth, and price assumptions and see the impact on intrinsic value and margin of safety,
-      for whichever company below you've selected in Quick Comparison.
+      Pick any number of Growth Projection parameters to see the companies selected in Quick Comparison side by
+      side — recorded actuals plus 3 years projected forward (shaded), under the shared assumptions below. Current
+      price is the one per-company exception (see the Intrinsic Value Walk below) since one shared price doesn't
+      mean much across companies trading at very different scales.
     </p>
+    <div class="card vm-assumptions-card" id="cmp-val-assumptions"></div>
+    <div id="cmp-val-walk"></div>
     <div class="cmp-toolbar">
-      <div class="cmp-val-company-toggle cmp-period-toggle" id="cmp-val-company-toggle" role="group" aria-label="Company"></div>
+      <div class="cmp-attrs">
+        <button type="button" class="cmp-attrs-btn" id="cmp-val-attrs-btn" aria-haspopup="true" aria-expanded="false">
+          Parameters <span class="cmp-attrs-count" id="cmp-val-attrs-count">0</span> &rsaquo;
+        </button>
+        <div class="cmp-attrs-panel" id="cmp-val-attrs-panel" hidden></div>
+      </div>
     </div>
+    <div class="cmp-pills" id="cmp-val-pills"></div>
     <div id="cmp-valuation-root"></div>
   </div>
 
@@ -238,7 +250,6 @@
   <script>window.COMPARE_RATIO_CATALOG = {{ ratio_catalog|tojson }};</script>
   <script src="{{ static_url('js/compare_shared.js') }}"></script>
   <script src="{{ static_url('js/valuation_dashboard.js') }}"></script>
-  <script src="{{ static_url('js/valuation_dashboard_interactive.js') }}"></script>
   <script src="{{ static_url('js/charts_overlay.js') }}"></script>
   <script src="{{ static_url('js/compare.js') }}"></script>
   <script src="{{ static_url('js/compare_detailed.js') }}"></script>

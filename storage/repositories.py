@@ -12,6 +12,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from config.settings import to_repo_relative
@@ -715,6 +716,61 @@ def list_watchlist_items(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+#: How long a fetched headline stays in company_news before being pruned --
+#: see schemas/sqlite_schema.sql's own comment on the table for why this
+#: exists at all (a fast local cache standing in for a live RSS fetch across
+#: this app's whole company registry, infeasible outright).
+NEWS_RETENTION_DAYS = 49  # 7 weeks
+
+
+def save_company_news(conn: sqlite3.Connection, company_id: str, items: list[dict]) -> None:
+    """Upserts `items` (web/news.py's fetch_company_news() output: title/link/
+    source/published/published_at dicts) for `company_id`, then prunes every
+    company_news row older than NEWS_RETENTION_DAYS -- run on every write
+    rather than on a separate schedule, so the table stays bounded without
+    needing its own cron job. De-duped on (company_id, link): a link already
+    on file keeps its original row (INSERT OR IGNORE) rather than being
+    touched again, since a feed item's own fields don't change after the
+    fact -- only fetched_at would, and that's not something worth a write."""
+    now = utcnow_iso()
+    conn.executemany(
+        "INSERT OR IGNORE INTO company_news (company_id, title, link, source, published_at, fetched_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [(company_id, i["title"], i["link"], i.get("source"), i.get("published_at"), now) for i in items],
+    )
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=NEWS_RETENTION_DAYS)).isoformat()
+    conn.execute(
+        "DELETE FROM company_news WHERE COALESCE(published_at, fetched_at) < ?", (cutoff,)
+    )
+    conn.commit()
+
+
+def list_company_news(
+    conn: sqlite3.Connection, company_ids: list[str] | None = None, limit: int = 200
+) -> list[sqlite3.Row]:
+    """Stored headlines, newest first (by published_at, falling back to
+    fetched_at for the rare item a feed gave no publish date for) --
+    web/templates/news.html's merged multi-company feed reads straight from
+    this rather than fetching every company live on each page view.
+    `company_ids=None` reads across every company this app has ever fetched
+    news for (whatever's accumulated so far, not a live full-registry scan);
+    an empty list deliberately returns nothing rather than silently
+    reinterpreting itself as "all companies"."""
+    if company_ids is not None and not company_ids:
+        return []
+    query = (
+        "SELECT company_news.*, companies.display_name FROM company_news "
+        "JOIN companies ON companies.company_id = company_news.company_id"
+    )
+    params: list = []
+    if company_ids is not None:
+        query += f" WHERE company_news.company_id IN ({','.join('?' for _ in company_ids)})"
+        params.extend(company_ids)
+    query += " ORDER BY COALESCE(company_news.published_at, company_news.fetched_at) DESC LIMIT ?"
+    params.append(limit)
+    return conn.execute(query, params).fetchall()
+
+
 def is_watchlisted(conn: sqlite3.Connection, item_type: str, item_ref: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM watchlist_items WHERE item_type = ? AND item_ref = ?", (item_type, item_ref)
@@ -1190,16 +1246,20 @@ def save_investigation_hypothesis(
     rationale: str | None,
     unknowns: list[str],
     generation_order: int,
+    chain_steps: list[str] | None = None,
     verdict: str | None = None,
     confidence_basis: str | None = None,
+    confidence_score: int | None = None,
     synthesis_rank: int | None = None,
 ) -> None:
     conn.execute(
         "INSERT INTO investigation_hypotheses (hypothesis_id, investigation_id, statement, mechanism, "
-        "category, rationale, unknowns, generation_order, verdict, confidence_basis, synthesis_rank, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (hypothesis_id, investigation_id, statement, mechanism, category, rationale, json.dumps(unknowns),
-         generation_order, verdict, confidence_basis, synthesis_rank, utcnow_iso()),
+        "chain_steps, category, rationale, unknowns, generation_order, verdict, confidence_basis, "
+        "confidence_score, synthesis_rank, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (hypothesis_id, investigation_id, statement, mechanism, json.dumps(chain_steps or []), category,
+         rationale, json.dumps(unknowns), generation_order, verdict, confidence_basis, confidence_score,
+         synthesis_rank, utcnow_iso()),
     )
     conn.commit()
 

@@ -257,8 +257,10 @@ def _persist(conn: DBConnection, investigation: Investigation, statement_type: s
             conn, hypothesis_id=hypothesis.hypothesis_id, investigation_id=investigation.investigation_id,
             statement=hypothesis.statement, mechanism=hypothesis.mechanism, category=hypothesis.category,
             rationale=hypothesis.rationale, unknowns=hypothesis.unknowns, generation_order=hypothesis.generation_order,
+            chain_steps=hypothesis.chain_steps,
             verdict=evaluation.verdict if evaluation else None,
             confidence_basis=evaluation.confidence_basis if evaluation else None,
+            confidence_score=evaluation.confidence_score if evaluation else None,
             synthesis_rank=rank_by_id.get(hypothesis.hypothesis_id),
         )
         if evaluation is None:

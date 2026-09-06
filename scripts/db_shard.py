@@ -8,7 +8,10 @@ or copies the file at the OS level. Only how the db is *stored in git*
 changes; the app keeps reading/writing data/equity_research.db exactly as
 before.
 
-Usage: python scripts/db_shard.py [--chunk-mb 49]
+Usage (run as a module -- a plain `python scripts/db_shard.py` fails on the
+`ingestion`/`storage` imports below, since sys.path[0] then resolves to
+scripts/, not the repo root):
+    python -m scripts.db_shard [--chunk-mb 49]
 Reassemble with scripts/db_unshard.py after a fresh clone/pull.
 """
 

@@ -106,6 +106,7 @@ from storage.repositories import (
     COMPANY_LIST_COLUMNS,
     OVERVIEW_RATIO_CATALOG,
     DEFAULT_THEME,
+    NEWS_RETENTION_DAYS,
     VALID_THEMES,
     add_index_definition,
     add_industry,
@@ -142,6 +143,7 @@ from storage.repositories import (
     list_batch_job_items,
     list_batch_job_runs,
     list_company_insights,
+    list_company_news,
     list_company_notes,
     list_documents_by_status,
     list_generated_reports,
@@ -169,6 +171,7 @@ from storage.repositories import (
     rename_sector,
     save_company_document,
     save_company_insights,
+    save_company_news,
     save_company_note,
     save_note_attachment,
     update_company_note,
@@ -2659,6 +2662,11 @@ def create_app() -> Flask:
                 {
                     **dict(h),
                     "unknowns": json.loads(h["unknowns"] or "[]"),
+                    # chain_steps/confidence_score predate a hypothesis generated/
+                    # evaluated before those columns existed — "[]" and NULL are
+                    # the correct fallback (see storage/database.py's migration),
+                    # not an error.
+                    "chain_steps": json.loads(h["chain_steps"] or "[]") if "chain_steps" in h.keys() else [],
                     "supporting_evidence": [e for e in evidence if e["stance"] == "supporting"],
                     "contradicting_evidence": [e for e in evidence if e["stance"] == "contradicting"],
                     "missing_evidence": [e for e in evidence if e["stance"] == "missing"],
@@ -2935,16 +2943,87 @@ def create_app() -> Flask:
         """Lazily-fetched, on the collapsible's first expand — not loaded for every
         watchlist row up front, so a long watchlist never fires a burst of outbound
         requests just from opening the page. Shared by the Watchlist row's 24h
-        teaser (default) and the Overview tab's news section (?days=2)."""
+        teaser (default) and the Overview tab's news section (?days=2). Write-through:
+        whatever this call fetches also lands in company_news (storage/repositories.py)
+        so the News page's merged feed builds up real history over time instead of
+        starting from zero — this endpoint's own response is unaffected."""
         window_days = request.args.get("days", 1, type=int)
-        company = get_company(get_db(), company_id)
+        db = get_db()
+        company = get_company(db, company_id)
         if company is None:
             abort(404, f"No company registered with company_id={company_id!r}")
         items = fetch_company_news(company["display_name"], window_days=window_days)
+        if items:
+            save_company_news(db, company_id, items)
         return jsonify(
             ok=items is not None,
             items=items or [],
             news_url=google_news_last_24h_url(company["display_name"], window_days=window_days),
+        )
+
+    @app.route("/news")
+    def news():
+        """Standalone News tab (sidebar) — a merged, newest-first feed across
+        every company on the Watchlist by default, or one company via the
+        filter box. Reads/writes the same company_news cache watchlist_news()
+        above does (see storage/repositories.py) rather than a live RSS fetch
+        per company on every page view — infeasible outright across this
+        app's full company registry (thousands of companies)."""
+        db = get_db()
+        watchlisted_companies = []
+        for item in list_watchlist_items(db):
+            if item["item_type"] != "company":
+                continue
+            company = get_company(db, item["item_ref"])
+            if company is None:
+                continue
+            watchlisted_companies.append({"company_id": company["company_id"], "display_name": company["display_name"]})
+        return render_template(
+            "news.html",
+            watchlisted_companies=watchlisted_companies,
+            search_url=url_for("companies_search"),
+            feed_url=url_for("news_feed"),
+            company_url_template=url_for("company_report", company_id="__ID__"),
+        )
+
+    @app.route("/news/feed.json")
+    def news_feed():
+        """`company_id` given: live-fetch + store that one company (even if
+        it's not on the Watchlist — the filter box can name anyone), then
+        read its up-to-7-week stored history back. No `company_id`: refresh
+        every Watchlisted company (bounded, unlike the full registry) and
+        read the merged, deduped result across just those."""
+        db = get_db()
+        company_id = request.args.get("company_id")
+        if company_id:
+            company = get_company(db, company_id)
+            if company is None:
+                abort(404, f"No company registered with company_id={company_id!r}")
+            items = fetch_company_news(company["display_name"], window_days=NEWS_RETENTION_DAYS)
+            if items:
+                save_company_news(db, company_id, items)
+            rows = list_company_news(db, company_ids=[company_id])
+        else:
+            watch_company_ids = [
+                item["item_ref"] for item in list_watchlist_items(db) if item["item_type"] == "company"
+            ]
+            for watch_company_id in watch_company_ids:
+                watch_company = get_company(db, watch_company_id)
+                if watch_company is None:
+                    continue
+                fresh = fetch_company_news(watch_company["display_name"], window_days=7)
+                if fresh:
+                    save_company_news(db, watch_company_id, fresh)
+            rows = list_company_news(db, company_ids=watch_company_ids) if watch_company_ids else []
+        return jsonify(
+            items=[
+                {
+                    "title": r["title"], "link": r["link"], "source": r["source"],
+                    "published_at": r["published_at"], "company_id": r["company_id"],
+                    "company_name": r["display_name"],
+                }
+                for r in rows
+            ]
         )
 
     @app.route("/chat")

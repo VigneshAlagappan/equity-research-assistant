@@ -63,6 +63,12 @@ class HypothesisEvaluation:
     supporting_evidence: list[EvidenceItem] = field(default_factory=list)
     contradicting_evidence: list[EvidenceItem] = field(default_factory=list)
     missing_evidence: list[str] = field(default_factory=list)
+    #: 0-100: how strongly the evidence gathered supports the `verdict` above
+    #: (not "how likely this hypothesis is true in general" — a REFUTED
+    #: verdict can carry a high score if the refuting evidence is strong).
+    #: None if the model didn't return a usable one; the UI shows "Unscored"
+    #: rather than a fabricated number in that case.
+    confidence_score: int | None = None
 
 
 HYPOTHESIS_EVALUATOR_SYSTEM_PROMPT = """You independently evaluate ONE hypothesis against the evidence retrieved \
@@ -93,6 +99,10 @@ Respond with ONLY a JSON object, no other text, in exactly this shape:
 {{
   "verdict": "<one of: SUPPORTED, PARTIALLY_SUPPORTED, REFUTED, INSUFFICIENT_EVIDENCE>",
   "confidence_basis": "<one or two sentences: why this verdict, referencing the evidence>",
+  "confidence_score": <integer 0-100: how strongly the evidence gathered supports THIS verdict, not how likely the \
+hypothesis is true in general — a REFUTED verdict backed by strong, direct refuting evidence should score high, \
+same as a SUPPORTED one backed by strong evidence; INSUFFICIENT_EVIDENCE should score low, since by definition \
+little evidence bears on it>,
   "supporting_evidence": [
     {{"kind": "<one of: {claim_types}>", "label": "<short label>", "value": "<the figure/quote/fact>", "citation": "<source>"}}
   ],
@@ -163,6 +173,16 @@ def _parse_response(text: str) -> dict:
     return parsed
 
 
+def _parse_confidence_score(raw: object) -> int | None:
+    """None on anything that isn't cleanly a 0-100 integer — a malformed
+    score is dropped (renders "Unscored"), never coerced into a number that
+    might misrepresent what the model actually returned."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    score = int(raw)
+    return score if 0 <= score <= 100 else None
+
+
 def _parse_evidence_items(raw_items: object) -> list[EvidenceItem]:
     items: list[EvidenceItem] = []
     for raw in raw_items if isinstance(raw_items, list) else []:
@@ -222,4 +242,5 @@ def evaluate_hypothesis(
         supporting_evidence=_parse_evidence_items(parsed.get("supporting_evidence")),
         contradicting_evidence=_parse_evidence_items(parsed.get("contradicting_evidence")),
         missing_evidence=[str(m) for m in (parsed.get("missing_evidence") or [])],
+        confidence_score=_parse_confidence_score(parsed.get("confidence_score")),
     )

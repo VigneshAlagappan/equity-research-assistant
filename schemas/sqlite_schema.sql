@@ -268,6 +268,31 @@ CREATE TABLE IF NOT EXISTS watchlist_items (
   UNIQUE(item_type, item_ref)
 );
 
+-- A rolling 7-week cache of Google News RSS lookups (web/news.py) -- link,
+-- source, and published time only, same "never the article content, just
+-- an outbound pointer to it" scope web/news.py's own docstring already
+-- commits to; nothing here is scraped article text. Exists so the News
+-- page (web/templates/news.html) can show a merged multi-company feed from
+-- one fast local query instead of a live RSS fetch per company on every
+-- page view (infeasible outright across this app's full company registry
+-- -- thousands of companies). Populated incidentally: whenever ANY existing
+-- news lookup runs (the Watchlist row teaser, the Overview tab's news
+-- section, or the News page itself), its results are upserted here too.
+-- Rows older than 7 weeks (by `published_at`, falling back to `fetched_at`
+-- when a feed item had no publish date) are pruned on each write -- see
+-- storage/repositories.py::save_company_news.
+CREATE TABLE IF NOT EXISTS company_news (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  title TEXT NOT NULL,
+  link TEXT NOT NULL,
+  source TEXT,
+  published_at TEXT,       -- ISO timestamp from the feed; NULL if the feed gave no date
+  fetched_at TEXT NOT NULL,  -- when this app first saw the item -- the retention fallback
+  UNIQUE(company_id, link)
+);
+CREATE INDEX IF NOT EXISTS idx_company_news_company ON company_news(company_id, published_at DESC);
+
 -- ============================================================
 -- Generated Signals reports (research/signals_report.py, via
 -- /research/thread/generate) -- full multi-section investigations, as
@@ -734,12 +759,17 @@ CREATE TABLE IF NOT EXISTS investigation_hypotheses (
   investigation_id TEXT NOT NULL REFERENCES investigations(investigation_id),
   statement TEXT NOT NULL,
   mechanism TEXT,
+  chain_steps TEXT,            -- JSON array of short causal-stage labels (Step 2E), cause -> observed effect;
+                                -- NULL/empty for hypotheses generated before this column existed (falls back
+                                -- to rendering `mechanism` prose instead — see web/templates/investigation.html)
   category TEXT NOT NULL,     -- financial|operational|competitive|strategic|management|regulatory|macro|industry
   rationale TEXT,
   unknowns TEXT,               -- JSON array
   generation_order INTEGER NOT NULL,  -- the order Step 2E produced them in
   verdict TEXT,                -- SUPPORTED|PARTIALLY_SUPPORTED|REFUTED|INSUFFICIENT_EVIDENCE (Step 2G)
   confidence_basis TEXT,       -- Step 2G's own explanation of the verdict
+  confidence_score INTEGER,    -- Step 2G's own 0-100 evidence-strength estimate; NULL if evaluation never ran
+                                -- or predates this column
   synthesis_rank INTEGER,      -- Step 2H's final ranking (1 = strongest); NULL until synthesized
   created_at TEXT NOT NULL
 );

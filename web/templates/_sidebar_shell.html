@@ -30,13 +30,17 @@
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="16" rx="1"/><rect x="15" y="4" width="6" height="16" rx="1"/><path d="M11 8h2M11 12h2M11 16h2"/></svg>
       <span>Compare</span>
     </a>
-    <a class="signals-sidebar-link {{ 'is-active' if request.endpoint == 'tools' else '' }}" href="{{ url_for('tools') }}">
-      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="3" height="9"/><rect x="14" y="7" width="3" height="5"/><path d="M3 21h18"/></svg>
-      <span>Tools</span>
-    </a>
     <a class="signals-sidebar-link {{ 'is-active' if request.endpoint in ('investigations', 'investigate_view') else '' }}" href="{{ url_for('investigations') }}">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg>
       <span>Cases</span>
+    </a>
+    <a class="signals-sidebar-link {{ 'is-active' if request.endpoint == 'news' else '' }}" href="{{ url_for('news') }}">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h11a2 2 0 0 1 2 2v13a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2z"/><path d="M17 8h3a1 1 0 0 1 1 1v10a2 2 0 0 1-2 2H8"/><path d="M8 8h6M8 12h6M8 16h4"/></svg>
+      <span>News</span>
+    </a>
+    <a class="signals-sidebar-link {{ 'is-active' if request.endpoint == 'tools' else '' }}" href="{{ url_for('tools') }}">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="3" height="9"/><rect x="14" y="7" width="3" height="5"/><path d="M3 21h18"/></svg>
+      <span>Tools</span>
     </a>
     <a class="signals-sidebar-link {{ 'is-active' if request.endpoint == 'watchlist' else '' }}" href="{{ url_for('watchlist') }}">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>

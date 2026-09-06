@@ -7,44 +7,16 @@
 {% block extra_style %}
   .investigation-top-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4); }
 
-  /* Report reads as a document: one comfortably-wide centered column
-     instead of every block separately clamped to 68ch and left-hugging
-     the page-wide (92%/1800px) container — that left a large dead strip
-     of margin on the right on anything wider than a laptop. The rail
-     (contents jump-nav) uses the width that strip used to waste. */
-  .report-shell { display: grid; grid-template-columns: 1fr; gap: var(--space-6); align-items: start; max-width: 1160px; margin: 0 auto; }
-  @media (min-width: 980px) {
-    .report-shell { grid-template-columns: minmax(0, 1fr) 220px; }
-    .report-rail { position: sticky; top: var(--space-4); max-height: calc(100vh - var(--space-8)); overflow-y: auto; }
-  }
-  .report-main { max-width: 760px; }
+  /* Report spans the page's own page-wide container (92%/1800px, base.html)
+     instead of clamping to a document-width column with a side rail — a
+     hypothesis's chain-of-pills and evidence checklist both want a full
+     row to lay out horizontally, and a 220-300px rail permanently taken
+     out of that (plus the extra clamp this used to add on top) left too
+     little room for either once real data was in them. */
+  .report-shell { max-width: none; }
+  .report-main { max-width: none; }
 
-  .report-toc { display: flex; flex-direction: column; gap: 2px; margin-top: var(--space-2); }
-  .report-toc-link {
-    display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12.5px;
-    text-decoration: none; color: var(--ink);
-  }
-  .report-toc-link:hover { color: var(--accent); }
-  /* Top-level entries (Summary, Hypotheses) mark real <h*>-less sections —
-     bold, own top rule, a little breathing room above each new group.
-     Sub entries (a hypothesis, "Still unanswered") nest under whichever
-     top entry precedes them, indented and lighter so the hierarchy reads
-     without needing a nested <ul>. */
-  .report-toc-top {
-    font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em;
-    padding-top: 10px; margin-top: 6px; border-top: 1px solid var(--color-divider);
-  }
-  .report-toc-top:first-child { margin-top: 0; padding-top: 0; border-top: none; }
-  .report-toc-sub { padding-left: 14px; opacity: 0.85; }
-  .report-toc-rank { opacity: 0.5; font-variant-numeric: tabular-nums; width: 1.4em; flex-shrink: 0; }
-  .report-toc-label { flex: 1; text-transform: capitalize; }
-  .report-toc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .report-toc-dot.verdict-supported { background: var(--indicator-positive); }
-  .report-toc-dot.verdict-partially_supported { background: var(--indicator-warning); }
-  .report-toc-dot.verdict-refuted { background: var(--ink-muted); }
-  .report-toc-dot.verdict-insufficient_evidence, .report-toc-dot.verdict-none { background: var(--color-divider); }
-
-  #section-summary, #section-unanswered, #section-evidence-needed, #section-hypotheses {
+  #section-summary, #section-hypotheses, #section-followups {
     scroll-margin-top: var(--space-4);
   }
   .report-section-heading { margin-bottom: var(--space-3); }
@@ -60,8 +32,26 @@
   .investigation-synthesis p { text-align: justify; margin: 0; }
   .investigation-synthesis ul { margin: var(--space-1) 0 0; padding-left: 1.2em; }
   .investigation-synthesis li { margin: 3px 0; }
-  .investigation-synthesis-section { margin-top: var(--space-3); }
+  .investigation-synthesis-section { margin-top: var(--space-3); margin-bottom: var(--space-6); }
   .investigation-synthesis-section .card-kicker { display: block; margin-bottom: var(--space-1); }
+  /* Verdict + confidence_basis of the #1-ranked hypothesis, shown right
+     under the strongest-explanation paragraph -- same "headline, then a
+     confidence badge + one-line caveat" shape a reference design used,
+     built from the real per-hypothesis verdict rather than inventing an
+     investigation-wide confidence score that doesn't exist in the data. */
+  .investigation-confidence-row { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-1); flex-wrap: wrap; }
+  .investigation-confidence-note { font-size: 13px; opacity: 0.6; }
+
+  /* Quick jump list -- every hypothesis's own statement as a link straight
+     to its card (#hyp-<id>, already the card's own anchor), so a reader
+     doesn't have to scroll past all N cards to find one they already know
+     the gist of. Plain text + native anchor scrolling, no JS needed. */
+  .hypothesis-index { margin-bottom: var(--space-6); }
+  .hypothesis-index .card-kicker { display: block; margin-bottom: var(--space-2); }
+  .hypothesis-index-list { margin: 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 6px; }
+  .hypothesis-index-list li { font-size: 13.5px; }
+  .hypothesis-index-link { color: var(--ink); text-decoration-color: var(--color-divider); }
+  .hypothesis-index-link:hover { color: var(--accent); text-decoration-color: currentColor; }
 
   .hypothesis-list { display: flex; flex-direction: column; gap: var(--space-4); }
   .hypothesis-card { padding: var(--space-4); scroll-margin-top: var(--space-4); }
@@ -69,24 +59,91 @@
   .hypothesis-tags { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
   .hypothesis-rank { font-size: 12px; opacity: 0.55; }
   .hypothesis-statement { margin: var(--space-2) 0 0; font-size: 15px; }
-  .hypothesis-mechanism, .hypothesis-rationale { margin: var(--space-2) 0 0; opacity: 0.85; font-size: 13.5px; }
+  .hypothesis-rationale { margin: var(--space-2) 0 0; opacity: 0.85; font-size: 13.5px; }
   .hypothesis-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55; margin-top: var(--space-3); }
   .hypothesis-unknowns { margin: 4px 0 0; padding-left: 1.2em; font-size: 13px; opacity: 0.8; }
 
+  /* Mechanism/chain card -- research/hypothesis_generator.py's causal
+     mechanism, given its own bordered card instead of running inline as
+     one more paragraph, so it reads as a distinct, referenceable unit.
+     Two render modes share this one card shell: `chain_steps` (a real
+     list of short causal stages, Step 2E) draws connected pills; a
+     hypothesis generated before that field existed falls back to
+     `mechanism` prose -- never a fabricated chain for data that's
+     genuinely just a sentence. */
+  .hypothesis-chain-card {
+    margin-top: var(--space-3); padding: var(--space-3); border: 1px solid var(--color-divider);
+    border-radius: var(--radius-md); background: var(--surface);
+  }
+  .hypothesis-chain-card .card-kicker { display: block; margin-bottom: var(--space-2); }
+  .hypothesis-mechanism-text { margin: 0; font-size: 13.5px; opacity: 0.9; }
+
+  .hypothesis-chain-steps { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .hyp-chain-pill {
+    display: inline-block; padding: 6px 12px; border: 1px solid var(--color-divider);
+    border-radius: var(--radius-md); font-size: 13px; font-weight: 600; background: var(--bg);
+  }
+  .hyp-chain-arrow { opacity: 0.45; flex: none; }
+  /* The chain's last pill is the hypothesis's own observed-effect claim —
+     bordered in the same band color as its score badge (see
+     .hyp-score-leading/contested/weak/unscored below) so the outcome the
+     rest of the chain leads to visually matches how strongly it's held. */
+  .hyp-chain-pill-outcome { font-weight: 700; }
+  .hyp-score-leading .hyp-chain-pill-outcome { border-color: var(--color-accent); color: var(--color-accent-800); background: var(--color-accent-100); }
+  .hyp-score-contested .hyp-chain-pill-outcome { border-color: var(--color-accent-2); color: var(--color-accent-2-800); background: var(--color-accent-2-100); }
+  .hyp-score-weak .hyp-chain-pill-outcome { border-color: var(--color-neutral-700); color: var(--ink-muted); }
+  .hyp-score-unscored .hyp-chain-pill-outcome { border-style: dashed; color: var(--ink-muted); }
+
+  /* Score badge, top-right of each hypothesis card -- a transparent,
+     auditable percentage (research/hypothesis_evaluator.py's
+     confidence_score: the evaluator's own 0-100 read on how strongly the
+     evidence it reviewed backs the stated verdict), never a probability
+     the hypothesis is true — see the Methodology disclosure below and
+     each badge's own title tooltip for the exact caveat. */
+  .hyp-score-badge { white-space: nowrap; }
+
+  /* Data-needed checklist -- reframes the same supporting/contradicting/
+     missing evidence the app already stores as one ordered list ("what
+     was needed to accept or refute this, and do we have it") instead of
+     three separate collapsed groups. The three states stay visually
+     distinct (a support item and a contradiction are NOT the same
+     "have"), and this is deliberately the FULL set of what
+     hypothesis_evaluator.py returned, not a curated subset. */
+  .hyp-checklist-items { display: flex; flex-direction: column; margin-top: var(--space-1); }
+  .hyp-checklist-item {
+    display: flex; align-items: baseline; gap: 8px; padding: 5px 0; font-size: 13px;
+    border-top: 1px solid var(--color-divider);
+  }
+  .hyp-checklist-item:first-child { border-top: none; }
+  .hyp-checklist-icon { flex: none; width: 1.2em; text-align: center; font-weight: 700; }
+  .hyp-checklist-have .hyp-checklist-icon { color: var(--success); }
+  .hyp-checklist-contradicts .hyp-checklist-icon { color: var(--indicator-warning); }
+  .hyp-checklist-missing .hyp-checklist-icon { color: var(--ink-muted); opacity: 0.6; }
+  .hyp-checklist-kind { flex: none; }
+  .hyp-checklist-text { flex: 1; min-width: 0; }
+  .hyp-checklist-text-value { opacity: 0.75; }
+  .hyp-checklist-status { flex: none; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.55; }
+
+  .hyp-followups { display: flex; flex-wrap: wrap; gap: 8px; margin-top: var(--space-2); }
+  .hyp-followup-pill {
+    display: inline-block; padding: 6px 12px; border: 1px solid var(--color-divider);
+    border-radius: 999px; font-size: 13px; background: var(--surface); color: var(--ink);
+  }
+
+  .investigation-methodology { margin-top: var(--space-6); }
+  .investigation-methodology summary { cursor: pointer; font-family: var(--font-heading); font-size: 16px; }
+  .investigation-methodology p { margin-top: var(--space-2); opacity: 0.85; font-size: 13.5px; }
+  .investigation-methodology ul { margin: var(--space-2) 0 0; padding-left: 1.2em; }
+  .investigation-methodology li { margin: 3px 0; opacity: 0.85; font-size: 13.5px; }
+
   .hypothesis-evidence { margin-top: var(--space-2); }
-  .hypothesis-evidence-group { margin-top: var(--space-2); }
-  .hypothesis-evidence-group summary { cursor: pointer; font-size: 12.5px; font-weight: 600; }
-  .hyp-evidence-cards { display: flex; flex-direction: column; margin-top: var(--space-1); }
-  .hyp-evidence-card { padding: var(--space-1) 0; border-top: 1px solid var(--color-divider); font-size: 13px; }
-  .hyp-evidence-card:first-child { border-top: none; }
-  .hyp-evidence-label { font-weight: 600; }
-  .hyp-evidence-value { opacity: 0.85; margin-top: 2px; }
-  .hyp-evidence-meta { opacity: 0.55; font-size: 11px; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.03em; }
 
   /* Print / "export to PDF" (browser print dialog, no server-side
      rendering needed): drop the app chrome and the two-column/sticky
-     layout, force every evidence <details> open (JS below, since a
-     closed <details> prints as just its <summary>), and give the report
+     layout, force the methodology disclosure open (JS below, since a
+     closed <details> prints as just its <summary> — the evidence
+     checklist above it is a plain always-visible list now, nothing to
+     force open), and give the report
      its own letterhead-style masthead that isn't shown on screen. */
   .print-masthead { display: none; }
   @media print {
@@ -94,17 +151,16 @@
     .signals-sidebar, .signals-topbar { display: none !important; }
     .signals-shell-main { margin-left: 0 !important; }
     body, .page, .page.page-wide { background: #fff !important; color: #000 !important; width: auto !important; max-width: none !important; padding: 0 !important; }
-    .report-shell { display: block !important; max-width: none !important; }
-    .report-main { max-width: none !important; }
-    .report-rail { display: none !important; }
     .print-masthead { display: block; margin-bottom: var(--space-5); padding-bottom: var(--space-3); border-bottom: 2px solid #000; }
     .print-masthead-brand { font-family: var(--font-heading); font-weight: 700; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
     .print-masthead-note { font-size: 11px; opacity: 0.7; margin-top: 2px; }
-    .card { box-shadow: none !important; border: 1px solid #999 !important; background: #fff !important; }
-    .hypothesis-card { page-break-inside: avoid; break-inside: avoid; }
+    .card, .hypothesis-chain-card { box-shadow: none !important; border: 1px solid #999 !important; background: #fff !important; }
+    .hypothesis-card, .hypothesis-chain-card { page-break-inside: avoid; break-inside: avoid; }
+    .hyp-chain-pill, .hyp-followup-pill { background: #fff !important; border-color: #999 !important; color: #000 !important; }
+    .hyp-chain-pill-outcome { border-width: 2px !important; }
     a { color: #000 !important; text-decoration: none !important; }
-    .hypothesis-evidence-group summary { list-style: none; }
-    .hypothesis-evidence-group summary::-webkit-details-marker { display: none; }
+    .investigation-methodology summary { list-style: none; }
+    .investigation-methodology summary::-webkit-details-marker { display: none; }
     @page { margin: 0.75in; }
   }
 {% endblock %}
@@ -140,27 +196,32 @@
       </div>
 
       {% if investigation.strongest_explanation %}
+      {% set top_hyp = (hypotheses|selectattr('synthesis_rank', 'equalto', 1)|list|first) if hypotheses else None %}
       <div class="investigation-synthesis" id="section-summary">
         <span class="tag tag-accent" style="align-self: flex-start;">Strongest explanation</span>
         <p>{{ investigation.strongest_explanation }}</p>
-
-        {% if investigation.unanswered_questions %}
-        <div class="investigation-synthesis-section" id="section-unanswered">
-          <span class="card-kicker">Still unanswered</span>
-          <ul>{% for q in investigation.unanswered_questions %}<li>{{ q }}</li>{% endfor %}</ul>
+        {% if top_hyp and top_hyp.verdict %}
+        <div class="investigation-confidence-row">
+          <span class="tag tag-outline">{{ top_hyp.verdict|replace('_', ' ')|title }}</span>
+          {% if top_hyp.confidence_basis %}<span class="investigation-confidence-note">{{ top_hyp.confidence_basis }}</span>{% endif %}
         </div>
         {% endif %}
 
-        {% if investigation.additional_evidence_needed %}
-        <div class="investigation-synthesis-section" id="section-evidence-needed">
-          <span class="card-kicker">Additional evidence worth collecting</span>
-          <ul>{% for e in investigation.additional_evidence_needed %}<li>{{ e }}</li>{% endfor %}</ul>
-        </div>
-        {% endif %}
       </div>
       {% else %}
       <p class="investigation-meta">Synthesis wasn't available for this investigation — individual hypothesis
         evaluations below are still grounded in their own evidence.</p>
+      {% endif %}
+
+      {% if hypotheses %}
+      <div class="hypothesis-index">
+        <span class="card-kicker">Hypotheses in this investigation</span>
+        <ol class="hypothesis-index-list">
+          {% for h in hypotheses %}
+          <li><a href="#hyp-{{ h.hypothesis_id }}" class="hypothesis-index-link">{{ h.statement }}</a></li>
+          {% endfor %}
+        </ol>
+      </div>
       {% endif %}
 
       <div class="hr" style="margin:0 0 var(--space-5)"></div>
@@ -171,134 +232,166 @@
       </div>
       {% endif %}
 
+      {% set KIND_TAG_CLASS = {
+        'FACT': 'tag-fact', 'CALCULATION': 'tag-calculation', 'INFERENCE': 'tag-inference',
+        'MANAGEMENT_OPINION': 'tag-statement', 'PREDICTION': 'tag-outline',
+        'CORRELATION': 'tag-neutral', 'CAUSATION': 'tag-accent-2'
+      } %}
       <div class="hypothesis-list">
         {% for h in hypotheses %}
-        <div class="card elev-sm hypothesis-card" id="hyp-{{ h.hypothesis_id }}">
+        {% set score = h.confidence_score %}
+        {% set score_band = 'leading' if score is not none and score >= 60 else 'contested' if score is not none and score >= 30 else 'weak' if score is not none else 'unscored' %}
+        <div class="card elev-sm hypothesis-card hyp-score-{{ score_band }}" id="hyp-{{ h.hypothesis_id }}">
           <div class="hypothesis-top-row">
-        <div class="hypothesis-tags">
-          {% if h.synthesis_rank %}<span class="hypothesis-rank">#{{ h.synthesis_rank }}</span>{% endif %}
-          <span class="tag tag-neutral">{{ h.category }}</span>
-          {% if h.verdict == 'SUPPORTED' %}
-          <span class="tag tag-accent">Supported</span>
-          {% elif h.verdict == 'PARTIALLY_SUPPORTED' %}
-          <span class="tag tag-accent-2">Partially supported</span>
-          {% elif h.verdict == 'REFUTED' %}
-          <span class="tag tag-neutral">Refuted</span>
-          {% elif h.verdict == 'INSUFFICIENT_EVIDENCE' %}
-          <span class="tag tag-outline">Insufficient evidence</span>
-          {% else %}
-          <span class="tag tag-outline">Not evaluated</span>
+            <div class="hypothesis-tags">
+              {% set not_ranked_reason = 'Refuted hypotheses are excluded from the strongest-explanation ranking (research/research_synthesis.py) -- not a missing number, it was never ranked.' if h.verdict == 'REFUTED' else 'This hypothesis was not included in the strongest-explanation ranking -- not a missing number.' %}
+              {% if h.synthesis_rank %}
+              <span class="hypothesis-rank">#{{ h.synthesis_rank }}</span>
+              {% else %}
+              <span class="hypothesis-rank" title="{{ not_ranked_reason }}">Not ranked</span>
+              {% endif %}
+              <span class="tag tag-neutral">{{ h.category }}</span>
+              {% if h.verdict == 'SUPPORTED' %}
+              <span class="tag tag-accent">Supported</span>
+              {% elif h.verdict == 'PARTIALLY_SUPPORTED' %}
+              <span class="tag tag-accent-2">Partially supported</span>
+              {% elif h.verdict == 'REFUTED' %}
+              <span class="tag tag-neutral">Refuted</span>
+              {% elif h.verdict == 'INSUFFICIENT_EVIDENCE' %}
+              <span class="tag tag-outline">Insufficient evidence</span>
+              {% else %}
+              <span class="tag tag-outline">Not evaluated</span>
+              {% endif %}
+            </div>
+            {% if score is not none %}
+            <span class="tag hyp-score-badge {{ 'tag-accent' if score_band == 'leading' else 'tag-accent-2' if score_band == 'contested' else 'tag-neutral' }}"
+                  title="The evaluator's own 0-100 estimate of how strongly the evidence it reviewed supports THIS verdict — not a probability the hypothesis is true, and not comparable across investigations. See Methodology &amp; assumptions below.">
+              {{ 'Leading' if score_band == 'leading' else 'Contested' if score_band == 'contested' else 'Weak' }} &middot; {{ score }}%
+            </span>
+            {% else %}
+            <span class="tag tag-outline hyp-score-badge" title="No evidence-strength estimate is available — either the evaluation didn't return one, or this hypothesis predates the scoring feature.">Unscored &middot; needs data</span>
+            {% endif %}
+          </div>
+
+          <p class="hypothesis-statement">{{ h.statement }}</p>
+          {% if h.confidence_basis %}<p class="hypothesis-rationale">{{ h.confidence_basis }}</p>
+          {% elif h.rationale %}<p class="hypothesis-rationale">{{ h.rationale }}</p>{% endif %}
+
+          {% if h.chain_steps %}
+          <div class="hypothesis-chain-card">
+            <span class="card-kicker">Hypothesis chain</span>
+            <div class="hypothesis-chain-steps">
+              {% for step in h.chain_steps %}
+              <span class="hyp-chain-pill{{ ' hyp-chain-pill-outcome' if loop.last else '' }}">{{ step }}</span>
+              {% if not loop.last %}<span class="hyp-chain-arrow" aria-hidden="true">&rarr;</span>{% endif %}
+              {% endfor %}
+            </div>
+          </div>
+          {% elif h.mechanism %}
+          <div class="hypothesis-chain-card">
+            <span class="card-kicker">Mechanism</span>
+            <p class="hypothesis-mechanism-text">{{ h.mechanism }}</p>
+          </div>
+          {% endif %}
+
+          {% if h.unknowns %}
+          <div class="hypothesis-label">Unknowns at time of generation</div>
+          <ul class="hypothesis-unknowns">{% for u in h.unknowns %}<li>{{ u }}</li>{% endfor %}</ul>
+          {% endif %}
+
+          {% if h.supporting_evidence or h.contradicting_evidence or h.missing_evidence %}
+          <div class="hypothesis-evidence">
+            <div class="hypothesis-label">Data needed to accept / refute</div>
+            <ul class="hyp-checklist-items">
+              {% for ev in h.supporting_evidence %}
+              <li class="hyp-checklist-item hyp-checklist-have">
+                <span class="hyp-checklist-icon" aria-hidden="true">&#10003;</span>
+                <span class="tag hyp-checklist-kind {{ KIND_TAG_CLASS.get(ev.kind, 'tag-outline') }}">{{ ev.kind }}</span>
+                <span class="hyp-checklist-text">{{ ev.label }}{% if ev.value %} — <span class="hyp-checklist-text-value">{{ ev.value }}</span>{% endif %}{{ ' (' + ev.citation + ')' if ev.citation }}</span>
+                <span class="hyp-checklist-status">have</span>
+              </li>
+              {% endfor %}
+              {% for ev in h.contradicting_evidence %}
+              <li class="hyp-checklist-item hyp-checklist-contradicts">
+                <span class="hyp-checklist-icon" aria-hidden="true">&#33;</span>
+                <span class="tag hyp-checklist-kind {{ KIND_TAG_CLASS.get(ev.kind, 'tag-outline') }}">{{ ev.kind }}</span>
+                <span class="hyp-checklist-text">{{ ev.label }}{% if ev.value %} — <span class="hyp-checklist-text-value">{{ ev.value }}</span>{% endif %}{{ ' (' + ev.citation + ')' if ev.citation }}</span>
+                <span class="hyp-checklist-status">found — contradicts</span>
+              </li>
+              {% endfor %}
+              {% for ev in h.missing_evidence %}
+              <li class="hyp-checklist-item hyp-checklist-missing">
+                <span class="hyp-checklist-icon" aria-hidden="true">&#9675;</span>
+                <span class="hyp-checklist-text">{{ ev.label }}</span>
+                <span class="hyp-checklist-status">missing</span>
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
           {% endif %}
         </div>
+        {% endfor %}
       </div>
 
-      <p class="hypothesis-statement">{{ h.statement }}</p>
-      {% if h.mechanism %}<p class="hypothesis-mechanism">{{ h.mechanism }}</p>{% endif %}
-      {% if h.confidence_basis %}<p class="hypothesis-rationale">{{ h.confidence_basis }}</p>
-      {% elif h.rationale %}<p class="hypothesis-rationale">{{ h.rationale }}</p>{% endif %}
-
-      {% if h.unknowns %}
-      <div class="hypothesis-label">Unknowns at time of generation</div>
-      <ul class="hypothesis-unknowns">{% for u in h.unknowns %}<li>{{ u }}</li>{% endfor %}</ul>
-      {% endif %}
-
-      {% if h.supporting_evidence or h.contradicting_evidence or h.missing_evidence %}
-      <div class="hypothesis-evidence">
-        {% if h.supporting_evidence %}
-        <details class="hypothesis-evidence-group" open>
-          <summary>Supporting evidence ({{ h.supporting_evidence|length }})</summary>
-          <div class="hyp-evidence-cards">
-            {% for ev in h.supporting_evidence %}
-            <div class="hyp-evidence-card">
-              <div class="hyp-evidence-label">{{ ev.label }}</div>
-              {% if ev.value %}<div class="hyp-evidence-value">{{ ev.value }}</div>{% endif %}
-              <div class="hyp-evidence-meta">{{ ev.kind }}{{ ' · ' + ev.citation if ev.citation }}</div>
-            </div>
-            {% endfor %}
-          </div>
-        </details>
+      {% if investigation.unanswered_questions or investigation.additional_evidence_needed %}
+      <div class="investigation-synthesis-section" id="section-followups">
+        <span class="card-kicker">Follow-up research</span>
+        {% if investigation.unanswered_questions %}
+        <div class="hypothesis-label">Still unanswered</div>
+        <div class="hyp-followups">
+          {% for q in investigation.unanswered_questions %}<span class="hyp-followup-pill">{{ q }}</span>{% endfor %}
+        </div>
         {% endif %}
-
-        {% if h.contradicting_evidence %}
-        <details class="hypothesis-evidence-group" open>
-          <summary>Contradicting evidence ({{ h.contradicting_evidence|length }})</summary>
-          <div class="hyp-evidence-cards">
-            {% for ev in h.contradicting_evidence %}
-            <div class="hyp-evidence-card">
-              <div class="hyp-evidence-label">{{ ev.label }}</div>
-              {% if ev.value %}<div class="hyp-evidence-value">{{ ev.value }}</div>{% endif %}
-              <div class="hyp-evidence-meta">{{ ev.kind }}{{ ' · ' + ev.citation if ev.citation }}</div>
-            </div>
-            {% endfor %}
-          </div>
-        </details>
-        {% endif %}
-
-        {% if h.missing_evidence %}
-        <details class="hypothesis-evidence-group">
-          <summary>Missing evidence ({{ h.missing_evidence|length }})</summary>
-          <div class="hyp-evidence-cards">
-            {% for ev in h.missing_evidence %}
-            <div class="hyp-evidence-card">
-              <div class="hyp-evidence-label">{{ ev.label }}</div>
-            </div>
-            {% endfor %}
-          </div>
-        </details>
+        {% if investigation.additional_evidence_needed %}
+        <div class="hypothesis-label">Additional evidence worth collecting</div>
+        <div class="hyp-followups">
+          {% for e in investigation.additional_evidence_needed %}<span class="hyp-followup-pill">{{ e }}</span>{% endfor %}
+        </div>
         {% endif %}
       </div>
       {% endif %}
-    </div>
-    {% endfor %}
-      </div>
-    </div>
 
-    {% if hypotheses %}
-    <aside class="report-rail no-print">
-      <div class="report-rail-section">
-        <div class="card-kicker" style="margin-bottom: var(--space-2);">On this page</div>
-        <nav class="report-toc">
-          {% if investigation.strongest_explanation %}
-          <a class="report-toc-link report-toc-top" href="#section-summary">
-            <span class="report-toc-label">Summary</span>
-          </a>
-          {% if investigation.unanswered_questions %}
-          <a class="report-toc-link report-toc-sub" href="#section-unanswered">
-            <span class="report-toc-label">Still unanswered</span>
-          </a>
+      <details class="investigation-methodology">
+        <summary>Methodology &amp; assumptions</summary>
+        <p>Signals investigations run a hypothesis-driven pipeline, not a single-pass answer. <strong>Generate</strong> —
+          several competing, falsifiable hypotheses are proposed before any evidence is gathered, spanning financial,
+          operational, competitive, strategic, management, regulatory, macro, and industry angles, each broken into
+          a short causal chain (cause &rarr; observed effect). <strong>Gather &amp; evaluate</strong> — each
+          hypothesis is checked independently against retrieved evidence (financial facts, filings, knowledge-graph
+          relationships), with up to one additional targeted retrieval pass if the first evaluation reports a
+          specific evidence gap. <strong>Synthesize</strong> — hypotheses are ranked and the strongest explanation
+          is written up, alongside what remains unanswered.</p>
+        <ul>
+          <li><strong>Supported</strong> / <strong>Partially supported</strong> / <strong>Refuted</strong> /
+            <strong>Insufficient evidence</strong> is an independent verdict per hypothesis, not a single overall
+            confidence score for the investigation.</li>
+          <li>The <strong>Leading / Contested / Weak / Unscored</strong> badge and percentage on each hypothesis is
+            the evaluator's own 0-100 estimate of how strongly the evidence IT reviewed supports that hypothesis's
+            verdict — Leading is 60% or higher, Contested is 30-59%, Weak is below 30%, and Unscored means no
+            estimate was returned (including every hypothesis evaluated before this scoring existed). It is not a
+            probability the hypothesis is true, and scores aren't comparable across different investigations, since
+            each one's evidence base differs.</li>
+          <li>The <strong>hypothesis chain</strong> is the same causal mechanism the hypothesis was generated with,
+            broken into short stages by the model at generation time (Step 2E) — it states how the hypothesis
+            claims things would work, not a verified sequence of events; whether it actually held is what the
+            verdict and evidence checklist below it address.</li>
+          {% if investigation.as_of %}
+          <li>This investigation is point-in-time: every evidence source was restricted to what was on file as of
+            {{ investigation.as_of }} — no later data was retrievable, so it reflects what could genuinely have been
+            known then.</li>
           {% endif %}
-          {% if investigation.additional_evidence_needed %}
-          <a class="report-toc-link report-toc-sub" href="#section-evidence-needed">
-            <span class="report-toc-label">Additional evidence</span>
-          </a>
-          {% endif %}
-          {% endif %}
-
-          {% if hypotheses %}
-          <a class="report-toc-link report-toc-top" href="#section-hypotheses">
-            <span class="report-toc-label">Hypotheses</span>
-          </a>
-          {% for h in hypotheses %}
-          <a class="report-toc-link report-toc-sub" href="#hyp-{{ h.hypothesis_id }}">
-            <span class="report-toc-rank">{{ h.synthesis_rank or loop.index }}</span>
-            <span class="report-toc-label">{{ h.category }}</span>
-            <span class="report-toc-dot verdict-{{ h.verdict|lower }}"></span>
-          </a>
-          {% endfor %}
-          {% endif %}
-        </nav>
-      </div>
-    </aside>
-    {% endif %}
+        </ul>
+      </details>
+    </div>
   </div>
 
   <script>
     document.getElementById('print-investigation-btn').addEventListener('click', () => window.print());
-    // A closed <details> prints as just its <summary> — force every evidence
-    // group open right before the print dialog opens so "Print / Export PDF"
-    // produces the full report, not a page of collapsed section headers.
+    // A closed <details> prints as just its <summary> — force the
+    // methodology disclosure open right before the print dialog opens so
+    // "Print / Export PDF" includes it instead of just its collapsed header.
     window.addEventListener('beforeprint', () => {
-      document.querySelectorAll('.hypothesis-evidence-group').forEach((d) => { d.open = true; });
+      document.querySelectorAll('.investigation-methodology').forEach((d) => { d.open = true; });
     });
   </script>
 {% endblock %}
