@@ -188,14 +188,25 @@
      user — a sub-tab switch here rather than both tables stacked and always
      visible, same "pick a view, don't scroll past everything" reasoning as
      the top nav itself. */
-  .admin-ingest-subnav { display: flex; gap: var(--space-2); border-bottom: 1px solid var(--color-divider); margin: var(--space-4) 0; }
-  .admin-ingest-subnav-btn {
+  .admin-ingest-subnav, .admin-audit-subnav { display: flex; gap: var(--space-2); border-bottom: 1px solid var(--color-divider); margin: var(--space-4) 0; }
+  .admin-ingest-subnav-btn, .admin-audit-subnav-btn {
     background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
     padding: 8px 4px; font-size: 14px; font-weight: 600; color: var(--ink-muted); cursor: pointer;
+    text-decoration: none; display: inline-block;
   }
-  .admin-ingest-subnav-btn:hover { color: var(--ink); }
-  .admin-ingest-subnav-btn.active { color: var(--ink); border-bottom-color: var(--color-accent); }
-  .admin-ingest-subpanel[hidden] { display: none; }
+  .admin-ingest-subnav-btn:hover, .admin-audit-subnav-btn:hover { color: var(--ink); }
+  .admin-ingest-subnav-btn.active, .admin-audit-subnav-btn.active { color: var(--ink); border-bottom-color: var(--color-accent); }
+  .admin-ingest-subpanel[hidden], .admin-audit-subpanel[hidden] { display: none; }
+  /* Audit Log's sub-nav (Data Reconciliation / Job Runs) is a real
+     href-based navigation (each click re-requests /settings with a
+     different al_tab query param), not the Ingest sub-nav's client-side-
+     only toggle -- deliberately a different class than
+     .admin-ingest-subnav-btn (styled identically above, same visual
+     pattern) so the Ingest panel's click handler further down, which does
+     a page-wide document.querySelectorAll('.admin-ingest-subnav-btn'),
+     doesn't also pick up these anchors and try to toggle Ingest's own
+     subpanels by a data-ingest-subpanel attribute these elements don't
+     have. */
   /* Plain <table class="table"> blocks (Needs Review, Failed Items, Pending/
      Failed Documents, Processing History) otherwise sit at the global 14px
      .table default — bring them to the same 13px as .admin-grid and the
@@ -378,6 +389,7 @@
   <a class="settings-nav-item {{ 'active' if active_panel == 'admin-import' }}" data-panel="admin-import" href="{{ url_for('settings', panel='admin-import') }}">Import Data</a>
   <a class="settings-nav-item {{ 'active' if active_panel == 'admin-stock_actions' }}" data-panel="admin-stock_actions" href="{{ url_for('settings', panel='admin-stock_actions') }}">Corporate Actions</a>
   <a class="settings-nav-item {{ 'active' if active_panel == 'admin-ingest' }}" data-panel="admin-ingest" href="{{ url_for('settings', panel='admin-ingest') }}">Ingestion</a>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-schedule' }}" data-panel="admin-schedule" href="{{ url_for('settings', panel='admin-schedule') }}">Schedule</a>
 
   <div class="settings-nav-group-label">System</div>
   <a class="settings-nav-item {{ 'active' if active_panel == 'admin-audit' }}" data-panel="admin-audit" href="{{ url_for('settings', panel='admin-audit') }}">Audit Log</a>
@@ -1241,6 +1253,57 @@
       </div>
     </div>
 
+    <div class="settings-panel" id="settings-panel-admin-schedule" {{ 'hidden' if active_admin_panel != 'schedule' }}>
+      <p class="muted">
+        Manually run any of Signal's recurring data jobs on demand. Nothing here runs automatically yet —
+        this is the manual trigger while real cron scheduling isn't wired up (see <code>SCHEDULED_JOBS.md</code>).
+        Every run here is recorded the same way a future automated run would be —
+        see <a href="{{ url_for('settings', panel='admin-audit', al_tab='job_runs') }}">Audit Log &rarr; Job Runs</a> for history.
+      </p>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="flash-list">
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
+      <table class="table">
+        <thead><tr><th>Job</th><th>Cadence</th><th>Last run</th><th></th></tr></thead>
+        <tbody>
+          {% for job in scheduled_jobs %}
+          <tr>
+            <td>
+              {{ job.label }}
+              {% if not job.runner_available %}<div class="muted" style="font-size:12px;margin-top:2px;">{{ job.reason }}</div>{% endif %}
+            </td>
+            <td>{{ job.cadence }}</td>
+            <td>
+              {% if job.last_run %}
+              <span class="tag {{ 'tag-success' if job.last_run.status == 'completed' else 'tag-neutral' if job.last_run.status == 'running' else 'tag-outline' }}">{{ job.last_run.status }}</span>
+              <span class="local-time" data-utc="{{ job.last_run.started_at }}">{{ job.last_run.started_at }}</span>
+              {% if job.last_run.items_total %} &middot; {{ job.last_run.items_succeeded }}/{{ job.last_run.items_total }} succeeded{% endif %}
+              {% if job.last_run.live_progress %} &middot; {{ job.last_run.live_progress.items_started }} started so far
+                ({{ job.last_run.live_progress.items_succeeded }} succeeded{% if job.last_run.live_progress.items_failed %}, {{ job.last_run.live_progress.items_failed }} failed{% endif %})
+                — reload to refresh{% endif %}
+              {% else %}
+              <span class="muted">Never run</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if job.runner_available %}
+              <form class="admin-async-form" method="post" action="{{ url_for('admin_schedule_run', job_id=job.job_id) }}">
+                <button type="submit" class="btn btn-ghost">Run now</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
     <div class="settings-panel" id="settings-panel-admin-audit" {{ 'hidden' if active_admin_panel != 'audit' }}>
       <p class="muted">
         One row per NSE-listed company: where its data stands against NSE XBRL migration, and its recent
@@ -1253,6 +1316,19 @@
         recent than their XBRL coverage &middot; {{ audit_not_started_count }} with no XBRL coverage yet.
       </p>
 
+      {# Reconciliation vs. Job Runs are two different grains of the same
+         "did our data get updated correctly" question (per-metric decision
+         trail vs. per-batch-run outcome) -- same sub-tab pattern the Ingest
+         panel already uses for Financial Data / Documents, reused rather
+         than inventing a second visual pattern for the same interaction. #}
+      <div class="admin-audit-subnav">
+        <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab != 'job_runs' }}"
+           href="{{ url_for('settings', panel='admin-audit', al_tab='reconciliation') }}">Data Reconciliation</a>
+        <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab == 'job_runs' }}"
+           href="{{ url_for('settings', panel='admin-audit', al_tab='job_runs') }}">Job Runs ({{ audit_job_runs|length }})</a>
+      </div>
+
+      <div class="admin-audit-subpanel" id="admin-audit-subpanel-reconciliation" {{ 'hidden' if audit_active_tab == 'job_runs' }}>
       <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
         <input type="hidden" name="panel" value="admin-audit">
         <div class="field">
@@ -1344,6 +1420,72 @@
       {% else %}
       <div class="empty-state">No NSE-listed active companies match this filter.</div>
       {% endif %}
+      </div>
+
+      <div class="admin-audit-subpanel" id="admin-audit-subpanel-job-runs" {{ 'hidden' if audit_active_tab != 'job_runs' }}>
+      <p class="muted">
+        One row per BatchRun-wrapped job execution — every Schedule panel "Run now" click, plus any other job
+        that already goes through <code>ingestion/batch_log.py</code>'s <code>BatchRun</code> (the NSE
+        financials/shareholding CLI batches, the price history job, DB sharding). Expand a run to see its
+        per-item outcomes (per-company for the NSE/price jobs, a single summary item for DB sharding, which
+        isn't per-company).
+      </p>
+      {% if audit_job_runs %}
+      <table class="table admin-audit-table">
+        <thead>
+          <tr><th></th><th>Job</th><th>Scope</th><th>Started</th><th>Finished</th><th>Status</th><th>Items</th></tr>
+        </thead>
+        <tbody>
+          {% for run in audit_job_runs %}
+          <tr class="admin-audit-row" data-audit-toggle>
+            <td><button type="button" class="admin-audit-expand" aria-expanded="false" aria-label="Show run items">&rsaquo;</button></td>
+            <td>{{ run['job_name'] }}</td>
+            <td>{{ run['scope_label'] or '—' }}</td>
+            <td><span class="local-time" data-utc="{{ run['started_at'] }}">{{ run['started_at'] }}</span></td>
+            <td>
+              {% if run['finished_at'] %}<span class="local-time" data-utc="{{ run['finished_at'] }}">{{ run['finished_at'] }}</span>
+              {% else %}<span class="muted">running&hellip;</span>{% endif %}
+            </td>
+            <td>
+              <span class="tag {{ 'tag-success' if run['status'] == 'completed' else 'tag-neutral' if run['status'] == 'running' else 'tag-outline' }}">{{ run['status'] }}</span>
+            </td>
+            <td>
+              {{ run['items_succeeded_live'] }}/{{ run['items_started_live'] }}{% if run['items_failed_live'] %} ({{ run['items_failed_live'] }} failed){% endif %}
+              {%- if run['status'] == 'running' %} <span class="muted">so far</span>{% endif %}
+            </td>
+          </tr>
+          <tr class="admin-audit-detail-row" hidden>
+            <td colspan="7">
+              {% if run['notes'] %}<p class="muted" style="margin-top:0;">{{ run['notes'] }}</p>{% endif %}
+              {% if run['items'] %}
+              <table class="table admin-audit-detail-table">
+                <thead>
+                  <tr><th>Company</th><th>Started</th><th>Finished</th><th>Status</th><th>Detail</th></tr>
+                </thead>
+                <tbody>
+                  {% for item in run['items'] %}
+                  <tr>
+                    <td>{{ item['company_id'] or '—' }}</td>
+                    <td><span class="local-time" data-utc="{{ item['started_at'] }}">{{ item['started_at'] }}</span></td>
+                    <td>{% if item['finished_at'] %}<span class="local-time" data-utc="{{ item['finished_at'] }}">{{ item['finished_at'] }}</span>{% else %}<span class="muted">running&hellip;</span>{% endif %}</td>
+                    <td><span class="tag {{ 'tag-success' if item['status'] == 'ok' else 'tag-neutral' if item['status'] == 'running' else 'tag-outline' }}">{{ item['status'] }}</span></td>
+                    <td>{{ item['detail'] or '—' }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              {% else %}
+              <div class="empty-state">No items recorded for this run.</div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">No job runs recorded yet — trigger one from Data Operations &rarr; Schedule.</div>
+      {% endif %}
+      </div>
     </div>
 {% endif %}
 
@@ -1352,23 +1494,27 @@
 
   <script src="{{ static_url('js/company_picker.js') }}"></script>
   <script>
-    // Audit Log — each company row's detail (its recent reconciliation_log
-    // entries) is a sibling <tr> rendered hidden by the server; clicking the
-    // row (or its chevron button) just toggles that one sibling. Delegated
-    // on the table body rather than bound per-row, same reasoning the
-    // Ingest actions forms don't bind per-checkbox listeners.
+    // Audit Log — each row's detail (reconciliation history for a company
+    // row, per-item outcomes for a Job Runs row) is a sibling <tr> rendered
+    // hidden by the server; clicking the row (or its chevron button) just
+    // toggles that one sibling. Delegated per-table rather than bound
+    // per-row, same reasoning the Ingest actions forms don't bind
+    // per-checkbox listeners. querySelectorAll (not querySelector) here —
+    // the Job Runs tab added a second .admin-audit-table alongside the
+    // original Data Reconciliation one, so this has to wire up every match,
+    // not just the first.
     (function () {
-      const table = document.querySelector('.admin-audit-table');
-      if (!table) return;
-      table.addEventListener('click', function (event) {
-        const row = event.target.closest('[data-audit-toggle]');
-        if (!row) return;
-        const detail = row.nextElementSibling;
-        if (!detail || !detail.classList.contains('admin-audit-detail-row')) return;
-        detail.hidden = !detail.hidden;
-        row.classList.toggle('is-expanded', !detail.hidden);
-        const expandBtn = row.querySelector('.admin-audit-expand');
-        if (expandBtn) expandBtn.setAttribute('aria-expanded', String(!detail.hidden));
+      document.querySelectorAll('.admin-audit-table').forEach(function (table) {
+        table.addEventListener('click', function (event) {
+          const row = event.target.closest('[data-audit-toggle]');
+          if (!row) return;
+          const detail = row.nextElementSibling;
+          if (!detail || !detail.classList.contains('admin-audit-detail-row')) return;
+          detail.hidden = !detail.hidden;
+          row.classList.toggle('is-expanded', !detail.hidden);
+          const expandBtn = row.querySelector('.admin-audit-expand');
+          if (expandBtn) expandBtn.setAttribute('aria-expanded', String(!detail.hidden));
+        });
       });
     })();
 

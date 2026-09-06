@@ -463,224 +463,7 @@
   .investigation-meta-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding-top: var(--space-1); border-top: 1px solid var(--color-divider); }
   .investigation-timestamp { font-size: 11px; }
 
-  /* — Valuation model tab (ported from the "HDFC Bank Equity Dashboard"
-     Claude Design project — see README) — */
-  .vm-layout { display: flex; gap: var(--space-6); align-items: flex-start; }
-  .vm-sidebar {
-    width: 210px; flex: none; position: sticky; top: calc(var(--site-header-h) + var(--company-tabbar-h) + var(--space-4));
-    display: flex; flex-direction: column; gap: var(--space-3);
-  }
-  .vm-nav { display: flex; flex-direction: column; gap: 2px; }
-  .vm-nav-btn {
-    text-align: left; border: none; background: none; cursor: pointer;
-    font: 14px var(--font-body); padding: 8px 10px; border-radius: var(--radius-sm);
-    color: var(--ink); border-left: 2px solid transparent; opacity: 0.75;
-  }
-  .vm-nav-btn:hover { opacity: 1; }
-  .vm-nav-btn.active {
-    color: var(--color-accent-700); border-left-color: var(--color-accent);
-    font-weight: 600; opacity: 1;
-  }
-  .vm-main { flex: 1; min-width: 0; }
-  .vm-content { margin-top: 0; }
-  /* The ported/interactive dataset's Valuation Model (#valuation-dashboard-
-     interactive) only ever has the one "Growth Projection" section — a
-     210px sidebar nav for a single, always-active button is dead width, and
-     the Growth Projection table (many year columns + CAGR + Trend) wants
-     that space more. Stack nav-then-content instead of side-by-side, so
-     .vm-main (and its table) gets the page's full width, not width minus
-     the sidebar. Scoped to this one block — the generic multi-section
-     dashboard above still uses the shared row layout, where a real sidebar
-     with 7 sections earns its width. */
-  #valuation-dashboard-interactive.vm-layout { flex-direction: column; align-items: stretch; }
-  #valuation-dashboard-interactive .vm-sidebar { width: auto; position: static; }
-  #valuation-dashboard-interactive .vm-nav { flex-direction: row; }
-  #valuation-dashboard-interactive .vm-nav-btn.active { border-left-color: transparent; border-bottom: 2px solid var(--color-accent); }
-
-  /* Financials tab (#valuation-dashboard) — a horizontal row of rounded
-     pill buttons for its 6-section nav, sitting directly under the
-     Consolidated/Standalone + Annual/Quarterly toggles instead of the
-     vertical sidebar every section count used to share (design ask: match
-     a reference dark-theme layout with the section nav as a pill row, not
-     a side rail). Same is-active fill as .statement-toggle/.vm-period-btn
-     right above it, so the whole toggle+nav block reads as one family of
-     pill controls. */
-  #valuation-dashboard.vm-layout { flex-direction: column; align-items: stretch; }
-  #valuation-dashboard .vm-sidebar { width: auto; position: static; }
-  #valuation-dashboard .vm-nav { flex-direction: row; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
-  #valuation-dashboard .vm-nav-btn {
-    border: 1px solid var(--color-divider); border-radius: 999px; padding: var(--space-2) var(--space-4);
-  }
-  #valuation-dashboard .vm-nav-btn.active {
-    background: var(--color-accent); color: var(--accent-ink);
-    border-color: var(--color-accent); font-weight: 600; opacity: 1;
-  }
-  .vm-section-desc { max-width: 70ch; margin-bottom: var(--space-5); }
-  .vm-kpi-grid {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3);
-    margin-bottom: var(--space-5);
-  }
-  .vm-kpi-grid-3 { grid-template-columns: repeat(3, 1fr); }
-
-  /* Screener.in-style ratio grid — a dense 3-column block of label/value
-     pairs with alternating row shading, replacing the old 6-card KPI grid
-     on the Overview tab (and the Financials tab's own default landing
-     view, which renders the same section). Framed as this app's own
-     .card.elev-sm (styles.css) rather than a bespoke border, so it reads
-     as one cohesive surface consistent with every other card on the site
-     — .vm-ratio-grid itself only owns the grid layout and cell dividers,
-     the card class owns the outer border/radius/padding/shadow. */
-  .vm-ratio-grid {
-    display: grid; grid-template-columns: repeat(3, 1fr);
-    gap: 0; margin-bottom: var(--space-5);
-  }
-  .vm-ratio-cell {
-    display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
-    padding: 12px 18px; font-size: 13.5px; line-height: 1.3;
-    border-bottom: 1px solid var(--color-divider); border-right: 1px solid var(--color-divider);
-    transition: background-color 0.12s ease;
-  }
-  .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+3) { border-bottom: none; }
-  .vm-ratio-cell:nth-child(3n) { border-right: none; }
-  .vm-ratio-cell:nth-child(6n+1), .vm-ratio-cell:nth-child(6n+2), .vm-ratio-cell:nth-child(6n+3) {
-    background: var(--surface);
-  }
-  .vm-ratio-cell:hover { background: var(--color-accent-100); }
-  .vm-ratio-label {
-    color: var(--ink-muted); font-size: 12.5px;
-  }
-  .vm-ratio-value {
-    font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 14.5px;
-  }
-
-  @media (max-width: 720px) {
-    .vm-layout { flex-direction: column; }
-    .vm-sidebar { width: 100%; position: static; }
-    .vm-nav { flex-direction: row; flex-wrap: wrap; }
-    .vm-kpi-grid, .vm-kpi-grid-3 { grid-template-columns: repeat(2, 1fr); }
-    .vm-ratio-grid { grid-template-columns: repeat(2, 1fr); }
-    .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+3) { border-bottom: 1px solid var(--color-divider); }
-    .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+2) { border-bottom: none; }
-    .vm-ratio-cell:nth-child(3n) { border-right: 1px solid var(--color-divider); }
-    .vm-ratio-cell:nth-child(2n) { border-right: none; }
-  }
-  @media (max-width: 480px) {
-    .vm-ratio-grid { grid-template-columns: 1fr; }
-    .vm-ratio-cell { border-right: none; }
-    .vm-ratio-grid .vm-ratio-cell:nth-last-child(-n+2) { border-bottom: 1px solid var(--color-divider); }
-    .vm-ratio-grid .vm-ratio-cell:last-child { border-bottom: none; }
-  }
-  .vm-num { font-variant-numeric: tabular-nums; }
-  .vm-eps-chart { width: 100%; height: 140px; margin-top: var(--space-3); display: block; }
-  .vm-eps-chart-empty { display: flex; align-items: center; justify-content: center; font-size: 24px; }
-  .vm-spark { width: 88px; height: 24px; display: block; }
-  .vm-table-scroll { overflow-x: auto; margin-bottom: var(--space-3); }
-  .vm-table-scroll table { font-size: 12.5px; border-collapse: separate; border-spacing: 0; }
-  .vm-table-scroll th, .vm-table-scroll td { padding: 5px 8px; }
-
-  /* Frozen first two columns (Parameter, Trend) — this table scrolls
-     horizontally once the 10 forecast-year columns run past the viewport,
-     and without this you'd lose track of which row a cell belongs to.
-     Excludes .vm-growth-section rows (the "Balance Sheet" / "Income
-     Statement" / ... dividers): those are one colspan cell each, and
-     sticky-positioning a spanned cell doesn't freeze just its visible
-     slice — it'd try to stick the whole spanned box, overlapping the data
-     below as you scroll. Every sticky cell needs its own opaque background
-     (transparent would let scrolled content show through) — a box-shadow
-     on the frozen edge is the visual cue that it's floating above scrolled
-     content, not just another cell in the grid.
-
-     No vertical (top) stickiness on the header row, deliberately —
-     `position: sticky; top: ...` here previously tried to pin the header
-     to the viewport, but overflow-x: auto above this rule (needed for the
-     horizontal scroll) makes the browser compute this element's overflow-y
-     as "auto" too, per the CSS Overflow spec's promotion rule (any
-     non-"visible" axis promotes the other from "visible" to "auto") —
-     silently turning .vm-table-scroll itself, not the page, into the
-     sticky positioning's containing block. Verified: the header rendered
-     "stuck" at a fixed offset from the TABLE's own top edge instead of the
-     viewport's, landing mid-table and overlapping the first 1-2 data
-     rows on every load, on both this table and the (already-static, see
-     the .vm-financials-table override below — same underlying bug, fixed
-     there first) Financials-tab tables. There's no CSS-only way to keep
-     overflow-x: auto without this promotion, so vertical sticky is
-     dropped entirely rather than shipped broken. */
-  .vm-table-scroll tbody tr:not(.vm-growth-section) td:first-child,
-  .vm-table-scroll thead th:first-child {
-    position: sticky; left: 0; z-index: 2; background: var(--bg);
-    min-width: 170px; max-width: 170px;
-  }
-  /* .vm-trend-header, not :nth-child(2) — the Type column (FACT/CALC badge)
-     now sits between Parameter and Trend in every .vm-table-scroll table,
-     so Trend is no longer reliably the 2nd column; a positional selector
-     silently freezes the wrong header cell instead (verified: broke this
-     exact way when Type was added). Class-based ties it to the column's
-     identity, not its index, so it survives the next column insertion too. */
-  .vm-table-scroll tbody tr:not(.vm-growth-section) .vm-trend-cell,
-  .vm-table-scroll thead th.vm-trend-header {
-    position: sticky; left: 170px; z-index: 2; background: var(--bg);
-    box-shadow: 3px 0 6px -3px color-mix(in srgb, var(--ink) 30%, transparent);
-  }
-  .vm-table-scroll thead th:first-child,
-  .vm-table-scroll thead th.vm-trend-header { z-index: 4; }
-  .vm-table-scroll tbody tr:not(.vm-growth-section):hover td:first-child,
-  .vm-table-scroll tbody tr:not(.vm-growth-section):hover .vm-trend-cell {
-    background: color-mix(in srgb, var(--ink) 4%, var(--bg));
-  }
-
-  .vm-growth-section td {
-    font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-accent);
-    background: var(--surface); padding: 6px 8px;
-  }
-  /* Forecast columns get a tinted background + accent text the whole way
-     down — a clear visual boundary between recorded actuals (plain) and
-     assumption-driven projection (tinted), not just a header label. */
-  .vm-group-header {
-    font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-muted);
-    text-align: center; font-weight: 400;
-  }
-  .vm-forecast-col, .vm-forecast-cell {
-    background: var(--color-accent-100);
-    color: var(--color-accent-800);
-  }
-  .vm-forecast-col.vm-group-header { color: var(--color-accent-700); font-weight: 600; }
-  /* CAGR column marks the seam between Actual and Forecast — a distinct
-     divider, not just another data column. */
-  .vm-cagr-col, .vm-cagr-cell {
-    border-left: 2px solid var(--color-divider); border-right: 2px solid var(--color-divider);
-    font-weight: 600;
-  }
-  /* Trend column (Growth Projection): a small sparkline by default,
-     click/tap to expand into a bigger chart. Kept as a native <details> so
-     no JS is needed for the expand/collapse itself. The expanded chart is
-     an absolutely-positioned overlay, not inline table content — a table's
-     own column-width algorithm won't reliably grow one cell to fit a
-     320px chart while every other row's cell stays at sparkline width, so
-     floating it above the table avoids fighting that layout entirely. */
-  .vm-trend-cell { min-width: 100px; position: relative; }
-  .vm-trend-details summary {
-    cursor: pointer; list-style: none; display: inline-block;
-  }
-  .vm-trend-details summary::-webkit-details-marker { display: none; }
-  .vm-trend-expanded {
-    position: absolute; top: 100%; left: 0; z-index: 5;
-    width: 640px; max-width: 90vw; margin-top: 4px; display: block;
-    background: var(--bg); border: 1px solid var(--color-divider); border-radius: var(--radius-sm);
-    box-shadow: var(--shadow-md); padding: var(--space-2);
-  }
-  .vm-trend-expanded-title {
-    font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 4px;
-  }
-  .vm-trend-expanded-svg { width: 100%; height: 260px; display: block; }
-  .vm-chart-line-actual { fill: none; stroke: var(--color-accent-700); stroke-width: 2; }
-  .vm-chart-line-forecast { fill: none; stroke: var(--color-accent); stroke-width: 2; stroke-dasharray: 4,3; }
-  .vm-chart-dot { fill: var(--color-accent-700); }
-  .vm-chart-dot-forecast { fill: var(--color-accent); }
-  .vm-chart-axis-label { font-size: 9px; fill: var(--ink-muted); }
-  .vm-chart-boundary { stroke: var(--color-divider); stroke-width: 1; stroke-dasharray: 2,2; }
-  .vm-chart-empty-text { font-size: 12px; fill: var(--ink-muted); }
-  .vm-kpi-grid .card, .vm-kpi-grid-3 .card { padding: var(--space-2); gap: 4px; }
-  .vm-kpi-grid .card-title { font-size: 15px; }
+  {% include "_valuation_model_styles.html" %}
 
   /* — Charts tab: pick any number of attributes to overlay on one time
      series, x-axis always FY. Only 2 physical y-axes exist (left/right), so
@@ -688,19 +471,22 @@
      one linear scale. See charts_overlay.js for the auto-assign heuristic
      and the per-attribute toggle that overrides it.
 
-     Capped and centered, not stretched to the page-wide (up to 1800px)
-     container's full width -- a wide monitor was stretching one line
-     chart edge to edge, which reads worse than a contained, centered chart
-     at a normal reading width. Compare bar/toolbar/chart share this cap so
-     the whole section reads as one centered column, not a full-width
-     toolbar over a narrower chart. */
+     Previously capped at 1040px and centered rather than stretched to the
+     page-wide (up to 1800px) container's full width -- reverted: a quarterly
+     "Max"-range chart can carry 15-17+ x-axis labels (Q# FYnnnn strings),
+     and charts_overlay.js's renderChart() now sizes its SVG viewBox to this
+     element's own measured width (see render()'s chartWidth), so a narrower
+     container was directly capping how much horizontal room existed per
+     label -- not just a cosmetic "reads better centered" choice like it was
+     when this cap was first added. Full width gives every label genuine
+     breathing room instead of the labels overlapping into unreadable
+     clutter (verified live: IDFCFIRSTB quarterly/Max was unreadable at
+     1040px, legible at full page-wide). */
   .chart-overlay {
     --chart-series-1: var(--color-accent-700); --chart-series-2: #2563eb;
     --chart-series-3: #16a34a; --chart-series-4: #9333ea;
     --chart-series-5: #dc2626; --chart-series-6: #0891b2;
     --chart-series-7: #db2777; --chart-series-8: #64748b;
-    max-width: 1040px;
-    margin: 0 auto;
   }
   .chart-overlay-controls { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   /* One horizontal toolbar (period/range toggle + one dropdown pill per
@@ -798,36 +584,6 @@
   .chart-compare-search { position: relative; display: inline-block; }
   .chart-compare-search .site-search-input,
   .chart-compare-search .site-search-input:focus { width: 220px; padding-left: 10px; }
-
-  /* — Valuation Model tab only: the assumptions panel, CAGR-window picker,
-     and intrinsic-value walk that Financials deliberately doesn't have
-     (facts only there — see README-equivalent discussion in this app's
-     history). — */
-  /* Assumptions and Intrinsic value walk sit side by side — the inputs and
-     the bottom-line output they drive, visible together without scrolling
-     past the whole Growth Projection table in between. The walk card is
-     only populated while the Growth Projection section is active; it's
-     empty (and hidden) on every other section. */
-  .vm-top-row { display: flex; gap: var(--space-4); align-items: flex-start; flex-wrap: wrap; }
-  .vm-assumptions-card { flex: 1 1 420px; }
-  .vm-walk-card { flex: 1 1 320px; }
-  .vm-walk-card:empty { display: none; }
-  @media (max-width: 720px) {
-    .vm-top-row { flex-direction: column; }
-  }
-  .vm-assumptions-grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: var(--space-4); margin-top: var(--space-3);
-  }
-  .vm-year-range { display: flex; gap: 6px; align-items: center; }
-  .vm-year-sep { opacity: 0.5; }
-  .vm-footnote { font-size: 12px; margin: calc(-1 * var(--space-3)) 0 var(--space-5); }
-  .vm-walk {
-    display: grid; grid-template-columns: 1fr auto; gap: 10px var(--space-4);
-    margin-top: var(--space-3); font-size: 15px;
-  }
-  .vm-walk-label { opacity: 0.7; }
-  .vm-walk-strong { font-weight: 600; }
 
   /* — Shareholding Pattern tab ("Major Holders") — real data
      (web/shareholding_feed.py), rendered client-side by
@@ -1292,9 +1048,7 @@
   <section class="merged-section" id="sec-commentary">
     <h2>Commentary</h2>
     <div class="empty-state">
-      Commentary isn't available yet — it needs the Investor Relations document
-      pipeline (annual reports, presentations, earnings-call transcripts), which
-      hasn't been built (README: Implementation Sequence, step 7).
+      Commentary isn't available yet
     </div>
   </section>
 

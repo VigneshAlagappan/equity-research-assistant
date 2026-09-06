@@ -45,9 +45,11 @@ from ingestion.pipeline import (
     ingest_file,
     ingest_fred_series,
     ingest_macro_file,
+    ingest_sec_edgar_company,
     ingest_yfinance_company,
 )
 from normalization.financials import ensure_metric_vocabulary
+from sources.sec_edgar import get_cik_for_ticker
 from research.assistant import answer_question
 from storage.database import init_db, list_tables
 from storage.repositories import (
@@ -171,6 +173,42 @@ def cmd_ingest_yfinance(args: argparse.Namespace) -> None:
     logger.info(
         "%s (yfinance): parsed=%d inserted=%d skipped=%d reconciled=%d",
         args.ticker, result.parsed_count, result.inserted_count, result.skipped_count, result.reconciled_count,
+    )
+    for reason in result.skip_reasons:
+        logger.warning("Skipped: %s", reason)
+
+
+def cmd_ingest_sec_edgar(args: argparse.Namespace) -> None:
+    """Ingest a US company's quarterly + annual financials live from SEC
+    EDGAR's own XBRL data (see sources/sec_edgar.py) — the structured,
+    regulator-published source that actually closes the "Financials — USA"
+    gap sources/yfinance_financials.py's annual-only pilot left open."""
+    setup_logging()
+    conn = init_db()
+    ensure_metric_vocabulary(conn)
+
+    if not get_company(conn, args.company_id):
+        conn.close()
+        raise SystemExit(
+            f"No company registered with company_id={args.company_id!r}. "
+            f"Run: python main.py add-company {args.company_id} --currency {args.currency} ..."
+        )
+
+    cik = args.cik
+    if cik is None:
+        cik = get_cik_for_ticker(args.company_id)
+        if cik is None:
+            conn.close()
+            raise SystemExit(
+                f"Could not resolve a SEC CIK for ticker {args.company_id!r} from SEC's own "
+                f"ticker directory — pass --cik explicitly if you already know it."
+            )
+
+    result = ingest_sec_edgar_company(conn, args.company_id, cik, currency=args.currency)
+    conn.close()
+    logger.info(
+        "%s (sec_edgar, CIK%010d): parsed=%d inserted=%d skipped=%d reconciled=%d",
+        args.company_id, cik, result.parsed_count, result.inserted_count, result.skipped_count, result.reconciled_count,
     )
     for reason in result.skip_reasons:
         logger.warning("Skipped: %s", reason)
@@ -913,6 +951,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--statement-type", default="consolidated", choices=["consolidated", "standalone"],
     )
     ingest_yfinance_parser.set_defaults(func=cmd_ingest_yfinance)
+
+    ingest_sec_edgar_parser = subparsers.add_parser(
+        "ingest-sec-edgar",
+        help="Ingest a US company's quarterly + annual financials live from SEC EDGAR's own XBRL data",
+    )
+    ingest_sec_edgar_parser.add_argument("company_id")
+    ingest_sec_edgar_parser.add_argument(
+        "--cik", type=int, default=None,
+        help="SEC CIK (integer, no leading zeros needed) — auto-resolved from company_id as a ticker if omitted",
+    )
+    ingest_sec_edgar_parser.add_argument("--currency", default="USD", help="ISO 4217 (default: USD)")
+    ingest_sec_edgar_parser.set_defaults(func=cmd_ingest_sec_edgar)
 
     ingest_fred_parser = subparsers.add_parser(
         "ingest-fred",

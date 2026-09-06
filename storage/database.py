@@ -51,6 +51,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_llm_call_log_columns(conn)
     _migrate_shareholding_observations_columns(conn)
     _migrate_investigations_as_of_column(conn)
+    _migrate_investigation_hypotheses_scoring_columns(conn)
     _migrate_investigation_companies(conn)
     _migrate_document_chunks_embedding_columns(conn)
     _migrate_generated_reports_question_embedding_columns(conn)
@@ -195,6 +196,21 @@ def _migrate_shareholding_observations_columns(conn: sqlite3.Connection) -> None
             conn.execute(f"ALTER TABLE shareholding_observations ADD COLUMN {column} REAL")
     if "num_shareholders" not in columns:
         conn.execute("ALTER TABLE shareholding_observations ADD COLUMN num_shareholders INTEGER")
+    if "detail_fetched_at" not in columns:
+        # Explicit "we already tried the per-quarter detail fetch" marker,
+        # separate from whether fii_percent/num_shareholders actually came
+        # back populated -- an older, pre-"2025-10-31"-taxonomy quarter
+        # genuinely has no named-holder/FII-DII breakdown to parse (see
+        # SCHEDULED_JOBS.md section 2), so it will *always* have
+        # fii_percent IS NULL even after a successful detail fetch. Using
+        # that column's nullness as "needs re-fetching" would make
+        # scripts/batch_fetch_nse.py's shareholding job re-hit NSE for the
+        # same old quarters on every single run forever -- exactly the
+        # repeated work Settings > Data Operations > Schedule's "Run now"
+        # is meant to avoid on a re-click. This column instead just
+        # records *when* the detail step last ran for a quarter,
+        # regardless of what it found.
+        conn.execute("ALTER TABLE shareholding_observations ADD COLUMN detail_fetched_at TEXT")
 
 
 def _migrate_investigations_as_of_column(conn: sqlite3.Connection) -> None:
@@ -206,6 +222,24 @@ def _migrate_investigations_as_of_column(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(investigations)")}
     if columns and "as_of" not in columns:
         conn.execute("ALTER TABLE investigations ADD COLUMN as_of TEXT")
+
+
+def _migrate_investigation_hypotheses_scoring_columns(conn: sqlite3.Connection) -> None:
+    """`chain_steps` (Step 2E's causal-stage list) and `confidence_score`
+    (Step 2G's 0-100 evidence-strength estimate) were added after
+    `investigation_hypotheses` shipped — ALTER TABLE backfills both as NULL
+    for every pre-existing hypothesis, which is exactly right: a hypothesis
+    generated/evaluated before these existed never had that data to report,
+    so the UI falls back to rendering `mechanism` prose and an "Unscored"
+    badge for it rather than inventing a chain or a number. Same pattern as
+    _migrate_investigations_as_of_column."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(investigation_hypotheses)")}
+    if not columns:
+        return
+    if "chain_steps" not in columns:
+        conn.execute("ALTER TABLE investigation_hypotheses ADD COLUMN chain_steps TEXT")
+    if "confidence_score" not in columns:
+        conn.execute("ALTER TABLE investigation_hypotheses ADD COLUMN confidence_score INTEGER")
 
 
 def _migrate_investigation_companies(conn: sqlite3.Connection) -> None:

@@ -256,6 +256,22 @@ def select_company_ids_by_index(conn: DBConnection, index_name: str) -> list[Row
     ).fetchall()
 
 
+def select_active_companies_by_country(conn: DBConnection, country: str) -> list[Row]:
+    """company_id for every active company registered under `country`
+    (companies.country -- "IN"/"US" today) -- scripts/
+    fetch_daily_prices_usa.py's ticker universe. Unlike the NSE-side
+    queries above, there's no index-membership filter here: the US
+    universe (a dozen companies today) is small enough that "every US
+    company on file" is the whole ticker list, not just an index subset,
+    and a couple of them (e.g. Lyft) aren't in any of the US indices
+    already tagged in company_index_membership (S&P 500/Nasdaq 100/Dow)
+    anyway -- filtering by one of those would silently drop them."""
+    return conn.execute(
+        "SELECT company_id FROM companies WHERE country = ? AND status = 'active' ORDER BY company_id",
+        (country,),
+    ).fetchall()
+
+
 def update_company_valuation_model_file(conn: DBConnection, company_id: str, valuation_model_file: str) -> None:
     conn.execute(
         "UPDATE companies SET valuation_model_file = ? WHERE company_id = ?",

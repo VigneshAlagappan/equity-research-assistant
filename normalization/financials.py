@@ -239,6 +239,54 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
     # Left unmapped rather than guessed.
 ]
 
+# "sec_edgar" (sources/sec_edgar.py) reads US-GAAP XBRL concept names
+# straight from SEC's own data.sec.gov/api/xbrl/companyfacts endpoint —
+# raw_label here is the bare us-gaap concept name (e.g. "NetIncomeLoss"),
+# same "XBRL tag as raw_label" convention the "nse" aliases below use, not
+# a spreadsheet row label. Ordered fallback lists per metric_key (which
+# concept a filer actually uses varies by industry) live in sources/
+# sec_edgar.py's own _CONCEPT_MAP -- add a new fallback concept there, and
+# its alias here, together; this table alone doesn't decide which concept
+# wins when a company reports more than one for the same metric_key.
+# Bank-specific coverage (interest_earned/deposits/advances) is thinner
+# than the general set -- verified against a real JPMorgan Chase filing
+# that bank holding companies often skip the generic Revenues concept
+# entirely (interest income/expense nets differently in a bank's income
+# statement), so total_revenue in particular will be absent for most banks
+# rather than wrong.
+DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
+    ("sec_edgar", "Revenues", "total_revenue"),
+    ("sec_edgar", "RevenueFromContractWithCustomerExcludingAssessedTax", "total_revenue"),
+    ("sec_edgar", "RevenueFromContractWithCustomerIncludingAssessedTax", "total_revenue"),
+    ("sec_edgar", "SalesRevenueNet", "total_revenue"),
+    ("sec_edgar", "RevenuesNetOfInterestExpense", "total_revenue"),
+    ("sec_edgar", "OperatingIncomeLoss", "operating_profit"),
+    ("sec_edgar", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "profit_before_tax"),
+    ("sec_edgar", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments", "profit_before_tax"),
+    ("sec_edgar", "IncomeTaxExpenseBenefit", "tax"),
+    ("sec_edgar", "NetIncomeLoss", "net_profit"),
+    ("sec_edgar", "ProfitLoss", "net_profit"),
+    ("sec_edgar", "EarningsPerShareDiluted", "eps"),
+    ("sec_edgar", "EarningsPerShareBasic", "eps"),
+    ("sec_edgar", "InterestAndDividendIncomeOperating", "interest_earned"),
+    ("sec_edgar", "InterestIncomeOperating", "interest_earned"),
+    ("sec_edgar", "InterestAndFeeIncomeLoansAndLeases", "interest_earned"),
+    ("sec_edgar", "InterestExpense", "interest_expended"),
+    ("sec_edgar", "InterestExpenseOperating", "interest_expended"),
+    ("sec_edgar", "Assets", "total_assets"),
+    ("sec_edgar", "StockholdersEquity", "total_shareholders_funds"),
+    ("sec_edgar", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "total_shareholders_funds"),
+    ("sec_edgar", "CommonStockSharesOutstanding", "shares_outstanding"),
+    ("sec_edgar", "CommonStockSharesIssued", "shares_outstanding"),
+    ("sec_edgar", "Deposits", "deposits"),
+    ("sec_edgar", "LoansAndLeasesReceivableNetReportedAmount", "advances"),
+    ("sec_edgar", "LoansAndLeasesReceivableNetOfDeferredIncome", "advances"),
+    ("sec_edgar", "LoansReceivableNet", "advances"),
+    ("sec_edgar", "NetCashProvidedByUsedInOperatingActivities", "net_cash_from_operating_activities"),
+    ("sec_edgar", "NetCashProvidedByUsedInInvestingActivities", "net_cash_from_investing_activities"),
+    ("sec_edgar", "NetCashProvidedByUsedInFinancingActivities", "net_cash_from_financing_activities"),
+]
+
 # "nse" (sources/nse_xbrl.py) reads a quarterly-results XBRL filing pulled
 # live from NSE's corporates-financial-results / Integrated Filing listings
 # — raw_label here is the XBRL tag's local name (e.g. "InterestEarned"), not

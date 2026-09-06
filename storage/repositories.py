@@ -12,6 +12,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from config.settings import to_repo_relative
@@ -715,6 +716,61 @@ def list_watchlist_items(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+#: How long a fetched headline stays in company_news before being pruned --
+#: see schemas/sqlite_schema.sql's own comment on the table for why this
+#: exists at all (a fast local cache standing in for a live RSS fetch across
+#: this app's whole company registry, infeasible outright).
+NEWS_RETENTION_DAYS = 49  # 7 weeks
+
+
+def save_company_news(conn: sqlite3.Connection, company_id: str, items: list[dict]) -> None:
+    """Upserts `items` (web/news.py's fetch_company_news() output: title/link/
+    source/published/published_at dicts) for `company_id`, then prunes every
+    company_news row older than NEWS_RETENTION_DAYS -- run on every write
+    rather than on a separate schedule, so the table stays bounded without
+    needing its own cron job. De-duped on (company_id, link): a link already
+    on file keeps its original row (INSERT OR IGNORE) rather than being
+    touched again, since a feed item's own fields don't change after the
+    fact -- only fetched_at would, and that's not something worth a write."""
+    now = utcnow_iso()
+    conn.executemany(
+        "INSERT OR IGNORE INTO company_news (company_id, title, link, source, published_at, fetched_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [(company_id, i["title"], i["link"], i.get("source"), i.get("published_at"), now) for i in items],
+    )
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=NEWS_RETENTION_DAYS)).isoformat()
+    conn.execute(
+        "DELETE FROM company_news WHERE COALESCE(published_at, fetched_at) < ?", (cutoff,)
+    )
+    conn.commit()
+
+
+def list_company_news(
+    conn: sqlite3.Connection, company_ids: list[str] | None = None, limit: int = 200
+) -> list[sqlite3.Row]:
+    """Stored headlines, newest first (by published_at, falling back to
+    fetched_at for the rare item a feed gave no publish date for) --
+    web/templates/news.html's merged multi-company feed reads straight from
+    this rather than fetching every company live on each page view.
+    `company_ids=None` reads across every company this app has ever fetched
+    news for (whatever's accumulated so far, not a live full-registry scan);
+    an empty list deliberately returns nothing rather than silently
+    reinterpreting itself as "all companies"."""
+    if company_ids is not None and not company_ids:
+        return []
+    query = (
+        "SELECT company_news.*, companies.display_name FROM company_news "
+        "JOIN companies ON companies.company_id = company_news.company_id"
+    )
+    params: list = []
+    if company_ids is not None:
+        query += f" WHERE company_news.company_id IN ({','.join('?' for _ in company_ids)})"
+        params.extend(company_ids)
+    query += " ORDER BY COALESCE(company_news.published_at, company_news.fetched_at) DESC LIMIT ?"
+    params.append(limit)
+    return conn.execute(query, params).fetchall()
+
+
 def is_watchlisted(conn: sqlite3.Connection, item_type: str, item_ref: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM watchlist_items WHERE item_type = ? AND item_ref = ?", (item_type, item_ref)
@@ -1190,16 +1246,20 @@ def save_investigation_hypothesis(
     rationale: str | None,
     unknowns: list[str],
     generation_order: int,
+    chain_steps: list[str] | None = None,
     verdict: str | None = None,
     confidence_basis: str | None = None,
+    confidence_score: int | None = None,
     synthesis_rank: int | None = None,
 ) -> None:
     conn.execute(
         "INSERT INTO investigation_hypotheses (hypothesis_id, investigation_id, statement, mechanism, "
-        "category, rationale, unknowns, generation_order, verdict, confidence_basis, synthesis_rank, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (hypothesis_id, investigation_id, statement, mechanism, category, rationale, json.dumps(unknowns),
-         generation_order, verdict, confidence_basis, synthesis_rank, utcnow_iso()),
+        "chain_steps, category, rationale, unknowns, generation_order, verdict, confidence_basis, "
+        "confidence_score, synthesis_rank, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (hypothesis_id, investigation_id, statement, mechanism, json.dumps(chain_steps or []), category,
+         rationale, json.dumps(unknowns), generation_order, verdict, confidence_basis, confidence_score,
+         synthesis_rank, utcnow_iso()),
     )
     conn.commit()
 
@@ -2429,6 +2489,39 @@ def update_shareholding_category_breakdown(
     conn.commit()
 
 
+def mark_shareholding_detail_fetched(conn: sqlite3.Connection, company_id: str, fiscal_year: str, quarter: str) -> None:
+    """Records *when* the per-quarter detail step (sources/
+    nse_shareholding.py's fetch_shareholding_detail(), one extra HTTP call
+    per quarter) last ran for this quarter -- separate from whether it
+    found a named-holder/FII-DII breakdown to parse, so scripts/
+    batch_fetch_nse.py's shareholding job can tell "we tried, this quarter
+    genuinely has none" apart from "we haven't tried yet" (see
+    detail_fetched_at's own migration comment in storage/database.py).
+    Call this once per quarter right after a *successful* detail fetch,
+    whether or not the returned breakdown was None -- never after an
+    NSEFetchError, so a transient failure still gets retried next run."""
+    conn.execute(
+        "UPDATE shareholding_observations SET detail_fetched_at = ? WHERE company_id = ? AND fiscal_year = ? AND quarter = ?",
+        (utcnow_iso(), company_id, fiscal_year, quarter),
+    )
+    conn.commit()
+
+
+def get_shareholding_detail_fetched_periods(conn: sqlite3.Connection, company_id: str) -> set[tuple[str, str]]:
+    """{(fiscal_year, quarter), ...} already carrying a detail_fetched_at
+    timestamp for this company -- scripts/batch_fetch_nse.py's
+    shareholding job skips the expensive per-quarter detail HTTP call for
+    any of these on a repeat "Run now" (Settings > Data Operations >
+    Schedule), instead of re-fetching every quarter NSE's master listing
+    returns on every single click."""
+    rows = conn.execute(
+        "SELECT fiscal_year, quarter FROM shareholding_observations "
+        "WHERE company_id = ? AND detail_fetched_at IS NOT NULL",
+        (company_id,),
+    ).fetchall()
+    return {(row["fiscal_year"], row["quarter"]) for row in rows}
+
+
 def insert_shareholding_holders(
     conn: sqlite3.Connection,
     company_id: str,
@@ -2574,12 +2667,32 @@ def finish_batch_job_item(conn: sqlite3.Connection, item_id: int, *, status: str
     conn.commit()
 
 
-def list_batch_job_runs(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
-    """Most recent runs first -- Admin UI / CLI history view."""
-    rows = conn.execute(
-        "SELECT * FROM batch_job_runs ORDER BY started_at DESC LIMIT ?", (limit,)
-    ).fetchall()
+def list_batch_job_runs(conn: sqlite3.Connection, job_name: str | None = None, limit: int = 20) -> list[dict]:
+    """Most recent runs first -- Admin UI / CLI history view. job_name is
+    optional and keyword-compatible with every existing caller (main.py's
+    batch-log CLI command calls this positionally-conn/keyword-limit only) --
+    added so the Settings > Data Operations > Schedule panel's "last run"
+    display (get_latest_batch_job_run below) and the Audit Log > Job Runs
+    tab can each narrow to one job without a second, near-duplicate query."""
+    if job_name is not None:
+        rows = conn.execute(
+            "SELECT * FROM batch_job_runs WHERE job_name = ? ORDER BY started_at DESC LIMIT ?",
+            (job_name, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM batch_job_runs ORDER BY started_at DESC LIMIT ?", (limit,)
+        ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_latest_batch_job_run(conn: sqlite3.Connection, job_name: str) -> dict | None:
+    """Most recent run for one job, or None if it's never been triggered --
+    the Schedule panel's "last run" column. Thin wrapper over
+    list_batch_job_runs(job_name=..., limit=1) rather than a separate query,
+    so the two stay consistent by construction."""
+    rows = list_batch_job_runs(conn, job_name=job_name, limit=1)
+    return rows[0] if rows else None
 
 
 def list_batch_job_items(conn: sqlite3.Connection, run_id: int) -> list[dict]:
@@ -2589,6 +2702,35 @@ def list_batch_job_items(conn: sqlite3.Connection, run_id: int) -> list[dict]:
         "SELECT * FROM batch_job_items WHERE run_id = ? ORDER BY item_id ASC", (run_id,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_batch_job_run_live_progress(conn: sqlite3.Connection, run_id: int) -> dict:
+    """How far a run has gotten *right now*, computed live from
+    batch_job_items -- unlike batch_job_runs.items_total/succeeded/failed
+    (only written once, at the very end, by finish_batch_job_run()), so
+    those columns stay NULL for a run's entire duration and give the
+    Settings > Data Operations > Schedule panel / Audit Log > Job Runs tab
+    nothing to show for a `status='running'` row today, even mid-run --
+    e.g. someone navigating away from a long NSE batch fetch and back
+    sees only "running" with a start timestamp, no sense of whether it's
+    5% or 95% done. Safe to call on an already-finished run too (numbers
+    will just match the stored summary), but callers only need this for a
+    still-running one -- a finished run already has its own summary."""
+    row = conn.execute(
+        """
+        SELECT
+            COUNT(*) AS items_started,
+            SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS items_succeeded,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS items_failed
+        FROM batch_job_items WHERE run_id = ?
+        """,
+        (run_id,),
+    ).fetchone()
+    return {
+        "items_started": row["items_started"] or 0,
+        "items_succeeded": row["items_succeeded"] or 0,
+        "items_failed": row["items_failed"] or 0,
+    }
 
 
 # ============================================================

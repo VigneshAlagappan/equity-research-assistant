@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+
+{% block title %}News — Signals{% endblock %}
+
+{% block page_class %}page-wide{% endblock %}
+
+{% block extra_style %}
+  .news-intro { max-width: 68ch; margin-bottom: var(--space-4); }
+
+  .news-toolbar { position: relative; max-width: 420px; margin-bottom: var(--space-3); }
+  .news-toolbar .site-search-input, .news-toolbar .site-search-input:focus { width: 100%; }
+  .news-toolbar .site-search-results { width: 100%; }
+
+  .news-filter-pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px;
+    border: 1px solid var(--color-divider); border-radius: 999px; background: var(--surface);
+    font-size: 13px; margin-bottom: var(--space-4);
+  }
+  .news-filter-clear {
+    border: none; background: none; color: var(--ink-muted); cursor: pointer; font-size: 14px;
+    line-height: 1; padding: 2px 4px; border-radius: 50%;
+  }
+  .news-filter-clear:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, transparent); }
+
+  .news-items { display: flex; flex-direction: column; max-width: 760px; }
+  .news-item { padding: var(--space-3) 0; border-top: 1px solid var(--color-divider); }
+  .news-item:first-child { border-top: none; }
+  .news-item-title-link { text-decoration: none; color: inherit; }
+  .news-item-title-link:hover .news-item-title { color: var(--color-accent); }
+  .news-item-title { font-size: 14px; line-height: 1.4; }
+  .news-item-meta { font-size: 12px; color: var(--ink-muted); margin-top: 4px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  /* Its own link to that company's page (web/app.py's company_report) --
+     a separate target from the headline's outbound link right above it, so
+     the two clickable things in one row (read the article vs. go to the
+     company) don't collide as one nested-anchor click target. */
+  .news-item-company { font-weight: 600; color: var(--ink); text-decoration: none; }
+  .news-item-company:hover { color: var(--color-accent); text-decoration: underline; }
+{% endblock %}
+
+{% block content %}
+  <h1>News</h1>
+  <p class="news-intro muted">
+    Headlines linked out from Google News — link, source, and time only, never the article itself (same scope as
+    the Watchlist page's own news teaser). By default, a merged feed across your Watchlisted companies, newest
+    first. Filter to any one company to see its own feed instead.
+  </p>
+
+  <div class="news-toolbar">
+    <input type="text" class="site-search-input" id="news-company-input" autocomplete="off" placeholder="Filter by company&hellip;">
+    <div class="site-search-results" id="news-company-results" hidden></div>
+  </div>
+  <div id="news-filter-pill"></div>
+
+  <div id="news-feed">
+    <p class="muted">Loading&hellip;</p>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      }
+
+      // Same relative-time shape as web/news.py's own _relative_time(), but
+      // computed client-side at render time from the stored published_at ISO
+      // timestamp -- a string like "2h ago" baked in at fetch time would read
+      // wrong once the item's been sitting in company_news for a while
+      // (storage/repositories.py's 7-week cache) and is displayed later.
+      function relativeTime(iso) {
+        if (!iso) return null;
+        const then = new Date(iso).getTime();
+        if (Number.isNaN(then)) return null;
+        const minutes = Math.floor((Date.now() - then) / 60000);
+        if (minutes < 1) return "just now";
+        if (minutes < 60) return minutes + "m ago";
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return hours + "h ago";
+        return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      }
+
+      const searchUrl = {{ search_url|tojson }};
+      const feedUrl = {{ feed_url|tojson }};
+      const companyUrlTemplate = {{ company_url_template|tojson }};
+      const watchlistedCompanies = {{ watchlisted_companies|tojson }};
+
+      function companyUrl(companyId) {
+        return companyUrlTemplate.replace("__ID__", encodeURIComponent(companyId));
+      }
+
+      const input = document.getElementById("news-company-input");
+      const resultsEl = document.getElementById("news-company-results");
+      const pillEl = document.getElementById("news-filter-pill");
+      const feedEl = document.getElementById("news-feed");
+
+      const state = { filter: null, items: [], requestId: 0 };
+
+      function renderPill() {
+        if (!state.filter) { pillEl.innerHTML = ""; return; }
+        pillEl.innerHTML =
+          '<span class="news-filter-pill">' + escapeHtml(state.filter.display_name) +
+            '<button type="button" class="news-filter-clear" id="news-filter-clear" aria-label="Clear filter">&times;</button>' +
+          "</span>";
+        document.getElementById("news-filter-clear").addEventListener("click", () => {
+          state.filter = null;
+          input.value = "";
+          renderPill();
+          loadFeed();
+        });
+      }
+
+      function renderResults(items) {
+        if (items.length === 0) {
+          resultsEl.innerHTML = '<div class="site-search-empty">No matching companies.</div>';
+        } else {
+          resultsEl.innerHTML = items.map((c) => (
+            '<button type="button" class="site-search-result" data-company-id="' + escapeHtml(c.company_id) + '" data-display-name="' + escapeHtml(c.display_name) + '">' +
+              '<div class="site-search-result-name">' + escapeHtml(c.display_name) + "</div>" +
+              '<div class="site-search-result-meta">' + escapeHtml(c.company_id) + (c.sector ? " &middot; " + escapeHtml(c.sector) : "") + "</div>" +
+            "</button>"
+          )).join("");
+        }
+        resultsEl.hidden = false;
+        resultsEl.querySelectorAll("[data-company-id]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            state.filter = { company_id: btn.dataset.companyId, display_name: btn.dataset.displayName };
+            input.value = "";
+            resultsEl.hidden = true;
+            renderPill();
+            loadFeed();
+          });
+        });
+      }
+
+      let debounce = null;
+      input.addEventListener("input", () => {
+        const query = input.value.trim();
+        clearTimeout(debounce);
+        if (!query) { resultsEl.hidden = true; return; }
+        debounce = setTimeout(async () => {
+          try {
+            const resp = await fetch(searchUrl + "?q=" + encodeURIComponent(query));
+            const data = await resp.json();
+            renderResults(data.results || []);
+          } catch (e) { /* a network hiccup on a typeahead isn't worth surfacing */ }
+        }, 150);
+      });
+      document.addEventListener("click", (e) => {
+        if (!resultsEl.contains(e.target) && e.target !== input) resultsEl.hidden = true;
+      });
+
+      function renderFeed() {
+        if (state.items.length === 0) {
+          feedEl.innerHTML = state.filter
+            ? '<p class="muted">No recent headlines found for ' + escapeHtml(state.filter.display_name) + ".</p>"
+            : (watchlistedCompanies.length === 0
+                ? '<p class="muted">Your Watchlist is empty — pin a company to see its news here, or filter to any one company above.</p>'
+                : '<p class="muted">No recent headlines found for your Watchlisted companies.</p>');
+          return;
+        }
+        const list = document.createElement("div");
+        list.className = "news-items";
+        state.items.forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "news-item";
+
+          const titleLink = document.createElement("a");
+          titleLink.className = "news-item-title-link";
+          titleLink.href = item.link;
+          titleLink.target = "_blank";
+          titleLink.rel = "noopener noreferrer";
+          const title = document.createElement("div");
+          title.className = "news-item-title";
+          title.textContent = item.title;
+          titleLink.appendChild(title);
+          row.appendChild(titleLink);
+
+          const meta = document.createElement("div");
+          meta.className = "news-item-meta";
+          const rel = relativeTime(item.published_at);
+          // The company name is its own link to that company's page (not
+          // nested inside titleLink above -- an <a> inside an <a> isn't
+          // valid HTML and the outer one would just swallow every click).
+          let metaHtml = "";
+          if (!state.filter) {
+            metaHtml += '<a class="news-item-company" href="' + escapeHtml(companyUrl(item.company_id)) + '">' + escapeHtml(item.company_name) + "</a>";
+          }
+          const rest = [item.source, rel].filter(Boolean).join(" &middot; ");
+          if (rest) metaHtml += (metaHtml ? " &middot; " : "") + rest;
+          meta.innerHTML = metaHtml;
+          row.appendChild(meta);
+          list.appendChild(row);
+        });
+        feedEl.replaceChildren(list);
+      }
+
+      async function loadFeed() {
+        const thisRequest = ++state.requestId;
+        feedEl.innerHTML = '<p class="muted">Loading&hellip;</p>';
+        try {
+          const url = state.filter ? feedUrl + "?company_id=" + encodeURIComponent(state.filter.company_id) : feedUrl;
+          const resp = await fetch(url);
+          const data = await resp.json();
+          if (thisRequest !== state.requestId) return; // superseded by a newer filter change
+          state.items = data.items || [];
+          renderFeed();
+        } catch (e) {
+          if (thisRequest !== state.requestId) return;
+          feedEl.innerHTML = '<p class="muted">Could not load news right now.</p>';
+        }
+      }
+
+      loadFeed();
+    })();
+  </script>
+{% endblock %}

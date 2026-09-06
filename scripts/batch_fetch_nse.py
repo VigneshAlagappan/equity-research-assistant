@@ -35,8 +35,10 @@ from sources.nse_shareholding import fetch_shareholding_detail, fetch_shareholdi
 from storage.company_repository import select_company_ids_by_index
 from storage.database import init_db
 from storage.repositories import (
+    get_shareholding_detail_fetched_periods,
     insert_shareholding_holders,
     insert_shareholding_observations,
+    mark_shareholding_detail_fetched,
     update_shareholding_category_breakdown,
 )
 
@@ -79,11 +81,25 @@ def _run_shareholding(conn, company_id: str) -> str:
     if not summaries:
         return "no shareholding submissions on NSE for this symbol"
     summaries.sort(key=lambda s: s.period_end)
+    # Cheap, local, always upserted regardless of the skip logic below --
+    # just the master listing NSE already returned in this same call, no
+    # extra HTTP request per quarter (that's the detail step next).
     insert_shareholding_observations(conn, company_id, summaries)
 
-    holder_total, quarter_errors = 0, 0
+    # The master listing above is one HTTP call total; fetch_shareholding_
+    # detail() below is one *more* HTTP call per quarter it runs for --
+    # on a repeat "Run now" (Settings > Data Operations > Schedule),
+    # skipping whichever quarters already have a detail_fetched_at
+    # timestamp turns an N-quarter re-click back into "however many are
+    # actually new since last time", not N all over again.
+    already_fetched = get_shareholding_detail_fetched_periods(conn, company_id)
+
+    holder_total = quarter_errors = skipped = 0
     for s in summaries:
         if not s.source_url:
+            continue
+        if (s.fiscal_year, s.quarter) in already_fetched:
+            skipped += 1
             continue
         try:
             holdings, breakdown = fetch_shareholding_detail(s.source_url)
@@ -96,6 +112,11 @@ def _run_shareholding(conn, company_id: str) -> str:
         )
         if breakdown is not None:
             update_shareholding_category_breakdown(conn, company_id, s.fiscal_year, s.quarter, breakdown)
+        # Marked after processing regardless of whether breakdown came back
+        # None -- an older-taxonomy quarter genuinely has no FII/DII split
+        # to parse (SCHEDULED_JOBS.md section 2), and that's a real,
+        # stable answer worth remembering, not a failure to retry forever.
+        mark_shareholding_detail_fetched(conn, company_id, s.fiscal_year, s.quarter)
 
     publish(
         conn,
@@ -111,6 +132,8 @@ def _run_shareholding(conn, company_id: str) -> str:
     )
 
     detail = f"summaries={len(summaries)} named_holders={holder_total}"
+    if skipped:
+        detail += f" skipped={skipped} (already fetched)"
     if quarter_errors:
         detail += f" quarter_errors={quarter_errors}"
     return detail
@@ -132,23 +155,30 @@ def _resolve_companies(conn, args: argparse.Namespace) -> list[str]:
     raise SystemExit("one of --companies / --companies-file / --index is required")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("kind", choices=sorted(_RUNNERS))
-    parser.add_argument("--companies", help="comma-separated company_id list")
-    parser.add_argument("--companies-file", help="path to a file, one company_id per line")
-    parser.add_argument("--index", help='company_index_membership index_name, e.g. "Nifty 50"')
-    parser.add_argument("--scope", help="human label for the audit log (defaults to the kind + count)")
-    args = parser.parse_args()
+def run_nse_batch(conn, kind: str, companies: list[str], scope_label: str | None = None, job_name: str | None = None) -> int:
+    """The actual company-list loop, factored out of main() so the Settings >
+    Data Operations > Schedule panel's "Run now" button (web/app.py) can
+    drive the exact same batch -- one capability (loop a company list
+    through the NSE financials/shareholding fetch, with a BatchRun audit
+    trail), two triggers (this CLI's main() below, and the admin route) --
+    same reuse shape as admin_refresh_company()'s own docstring describes
+    for the single-company refresh action. Returns the BatchRun's run_id so
+    the caller can report/link back to it (e.g. a flash message pointing at
+    Audit Log -> Job Runs).
 
-    conn = init_db()
-    companies = _resolve_companies(conn, args)
+    `job_name` defaults to `_JOB_NAMES[kind]` (the CLI never needs to
+    override it), but the Schedule panel passes a distinct value for its
+    "Nifty 500 remaining" jobs -- those run the same `kind` as the Nifty 50
+    jobs, and get_latest_batch_job_run() looks "last run" up by job_name
+    alone, so two scopes sharing one job_name would make each Schedule row
+    show whichever scope happened to run more recently instead of its own
+    history."""
     if not companies:
-        raise SystemExit("resolved company list is empty")
+        raise ValueError("company list is empty")
 
-    scope_label = args.scope or f"{args.kind} ({len(companies)} companies)"
-    runner = _RUNNERS[args.kind]
-    job_name = _JOB_NAMES[args.kind]
+    scope_label = scope_label or f"{kind} ({len(companies)} companies)"
+    runner = _RUNNERS[kind]
+    job_name = job_name or _JOB_NAMES[kind]
 
     print(f"{job_name}: {len(companies)} companies, scope={scope_label!r}", flush=True)
     ok = failed = 0
@@ -165,8 +195,26 @@ def main() -> None:
                     print(f"{company_id}: FAILED -- {exc}", flush=True)
                     raise
 
-    conn.close()
     print(f"\nDone. run_id={run.run_id} ok={ok} failed={failed}", flush=True)
+    return run.run_id
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("kind", choices=sorted(_RUNNERS))
+    parser.add_argument("--companies", help="comma-separated company_id list")
+    parser.add_argument("--companies-file", help="path to a file, one company_id per line")
+    parser.add_argument("--index", help='company_index_membership index_name, e.g. "Nifty 50"')
+    parser.add_argument("--scope", help="human label for the audit log (defaults to the kind + count)")
+    args = parser.parse_args()
+
+    conn = init_db()
+    companies = _resolve_companies(conn, args)
+    if not companies:
+        raise SystemExit("resolved company list is empty")
+
+    run_nse_batch(conn, args.kind, companies, scope_label=args.scope)
+    conn.close()
 
 
 if __name__ == "__main__":

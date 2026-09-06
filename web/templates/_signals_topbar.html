@@ -41,6 +41,7 @@
       <div class="profile-email">{{ g.user['email'] or g.user['username'] }}</div>
       <a href="{{ url_for('about') }}">About</a>
       <a href="{{ url_for('settings') }}">Settings</a>
+      <a href="{{ url_for('docs') }}">Docs</a>
       {% if g.user['is_admin'] %}
       <a href="{{ url_for('admin_usage') }}">Usage</a>
       {% endif %}
@@ -50,6 +51,7 @@
       {% else %}
       <a href="{{ url_for('about') }}">About</a>
       <a href="{{ url_for('settings') }}">Settings</a>
+      <a href="{{ url_for('docs') }}">Docs</a>
       <a href="{{ url_for('login') }}">Log in</a>
       {% endif %}
     </div>

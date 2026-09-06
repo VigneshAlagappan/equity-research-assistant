@@ -98,6 +98,11 @@ def fetch_company_news(query: str, window_days: int = 1) -> list[dict] | None:
                 "link": link,
                 "source": source or None,
                 "published": _relative_time(published) if published else None,
+                # ISO timestamp alongside the relative-time display string above --
+                # needed to sort headlines from several companies' separate feeds
+                # into one merged, newest-first list (web/templates/news.html);
+                # "2h ago" vs "1d ago" vs "Sep 03" don't compare correctly as strings.
+                "published_at": published.isoformat() if published else None,
             }
         )
 

@@ -31,6 +31,7 @@ from sources.rbi_dbie_tables import (
 from sources.fred import fetch_fred_series
 from sources.iitm_rainfall import parse_iitm_file
 from sources.rbi_indicators import looks_like_rbi_indicator_workbook, parse_rbi_indicator_workbook
+from sources.sec_edgar import SECEdgarAdapter
 from sources.yfinance_financials import YFinanceAdapter
 from storage.repositories import (
     compute_reconciliation_keys,
@@ -227,6 +228,55 @@ def ingest_yfinance_company(
     logger.info(
         "Ingested %s (yfinance): parsed=%d inserted=%d skipped=%d reconciled=%d",
         ticker, result.parsed_count, result.inserted_count, result.skipped_count, result.reconciled_count,
+    )
+    return result
+
+
+def ingest_sec_edgar_company(
+    conn: DBConnection,
+    company_id: str,
+    cik: int,
+    *,
+    currency: str = "USD",
+) -> IngestionResult:
+    """Fetch a US company's quarterly + annual financials live from SEC
+    EDGAR's own XBRL data and run them through the same validate -> store
+    -> reconcile steps ingest_file() uses for an uploaded file -- same
+    "live source, separate function, not a branch of ingest_file()" shape
+    as ingest_yfinance_company() just above. No statement_type parameter
+    (unlike that one): US public companies file consolidated financials
+    only, there's no separate standalone statement to choose between.
+    """
+    company_id = normalize_company_id(company_id)
+    assert_active(conn, company_id)  # same ingestion gate as ingest_file()
+
+    adapter = SECEdgarAdapter(conn)
+    parsed = adapter.fetch(company_id, cik, currency=currency)
+
+    result = IngestionResult(company_id=company_id, source_id=adapter.source_id, file_path=f"sec_edgar:CIK{cik:010d}")
+    result.parsed_count = len(parsed)
+
+    valid: list[NormalizedObservation] = []
+    for obs in parsed:
+        problems = validate_observation(obs)
+        if problems:
+            result.skipped_count += 1
+            label = f"{obs.metric_key} {obs.fiscal_year}{obs.quarter or ''}"
+            reason = f"{label}: {'; '.join(problems)}"
+            result.skip_reasons.append(reason)
+            logger.warning("Skipping invalid observation: %s", reason)
+            continue
+        valid.append(obs)
+
+    insert_financial_observations(conn, valid)
+    result.inserted_count = len(valid)
+    result.reconciled_count = _publish_financial_ingestion(
+        conn, company_id=company_id, source_id=adapter.source_id, statement_type="consolidated", valid=valid,
+    )
+
+    logger.info(
+        "Ingested CIK%010d (sec_edgar): parsed=%d inserted=%d skipped=%d reconciled=%d",
+        cik, result.parsed_count, result.inserted_count, result.skipped_count, result.reconciled_count,
     )
     return result
 

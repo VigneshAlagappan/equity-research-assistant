@@ -28,7 +28,7 @@ the live file itself is never touched by this, only how it's stored in git. Befo
 committing a change to the database, re-shard it:
 
 ```bash
-python scripts/db_shard.py
+python -m scripts.db_shard
 ```
 
 Both scripts verify a SHA-256 checksum on reassembly and refuse to overwrite an
@@ -434,7 +434,7 @@ switch in commit `8df59aa`).
 regularly):**
 
 ```bash
-python scripts/db_shard.py
+python -m scripts.db_shard
 ```
 
 Snapshots the live db via SQLite's own online backup API and rewrites

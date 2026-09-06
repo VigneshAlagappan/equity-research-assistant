@@ -41,9 +41,19 @@
       // Currency-agnostic category names — used by both live feeds,
       // scale/symbol chosen from `currency`.
       case "big":
-        return isUSD
-          ? "$" + Math.round(val).toLocaleString("en-US") + "M"
-          : "₹" + Math.round(val).toLocaleString("en-IN") + " Cr";
+        // USD values here are always already in millions (this app's
+        // "big" unit convention for a USD company — see sources/
+        // yfinance_financials.py's _UNIT_DIVISOR); a flat "$4,727,000M"
+        // for a company Apple's size is unreadable, so scale to T/B/M
+        // same as web/app.py's _format_market_cap() (Companies list) —
+        // duplicated here rather than shared since one's Python/one's JS,
+        // but keep the two in sync if the thresholds ever change. INR
+        // stays flat Cr (this app's one aggregate-currency unit, no
+        // further Lakh/Cr-of-Cr scaling), unchanged.
+        if (!isUSD) return "₹" + Math.round(val).toLocaleString("en-IN") + " Cr";
+        if (Math.abs(val) >= 1_000_000) return "$" + (val / 1_000_000).toFixed(2) + "T";
+        if (Math.abs(val) >= 1_000) return "$" + (val / 1_000).toFixed(1) + "B";
+        return "$" + Math.round(val).toLocaleString("en-US") + "M";
       case "perShare":
         return (isUSD ? "$" : "₹") + val.toFixed(2);
       case "sharesCount":
@@ -509,4 +519,10 @@
     const overviewRoot = document.getElementById("valuation-overview");
     if (overviewRoot) init(overviewRoot, null);
   });
+
+  // Minimal export surface for web/static/js/compare.js (the Compare page) —
+  // it needs the exact same ratio catalog/computation/formatting this file
+  // already owns for the Overview tab, not a second copy that could drift
+  // out of sync with it. Everything else in this IIFE stays private.
+  window.SignalsValuation = { fmt: fmt, buildRatioContext: buildRatioContext, RATIO_CATALOG: RATIO_CATALOG };
 })();

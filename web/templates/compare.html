@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+
+{% block title %}Compare — Signals{% endblock %}
+
+{% block page_class %}page-wide{% endblock %}
+
+{% block extra_style %}
+  .compare-intro { max-width: 68ch; margin-bottom: var(--space-5); }
+
+  /* — Top nav: Quick Comparison / Detailed Comparison / Valuation Model —
+     a horizontal tab bar, not a side rail. Used to be a 200px vertical
+     rail (same side-tab pattern as Settings' own .settings-nav), but that
+     permanently gave up a fifth of the page's width to three tab labels on
+     every panel, including the Detailed/Valuation tables that most need
+     the room (verified: those tables scroll horizontally under real data,
+     so 200px back is real headroom, not cosmetic). Same underline-active
+     style #valuation-dashboard-interactive's own horizontal .vm-nav
+     already uses, reused here rather than inventing a second tab look. */
+  .compare-shell { display: block; }
+  .compare-nav {
+    display: flex; flex-direction: row; flex-wrap: wrap; gap: var(--space-6);
+    border-bottom: 1px solid var(--color-divider); margin-bottom: var(--space-4);
+  }
+  .compare-nav-item {
+    display: inline-block;
+    padding: 8px 2px; margin: 0; border: none; border-bottom: 2px solid transparent; border-radius: 0;
+    background: none; color: var(--ink-muted);
+    font: inherit; font-size: 14px; line-height: 1.3; text-align: left; cursor: pointer;
+  }
+  .compare-nav-item:hover { color: var(--ink); }
+  .compare-nav-item.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--color-accent); }
+  .compare-content { min-width: 0; }
+  .compare-panel[hidden] { display: none; }
+
+  .compare-slots {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3);
+    margin-bottom: var(--space-6);
+  }
+  @media (max-width: 900px) {
+    .compare-slots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  .compare-slot {
+    min-height: 96px; padding: var(--space-3); border: 1px solid var(--color-divider);
+    border-radius: var(--radius-md); background: var(--surface);
+    display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  }
+  .compare-slot-empty { position: relative; justify-content: flex-start; }
+  /* .site-search-input reserves left padding for _header.html's search
+     icon (web/static/classical/styles.css) -- no icon here, so that space
+     would just read as an odd indent on the placeholder text. */
+  .compare-slot-empty .site-search-input { width: 100%; padding-left: 10px; }
+  .compare-slot-empty .site-search-input:focus { width: 100%; }
+  .compare-slot-name { font-weight: 600; font-size: 14px; }
+  .compare-slot-meta { font-size: 12px; color: var(--ink-muted); }
+  .compare-slot-actions { display: flex; gap: var(--space-2); margin-top: 4px; }
+  .compare-slot-actions .btn { font-size: 12px; padding: 2px 8px; }
+
+  .compare-table-wrap { overflow-x: auto; }
+  .compare-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .compare-table th, .compare-table td { padding: 8px 12px; border-bottom: 1px solid var(--color-divider); text-align: left; white-space: nowrap; }
+  /* Row label column pinned to the left edge while the company columns
+     scroll horizontally under it (.compare-table-wrap's own overflow-x) --
+     the one column every row needs to stay readable against, same as a
+     spreadsheet's frozen header column. */
+  .compare-table thead th { position: sticky; top: 0; background: var(--surface); z-index: 2; }
+  .compare-table tbody th {
+    position: sticky; left: 0; background: var(--surface); z-index: 1;
+    font-weight: 500; color: var(--ink-muted); white-space: normal; min-width: 160px;
+  }
+  .compare-table thead th:first-child { left: 0; z-index: 3; }
+  .compare-table tbody tr:hover td, .compare-table tbody tr:hover th { background: var(--row-hover); }
+
+  .compare-fx-note { font-size: 12px; margin-top: var(--space-3); }
+
+  /* — Detailed Comparison toolbar: period pill-toggle + Attributes
+     dropdown + add-company search, one row, matching the Charts tab's own
+     toolbar rhythm (web/templates/company.html's .chart-overlay-toolbar)
+     without importing that page's page-scoped rules. */
+  .cmp-toolbar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4); }
+  .cmp-period-toggle { display: flex; border: 1px solid var(--color-divider); border-radius: var(--radius-sm); overflow: hidden; flex: none; }
+  .cmp-period-btn { font: inherit; font-size: 13px; padding: 6px 12px; border: none; background: none; color: var(--ink-muted); cursor: pointer; }
+  .cmp-period-btn + .cmp-period-btn { border-left: 1px solid var(--color-divider); }
+  .cmp-period-btn.active { background: var(--color-accent-700); color: #fff; }
+
+  .cmp-attrs { position: relative; flex: none; }
+  .cmp-attrs-btn {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 0.04em;
+    text-transform: uppercase; padding: 6px 10px; border: 1px solid var(--color-divider);
+    border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); cursor: pointer;
+  }
+  .cmp-attrs-count {
+    background: var(--color-accent-100); color: var(--color-accent-800); border-radius: 999px;
+    padding: 0 6px; font-size: 11px; font-weight: 600;
+  }
+  .cmp-attrs-panel {
+    position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 20;
+    width: 260px; max-height: 340px; overflow-y: auto; padding: var(--space-2);
+    background: var(--bg); border: 1px solid var(--color-divider); border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+  }
+  .cmp-attrs-panel[hidden] { display: none; }
+  .cmp-attrs-section-title {
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-accent);
+    margin: var(--space-2) 4px 2px; font-weight: 600;
+  }
+  .cmp-attrs-section-title:first-child { margin-top: 2px; }
+  .cmp-attr-item { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px; border-radius: var(--radius-sm); cursor: pointer; }
+  .cmp-attr-item:hover { background: var(--row-hover); }
+  .cmp-attr-item input { accent-color: var(--color-accent-700); }
+
+  .cmp-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-3); }
+  .cmp-pill {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 8px;
+    border: 1px solid var(--color-divider); border-radius: 999px; background: var(--surface);
+  }
+
+  /* — Detailed table: one frozen multi-year grid per statement section,
+     each section collapsible (native <details>, one open/closed state per
+     section that survives re-renders -- see compare_detailed.js's
+     state.collapsedSections) rather than one long continuous table mixing
+     every section's rows together. All sections share one outer bordered
+     card with dividers between them, not separate floating cards, so the
+     whole comparison still reads as one object. */
+  .cmp-sections-card { border: 1px solid var(--color-divider); border-radius: var(--radius-md); overflow: hidden; }
+  .cmp-section + .cmp-section { border-top: 1px solid var(--color-divider); }
+  /* Exactly two flex children here on purpose (title, meta) -- the
+     chevron used to be a ::before on .cmp-section-summary itself, which
+     made it a THIRD flex item, and `justify-content: space-between`
+     across three items pushes the middle one (the title) toward the
+     center of the row instead of hugging the left edge next to the
+     chevron. Moving the chevron onto .cmp-section-title's own ::before
+     keeps it visually glued to the title as one block, so space-between
+     now only has two things to place: that block on the left, the
+     metrics/state text on the right. */
+  .cmp-section-summary {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+    padding: var(--space-3) var(--space-4); cursor: pointer; list-style: none; font-weight: 600;
+  }
+  .cmp-section-summary::-webkit-details-marker { display: none; }
+  .cmp-section-title { display: flex; align-items: center; }
+  .cmp-section-title::before {
+    content: "▸"; font-size: 10px; opacity: 0.6; transition: transform 0.15s ease; margin-right: var(--space-2);
+  }
+  .cmp-section[open] > .cmp-section-summary .cmp-section-title::before { transform: rotate(90deg); }
+  .cmp-section-meta { font-size: 12px; font-weight: 400; color: var(--ink-muted); white-space: nowrap; }
+
+  /* — Valuation Model tab: a Detailed-Comparison-shaped side-by-side table
+     (own toolbar/pills/attrs-panel ids below, .cmp-* styles above already
+     cover the shared shell) reading web/valuation_feed.py's per-company
+     feed and projecting forward under one shared set of assumptions
+     (web/static/js/compare_valuation.js) -- this include pulls in the same
+     .vm-assumptions-card/.vm-assumptions-grid/.field/.vm-year-range markup
+     the single-company Valuation Model tab uses for its Assumptions card
+     (just one shared instance here instead of one per company), plus the
+     .vm-forecast-cell/.vm-forecast-col/.vm-group-header/.vm-cagr-col tint
+     and the tag-fact/tag-calculation badge styling the comparison table
+     itself reuses. */
+  {% include "_valuation_model_styles.html" %}
+  .cmp-val-price-input { max-width: 140px; }
+
+  .cmp-detailed-table { width: 100%; border-collapse: collapse; font-size: 13px; border-top: 1px solid var(--color-divider); }
+  .cmp-detailed-table th, .cmp-detailed-table td { padding: 6px var(--space-4); text-align: right; white-space: nowrap; }
+  .cmp-detailed-table th:first-child, .cmp-detailed-table td:first-child { text-align: left; white-space: normal; }
+  .cmp-detailed-table td:nth-child(2), .cmp-detailed-table th:nth-child(2) { text-align: left; }
+  .cmp-detailed-table thead th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); font-weight: 500; padding-top: var(--space-2); }
+  .cmp-attr-label-row td:first-child, .cmp-attr-label-row th:first-child { font-weight: 600; padding-top: var(--space-3); }
+  .cmp-company-cell { color: var(--ink-muted); font-size: 12px; }
+  /* Plain "-" for a genuine reporting gap, not a full "Not reported"
+     sentence -- still muted so it reads as absence at a glance, just
+     lighter-weight than the earlier wording (per direct feedback: the
+     fuller phrase read as clumsy/noisy repeated across a dense grid). */
+  .cmp-not-reported { color: var(--ink-muted); }
+  .cmp-detailed-footnote { font-size: 12px; color: var(--ink-muted); margin-top: var(--space-3); }
+{% endblock %}
+
+{% block content %}
+  <h1>Compare</h1>
+  <p class="compare-intro muted">
+    Companies as columns, one metric catalog, deterministic financial facts only — no LLM inference.
+  </p>
+
+  <div class="compare-shell">
+    <nav class="compare-nav" role="tablist">
+      <button type="button" class="compare-nav-item active" data-compare-tab="quick">Quick Comparison</button>
+      <button type="button" class="compare-nav-item" data-compare-tab="detailed">Detailed Comparison</button>
+      <button type="button" class="compare-nav-item" data-compare-tab="valuation">Valuation Model</button>
+    </nav>
+
+    <div class="compare-content">
+
+  <div class="compare-panel" id="compare-panel-quick" data-compare-panel="quick">
+    <p class="compare-intro muted">
+      Pick up to 4 companies to see them side by side across the same ratios shown on each company's own Overview
+      tab, one period (the latest) per company. Mixing an Indian and a US company automatically converts monetary
+      figures to USD, using a live exchange rate noted below the table — ratios and percentages (P/E, ROE, margins,
+      growth, ...) need no conversion and are shown as-is either way.
+    </p>
+    <div id="compare-slots" class="compare-slots" data-search-url="{{ search_url }}"></div>
+    <div id="compare-table"></div>
+  </div>
+
+  <div class="compare-panel" id="compare-panel-detailed" data-compare-panel="detailed"
+       data-charts-url-template="{{ charts_url_template }}" hidden>
+    <p class="compare-intro muted">
+      Pick any number of attributes to see the full recorded history side by side for the companies selected in
+      Quick Comparison — not a spec-sheet snapshot, the same per-period series the Charts tab plots, laid out as a
+      table instead.
+    </p>
+    <div class="cmp-toolbar">
+      <div class="cmp-period-toggle" role="group" aria-label="Period">
+        <button type="button" class="cmp-period-btn active" data-cmp-period="annual">Annual</button>
+        <button type="button" class="cmp-period-btn" data-cmp-period="quarterly">Quarterly</button>
+      </div>
+      <div class="cmp-attrs">
+        <button type="button" class="cmp-attrs-btn" id="cmp-attrs-btn" aria-haspopup="true" aria-expanded="false">
+          Attributes <span class="cmp-attrs-count" id="cmp-attrs-count">0</span> &rsaquo;
+        </button>
+        <div class="cmp-attrs-panel" id="cmp-attrs-panel" hidden></div>
+      </div>
+    </div>
+    <div class="cmp-pills" id="cmp-pills"></div>
+    <div id="cmp-detailed-table"></div>
+  </div>
+
+  <div class="compare-panel" id="compare-panel-valuation" data-compare-panel="valuation"
+       data-valuation-url-template="{{ valuation_url_template }}" hidden>
+    <p class="compare-intro muted">
+      Pick any number of Growth Projection parameters to see the companies selected in Quick Comparison side by
+      side — recorded actuals plus 3 years projected forward (shaded), under the shared assumptions below. Current
+      price is the one per-company exception (see the Intrinsic Value Walk below) since one shared price doesn't
+      mean much across companies trading at very different scales.
+    </p>
+    <div class="card vm-assumptions-card" id="cmp-val-assumptions"></div>
+    <div id="cmp-val-walk"></div>
+    <div class="cmp-toolbar">
+      <div class="cmp-attrs">
+        <button type="button" class="cmp-attrs-btn" id="cmp-val-attrs-btn" aria-haspopup="true" aria-expanded="false">
+          Parameters <span class="cmp-attrs-count" id="cmp-val-attrs-count">0</span> &rsaquo;
+        </button>
+        <div class="cmp-attrs-panel" id="cmp-val-attrs-panel" hidden></div>
+      </div>
+    </div>
+    <div class="cmp-pills" id="cmp-val-pills"></div>
+    <div id="cmp-valuation-root"></div>
+  </div>
+
+    </div>
+  </div>
+
+  <script>window.COMPARE_RATIO_CATALOG = {{ ratio_catalog|tojson }};</script>
+  <script src="{{ static_url('js/compare_shared.js') }}"></script>
+  <script src="{{ static_url('js/valuation_dashboard.js') }}"></script>
+  <script src="{{ static_url('js/charts_overlay.js') }}"></script>
+  <script src="{{ static_url('js/compare.js') }}"></script>
+  <script src="{{ static_url('js/compare_detailed.js') }}"></script>
+  <script src="{{ static_url('js/compare_valuation.js') }}"></script>
+  <script>
+    (function () {
+      const tabs = document.querySelectorAll('[data-compare-tab]');
+      tabs.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          tabs.forEach((b) => b.classList.toggle('active', b === btn));
+          document.querySelectorAll('[data-compare-panel]').forEach((panel) => {
+            panel.hidden = panel.dataset.comparePanel !== btn.dataset.compareTab;
+          });
+        });
+      });
+    })();
+  </script>
+{% endblock %}
