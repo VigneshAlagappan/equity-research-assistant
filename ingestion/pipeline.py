@@ -35,6 +35,7 @@ from sources.sec_edgar import SECEdgarAdapter
 from sources.yfinance_financials import YFinanceAdapter
 from storage.repositories import (
     compute_reconciliation_keys,
+    get_existing_macro_periods,
     insert_bank_infrastructure_observations,
     insert_financial_observations,
     insert_macro_observations,
@@ -374,16 +375,38 @@ def ingest_fred_series(
     there's no file_path/source-detection-by-path step here (the series_id
     is the input), same reasoning ingest_yfinance_company() is its own
     function rather than a branch of ingest_file().
+
+    fetch_fred_series() always returns a series' *entire* history (FRED's
+    CSV export has no "since" param), and insert_macro_observations() is
+    plain append-only (by design -- see its own docstring) with nothing
+    upstream deduplicating a period already on file. Left alone, a repeat
+    call for the same series_id (e.g. this app's own scheduled quarterly
+    FRED job re-running) would append a duplicate row for every period,
+    every run, forever. Periods already stored for this exact
+    (series_key, region, source="fred") are filtered out here before
+    validation/insert -- scoped to this function alone, not
+    insert_macro_observations itself, since that function is shared with
+    the RBI/IMD file-upload path, where re-processing the same file is a
+    much rarer, usually-deliberate action rather than a job's normal
+    steady-state behavior.
     """
     parsed = fetch_fred_series(series_id, unit=unit, series_key=series_key, region=region)
+    resolved_series_key = series_key or series_id.lower()
 
-    result = MacroIngestionResult(
-        series_key=series_key or series_id.lower(), source_id="fred", file_path=f"fred:{series_id}"
-    )
+    result = MacroIngestionResult(series_key=resolved_series_key, source_id="fred", file_path=f"fred:{series_id}")
     result.parsed_count = len(parsed)
 
+    existing_periods = get_existing_macro_periods(conn, resolved_series_key, region, "fred")
+    new_obs = [obs for obs in parsed if obs.period not in existing_periods]
+    already_have = len(parsed) - len(new_obs)
+    if already_have:
+        logger.info(
+            "ingest_fred_series(%s): %d/%d period(s) already on file, skipping",
+            series_id, already_have, len(parsed),
+        )
+
     valid: list[MacroNormalizedObservation] = []
-    for obs in parsed:
+    for obs in new_obs:
         problems = validate_macro_observation(obs)
         if problems:
             result.skipped_count += 1

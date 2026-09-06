@@ -2345,6 +2345,23 @@ def get_bank_infrastructure_series(
     ).fetchall()
 
 
+def get_existing_macro_periods(conn: sqlite3.Connection, series_key: str, region: str | None, source: str) -> set[str]:
+    """Every period already stored for this exact (series_key, region,
+    source) -- lets a repeat fetch that re-pulls a source's full history
+    every time (ingestion/pipeline.py's ingest_fred_series, which has no
+    incremental "since last time" mode of its own) skip periods it already
+    has instead of insert_macro_observations appending a duplicate row for
+    them on every run. Same shape as get_shareholding_detail_fetched_periods
+    for NSE shareholding, just period-keyed instead of a separate flag
+    column -- macro_observations has no natural place to mark "already
+    fetched" other than the row already being there."""
+    rows = conn.execute(
+        "SELECT period FROM macro_observations WHERE series_key = ? AND region IS ? AND source = ?",
+        (series_key, region, source),
+    ).fetchall()
+    return {r["period"] for r in rows}
+
+
 def get_macro_series(
     conn: sqlite3.Connection, series_key: str, region: str | None = None
 ) -> list[sqlite3.Row]:
@@ -2667,23 +2684,57 @@ def finish_batch_job_item(conn: sqlite3.Connection, item_id: int, *, status: str
     conn.commit()
 
 
-def list_batch_job_runs(conn: sqlite3.Connection, job_name: str | None = None, limit: int = 20) -> list[dict]:
+def list_running_batch_job_runs(conn: sqlite3.Connection) -> list[dict]:
+    """Every batch_job_runs row still at status='running', across every job
+    -- web/app.py's startup recovery reads this once per process start. A
+    'running' row can only exist while its own admin_schedule_run() request
+    is still in flight (that route is synchronous/blocking, no background-
+    job infrastructure), so on a *fresh* process start any such row is
+    necessarily left over from a previous process that died mid-run, never
+    a live run to leave alone."""
+    rows = conn.execute(
+        "SELECT * FROM batch_job_runs WHERE status = 'running' ORDER BY started_at ASC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_batch_job_runs(
+    conn: sqlite3.Connection, job_name: str | None = None, limit: int = 20, since_iso: str | None = None,
+) -> list[dict]:
     """Most recent runs first -- Admin UI / CLI history view. job_name is
     optional and keyword-compatible with every existing caller (main.py's
     batch-log CLI command calls this positionally-conn/keyword-limit only) --
     added so the Settings > Data Operations > Schedule panel's "last run"
     display (get_latest_batch_job_run below) and the Audit Log > Job Runs
-    tab can each narrow to one job without a second, near-duplicate query."""
+    tab can each narrow to one job without a second, near-duplicate query.
+    since_iso (also optional, keyword-only in practice) narrows to runs
+    started at or after that UTC timestamp -- the Job Runs tab's time-period
+    filter; omitted entirely rather than passed as None down to SQL, same
+    "build the WHERE clause from only the filters actually active" shape
+    the reconciliation tab's own filtering already uses."""
+    clauses: list[str] = []
+    params: list[object] = []
     if job_name is not None:
-        rows = conn.execute(
-            "SELECT * FROM batch_job_runs WHERE job_name = ? ORDER BY started_at DESC LIMIT ?",
-            (job_name, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM batch_job_runs ORDER BY started_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        clauses.append("job_name = ?")
+        params.append(job_name)
+    if since_iso is not None:
+        clauses.append("started_at >= ?")
+        params.append(since_iso)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    rows = conn.execute(
+        f"SELECT * FROM batch_job_runs {where} ORDER BY started_at DESC LIMIT ?",
+        (*params, limit),
+    ).fetchall()
     return [dict(r) for r in rows]
+
+
+def list_distinct_batch_job_names(conn: sqlite3.Connection) -> list[str]:
+    """Every job_name that has ever recorded a run -- populates the Job
+    Runs tab's "Select a Job" filter with only jobs that actually have
+    history, rather than the full _SCHEDULED_JOBS registry (which also
+    lists jobs with no runner/no runs yet)."""
+    rows = conn.execute("SELECT DISTINCT job_name FROM batch_job_runs ORDER BY job_name").fetchall()
+    return [r["job_name"] for r in rows]
 
 
 def get_latest_batch_job_run(conn: sqlite3.Connection, job_name: str) -> dict | None:

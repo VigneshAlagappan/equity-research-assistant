@@ -12,8 +12,11 @@ ingested financial data from the web UI.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 from storage.db_types import DBConnection
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -84,11 +87,13 @@ from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.investigation import InvestigationError, run_investigation
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
+from scripts.batch_fetch_fred import run_fred_batch, TRACKED_SERIES
 from scripts.batch_fetch_nse import run_nse_batch
+from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
 from scripts.db_shard import run_db_shard_job
 from scripts.fetch_daily_prices import run_price_history_update
 from scripts.fetch_daily_prices_usa import run_price_history_update_usa
-from storage.company_repository import select_company_ids_by_index
+from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
 from storage.database import init_db
 from storage.investigation_repository import (
     count_investigation_hypotheses,
@@ -122,6 +127,7 @@ from storage.repositories import (
     delete_industry,
     delete_note_attachment,
     delete_sector,
+    finish_batch_job_run,
     get_company_document,
     get_note_attachment,
     get_company_index_tags,
@@ -156,7 +162,9 @@ from storage.repositories import (
     list_latest_shares_outstanding,
     list_llm_call_log,
     list_macro_series_summary,
+    list_distinct_batch_job_names,
     list_reconciliation_log_by_company,
+    list_running_batch_job_runs,
     list_xbrl_migration_status,
     list_note_attachments_for_company,
     list_report_evidence,
@@ -193,6 +201,8 @@ from web.news import fetch_company_news, google_news_last_24h_url
 from web.rich_text import sanitize_note_html
 from web.charts_feed import build_charts_feed
 from web.valuation_feed import build_valuation_feed
+
+logger = logging.getLogger(__name__)
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -773,6 +783,18 @@ def create_app() -> Flask:
     def _run_db_shard(conn) -> int:
         return run_db_shard_job(conn)
 
+    def _run_fred_macro(conn) -> int:
+        return run_fred_batch(conn, TRACKED_SERIES, scope_label=f"FRED ({len(TRACKED_SERIES)} series)")
+
+    def _run_financials_usa(conn) -> int:
+        """Every active US company on file (a dozen today, same "no
+        index-membership filter" reasoning select_active_companies_by_country's
+        own docstring gives -- a couple of them aren't tagged into any of
+        the US indices in company_index_membership, so filtering by one of
+        those would silently drop them)."""
+        companies = [r["company_id"] for r in select_active_companies_by_country(conn, "US")]
+        return run_sec_edgar_batch(conn, companies, scope_label=f"US companies ({len(companies)})")
+
     def _run_price_history_usa(conn) -> int:
         # Same shape as _run_price_history_india above: run_price_history_
         # update_usa() opens its own main-db/price-db connections
@@ -781,7 +803,7 @@ def create_app() -> Flask:
         # underneath either way.
         return run_price_history_update_usa()
 
-    # Eleven jobs get a real "Run now" button; the other six render as a
+    # Thirteen jobs get a real "Run now" button; the other four render as a
     # disabled row with `reason` as subtext (see ScheduledJob's docstring
     # above). Order here is the display order in the Schedule panel table.
     _SCHEDULED_JOBS: list[ScheduledJob] = [
@@ -807,9 +829,8 @@ def create_app() -> Flask:
                      "nse_shareholding_fetch_nifty_midcap150", None, _run_shareholding_nifty_midcap150),
         ScheduledJob("shareholding_india_smallcap250", "Shareholding pattern — India (Nifty Smallcap 250)", "Quarterly",
                      "nse_shareholding_fetch_nifty_smallcap250", None, _run_shareholding_nifty_smallcap250),
-        ScheduledJob("financials_usa", "Financials — USA", "Quarterly", None,
-                     "yfinance's quarterly data doesn't align to fiscal quarters — needs a "
-                     "per-company fiscal-quarter mapping first", None),
+        ScheduledJob("financials_usa", "Financials — USA", "Quarterly",
+                     "sec_edgar_financials_fetch", None, _run_financials_usa),
         ScheduledJob("doc_analysis", "Document analysis (transcripts/concalls)", "Quarterly", None,
                      "No scheduled trigger exists for the manual \"process pending documents\" "
                      "action, and there's no automated fetch source — this would only ever "
@@ -820,14 +841,90 @@ def create_app() -> Flask:
         ScheduledJob("insights_macro", "Macro insights", "Monthly", None,
                      "The generation function itself doesn't exist yet — needs a design "
                      "decision on what a macro insight is first", None),
-        ScheduledJob("fred_macro", "FRED macro data", "Weekly", None,
-                     "Live fetch works one series at a time — needs a loop over a configured "
-                     "series list", None),
+        ScheduledJob("fred_macro", "FRED macro data", "Quarterly",
+                     "fred_macro_fetch", None, _run_fred_macro),
         ScheduledJob("rbi_macro", "RBI / IITM macro data", "Weekly", None,
                      "These sources are file-based parsers over manually-downloaded files, "
                      "not live fetchers — \"weekly\" here still means a human stages the file "
                      "first", None),
     ]
+
+    def _resume_interrupted_batch_jobs() -> None:
+        """Called once, at process startup (see the WERKZEUG_RUN_MAIN-guarded
+        call near the bottom of create_app()) -- admin_schedule_run's "Run
+        now" is synchronous and blocking with no background-job
+        infrastructure, so a batch_job_runs row can only be at
+        status='running' while its own request is still in flight in a
+        live process. On a *fresh* process start there is no such request,
+        so every row list_running_batch_job_runs() finds here is left over
+        from a previous process that died (crashed, or was restarted)
+        mid-run -- never a run to leave alone.
+
+        Marked 'failed' (the schema's status CHECK has no 'interrupted'
+        value, and this run genuinely didn't complete) with a note
+        explaining why, then replayed via the exact same runner used for a
+        manual "Run now" click -- safe to just replay the whole scope
+        rather than reconstructing "which companies are left" from
+        batch_job_items, since every runner's own per-company work is
+        already idempotent (NSE's dest_path-exists check, the
+        shareholding detail_fetched_at flag, SEC EDGAR's reconciliation
+        step): a replay cheaply re-confirms whatever the dead run already
+        finished and only does real work for what's left. Run in a
+        background thread, each on its own db connection (this isn't a
+        request, so there's no request-scoped `g` connection to reuse, and
+        a sqlite3 connection can't cross threads) -- startup itself must
+        not block on what could be a several-minute crawl.
+        """
+        conn = init_db()
+        try:
+            stale_runs = list_running_batch_job_runs(conn)
+            for run in stale_runs:
+                finish_batch_job_run(
+                    conn, run["run_id"], status="failed",
+                    notes="Interrupted by a server restart — auto re-queued.",
+                )
+        finally:
+            conn.close()
+
+        if not stale_runs:
+            return
+
+        jobs_by_name = {job.job_name: job for job in _SCHEDULED_JOBS if job.job_name}
+        to_resume = []
+        for run in stale_runs:
+            job = jobs_by_name.get(run["job_name"])
+            if job is None or job.runner is None:
+                logger.warning(
+                    "Interrupted batch run_id=%s (job_name=%r) has no registered runner to resume",
+                    run["run_id"], run["job_name"],
+                )
+                continue
+            to_resume.append((job, run))
+
+        if to_resume:
+            # One worker thread processing the list in sequence, not one
+            # thread per job -- these are exactly the several-minute,
+            # several-hundred-company NSE/SEC crawls admin_schedule_run's
+            # own docstring describes; several of them hammering NSE's WAF
+            # at once (a real, previously-observed failure mode in this app
+            # -- see sources/nse_fetch.py's _bootstrap()) would be worse
+            # than the interruption this is meant to recover from, not
+            # better.
+            threading.Thread(target=_run_resumed_jobs_sequentially, args=(to_resume,), daemon=True).start()
+
+    def _run_resumed_jobs_sequentially(to_resume: list) -> None:
+        for job, run in to_resume:
+            logger.info(
+                "Auto-resuming interrupted batch job %r (was run_id=%s, scope=%r)",
+                job.job_id, run["run_id"], run["scope_label"],
+            )
+            conn = init_db()
+            try:
+                job.runner(conn)
+            except Exception:  # noqa: BLE001 -- one job's resume failing shouldn't block the rest of the queue
+                logger.exception("Auto-resume of interrupted job %r failed", job.job_id)
+            finally:
+                conn.close()
 
     def _schedule_panel_context(db) -> dict:
         """Only computed when the Schedule panel is actually being viewed,
@@ -955,7 +1052,30 @@ def create_app() -> Flask:
         it, it's cheap" call this function already makes for recent_log
         above."""
         active_tab = "job_runs" if request.args.get("al_tab") == "job_runs" else "reconciliation"
-        job_runs = list_batch_job_runs(db, limit=50)
+
+        # Schwab "Transfer Activity"-style filter bar: a job picker (their
+        # account picker) + a time-period picker, instead of always
+        # dumping the last 50 runs across every job unfiltered -- with 13+
+        # jobs now sharing this one table (NSE x4 tiers x2 kinds, SEC
+        # EDGAR, FRED, price history x2, DB shard), an unfiltered view
+        # buries any one job's history under whichever jobs happen to run
+        # most often. "All jobs" + "All time" (both empty string) reproduces
+        # the old unfiltered behavior exactly, so this is additive, not a
+        # behavior change for anyone who ignores the new controls.
+        job_filter = request.args.get("al_job") or ""
+        period_filter = request.args.get("al_period") or ""
+        _PERIOD_DAYS = {"5": 5, "30": 30, "90": 90, "365": 365}
+        since_iso = None
+        if period_filter in _PERIOD_DAYS:
+            since_iso = (datetime.now(timezone.utc) - timedelta(days=_PERIOD_DAYS[period_filter])).isoformat()
+
+        job_labels = {job.job_name: job.label for job in _SCHEDULED_JOBS if job.job_name}
+        job_filter_options = [
+            {"job_name": name, "label": job_labels.get(name, name)}
+            for name in list_distinct_batch_job_names(db)
+        ]
+
+        job_runs = list_batch_job_runs(db, job_name=job_filter or None, since_iso=since_iso, limit=200)
         for run in job_runs:
             run["items"] = list_batch_job_items(db, run["run_id"])
             # Derived from the already-eager-loaded items above, not
@@ -1009,6 +1129,9 @@ def create_app() -> Flask:
             "audit_not_started_count": sum(1 for r in migration_rows if r["migration_status"] == "not_started"),
             "audit_active_tab": active_tab,
             "audit_job_runs": job_runs,
+            "audit_job_filter": job_filter,
+            "audit_job_filter_options": job_filter_options,
+            "audit_period_filter": period_filter,
         }
 
     @app.route("/admin")
@@ -3036,5 +3159,16 @@ def create_app() -> Flask:
     @app.route("/chat", methods=["POST"])
     def chat_ask():
         return _answer_question_response()
+
+    # Guarded so this runs exactly once in the process that actually serves
+    # requests -- with the debug reloader on, create_app() executes once in
+    # Werkzeug's monitor process (which never serves anything, just watches
+    # files and re-execs a child) and again in the reloader's child, which
+    # sets WERKZEUG_RUN_MAIN=true; without this guard the monitor process
+    # would also mark runs failed / spawn resume threads it then immediately
+    # abandons. Without the reloader (debug=False, or no --debug) that env
+    # var is never set, so the `not app.debug` half covers that case.
+    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        _resume_interrupted_batch_jobs()
 
     return app

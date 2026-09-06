@@ -297,12 +297,23 @@ _INSTANT_CONCEPTS = frozenset({
     "LoansReceivableNet",
 })
 
-# Per-unit concepts (already dollars-per-share or a share count) -- must
-# NOT be divided by _UNIT_DIVISOR the way an aggregate dollar figure is.
-# Mirrors sources/yfinance_financials.py's own _PER_UNIT_ROW_LABELS split.
+# Per-unit concepts (already dollars-per-share) -- must NOT be divided by
+# _UNIT_DIVISOR the way an aggregate dollar figure is. Share-count concepts
+# (CommonStockSharesOutstanding/CommonStockSharesIssued) deliberately do NOT
+# belong here, despite also being "not a dollar amount" -- this app's
+# shares_outstanding convention (matching sources/yfinance_financials.py's
+# own docstring reasoning, "Ordinary Shares Number" -> _UNIT_DIVISOR) is
+# millions of shares, not a raw count, specifically so a downstream
+# aggregate_in_millions / shares ratio (book value per share, market cap)
+# comes out correctly regardless of which source ingested shares_outstanding.
+# A real bug this exempted, not hypothetical: with these two in this set,
+# a raw share count (e.g. ~7.02 billion for a mega-cap bank) times a
+# per-share price produced an actual-dollar market cap that every
+# consumer (web/app.py's company-list market cap, valuation_dashboard.js)
+# then mis-scaled by 1e6 on display, rendering (e.g.) a real ~$440B market
+# cap as "$439,886.20T".
 _PER_UNIT_CONCEPTS = frozenset({
     "EarningsPerShareDiluted", "EarningsPerShareBasic",
-    "CommonStockSharesOutstanding", "CommonStockSharesIssued",
 })
 
 _UNIT_DIVISOR = 1_000_000  # raw USD -> this app's USD_MILLION "big" convention

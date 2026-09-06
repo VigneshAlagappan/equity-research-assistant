@@ -1430,6 +1430,35 @@
         per-item outcomes (per-company for the NSE/price jobs, a single summary item for DB sharding, which
         isn't per-company).
       </p>
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-audit">
+        <input type="hidden" name="al_tab" value="job_runs">
+        <div class="field">
+          <label for="jobrun-job">Job</label>
+          <select class="input" id="jobrun-job" name="al_job">
+            <option value="">All jobs</option>
+            {% for opt in audit_job_filter_options %}
+            <option value="{{ opt.job_name }}" {{ 'selected' if audit_job_filter == opt.job_name }}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="jobrun-period">Time period</label>
+          <select class="input" id="jobrun-period" name="al_period">
+            <option value="" {{ 'selected' if audit_period_filter == '' }}>All time</option>
+            <option value="5" {{ 'selected' if audit_period_filter == '5' }}>Last 5 days</option>
+            <option value="30" {{ 'selected' if audit_period_filter == '30' }}>Last 30 days</option>
+            <option value="90" {{ 'selected' if audit_period_filter == '90' }}>Last 90 days</option>
+            <option value="365" {{ 'selected' if audit_period_filter == '365' }}>Last year</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Apply</button>
+        {% if audit_job_filter or audit_period_filter %}
+        <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-audit', al_tab='job_runs') }}">Clear</a>
+        {% endif %}
+      </form>
+
       {% if audit_job_runs %}
       <table class="table admin-audit-table">
         <thead>
