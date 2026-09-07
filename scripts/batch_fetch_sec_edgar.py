@@ -14,6 +14,7 @@ Usage:
   python -m scripts.batch_fetch_sec_edgar --companies-file sp500.txt
   python -m scripts.batch_fetch_sec_edgar --index "S&P 500" --scope "S&P 500 financials"
   python -m scripts.batch_fetch_sec_edgar --country US
+  python -m scripts.batch_fetch_sec_edgar --country US --force  # bypass the skip-if-recent check below
 
 --companies-file / --index / --country are alternate ways to supply the
 company list -- exactly one of --companies/--companies-file/--index/
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from datetime import datetime, timedelta, timezone
 
 from companies.registry import get_company
 from ingestion.batch_log import BatchRun
@@ -34,6 +36,7 @@ from ingestion.pipeline import ingest_sec_edgar_company
 from sources.sec_edgar import SECFetchError, get_cik_for_ticker
 from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
 from storage.database import init_db
+from storage.repositories import get_last_successful_batch_item_times
 
 # SEC's fair-access policy caps automated traffic at 10 req/s; one company
 # here is one companyfacts request (get_cik_for_ticker's own ticker->CIK
@@ -42,6 +45,19 @@ from storage.database import init_db
 REQUEST_DELAY_SECONDS = 0.3
 
 _JOB_NAME = "sec_edgar_financials_fetch"
+
+# Unlike NSE's jobs, this one had no skip-if-already-done check at all
+# until now: every "Run now" click re-fetched and re-parsed every
+# company's entire companyfacts history from scratch, regardless of
+# whether it had just succeeded minutes earlier -- fine for a dozen
+# companies, wasteful (and eventually rate-limit-risky, per SEC's own
+# fair-access policy) as the US universe grows. 24h matches this job's own
+# real-world cadence (a company files a new 10-Q/10-K at most once a
+# quarter; nothing meaningful changes hour to hour) while still letting a
+# scheduled daily/quarterly run always pick up a freshly-filed quarter
+# promptly. --force (or force=True) bypasses this for a deliberate
+# re-check regardless of how recently it last succeeded.
+REFETCH_TTL_HOURS = 24
 
 
 def _run_financials(conn, company_id: str) -> str:
@@ -78,23 +94,43 @@ def _resolve_companies(conn, args: argparse.Namespace) -> list[str]:
     raise SystemExit("one of --companies / --companies-file / --index / --country is required")
 
 
-def run_sec_edgar_batch(conn, companies: list[str], scope_label: str | None = None, job_name: str | None = None) -> int:
+def run_sec_edgar_batch(
+    conn, companies: list[str], scope_label: str | None = None, job_name: str | None = None, force: bool = False,
+) -> int:
     """The actual company-list loop, factored out of main() so the Settings >
     Data Operations > Schedule panel's "Run now" button (web/app.py) can
     drive the exact same batch -- same one-capability-two-triggers shape
     scripts/batch_fetch_nse.py's run_nse_batch() already uses. Returns the
-    BatchRun's run_id."""
+    BatchRun's run_id.
+
+    Skips any company that already succeeded at this exact job_name within
+    REFETCH_TTL_HOURS (force=True bypasses this entirely) -- one batched
+    audit-log query up front (get_last_successful_batch_item_times), not
+    one query per company. A skipped company still gets its own
+    run.item(...) entry (status 'ok', detail explaining why) so Audit Log
+    -> Job Runs shows every company that was considered, not just the ones
+    actually re-fetched."""
     if not companies:
         raise ValueError("company list is empty")
 
     scope_label = scope_label or f"sec_edgar financials ({len(companies)} companies)"
     job_name = job_name or _JOB_NAME
 
+    last_success = {} if force else get_last_successful_batch_item_times(conn, job_name, companies)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=REFETCH_TTL_HOURS)
+
     print(f"{job_name}: {len(companies)} companies, scope={scope_label!r}", flush=True)
-    ok = failed = 0
+    ok = failed = skipped = 0
     with BatchRun(conn, job_name, scope_label) as run:
         print(f"run_id={run.run_id}", flush=True)
         for i, company_id in enumerate(companies):
+            last = last_success.get(company_id)
+            if last and datetime.fromisoformat(last) > cutoff:
+                with run.item(company_id) as item:
+                    item.detail = f"skipped (already fetched successfully at {last}, within {REFETCH_TTL_HOURS}h)"
+                skipped += 1
+                print(f"{company_id}: SKIPPED -- {item.detail}", flush=True)
+                continue
             if i > 0:
                 time.sleep(REQUEST_DELAY_SECONDS)
             with run.item(company_id) as item:
@@ -107,7 +143,7 @@ def run_sec_edgar_batch(conn, companies: list[str], scope_label: str | None = No
                     print(f"{company_id}: FAILED -- {exc}", flush=True)
                     raise
 
-    print(f"\nDone. run_id={run.run_id} ok={ok} failed={failed}", flush=True)
+    print(f"\nDone. run_id={run.run_id} ok={ok} failed={failed} skipped={skipped}", flush=True)
     return run.run_id
 
 
@@ -118,6 +154,10 @@ def main() -> None:
     parser.add_argument("--index", help='company_index_membership index_name, e.g. "S&P 500"')
     parser.add_argument("--country", help='companies.country, e.g. "US" -- every active company on file')
     parser.add_argument("--scope", help="human label for the audit log (defaults to the count)")
+    parser.add_argument(
+        "--force", action="store_true",
+        help=f"re-fetch every company even if it already succeeded within the last {REFETCH_TTL_HOURS}h",
+    )
     args = parser.parse_args()
 
     conn = init_db()
@@ -125,7 +165,7 @@ def main() -> None:
     if not companies:
         raise SystemExit("resolved company list is empty")
 
-    run_sec_edgar_batch(conn, companies, scope_label=args.scope)
+    run_sec_edgar_batch(conn, companies, scope_label=args.scope, force=args.force)
     conn.close()
 
 

@@ -264,6 +264,27 @@
   }
   .admin-pagination-links { display: flex; align-items: center; gap: var(--space-2); }
 
+  .admin-add-company { margin-top: var(--space-3); }
+  .admin-add-company-form {
+    margin-top: var(--space-3); padding: var(--space-3); border: 1px solid var(--color-divider);
+    border-radius: 8px; background: var(--color-surface-alt, transparent);
+  }
+  .admin-add-company-grid {
+    display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: var(--space-3);
+    margin-bottom: var(--space-3);
+  }
+  .admin-add-company-grid .field label {
+    display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--ink-muted); margin-bottom: 4px;
+  }
+  .admin-add-company-grid .admin-other-input { margin-top: 6px; }
+  @media (max-width: 900px) {
+    .admin-add-company-grid { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 600px) {
+    .admin-add-company-grid { grid-template-columns: 1fr; }
+  }
+
   .admin-companies-filters {
     display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;
     margin-top: var(--space-3);
@@ -641,6 +662,101 @@
     <div class="settings-panel" id="settings-panel-admin-companies" {{ 'hidden' if active_admin_panel != 'companies' }}>
       <p class="muted">Edit a company's name, sector, industry, and active/archived status. Ingested financial data is edited only via Import Data (this tab) or the CLI, never here.</p>
 
+      <details class="admin-add-company">
+        <summary class="btn btn-primary" style="display: inline-block; cursor: pointer;">+ Add Company</summary>
+        <form class="admin-add-company-form" method="post" action="{{ url_for('admin_add_company') }}">
+          <p class="muted">
+            Looks the ticker up on Yahoo Finance for its name, sector, and currency, registers it, then fetches
+            financials (SEC EDGAR + Yahoo Finance for a US company, NSE filings for an Indian one) and a 10-year
+            price history &mdash; no other fields needed. This can take a while to return; each step's outcome is
+            reported once it finishes, and anything Yahoo Finance got wrong (sector, industry, name) can be
+            corrected afterward in the row below.
+          </p>
+          <div class="admin-add-company-grid">
+            <div class="field">
+              <label for="add-company-country">Country</label>
+              <select class="input" id="add-company-country" name="country">
+                <option value="IN" selected>India (NSE)</option>
+                <option value="US">United States (SEC EDGAR)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="add-company-search">Company <span class="muted">(name or ticker)</span></label>
+              <input class="input" type="text" id="add-company-search" autocomplete="off"
+                     placeholder="Start typing a company name or ticker&hellip;" list="add-company-suggestions">
+              <datalist id="add-company-suggestions"></datalist>
+              <input type="hidden" id="add-company-id" name="company_id" required>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary">Look up &amp; add</button>
+        </form>
+      </details>
+      <script>
+        (function () {
+          var search = document.getElementById("add-company-search");
+          var country = document.getElementById("add-company-country");
+          var hiddenId = document.getElementById("add-company-id");
+          var datalist = document.getElementById("add-company-suggestions");
+          if (!search) return;
+
+          var byLabel = {};
+          var debounceTimer = null;
+
+          function renderSuggestions(results) {
+            byLabel = {};
+            datalist.innerHTML = "";
+            results.forEach(function (r) {
+              var label = r.name + " (" + r.ticker + ")";
+              byLabel[label] = r.ticker;
+              var opt = document.createElement("option");
+              opt.value = label;
+              datalist.appendChild(opt);
+            });
+          }
+
+          function fetchSuggestions() {
+            var q = search.value.trim();
+            if (q.length < 2) {
+              renderSuggestions([]);
+              return;
+            }
+            fetch("{{ url_for('admin_companies_search') }}?q=" + encodeURIComponent(q) + "&country=" + encodeURIComponent(country.value))
+              .then(function (resp) { return resp.json(); })
+              .then(function (data) { renderSuggestions(data.results || []); })
+              .catch(function () { renderSuggestions([]); });
+          }
+
+          search.addEventListener("input", function () {
+            // A selection from the datalist replaces the input's value
+            // outright with the full "Name (TICKER)" label -- if that
+            // exact label is already a known suggestion, resolve it
+            // straight to a ticker instead of re-querying for it.
+            if (byLabel[search.value]) {
+              hiddenId.value = byLabel[search.value];
+            } else {
+              hiddenId.value = "";
+            }
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(fetchSuggestions, 300);
+          });
+
+          search.closest("form").addEventListener("submit", function (e) {
+            if (!hiddenId.value) {
+              // No exact suggestion picked -- fall back to whatever was
+              // typed, trimmed of any "(TICKER)" suffix, as a plain ticker;
+              // onboard_new_company's own Yahoo Finance lookup is the real
+              // validation step, this is just a reasonable guess.
+              var typed = search.value.trim();
+              var match = typed.match(/\(([^)]+)\)\s*$/);
+              hiddenId.value = match ? match[1] : typed;
+            }
+            if (!hiddenId.value) {
+              e.preventDefault();
+            }
+          });
+        })();
+      </script>
+
       <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
         <input type="hidden" name="panel" value="admin-companies">
         <div class="field">
@@ -667,6 +783,13 @@
           <select class="input" id="admin-companies-tag" name="tag" onchange="this.form.requestSubmit()">
             <option value="">All indices</option>
             {% for t in index_names %}<option value="{{ t }}" {{ 'selected' if t == companies_tag_filter }}>{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="admin-companies-country">Country</label>
+          <select class="input" id="admin-companies-country" name="country" onchange="this.form.requestSubmit()">
+            <option value="">All countries</option>
+            {% for co in countries %}<option value="{{ co }}" {{ 'selected' if co == companies_country_filter }}>{{ co }}</option>{% endfor %}
           </select>
         </div>
         <div class="field">
@@ -757,7 +880,7 @@
           of {{ companies_total }} companies
         </span>
         <div class="admin-pagination-links">
-          {% set pagination_args = {'panel': 'admin-companies', 'q': companies_query, 'sector': companies_sector_filter, 'industry': companies_industry_filter, 'tag': companies_tag_filter, 'status': companies_status_filter} %}
+          {% set pagination_args = {'panel': 'admin-companies', 'q': companies_query, 'sector': companies_sector_filter, 'industry': companies_industry_filter, 'tag': companies_tag_filter, 'country': companies_country_filter, 'status': companies_status_filter} %}
           {% if companies_page > 1 %}
           <a class="btn btn-ghost" href="{{ url_for('settings', page=companies_page - 1, **pagination_args) }}">&larr; Previous</a>
           {% endif %}
@@ -772,8 +895,8 @@
       <div class="empty-state">No companies match these filters.</div>
       {% else %}
       <div class="empty-state">
-        No companies registered yet. Run <code>python main.py seed-companies</code> or
-        <code>python main.py add-company &lt;ID&gt; ...</code> from the CLI.
+        No companies registered yet. Use "+ Add Company" above, or run
+        <code>python main.py seed-companies</code> from the CLI.
       </div>
       {% endif %}
     </div>
@@ -1547,10 +1670,14 @@
           <label for="jobrun-period">Time period</label>
           <select class="input" id="jobrun-period" name="al_period">
             <option value="" {{ 'selected' if audit_period_filter == '' }}>All time</option>
-            <option value="5" {{ 'selected' if audit_period_filter == '5' }}>Last 5 days</option>
-            <option value="30" {{ 'selected' if audit_period_filter == '30' }}>Last 30 days</option>
-            <option value="90" {{ 'selected' if audit_period_filter == '90' }}>Last 90 days</option>
-            <option value="365" {{ 'selected' if audit_period_filter == '365' }}>Last year</option>
+            <option value="1h" {{ 'selected' if audit_period_filter == '1h' }}>Last 1 hour</option>
+            <option value="4h" {{ 'selected' if audit_period_filter == '4h' }}>Last 4 hours</option>
+            <option value="8h" {{ 'selected' if audit_period_filter == '8h' }}>Last 8 hours</option>
+            <option value="24h" {{ 'selected' if audit_period_filter == '24h' }}>Last 24 hours</option>
+            <option value="5d" {{ 'selected' if audit_period_filter == '5d' }}>Last 5 days</option>
+            <option value="30d" {{ 'selected' if audit_period_filter == '30d' }}>Last 30 days</option>
+            <option value="90d" {{ 'selected' if audit_period_filter == '90d' }}>Last 90 days</option>
+            <option value="365d" {{ 'selected' if audit_period_filter == '365d' }}>Last year</option>
           </select>
         </div>
         <button type="submit" class="btn btn-primary">Apply</button>

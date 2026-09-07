@@ -2888,6 +2888,63 @@ def finish_batch_job_item(conn: sqlite3.Connection, item_id: int, *, status: str
     conn.commit()
 
 
+def get_last_successful_batch_item_times(
+    conn: sqlite3.Connection, job_name: str, company_ids: list[str]
+) -> dict[str, str]:
+    """company_id -> finished_at of its most recent 'ok' batch_job_items row
+    for this job_name, across every past run (not just the latest one) --
+    scripts/batch_fetch_sec_edgar.py's skip-if-recently-succeeded check.
+    Reuses the existing batch_job_runs/batch_job_items audit trail rather
+    than a new per-company timestamp column (unlike NSE shareholding's own
+    detail_fetched_at, which stamps a column on shareholding_observations
+    itself): SEC EDGAR's ingest_sec_edgar_company() has no single per-
+    company domain-table row to stamp -- one call inserts many rows across
+    many metrics/periods -- so "when did this company last succeed at this
+    job" is more naturally read back from the audit log that already
+    records exactly that, than invented as a new column somewhere. A
+    company absent from the returned dict has never succeeded at this job
+    (or never been attempted), same "absent means unknown, not zero"
+    convention get_strongest_verdict_by_investigation already uses."""
+    if not company_ids:
+        return {}
+    placeholders = ",".join("?" for _ in company_ids)
+    rows = conn.execute(
+        f"""
+        SELECT bi.company_id, MAX(bi.finished_at) AS last_success
+        FROM batch_job_items bi
+        JOIN batch_job_runs br ON br.run_id = bi.run_id
+        WHERE br.job_name = ? AND bi.status = 'ok' AND bi.company_id IN ({placeholders})
+        GROUP BY bi.company_id
+        """,
+        (job_name, *company_ids),
+    ).fetchall()
+    return {row["company_id"]: row["last_success"] for row in rows}
+
+
+def get_latest_batch_item_for_company(conn: sqlite3.Connection, job_name: str, company_id: str) -> dict | None:
+    """This company's own most recent batch_job_items row for one job_name,
+    across every past run (not just the latest run overall) -- whatever its
+    status ('running', 'ok', or 'failed'). Company Report's per-company
+    "Run now" button (web/app.py's admin_company_run_now()) reads this back
+    to show a status badge (Running/Complete/Failed, with the detail/
+    timestamp) sourced from the same audit trail Settings > Audit Log ->
+    Job Runs reads, rather than a separate ad hoc status field. None if this
+    company has never been an item in any run of this job -- distinct from
+    a 'failed' row, which means it *has* been attempted."""
+    row = conn.execute(
+        """
+        SELECT bi.*
+        FROM batch_job_items bi
+        JOIN batch_job_runs br ON br.run_id = bi.run_id
+        WHERE br.job_name = ? AND bi.company_id = ?
+        ORDER BY bi.item_id DESC
+        LIMIT 1
+        """,
+        (job_name, company_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def list_running_batch_job_runs(conn: sqlite3.Connection) -> list[dict]:
     """Every batch_job_runs row still at status='running', across every job
     -- web/app.py's startup recovery reads this once per process start. A

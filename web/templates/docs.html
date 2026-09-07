@@ -2,25 +2,47 @@
 
 {% block title %}Docs — Signals{% endblock %}
 
+{# Same reasoning as Settings' own page_class override (web/templates/
+   settings.html): the default .page container is centered at 85%
+   width/max 1440px (base.html), which left this now-sidebar-shaped page
+   stranded with a wide empty margin on both sides. Hugs the icon rail
+   like Settings does instead. #}
+{% block page_class %}page-flush-left{% endblock %}
+
 {% block extra_style %}
-  .docs-wrap { max-width: 720px; }
-  /* Same joined-pill toggle group as the Consolidated/Standalone and
-     Annual/Quarterly switches on a company page (.statement-toggle/
-     .vm-period-btn in web/templates/company.html) — this app's actual
-     current convention for a small (2-4 option) picker, not the older
-     underline-tab bar (web/templates/admin.html's .admin-nav, web/templates/
-     tools.html's .tools-subheader) that convention has been moving away
-     from. Server-rendered links + full navigation (not client-side
-     toggling) since each section here is its own bookmarkable/shareable URL. */
-  .docs-nav {
-    display: inline-flex; border: 1px solid var(--border); border-radius: 8px;
-    overflow: hidden; margin-bottom: var(--space-4);
+  /* page-flush-left itself is defined per-page (base.html's extra_style
+     block isn't shared across templates) -- same rule text as settings.html's
+     own copy, since both pages opt into the identical override. */
+  .page.page-flush-left { width: auto; max-width: none; margin: 0; }
+
+  /* Left sidebar nav, same shape as Settings' own (web/templates/
+     settings.html's .settings-shell/.settings-nav/.settings-nav-item) --
+     replaces the old horizontal pill-tab bar this page used before. Own
+     "docs-" prefixed classes rather than reusing "settings-*" directly
+     (the two pages never render together, so there'd be no actual
+     conflict, but a Docs page styled by classes literally named
+     "settings-nav-item" would be a confusing thing to read in isolation).
+     Still server-rendered links + full navigation, not client-side
+     toggling — each section is its own bookmarkable/shareable URL, same
+     reasoning the old version's docstring already gave. */
+  .docs-shell { display: flex; gap: var(--space-6); align-items: flex-start; }
+  .docs-sidenav { display: flex; flex-direction: column; width: 200px; flex: none; }
+  .docs-sidenav-item {
+    display: block; width: 100%;
+    padding: 7px 10px; margin: 0; border-radius: var(--radius-lg);
+    border: 1px solid transparent; background: none; color: var(--ink);
+    font: inherit; font-size: 14px; line-height: 1.3; text-align: left; text-decoration: none;
   }
-  .docs-nav-btn {
-    padding: 0.4rem 0.9rem; font-size: 13px; color: var(--ink-muted); text-decoration: none;
+  .docs-sidenav-item:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .docs-sidenav-item.active {
+    background: var(--surface); border-color: var(--border); color: var(--accent); font-weight: 600;
   }
-  .docs-nav-btn:hover { background: var(--row-hover); }
-  .docs-nav-btn.active { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .docs-content { flex: 1; min-width: 0; }
+  @media (max-width: 760px) {
+    .docs-shell { flex-direction: column; }
+    .docs-sidenav { flex-direction: row; flex-wrap: wrap; width: auto; gap: 4px; }
+    .docs-sidenav-item { width: auto; flex: 1 1 auto; }
+  }
 
   .docs-card {
     border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem;
@@ -30,6 +52,38 @@
   .docs-card p { font-size: 0.85rem; color: var(--ink-muted); line-height: 1.55; margin: 0 0 0.6rem; }
   .docs-card p:last-child { margin-bottom: 0; }
   .docs-taxonomy-list { font-size: 0.85rem; color: var(--ink-muted); line-height: 1.7; margin: 0 0 0.6rem; padding-left: 1.1rem; }
+  .docs-pipeline { font-size: 0.85rem; color: var(--ink-muted); line-height: 1.7; margin: 0 0 0.6rem; padding-left: 1.3rem; }
+  .docs-pipeline li { margin-bottom: 0.3rem; }
+  .docs-pipeline strong { color: var(--ink); }
+
+  /* Release Notes — its own two-column split *within* .docs-content (the
+     version history + a right-hand "On this Page" jump list), same shape
+     as most changelog pages (e.g. ClearBlade's docs) use once there's more
+     than a couple of entries to scroll past. Plain anchor links, no
+     scroll-spy JS -- worth adding once there are enough versions that
+     "which one am I looking at" stops being obvious from a glance. */
+  .docs-release-shell { display: flex; gap: var(--space-5); align-items: flex-start; }
+  .docs-release-main { flex: 1; min-width: 0; }
+  .docs-release-toc {
+    width: 220px; flex: none; border: 1px solid var(--border); border-radius: 8px;
+    padding: 0.9rem 1rem; position: sticky; top: 1rem;
+  }
+  .docs-release-toc-title { font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-muted); margin: 0 0 0.5rem; }
+  .docs-release-toc a {
+    display: block; padding: 3px 0; font-size: 13px; color: var(--ink-muted); text-decoration: none;
+  }
+  .docs-release-toc a:hover { color: var(--ink); }
+  .docs-release-entry { padding-bottom: 1.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+  .docs-release-entry:last-child { border-bottom: none; margin-bottom: 0; }
+  .docs-release-entry h3 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+  .docs-release-date { font-weight: 400; color: var(--ink-muted); font-size: 0.9rem; }
+  .docs-release-category { font-size: 0.8rem; font-weight: 600; color: var(--ink-muted); margin: 0.8rem 0 0.3rem; }
+  .docs-release-entry ul { font-size: 0.85rem; color: var(--ink-muted); line-height: 1.6; margin: 0 0 0.4rem; padding-left: 1.1rem; }
+  .docs-release-entry ul li { margin-bottom: 0.25rem; }
+  @media (max-width: 900px) {
+    .docs-release-shell { flex-direction: column-reverse; }
+    .docs-release-toc { width: auto; position: static; }
+  }
   .docs-source {
     font-size: 0.78rem; color: var(--ink-muted); border-top: 1px solid var(--border);
     margin-top: 0.75rem; padding-top: 0.6rem;
@@ -38,35 +92,194 @@
 {% endblock %}
 
 {% block content %}
-<div class="docs-wrap">
-  <h1>Docs</h1>
+<h1>Docs</h1>
 
-  <nav class="docs-nav">
-    <a class="docs-nav-btn {{ 'active' if active_section == 'sources' else '' }}" href="{{ url_for('docs', section='sources') }}">How We Source Data</a>
-    <a class="docs-nav-btn {{ 'active' if active_section == 'xbrl' else '' }}" href="{{ url_for('docs', section='xbrl') }}">About XBRL</a>
+<div class="docs-shell">
+  <nav class="docs-sidenav">
+    <a class="docs-sidenav-item {{ 'active' if active_section == 'sources' else '' }}" href="{{ url_for('docs', section='sources') }}">How We Source Data</a>
+    <a class="docs-sidenav-item {{ 'active' if active_section == 'xbrl' else '' }}" href="{{ url_for('docs', section='xbrl') }}">About XBRL</a>
+    <a class="docs-sidenav-item {{ 'active' if active_section == 'research' else '' }}" href="{{ url_for('docs', section='research') }}">How Research Works</a>
+    <a class="docs-sidenav-item {{ 'active' if active_section == 'point_in_time' else '' }}" href="{{ url_for('docs', section='point_in_time') }}">Point-in-Time Investigations</a>
+    <a class="docs-sidenav-item {{ 'active' if active_section == 'model_routing' else '' }}" href="{{ url_for('docs', section='model_routing') }}">Choosing an AI Model</a>
+    <a class="docs-sidenav-item {{ 'active' if active_section == 'macro_data' else '' }}" href="{{ url_for('docs', section='macro_data') }}">Macro &amp; Economic Data</a>
+    <a class="docs-sidenav-item {{ 'active' if active_section == 'release_notes' else '' }}" href="{{ url_for('docs', section='release_notes') }}">Release Notes</a>
   </nav>
 
-  {% if active_section == 'sources' %}
-  <div class="docs-card">
-    <h3>How this app sources financial data</h3>
-    <p>Every number in the Financials tab traces back to a specific filing — either an XBRL document filed with NSE, a spreadsheet export, or a manually uploaded workbook. When more than one source has reported the same period, this app keeps every observation on file but reconciles a single canonical figure per source's trust ranking, so nothing is silently averaged or overwritten.</p>
-    <p>The <span class="tag tag-fact">FACT</span> / <span class="tag tag-calculation">CALC</span> tags next to each row on the Financials, Overview, and Valuation Model tabs mark whether that figure was reported as-is by the source, or computed here from other reported figures (a ratio, a CAGR, a fallback formula).</p>
+  <div class="docs-content">
+    {% if active_section == 'sources' %}
+    <div class="docs-card">
+      <h3>How this app sources financial data</h3>
+      <p>Every number in the Financials tab traces back to a specific filing — either an XBRL document filed with NSE, a spreadsheet export, or a manually uploaded workbook. When more than one source has reported the same period, this app keeps every observation on file but reconciles a single canonical figure per source's trust ranking, so nothing is silently averaged or overwritten.</p>
+      <p>The <span class="tag tag-fact">FACT</span> / <span class="tag tag-calculation">CALC</span> tags next to each row on the Financials, Overview, and Valuation Model tabs mark whether that figure was reported as-is by the source, or computed here from other reported figures (a ratio, a CAGR, a fallback formula).</p>
+    </div>
+    {% elif active_section == 'xbrl' %}
+    <div class="docs-card">
+      <h3>About XBRL</h3>
+      <p><strong>XBRL</strong> (eXtensible Business Reporting Language) is a structured, tagged format for reporting business and financial data electronically. Instead of a number sitting in an arbitrary spreadsheet cell, XBRL wraps it in a standardized tag drawn from a published <strong>taxonomy</strong> — a schema defining every reportable item and how it relates to the others for a given regulatory filing. The tagged data itself lives in a separate <strong>instance document</strong>, which also carries the unit, reporting period, and scale (e.g. crores, lakhs) for each figure. Because every filer uses the same tags, XBRL data can be read and compared programmatically without re-keying it by hand.</p>
+      <p>NSE requires listed companies to file XBRL for most SEBI (LODR) Regulations compliance disclosures — a separate taxonomy exists per regulation, for example:</p>
+      <ul class="docs-taxonomy-list">
+        <li>Regulation 33 — Financial Results (separate taxonomies for Ind-AS companies, banks, NBFCs, and insurers)</li>
+        <li>Regulation 31 — Shareholding Pattern</li>
+        <li>Regulation 27(2) — Corporate Governance</li>
+        <li>Regulation 23(9) — Related Party Transactions</li>
+        <li>Regulation 44 — Voting Results</li>
+      </ul>
+      <p>This app's NSE integration reads the <strong>Regulation 33 — Financial Results</strong> taxonomy specifically (the quarterly and annual results filing) — both the Ind-AS/general and the banking variants, across the taxonomy-version changes NSE has made over time (including its newer "Integrated Filing" framework). Only what a filing actually reports is used: nothing here is estimated or inferred to fill a gap in the source XBRL.</p>
+      <p class="docs-source">Source: NSE India, <a href="https://www.nseindia.com/static/companies-listing/xbrl-information" target="_blank" rel="noopener">XBRL Filing Information</a></p>
+    </div>
+    {% elif active_section == 'research' %}
+    <div class="docs-card">
+      <h3>How Research Works</h3>
+      <p>Asking a research question (Ask AI, or a full Investigation) doesn't just generate one plausible-sounding answer from whatever evidence happens to come up first. It runs through a fixed sequence of stages, so the first plausible narrative isn't automatically the final one:</p>
+      <ol class="docs-pipeline">
+        <li><strong>Hypotheses</strong> — the question is broken into competing explanations worth checking, not committed to a single storyline up front.</li>
+        <li><strong>Plan</strong> — for each hypothesis, what evidence would actually confirm or rule it out.</li>
+        <li><strong>Evidence gathering</strong> — retrieval against this company's filings, financials, and prior research.</li>
+        <li><strong>Evaluation</strong> — each hypothesis is scored against what the evidence actually shows.</li>
+        <li><strong>Sufficiency check</strong> — if the evidence gathered so far isn't enough to evaluate confidently, the loop goes back to gather more — but only up to a limit (a fixed number of iterations, wall-clock time, and cost). A hard question can't loop forever or run up unbounded cost; it eventually returns its best answer with the evidence it has, rather than never finishing.</li>
+        <li><strong>Synthesis</strong> — the strongest-evidenced hypothesis becomes the answer, shown as the Verdict at the top of the investigation, with every hypothesis considered listed underneath it.</li>
+      </ol>
+      <p>What you see as "Hypotheses evaluated" and the top Verdict on an Investigation page is this pipeline's actual output, not a summary written after the fact.</p>
+    </div>
+    {% elif active_section == 'point_in_time' %}
+    <div class="docs-card">
+      <h3>Point-in-Time Investigations</h3>
+      <p>An investigation asking what could genuinely have been concluded as of some past date needs to make sure later information doesn't quietly leak into the answer — hindsight is easy to introduce by accident once a model has seen data that didn't exist yet at the date in question.</p>
+      <p>When an investigation carries an <span class="tag tag-outline">evidence as of</span> date, every piece of evidence is filtered against that date <em>before</em> it ever reaches the reasoning step — a deterministic cutoff applied to the data itself, not just an instruction asking the model to please ignore later information.</p>
+      <p>Getting this right means treating several dates on a single piece of evidence as genuinely different things, not one "date" field:</p>
+      <ul class="docs-taxonomy-list">
+        <li>the period being reported on (e.g. Q3 FY2025)</li>
+        <li>when it was actually filed or published</li>
+        <li>when this app ingested it</li>
+        <li>when it was later revised or restated, if ever</li>
+      </ul>
+      <p>A figure can be revised months after its original filing — a point-in-time investigation as of a date before that revision uses the original figure, because that's genuinely all that was knowable then.</p>
+    </div>
+    {% elif active_section == 'model_routing' %}
+    <div class="docs-card">
+      <h3>Choosing an AI Model</h3>
+      <p>Not every question needs the same amount of reasoning. Before any question reaches a model, this app estimates how hard it actually is and routes it to one of three tiers:</p>
+      <ul class="docs-taxonomy-list">
+        <li><strong>Quick</strong> — a straightforward factual lookup ("what was revenue in FY2024", "current price") — fast and cheap, because no cross-referencing or judgment is needed.</li>
+        <li><strong>Standard</strong> — questions that need some synthesis across a moderate amount of evidence, without demanding the deepest reasoning available.</li>
+        <li><strong>Deep</strong> — comparisons, trend/outlook questions, "why" questions, or anything involving judgment (risk, sustainability, red flags, discrepancies) — routed to the strongest available model regardless of cost, because getting these right matters more than saving a few cents.</li>
+      </ul>
+      <p>That routing decision is made by a fixed, keyword- and evidence-based rule, not by asking a model to judge its own question's difficulty first — a classifier round-trip like that would cost more than the tokens it's trying to save. The practical effect: a simple factual question typically comes back faster, while a genuinely hard question gets the app's best reasoning, not whatever model happened to be cheapest.</p>
+    </div>
+    {% elif active_section == 'macro_data' %}
+    <div class="docs-card">
+      <h3>Macro &amp; Economic Data</h3>
+      <p>A company doesn't operate in a vacuum — interest rates, rainfall, and the health of an entire lending sector can all shape how a business performs, even though none of them show up on its own balance sheet. Alongside company-level filings, this app also tracks a handful of these wider economic indicators, each pulled from the official body that actually publishes it. Here's what each one covers and why it's useful to have on hand.</p>
+
+      <h3>India</h3>
+      <p><strong>RBI</strong> (Reserve Bank of India) is India's central bank — the body that sets interest rates, oversees the banking system, and publishes the country's core economic health check-up. This app draws on RBI's own "50 Macroeconomic Indicators" release, which brings together dozens of series — from money supply to banking-system growth — in one place, at whatever cadence RBI itself publishes them (weekly, monthly, or quarterly, depending on the indicator). It's the most direct way to see the broader economic backdrop a company is operating against.</p>
+      <p><strong>IITM</strong> (Indian Institute of Tropical Meteorology) publishes India's long-term rainfall records, going back well over a century in some series. That might sound unrelated to a balance sheet, but rainfall drives agricultural income across large parts of the country, which in turn ripples into consumer spending, rural credit demand, and the fortunes of any business whose customers depend on a good monsoon — a genuinely useful macro signal, just one most financial tools skip.</p>
+      <p><strong>MFIN</strong> (Microfinance Institutions Network) is the industry association for India's microfinance lenders — not a government body, but the closest thing to an official voice for that specific corner of the lending sector. Where relevant, this app treats MFIN as a recognized data source for sector-wide microfinance figures, useful context for any company whose business touches small, unsecured rural or semi-urban lending.</p>
+
+      <h3>United States</h3>
+      <p><strong>FRED</strong> (Federal Reserve Economic Data) is a free, public database maintained by the Federal Reserve Bank of St. Louis — effectively the US equivalent of RBI's own publications, covering things like the Federal Funds Rate (the US central bank's own benchmark interest rate) and 10-Year Treasury yields, alongside hundreds of other series most professional research relies on. Unlike the India sources above, FRED data is fetched live from its own public feed rather than a periodically-updated file, so it stays current with whatever FRED itself has published most recently.</p>
+
+      <p class="docs-source">These figures live alongside company financials rather than replacing them — they add context (what was the economic weather like at the time), not a substitute for a company's own reported numbers.</p>
+    </div>
+    {% elif active_section == 'release_notes' %}
+    <div class="docs-release-shell">
+      <div class="docs-release-main">
+
+        <div class="docs-release-entry" id="v2026-1-5">
+          <h3>2026.1.5 <span class="docs-release-date">(2026-09-07)</span></h3>
+          <p class="docs-release-category">Docs</p>
+          <ul>
+            <li>Enhancement: Docs redesigned with a left sidebar (matching Settings) and full page width, instead of the old horizontal pill-tab bar in a narrow centered column.</li>
+            <li>Enhancement: Four new sections — How Research Works, Point-in-Time Investigations, Choosing an AI Model, and Macro &amp; Economic Data.</li>
+            <li>Enhancement: This Release Notes section.</li>
+          </ul>
+        </div>
+
+        <div class="docs-release-entry" id="v2026-1-4">
+          <h3>2026.1.4 <span class="docs-release-date">(2026-09-05)</span></h3>
+          <p class="docs-release-category">Companies</p>
+          <ul>
+            <li>Enhancement: Add a "Run now" button to each company's page that re-fetches its latest financials (and shareholding pattern, for an NSE-listed company) on demand — recorded to Audit Log &rarr; Job Runs, with a status badge (Running / Complete / Failed) shown next to the button.</li>
+            <li>Fix: Admin actions on a company's page (Import raw file, Reconcile, Run now) could silently scroll off-screen with no visible scrollbar — moved to their own row so they're always visible.</li>
+            <li>Fix: A naming collision broke the site-wide company search box for every visitor — resolved.</li>
+          </ul>
+        </div>
+
+        <div class="docs-release-entry" id="v2026-1-3">
+          <h3>2026.1.3 <span class="docs-release-date">(2026-09-03)</span></h3>
+          <p class="docs-release-category">Charts</p>
+          <ul>
+            <li>Fix: The Charts tab's attribute-picker sections (Income Statement, Price &amp; Volume, etc.) no longer all stay open at once — opening one now closes the others, and clicking away closes it too.</li>
+          </ul>
+        </div>
+
+        <div class="docs-release-entry" id="v2026-1-2">
+          <h3>2026.1.2 <span class="docs-release-date">(2026-09-01)</span></h3>
+          <p class="docs-release-category">Charts</p>
+          <ul>
+            <li>Enhancement: Avg Daily Volume on a company's Charts tab now renders as vertical bars instead of a line, matching how volume is conventionally shown alongside price.</li>
+          </ul>
+        </div>
+
+        <div class="docs-release-entry" id="v2026-1-1">
+          <h3>2026.1.1 <span class="docs-release-date">(2026-08-28)</span></h3>
+          <p class="docs-release-category">Companies</p>
+          <ul>
+            <li>Enhancement: Add a company from Settings &rarr; Companies &rarr; "+ Add Company" — enter just a ticker and country, and the app looks it up on Yahoo Finance, registers it, and pulls its financials (SEC EDGAR + Yahoo Finance for a US company, NSE filings for an Indian one) plus 10 years of price history automatically.</li>
+            <li>Enhancement: The Add Company ticker field suggests plausible companies as you type, with Country moved ahead of it so suggestions match the right exchange.</li>
+            <li>Enhancement: Add a Country filter to the Companies list in Settings.</li>
+          </ul>
+        </div>
+
+        <div class="docs-release-entry" id="v2026-1-0">
+          <h3>2026.1.0 <span class="docs-release-date">(2026-08-23)</span></h3>
+          <p class="docs-release-category">Initial release</p>
+          <p>The foundation everything since has built on: real company data, a grounded AI research assistant, and the transparency principle every later addition has followed — an honest "not available yet" beats a fabricated number, always.</p>
+
+          <p class="docs-release-category">Companies</p>
+          <ul>
+            <li>Company Overview, Financials, and Charts, built entirely on real ingested data — screener exports and NSE XBRL filings, not mocked figures.</li>
+            <li>A live NSE price quote on every company page, refreshed continuously, with a graceful fallback if the feed is briefly unavailable.</li>
+            <li>AI-generated Key Insights per company — user-triggered, and every regeneration kept as history rather than silently overwriting the last one.</li>
+            <li>A deterministic, rules-based Indicators panel (e.g. "promoter holding fell 2.1pp", "net profit grew 22% YoY") — pattern-matched from real data, not an AI guess.</li>
+            <li>Notes, a document timeline, and a Threads tab for keeping context alongside a company's own numbers.</li>
+          </ul>
+
+          <p class="docs-release-category">Research</p>
+          <ul>
+            <li>Ask a research question and get a grounded answer, with supporting evidence and charts — not a free-floating narrative.</li>
+            <li>Full "Signals" report generation — a structured, multi-section deep dive (Key Finding, Hypothesis, What We Still Don't Know) grounded in real financial and document evidence.</li>
+            <li>Hypothesis-driven Investigations — several competing explanations generated and evaluated independently, then ranked, instead of committing to one single narrative up front.</li>
+            <li>Every generated answer and report is saved and reusable — a near-duplicate question is served from the saved answer instead of paying for a fresh AI call.</li>
+          </ul>
+
+          <p class="docs-release-category">Data</p>
+          <ul>
+            <li>Real financial data ingestion from NSE XBRL filings and Screener exports, reconciled by source trust ranking whenever more than one source reports the same period.</li>
+            <li>Real macro/economic data from RBI and IITM (India) and FRED (USA) — see the Macro &amp; Economic Data section for what each one covers.</li>
+          </ul>
+
+          <p class="docs-release-category">Accounts &amp; Site</p>
+          <ul>
+            <li>Sign-up, login, and per-user theming (4 themes).</li>
+            <li>A Watchlist for pinning companies and research threads.</li>
+            <li>A cost/usage page tracking every AI call this app has ever made — total spend, tokens, and a breakdown by task and model.</li>
+          </ul>
+        </div>
+
+      </div>
+
+      <aside class="docs-release-toc">
+        <p class="docs-release-toc-title">On this page</p>
+        <a href="#v2026-1-5">2026.1.5 (2026-09-07)</a>
+        <a href="#v2026-1-4">2026.1.4 (2026-09-05)</a>
+        <a href="#v2026-1-3">2026.1.3 (2026-09-03)</a>
+        <a href="#v2026-1-2">2026.1.2 (2026-09-01)</a>
+        <a href="#v2026-1-1">2026.1.1 (2026-08-28)</a>
+        <a href="#v2026-1-0">2026.1.0 (2026-08-23)</a>
+      </aside>
+    </div>
+    {% endif %}
   </div>
-  {% elif active_section == 'xbrl' %}
-  <div class="docs-card">
-    <h3>About XBRL</h3>
-    <p><strong>XBRL</strong> (eXtensible Business Reporting Language) is a structured, tagged format for reporting business and financial data electronically. Instead of a number sitting in an arbitrary spreadsheet cell, XBRL wraps it in a standardized tag drawn from a published <strong>taxonomy</strong> — a schema defining every reportable item and how it relates to the others for a given regulatory filing. The tagged data itself lives in a separate <strong>instance document</strong>, which also carries the unit, reporting period, and scale (e.g. crores, lakhs) for each figure. Because every filer uses the same tags, XBRL data can be read and compared programmatically without re-keying it by hand.</p>
-    <p>NSE requires listed companies to file XBRL for most SEBI (LODR) Regulations compliance disclosures — a separate taxonomy exists per regulation, for example:</p>
-    <ul class="docs-taxonomy-list">
-      <li>Regulation 33 — Financial Results (separate taxonomies for Ind-AS companies, banks, NBFCs, and insurers)</li>
-      <li>Regulation 31 — Shareholding Pattern</li>
-      <li>Regulation 27(2) — Corporate Governance</li>
-      <li>Regulation 23(9) — Related Party Transactions</li>
-      <li>Regulation 44 — Voting Results</li>
-    </ul>
-    <p>This app's NSE integration reads the <strong>Regulation 33 — Financial Results</strong> taxonomy specifically (the quarterly and annual results filing) — both the Ind-AS/general and the banking variants, across the taxonomy-version changes NSE has made over time (including its newer "Integrated Filing" framework). Only what a filing actually reports is used: nothing here is estimated or inferred to fill a gap in the source XBRL.</p>
-    <p class="docs-source">Source: NSE India, <a href="https://www.nseindia.com/static/companies-listing/xbrl-information" target="_blank" rel="noopener">XBRL Filing Information</a></p>
-  </div>
-  {% endif %}
 </div>
 {% endblock %}
