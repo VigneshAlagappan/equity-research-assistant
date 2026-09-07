@@ -51,6 +51,10 @@
     .company-title-row { flex-wrap: wrap; overflow-x: visible; }
     .company-identity { white-space: normal; flex-basis: 100%; }
   }
+  .company-admin-actions {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+    margin: 0 0 var(--space-3);
+  }
 
   .panel-section-financials :is(h2) { margin-top: 0; }
   .company-identity-extra { font-size: 13px; color: var(--ink-muted); margin: var(--space-1) 0 0; }
@@ -572,6 +576,25 @@
   .chart-overlay-axis-label { font-size: 10px; fill: var(--ink-muted); }
   .chart-overlay-axis-note { font-size: 9px; fill: var(--ink-muted); font-style: italic; }
   .chart-overlay-line { fill: none; stroke-width: 2; }
+  /* Volume bars (drawSide()'s isVolumeSeries branch) — muted opacity so a
+     line/area sharing the same plot area (this app has one pane, not a
+     separate volume strip) stays legible drawn on top, same "supporting
+     detail, not the main trend" visual weight as the reference chart's own
+     grey volume bars. cursor: pointer matches .chart-overlay-hit — a bar
+     carries its own data-tooltip/click target directly, no separate hit
+     shape needed the way a thin line's dots require one. */
+  .chart-overlay-bar { opacity: 0.35; cursor: pointer; }
+
+  /* "Run now" status badges (company_report()'s run_now_status, sourced
+     from get_latest_batch_item_for_company -- the same batch_job_items rows
+     Audit Log > Job Runs reads) -- reuses .tag's own shape, just with its
+     own status colors since ok/failed/running/never_run needs more than
+     .tag-accent/.tag-neutral's two tones. */
+  .run-now-badge { font-size: 11px; cursor: default; }
+  .run-now-ok { background: var(--color-accent-100); color: var(--color-accent-800); }
+  .run-now-failed { background: color-mix(in srgb, #a33 12%, transparent); color: #a33; }
+  .run-now-running { background: color-mix(in srgb, #d9a441 15%, transparent); color: #96721e; }
+  .run-now-never_run { background: var(--color-neutral-100); color: var(--color-neutral-800); }
   .chart-overlay-empty { font-size: 13px; color: var(--ink-muted); padding: var(--space-4) 0; text-align: center; }
 
   /* — Compare With (web/static/js/charts_overlay.js): the search dropdown
@@ -673,18 +696,42 @@
           {{ '&#9733; Watchlisted' | safe if is_watchlisted else '&#9734; Add to watchlist' | safe }}
         </button>
       </form>
-      {% if g.user and g.user['is_admin'] %}
+    </div>
+
+    {% if g.user and g.user['is_admin'] %}
+    {# A dedicated, wrapping row -- .company-title-row above is nowrap with
+       a hidden (scrollbar-width: none) horizontal overflow, so anything
+       added there past the visible width silently scrolls off-screen with
+       no indication more exists (confirmed: Run now + its status badges
+       were invisible on a real company page for exactly this reason).
+       Admin actions get their own line instead, wrapping normally like
+       .company-identity-extra below. #}
+    <div class="company-admin-actions">
       <a class="import-link-btn" href="{{ url_for('settings', panel='admin-import', company_id=company_id) }}">&#8593; Import raw file</a>
       <form action="{{ url_for('admin_reconcile_company', company_id=company_id) }}" method="post" style="display:inline">
         <button type="submit" class="import-link-btn">&#8635; Reconcile</button>
       </form>
-      {% if company['nse_symbol'] %}
-      <form action="{{ url_for('admin_refresh_company', company_id=company_id) }}" method="post" style="display:inline">
-        <button type="submit" class="import-link-btn" title="Fetch this company's latest filings live from NSE">&#8635; Refresh from NSE</button>
+      <form action="{{ url_for('admin_company_run_now', company_id=company_id) }}" method="post" style="display:inline" data-run-now-form>
+        <button type="submit" class="import-link-btn" data-run-now-btn
+                title="Fetch latest financials{% if company['nse_symbol'] %} and shareholding pattern{% endif %} now — recorded to Audit Log &gt; Job Runs">
+          &#8635; Run now
+        </button>
       </form>
-      {% endif %}
+      {% if run_now_status %}
+      {% for s in run_now_status %}
+      <span class="tag run-now-badge run-now-{{ s.status }}"
+            title="{{ s.detail or '' }}{% if s.finished_at %} ({{ s.finished_at }}){% endif %}">
+        {{ s.label }}:
+        {%- if s.status == 'ok' %} Complete
+        {%- elif s.status == 'failed' %} Failed
+        {%- elif s.status == 'running' %} Running&hellip;
+        {%- else %} Never run
+        {%- endif %}
+      </span>
+      {% endfor %}
       {% endif %}
     </div>
+    {% endif %}
 
     {% set industry_bits = [company['basic_industry']] | select | list %}
     {% set has_indices = nse_index_tags or bse_index_tags or other_index_tags %}
@@ -1096,6 +1143,27 @@
       }
       wireInsightsButton('insights-generate');
       wireInsightsButton('insights-regenerate');
+    })();
+  </script>
+
+  <script>
+    // "Run now" (admin_company_run_now) is a plain synchronous POST +
+    // redirect, not fetch()'d -- the response IS the next page (with its
+    // flash messages/updated status badges), so there's nothing to patch
+    // into this page after the fact. The only thing worth doing client-side
+    // is visible "this is in progress" feedback for however long the
+    // request takes (a live NSE/SEC EDGAR fetch, not instant) -- disabling
+    // the button also stops a second click starting a second, redundant run
+    // while the first is still in flight.
+    (function () {
+      const form = document.querySelector('[data-run-now-form]');
+      if (!form) return;
+      form.addEventListener('submit', () => {
+        const btn = form.querySelector('[data-run-now-btn]');
+        if (!btn) return;
+        btn.disabled = true;
+        btn.textContent = '⟳ Running…';
+      });
     })();
   </script>
 

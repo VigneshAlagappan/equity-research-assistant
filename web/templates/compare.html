@@ -108,6 +108,11 @@
   .cmp-attr-item:hover { background: var(--row-hover); }
   .cmp-attr-item input { accent-color: var(--color-accent-700); }
 
+  .cmp-cagr-range { display: flex; align-items: center; gap: 6px; flex: none; font-size: 12px; color: var(--ink-muted); }
+  .cmp-cagr-range label { white-space: nowrap; }
+  .cmp-cagr-range select { font-size: 12px; padding: 5px 8px; }
+  .cmp-cagr-range[hidden] { display: none; }
+
   .cmp-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-3); }
   .cmp-pill {
     display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 8px;
@@ -171,6 +176,12 @@
      fuller phrase read as clumsy/noisy repeated across a dense grid). */
   .cmp-not-reported { color: var(--ink-muted); }
   .cmp-detailed-footnote { font-size: 12px; color: var(--ink-muted); margin-top: var(--space-3); }
+  /* CAGR column -- set off from the period columns with a left divider
+     since it's a different kind of figure (a start/end-derived rate, not
+     a per-period actual) sharing the same row. */
+  .cmp-cagr-col { border-left: 2px solid var(--color-divider); font-weight: 600; }
+  th.cmp-cagr-col { font-weight: 500; }
+  .cmp-cagr-col-range { display: block; font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: normal; white-space: nowrap; }
 {% endblock %}
 
 {% block content %}
@@ -216,6 +227,12 @@
           Attributes <span class="cmp-attrs-count" id="cmp-attrs-count">0</span> &rsaquo;
         </button>
         <div class="cmp-attrs-panel" id="cmp-attrs-panel" hidden></div>
+      </div>
+      <div class="cmp-cagr-range" id="cmp-cagr-range" hidden>
+        <label for="cmp-cagr-from">CAGR from</label>
+        <select class="input" id="cmp-cagr-from"></select>
+        <label for="cmp-cagr-to">to</label>
+        <select class="input" id="cmp-cagr-to"></select>
       </div>
     </div>
     <div class="cmp-pills" id="cmp-pills"></div>

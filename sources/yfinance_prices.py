@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 # Extend this table if another US company_id/ticker mismatch turns up;
 # a dedicated db column would only be worth it if this list grows past a
 # handful.
-US_TICKER_OVERRIDES = {"BRKB": "BRK-B"}
+US_TICKER_OVERRIDES = {"BRKB": "BRK-B", "BRKA": "BRK-A"}
 
 
 def resolve_yfinance_ticker(ticker: str, country: str = "IN") -> str:

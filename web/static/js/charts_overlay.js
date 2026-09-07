@@ -265,7 +265,7 @@
   // same picking intent (any number of attributes, grouped by statement
   // section, explicit L/R side), just not all paid for in vertical space
   // on every load regardless of what's actually selected.
-  function renderPicker(attributes, order, sides, colorOf) {
+  function renderPicker(attributes, order, sides, colorOf, openSectionId) {
     const hint =
       '<details class="chart-overlay-hint">' +
         '<summary>How this works</summary>' +
@@ -309,8 +309,15 @@
       .map((s) => {
         const title = escapeHtml(SECTION_TITLES[s.section] || s.section);
         const badge = s.checkedCount > 0 ? ' <span class="chart-overlay-section-count">' + s.checkedCount + "</span>" : "";
+        // Accordion, not "stay open forever once something's checked" --
+        // only the one section in state.openSectionId (see init()'s own
+        // comment on that field) renders open; toggling a different
+        // section closes this one, wired below in render()'s "toggle"
+        // listener rather than here (native <details> open/close is what
+        // fires that event, this only sets the *initial* state per render).
+        const isOpen = s.section === openSectionId;
         return (
-          '<details class="chart-overlay-section"' + (s.checkedCount > 0 ? " open" : "") + ">" +
+          '<details class="chart-overlay-section" data-section="' + escapeHtml(s.section) + '"' + (isOpen ? " open" : "") + ">" +
             "<summary>" + title + badge + "</summary>" +
             '<div class="chart-overlay-section-body">' + s.html + "</div>" +
           "</details>"
@@ -432,17 +439,53 @@
       grid += '<line x1="' + x0 + '" y1="' + y.toFixed(1) + '" x2="' + x1 + '" y2="' + y.toFixed(1) + '" class="chart-overlay-gridline"></line>';
     });
 
-    let lines = "", dots = "", axisLabels = "";
+    let lines = "", bars = "", dots = "", axisLabels = "";
+
+    // Volume reads as a magnitude at each period, not a trend to trace
+    // point-to-point — every real price/volume chart (see the reference
+    // screenshot) draws it as a bar per period rather than a connected
+    // line, so it visually reads as "how much happened this period" instead
+    // of implying a continuous path between periods the way every other
+    // (flow/ratio) attribute here correctly does.
+    function isVolumeSeries(s) { return s.section === "priceVolume" && s.key === "volume"; }
 
     function drawSide(seriesList, geom, axisX, anchor) {
       if (!geom) return;
+      // Multiple series can share a side; volume bars for the same period
+      // sit side by side (not stacked/overlapping) so more than one
+      // company's volume, or volume alongside another bar-worthy metric in
+      // the future, both stay individually readable.
+      const volumeSeriesOnSide = seriesList.filter(isVolumeSeries);
       seriesList.forEach((s) => {
         const id = attrId(s.section, s.key);
         const color = colorOf(id);
+        const nameSuffix = showCompanyNames ? " (" + escapeHtml(s.companyName) + ")" : "";
+        if (isVolumeSeries(s)) {
+          const slotCount = volumeSeriesOnSide.length;
+          const slotIndex = volumeSeriesOnSide.indexOf(s);
+          const period = n > 1 ? (x1 - x0) / (n - 1) : (x1 - x0);
+          const groupWidth = Math.max(2, Math.min(period * 0.7, 20));
+          const barWidth = groupWidth / slotCount;
+          s.values.forEach((v, i) => {
+            if (v === null || !Number.isFinite(v)) return;
+            const c = geom.coordFor(s.values, i);
+            const barX = c.x - groupWidth / 2 + slotIndex * barWidth;
+            const barY = Math.min(c.y, y1);
+            const barH = Math.max(0, y1 - barY);
+            const tooltipText = escapeHtml(s.label) + nameSuffix + "\n" + PERIODS[i] + ": " + escapeHtml(fmt(v, s.unit, currency));
+            // Own bucket, rendered before `lines` (see the return below) so
+            // a line/area on the other axis draws on top of the bars, not
+            // behind them — same visual layering as the reference chart's
+            // price line sitting above its volume bars.
+            bars +=
+              '<rect x="' + barX.toFixed(1) + '" y="' + barY.toFixed(1) + '" width="' + barWidth.toFixed(1) + '" height="' + barH.toFixed(1) +
+              '" class="chart-overlay-bar" style="fill: ' + color + '" data-tooltip="' + tooltipText + '"><title>' + tooltipText + "</title></rect>";
+          });
+          return;
+        }
         const dash = DASH_PATTERNS[s.companyIndex % DASH_PATTERNS.length];
         const dashAttr = dash ? ' stroke-dasharray="' + dash + '"' : "";
         lines += '<path d="' + pathFor(s.values, geom) + '" class="chart-overlay-line" style="stroke: ' + color + '"' + dashAttr + "></path>";
-        const nameSuffix = showCompanyNames ? " (" + escapeHtml(s.companyName) + ")" : "";
         s.values.forEach((v, i) => {
           if (v === null || !Number.isFinite(v)) return;
           const c = geom.coordFor(s.values, i);
@@ -498,7 +541,7 @@
 
     return (
       '<svg viewBox="0 0 ' + w + " " + h + '" class="chart-overlay-svg" preserveAspectRatio="xMidYMid meet">' +
-        grid + lines + dots + axisLabels + xLabels +
+        grid + bars + lines + dots + axisLabels + xLabels +
       "</svg>" +
       '<div class="chart-overlay-legend">' + legend + "</div>" +
       '<div class="chart-overlay-tooltip" hidden></div>'
@@ -525,6 +568,16 @@
       compareActiveIndex: -1,
       compareFocusPending: false,
       compareDebounce: null,
+      // Which attribute-picker section (Income Statement, Price & Volume,
+      // ...) is expanded, accordion-style -- at most one at a time, tracked
+      // here (not just left to each <details>'s own open state) because
+      // render() fully rebuilds the picker's HTML on every change, and an
+      // attribute checkbox's own section needs to still say open after that
+      // rebuild. Previously every section with a checked attribute forced
+      // itself open on every render with no way to close it, so checking
+      // one attribute in each of two sections left both permanently
+      // expanded, stacked on top of the chart.
+      openSectionId: null,
     };
 
     function colorOf(id) {
@@ -542,6 +595,10 @@
           state.sides[id] = autoSideFor(ds.byId[id], state.order, state.sides, ds.byId);
           state.order.push(id);
         });
+        // Open the first default pick's own section so a first-time visitor
+        // still lands on an expanded picker, same as before -- just one
+        // section now, not every section that happens to have a selection.
+        state.openSectionId = pair[0].split(":")[0];
       }
     }
 
@@ -639,7 +696,7 @@
         renderCompareBar(state) +
         '<div class="chart-overlay-toolbar">' +
           renderControls(state.periodType, state.range) +
-          renderPicker(unionAttrs, state.order, state.sides, colorOf) +
+          renderPicker(unionAttrs, state.order, state.sides, colorOf, state.openSectionId) +
         "</div>" +
         '<div class="chart-overlay-chart">' + renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames, chartWidth) + "</div>";
 
@@ -657,6 +714,26 @@
             delete state.sides[id];
           }
           render();
+        });
+      });
+
+      // Accordion wiring: opening one section (native <details> toggle,
+      // fired by the browser on a summary click) closes every other one and
+      // records which section is open; closing the open one (e.g. clicking
+      // its own summary again) clears it. Re-attached each render() since
+      // the whole picker's HTML, these elements included, is rebuilt from
+      // scratch above.
+      root.querySelectorAll(".chart-overlay-section").forEach((det) => {
+        det.addEventListener("toggle", () => {
+          const section = det.dataset.section;
+          if (det.open) {
+            state.openSectionId = section;
+            root.querySelectorAll(".chart-overlay-section").forEach((other) => {
+              if (other !== det) other.open = false;
+            });
+          } else if (state.openSectionId === section) {
+            state.openSectionId = null;
+          }
         });
       });
 
@@ -808,6 +885,15 @@
       if (state.compareOpen && !root.contains(e.target)) {
         state.compareOpen = false;
         render();
+      }
+      // Same "clicking away closes it" rule for the accordion picker --
+      // native <details> has no such behavior on its own, and leaving an
+      // open section up until the next unrelated render() (a checkbox/side/
+      // range change elsewhere) would still look stuck in the meantime.
+      if (state.openSectionId && !e.target.closest(".chart-overlay-section")) {
+        const openDet = root.querySelector('.chart-overlay-section[data-section="' + state.openSectionId + '"]');
+        if (openDet) openDet.open = false;
+        state.openSectionId = null;
       }
       // A dot's own click handler stops propagation, so this only fires for
       // a click elsewhere — dismiss whatever point was previously selected.

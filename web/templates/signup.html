@@ -3,6 +3,9 @@
 {% block title %}Sign up — Signals{% endblock %}
 
 {% block use_sidebar %}false{% endblock %}
+{# Same "simple public header, no app chrome" treatment landing.html/about.html
+   get — see login.html's identical comment. #}
+{% set hide_nav_links = true %}
 
 {% block extra_style %}
   .auth-wrap { max-width: 380px; margin: 3rem auto 0; }

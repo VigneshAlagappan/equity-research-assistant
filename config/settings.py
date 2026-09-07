@@ -257,6 +257,38 @@ DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
 ANTHROPIC_API_KEY_SET = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 # ------------------------------------------------------------------
+# Local model (llm/providers/local_provider.py, llm/capability_registry.py)
+#
+# Moved above the tiering policy below so LOCAL_MODEL_ID can be referenced
+# directly in TIER_PREFERRED_MODEL["quick"] (a plain top-to-bottom module,
+# no forward references) now that the local model is a tier's preferred
+# choice, not just a fallback — see that dict's own comment.
+#
+# A locally running Ollama server also still backs every OTHER tier's
+# fallback chain (llm/router.py) — tried there only once every configured
+# Anthropic model has failed. Not started/stopped by this app (README §20,
+# local-first experimentation: start it yourself when you want it
+# available). LOCAL_MODEL_ENABLED lets it be turned off entirely (e.g. no
+# Ollama installed) without touching code -- which, now that "quick"
+# prefers it, means every quick-tier question falls through to the next
+# enabled model (claude-haiku-4-5) instead, same graceful-degradation path
+# router.py already uses for a provider outage.
+#
+# LOCAL_MODEL_ID must be a tag `ollama list` actually shows as pulled —
+# there's no startup check for this. Confirmed real in this app: the
+# default below (llama3.1:8b) wasn't pulled in one real dev environment
+# that had gemma4:latest/gemma4:31b/deepseek-r1:8b instead — fixed there
+# via LOCAL_MODEL_ID in .env, not by changing this default (a different
+# environment may genuinely have llama3.1:8b pulled). The mocked-HTTP test
+# suite (tests/test_llm_providers.py) cannot catch this class of bug at
+# all — it never asks a real Ollama server which tags exist.
+# ------------------------------------------------------------------
+
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+LOCAL_MODEL_ENABLED = os.environ.get("LOCAL_MODEL_ENABLED", "true").lower() != "false"
+LOCAL_MODEL_ID = os.environ.get("LOCAL_MODEL_ID", "llama3.1:8b")
+
+# ------------------------------------------------------------------
 # Model tiering policy — llm/hardness.py's classify() sorts each question
 # into a Tier (quick/standard/deep); llm/router.py and
 # llm/capability_registry.py read the three settings below to decide which
@@ -276,14 +308,17 @@ DISABLED_MODELS: set[str] = {"claude-opus-5"}
 #   deep      peer comparisons, "why"/causal reasoning, or 40+ evidence lines
 # llm/router.py's fallback chain starts here, then falls through other
 # enabled models (strongest reasoning_strength first) if this one fails.
-#TIER_PREFERRED_MODEL: dict[str, str] = {
-#    "quick": "claude-haiku-4-5",
-#    "standard": "claude-sonnet-5",
-#    "deep": "claude-sonnet-5",
-#}
-
+#
+# "quick" prefers the local Ollama model (Gemma 4, per this environment's
+# .env LOCAL_MODEL_ID=gemma4:latest) instead of a paid Anthropic call —
+# free and fast enough for short factual lookups with little evidence, the
+# exact case this tier exists for; standard/deep still go straight to
+# Haiku since a local model failing over silently on a harder question is
+# a worse trade than the API cost. If Ollama isn't running, this tier
+# simply falls through to claude-haiku-4-5 next (LOCAL_MODEL_ENABLED
+# governs whether the local model is offered at all, see above).
 TIER_PREFERRED_MODEL: dict[str, str] = {
-    "quick": "claude-haiku-4-5",
+    "quick": LOCAL_MODEL_ID,
     "standard": "claude-haiku-4-5",
     "deep": "claude-haiku-4-5",
 }
@@ -301,32 +336,6 @@ TIER_MIN_REASONING_STRENGTH: dict[str, int] = {
     "standard": 2,
     "deep": 4,
 }
-
-# ------------------------------------------------------------------
-# Local model fallback (llm/providers/local_provider.py, llm/capability_registry.py)
-#
-# A locally running Ollama server is the last resort in the fallback chain
-# llm/router.py builds — tried only once every configured Anthropic model has
-# failed. Not started/stopped by this app (README §20, local-first
-# experimentation: start it yourself when you want the fallback available).
-# LOCAL_MODEL_ENABLED lets it be turned off entirely (e.g. no Ollama
-# installed) without touching code.
-#
-# LOCAL_MODEL_ID must be a tag `ollama list` actually shows as pulled —
-# there's no startup check for this (the fallback is only ever reached after
-# every cloud model has already failed, so a bad tag here means the "last
-# resort" itself silently 404s at the worst possible moment). Confirmed real
-# in this app: the default below (llama3.1:8b) wasn't pulled in one real dev
-# environment that had gemma4:latest/gemma4:31b/deepseek-r1:8b instead —
-# fixed there via LOCAL_MODEL_ID in .env, not by changing this default (a
-# different environment may genuinely have llama3.1:8b pulled). The
-# mocked-HTTP test suite (tests/test_llm_providers.py) cannot catch this
-# class of bug at all — it never asks a real Ollama server which tags exist.
-# ------------------------------------------------------------------
-
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-LOCAL_MODEL_ENABLED = os.environ.get("LOCAL_MODEL_ENABLED", "true").lower() != "false"
-LOCAL_MODEL_ID = os.environ.get("LOCAL_MODEL_ID", "llama3.1:8b")
 
 # sources/sec_edgar.py: SEC's fair-access policy requires every request
 # carry an identifying User-Agent ("Company Name contact@example.com") --

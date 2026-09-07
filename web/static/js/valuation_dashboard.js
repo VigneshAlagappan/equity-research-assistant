@@ -524,5 +524,13 @@
   // it needs the exact same ratio catalog/computation/formatting this file
   // already owns for the Overview tab, not a second copy that could drift
   // out of sync with it. Everything else in this IIFE stays private.
-  window.SignalsValuation = { fmt: fmt, buildRatioContext: buildRatioContext, RATIO_CATALOG: RATIO_CATALOG };
+  window.SignalsValuation = {
+    fmt: fmt, buildRatioContext: buildRatioContext, RATIO_CATALOG: RATIO_CATALOG,
+    // Exported for web/static/js/compare_detailed.js's CAGR column -- these
+    // were previously module-private (only growthCagr()'s always-full-range
+    // composition was used internally); the Detailed Comparison tab needs
+    // the pieces themselves so it can compute a CAGR between a user-chosen
+    // start/end period instead of always first-to-last.
+    cagr: cagr, elapsedYears: elapsedYears, firstNonNull: firstNonNull, lastNonNull: lastNonNull,
+  };
 })();

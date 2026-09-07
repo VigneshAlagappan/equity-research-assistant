@@ -681,6 +681,72 @@ def list_xbrl_migration_status(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+def list_sec_edgar_migration_status(conn: sqlite3.Connection) -> list[dict]:
+    """Per active US company: the same "is the target source of truth
+    caught up with everything else on file" question
+    list_xbrl_migration_status() answers for NSE, just source='sec_edgar'
+    instead of 'nse' and scoped to country='US' instead of nse_symbol
+    IS NOT NULL -- a sibling function, not a branch of that one (same
+    "one capability, two call sites would blur two genuinely different
+    real-world stories" reasoning ingest_yfinance_company() vs.
+    ingest_sec_edgar_company() already follows): NSE's version is tracking
+    a real migration away from pre-XBRL legacy data India actually went
+    through, while for the US there was never a "legacy" era to migrate
+    off -- sources/sec_edgar.py was trust_rank 0 from the day it was
+    built. The status taxonomy still transfers directly, though: "pending"
+    here means yfinance (trust_rank 3, a secondary provider) has a more
+    recent quarter on file than SEC EDGAR (trust_rank 0, the regulator's
+    own data) does for the same company -- worth re-running
+    ingest-sec-edgar for, same actionable meaning as an NSE "pending" row.
+
+    "nse_symbol" in the per-row dict is deliberately absent (not just
+    None) -- callers/templates that already branch on migration source
+    (India vs USA) shouldn't be tempted to reuse an NSE-only field name
+    that has no US equivalent (company_id itself is the closest thing to
+    a "ticker" for a US company, already returned)."""
+    coverage_rows = conn.execute(
+        """
+        SELECT company_id,
+               MAX(CASE WHEN source = 'sec_edgar' THEN fiscal_year || quarter END) AS latest_edgar_period,
+               MAX(fiscal_year || quarter) AS latest_any_period
+        FROM financial_observations
+        WHERE period_type = 'quarterly'
+        GROUP BY company_id
+        """
+    ).fetchall()
+    coverage_by_company = {row["company_id"]: row for row in coverage_rows}
+
+    companies = conn.execute(
+        "SELECT company_id, display_name FROM companies WHERE country = 'US' AND status = 'active'"
+    ).fetchall()
+
+    _STATUS_ORDER = {"pending": 0, "not_started": 1, "no_data": 2, "up_to_date": 3}
+    results: list[dict] = []
+    for company in companies:
+        coverage = coverage_by_company.get(company["company_id"])
+        latest_edgar = coverage["latest_edgar_period"] if coverage else None
+        latest_any = coverage["latest_any_period"] if coverage else None
+        if latest_any is None:
+            migration_status = "no_data"
+        elif latest_edgar is None:
+            migration_status = "not_started"
+        elif latest_edgar < latest_any:
+            migration_status = "pending"
+        else:
+            migration_status = "up_to_date"
+        results.append(
+            {
+                "company_id": company["company_id"],
+                "display_name": company["display_name"],
+                "latest_edgar_period": latest_edgar,
+                "latest_legacy_period": latest_any,
+                "migration_status": migration_status,
+            }
+        )
+    results.sort(key=lambda r: (_STATUS_ORDER[r["migration_status"]], r["display_name"] or ""))
+    return results
+
+
 WATCHLIST_ITEM_TYPES = ("company", "thread")
 
 
@@ -1285,7 +1351,78 @@ def get_investigation(conn: sqlite3.Connection, investigation_id: str) -> sqlite
 
 
 def list_investigations(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return conn.execute("SELECT * FROM investigations ORDER BY generated_at DESC").fetchall()
+    """deleted_at IS NOT NULL rows excluded unconditionally -- see
+    list_generated_reports' own comment, same reasoning applies here."""
+    return conn.execute(
+        "SELECT * FROM investigations WHERE deleted_at IS NULL ORDER BY generated_at DESC"
+    ).fetchall()
+
+
+def hide_investigation(conn: sqlite3.Connection, investigation_id: str) -> bool:
+    """Reversible -- see unhide_investigation. investigations has no
+    existing hard-delete function the way generated_reports does (nothing
+    ever offered one for a Deep Dive), so soft_delete_investigation below
+    is the only delete path for this table, not a second one alongside a
+    pre-existing hard delete."""
+    cursor = conn.execute(
+        "UPDATE investigations SET hidden_at = ? WHERE investigation_id = ? AND deleted_at IS NULL",
+        (utcnow_iso(), investigation_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def unhide_investigation(conn: sqlite3.Connection, investigation_id: str) -> bool:
+    cursor = conn.execute(
+        "UPDATE investigations SET hidden_at = NULL WHERE investigation_id = ?", (investigation_id,)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def soft_delete_investigation(conn: sqlite3.Connection, investigation_id: str) -> bool:
+    """"Archived forever" -- see soft_delete_generated_report's own
+    docstring, same contract: deleted_at is set, the row (and its
+    investigation_hypotheses/investigation_hypothesis_evidence children)
+    is never actually removed, and no UI ever clears deleted_at."""
+    cursor = conn.execute(
+        "UPDATE investigations SET deleted_at = ? WHERE investigation_id = ?", (utcnow_iso(), investigation_id)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def get_strongest_verdict_by_investigation(conn: sqlite3.Connection, investigation_ids: list[str]) -> dict[str, str | None]:
+    """investigation_id -> the strongest (synthesis_rank=1, or lowest
+    generation_order if synthesis never ran) hypothesis's verdict --
+    web/app.py's Cases list Status filter, so a Deep Dive entry has
+    something to filter on the same way a Quick Answer entry's parsed
+    confidence does. One batched query (ROW_NUMBER() PARTITION BY
+    investigation_id, same windowing shape list_reconciliation_log_by_company
+    already uses) rather than one list_investigation_hypotheses() call per
+    investigation -- N+1 over what could be hundreds of cases otherwise.
+    An investigation with no hypotheses yet (or evaluation never ran) is
+    absent from the returned dict, not mapped to None -- the caller
+    decides how to label "no verdict" for display."""
+    if not investigation_ids:
+        return {}
+    placeholders = ",".join("?" for _ in investigation_ids)
+    rows = conn.execute(
+        f"""
+        SELECT investigation_id, verdict FROM (
+            SELECT investigation_id, verdict,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY investigation_id
+                       ORDER BY CASE WHEN synthesis_rank IS NULL THEN 1 ELSE 0 END, synthesis_rank, generation_order
+                   ) AS rn
+            FROM investigation_hypotheses
+            WHERE investigation_id IN ({placeholders})
+        )
+        WHERE rn = 1
+        """,
+        investigation_ids,
+    ).fetchall()
+    return {row["investigation_id"]: row["verdict"] for row in rows}
 
 
 def list_investigation_hypotheses(conn: sqlite3.Connection, investigation_id: str) -> list[sqlite3.Row]:
@@ -1787,6 +1924,7 @@ def _row_to_generated_report(row: sqlite3.Row) -> dict:
         "generated_at": row["generated_at"],
         "question_embedding": json.loads(row["question_embedding"]) if row["question_embedding"] else None,
         "question_embedding_model": row["question_embedding_model"],
+        "hidden_at": row["hidden_at"],
     }
 
 
@@ -1832,9 +1970,50 @@ def get_generated_report(conn: sqlite3.Connection, thread_id: str) -> dict | Non
 
 
 def list_generated_reports(conn: sqlite3.Connection) -> list[dict]:
-    """Every generated report, newest first."""
-    rows = conn.execute("SELECT * FROM generated_reports ORDER BY generated_at DESC").fetchall()
+    """Every generated report, newest first -- deleted_at IS NOT NULL rows
+    excluded unconditionally (see hide_generated_report's own module-level
+    comment on why deleted_at has no matching "include deleted" flag the
+    way hidden_at does: this app never actually erases the row, but the
+    Cases list itself never re-surfaces one marked deleted, by design)."""
+    rows = conn.execute(
+        "SELECT * FROM generated_reports WHERE deleted_at IS NULL ORDER BY generated_at DESC"
+    ).fetchall()
     return [_row_to_generated_report(row) for row in rows]
+
+
+def hide_generated_report(conn: sqlite3.Connection, thread_id: str) -> bool:
+    """Reversible -- see unhide_generated_report. Returns False if
+    thread_id doesn't exist (caller 404s), same convention as
+    delete_generated_report."""
+    cursor = conn.execute(
+        "UPDATE generated_reports SET hidden_at = ? WHERE thread_id = ? AND deleted_at IS NULL",
+        (utcnow_iso(), thread_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def unhide_generated_report(conn: sqlite3.Connection, thread_id: str) -> bool:
+    cursor = conn.execute(
+        "UPDATE generated_reports SET hidden_at = NULL WHERE thread_id = ?", (thread_id,)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def soft_delete_generated_report(conn: sqlite3.Connection, thread_id: str) -> bool:
+    """Marks deleted_at rather than calling delete_generated_report's real
+    DELETE -- "archived forever" per the actual request this exists for:
+    presented to the user as permanent (no Undelete action anywhere in the
+    UI), but the row and its evidence/followups are never physically
+    removed. delete_generated_report itself is untouched -- it's a
+    different, pre-existing hard-delete path (the individual thread page's
+    own Delete action), not something this repurposes."""
+    cursor = conn.execute(
+        "UPDATE generated_reports SET deleted_at = ? WHERE thread_id = ?", (utcnow_iso(), thread_id)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
 
 
 def save_report_evidence(conn: sqlite3.Connection, thread_id: str, evidence: list[dict]) -> None:
@@ -2083,8 +2262,33 @@ def set_company_index_tags(conn: sqlite3.Connection, company_id: str, index_name
 # ============================================================
 
 
+def list_all_metrics(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+    """Every (metric_key, display_name) pair on file -- research/
+    aggregate_query.py's closed vocabulary for mapping free text ("total
+    profit", "combined earnings") onto a real metric_key, the same "LLM
+    maps onto a known vocabulary" shape research/macro_evidence.py's
+    _plan_retrieval already uses for macro series."""
+    rows = conn.execute(
+        "SELECT metric_key, display_name FROM metrics_dictionary ORDER BY metric_key"
+    ).fetchall()
+    return [(r["metric_key"], r["display_name"] or r["metric_key"]) for r in rows]
+
+
 def list_sectors(conn: sqlite3.Connection) -> list[str]:
     return [row["name"] for row in conn.execute("SELECT name FROM sectors ORDER BY name")]
+
+
+def list_macro_economic_sectors(conn: sqlite3.Connection) -> list[str]:
+    """Distinct companies.macro_economic_sector values on file -- unlike
+    sector/industry above, there's no admin-curated macro_economic_sectors
+    table backing this (it's NSE's own broadest classification level, free
+    text, never exposed in the Admin Sectors/Industries/Tags panel), so
+    this reads the column's own distinct values directly. retrieval/
+    tag_resolver.py's vocabulary source for this one dimension."""
+    rows = conn.execute(
+        "SELECT DISTINCT macro_economic_sector FROM companies WHERE macro_economic_sector IS NOT NULL"
+    ).fetchall()
+    return [row["macro_economic_sector"] for row in rows]
 
 
 def count_companies_by_sector(conn: sqlite3.Connection) -> dict[str, int]:
@@ -2343,6 +2547,23 @@ def get_bank_infrastructure_series(
         "SELECT * FROM bank_infrastructure_observations WHERE bank_name = ? AND metric = ? ORDER BY period",
         (bank_name, metric),
     ).fetchall()
+
+
+def get_existing_macro_periods(conn: sqlite3.Connection, series_key: str, region: str | None, source: str) -> set[str]:
+    """Every period already stored for this exact (series_key, region,
+    source) -- lets a repeat fetch that re-pulls a source's full history
+    every time (ingestion/pipeline.py's ingest_fred_series, which has no
+    incremental "since last time" mode of its own) skip periods it already
+    has instead of insert_macro_observations appending a duplicate row for
+    them on every run. Same shape as get_shareholding_detail_fetched_periods
+    for NSE shareholding, just period-keyed instead of a separate flag
+    column -- macro_observations has no natural place to mark "already
+    fetched" other than the row already being there."""
+    rows = conn.execute(
+        "SELECT period FROM macro_observations WHERE series_key = ? AND region IS ? AND source = ?",
+        (series_key, region, source),
+    ).fetchall()
+    return {r["period"] for r in rows}
 
 
 def get_macro_series(
@@ -2667,23 +2888,114 @@ def finish_batch_job_item(conn: sqlite3.Connection, item_id: int, *, status: str
     conn.commit()
 
 
-def list_batch_job_runs(conn: sqlite3.Connection, job_name: str | None = None, limit: int = 20) -> list[dict]:
+def get_last_successful_batch_item_times(
+    conn: sqlite3.Connection, job_name: str, company_ids: list[str]
+) -> dict[str, str]:
+    """company_id -> finished_at of its most recent 'ok' batch_job_items row
+    for this job_name, across every past run (not just the latest one) --
+    scripts/batch_fetch_sec_edgar.py's skip-if-recently-succeeded check.
+    Reuses the existing batch_job_runs/batch_job_items audit trail rather
+    than a new per-company timestamp column (unlike NSE shareholding's own
+    detail_fetched_at, which stamps a column on shareholding_observations
+    itself): SEC EDGAR's ingest_sec_edgar_company() has no single per-
+    company domain-table row to stamp -- one call inserts many rows across
+    many metrics/periods -- so "when did this company last succeed at this
+    job" is more naturally read back from the audit log that already
+    records exactly that, than invented as a new column somewhere. A
+    company absent from the returned dict has never succeeded at this job
+    (or never been attempted), same "absent means unknown, not zero"
+    convention get_strongest_verdict_by_investigation already uses."""
+    if not company_ids:
+        return {}
+    placeholders = ",".join("?" for _ in company_ids)
+    rows = conn.execute(
+        f"""
+        SELECT bi.company_id, MAX(bi.finished_at) AS last_success
+        FROM batch_job_items bi
+        JOIN batch_job_runs br ON br.run_id = bi.run_id
+        WHERE br.job_name = ? AND bi.status = 'ok' AND bi.company_id IN ({placeholders})
+        GROUP BY bi.company_id
+        """,
+        (job_name, *company_ids),
+    ).fetchall()
+    return {row["company_id"]: row["last_success"] for row in rows}
+
+
+def get_latest_batch_item_for_company(conn: sqlite3.Connection, job_name: str, company_id: str) -> dict | None:
+    """This company's own most recent batch_job_items row for one job_name,
+    across every past run (not just the latest run overall) -- whatever its
+    status ('running', 'ok', or 'failed'). Company Report's per-company
+    "Run now" button (web/app.py's admin_company_run_now()) reads this back
+    to show a status badge (Running/Complete/Failed, with the detail/
+    timestamp) sourced from the same audit trail Settings > Audit Log ->
+    Job Runs reads, rather than a separate ad hoc status field. None if this
+    company has never been an item in any run of this job -- distinct from
+    a 'failed' row, which means it *has* been attempted."""
+    row = conn.execute(
+        """
+        SELECT bi.*
+        FROM batch_job_items bi
+        JOIN batch_job_runs br ON br.run_id = bi.run_id
+        WHERE br.job_name = ? AND bi.company_id = ?
+        ORDER BY bi.item_id DESC
+        LIMIT 1
+        """,
+        (job_name, company_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_running_batch_job_runs(conn: sqlite3.Connection) -> list[dict]:
+    """Every batch_job_runs row still at status='running', across every job
+    -- web/app.py's startup recovery reads this once per process start. A
+    'running' row can only exist while its own admin_schedule_run() request
+    is still in flight (that route is synchronous/blocking, no background-
+    job infrastructure), so on a *fresh* process start any such row is
+    necessarily left over from a previous process that died mid-run, never
+    a live run to leave alone."""
+    rows = conn.execute(
+        "SELECT * FROM batch_job_runs WHERE status = 'running' ORDER BY started_at ASC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_batch_job_runs(
+    conn: sqlite3.Connection, job_name: str | None = None, limit: int = 20, since_iso: str | None = None,
+) -> list[dict]:
     """Most recent runs first -- Admin UI / CLI history view. job_name is
     optional and keyword-compatible with every existing caller (main.py's
     batch-log CLI command calls this positionally-conn/keyword-limit only) --
     added so the Settings > Data Operations > Schedule panel's "last run"
     display (get_latest_batch_job_run below) and the Audit Log > Job Runs
-    tab can each narrow to one job without a second, near-duplicate query."""
+    tab can each narrow to one job without a second, near-duplicate query.
+    since_iso (also optional, keyword-only in practice) narrows to runs
+    started at or after that UTC timestamp -- the Job Runs tab's time-period
+    filter; omitted entirely rather than passed as None down to SQL, same
+    "build the WHERE clause from only the filters actually active" shape
+    the reconciliation tab's own filtering already uses."""
+    clauses: list[str] = []
+    params: list[object] = []
     if job_name is not None:
-        rows = conn.execute(
-            "SELECT * FROM batch_job_runs WHERE job_name = ? ORDER BY started_at DESC LIMIT ?",
-            (job_name, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM batch_job_runs ORDER BY started_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        clauses.append("job_name = ?")
+        params.append(job_name)
+    if since_iso is not None:
+        clauses.append("started_at >= ?")
+        params.append(since_iso)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    rows = conn.execute(
+        f"SELECT * FROM batch_job_runs {where} ORDER BY started_at DESC LIMIT ?",
+        (*params, limit),
+    ).fetchall()
     return [dict(r) for r in rows]
+
+
+def list_distinct_batch_job_names(conn: sqlite3.Connection) -> list[str]:
+    """Every job_name that has ever recorded a run -- populates the Job
+    Runs tab's "Select a Job" filter with only jobs that actually have
+    history, rather than the full _SCHEDULED_JOBS registry (which also
+    lists jobs with no runner/no runs yet)."""
+    rows = conn.execute("SELECT DISTINCT job_name FROM batch_job_runs ORDER BY job_name").fetchall()
+    return [r["job_name"] for r in rows]
 
 
 def get_latest_batch_job_run(conn: sqlite3.Connection, job_name: str) -> dict | None:

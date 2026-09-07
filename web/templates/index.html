@@ -132,6 +132,12 @@
     display: block;
   }
   table.companies .companies-index-tags { display: block; color: var(--ink-muted); font-size: 12px; }
+  .companies-status-toggle { display: inline; margin-left: 6px; }
+  .companies-status-toggle-btn {
+    font: inherit; font-size: 11px; color: var(--ink-muted); background: none; border: none;
+    padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+  }
+  .companies-status-toggle-btn:hover { color: var(--ink); }
   table.companies th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   table.companies th.sortable:hover { color: var(--color-accent); }
   table.companies th.sortable.sorted { color: var(--color-accent); }
@@ -191,6 +197,14 @@
       </select>
     </div>
     {% endif %}
+    <div class="field">
+      <label for="companies-status">Status</label>
+      <select class="input" id="companies-status">
+        <option value="active" selected>Active</option>
+        <option value="archived">Archived</option>
+        <option value="">All statuses</option>
+      </select>
+    </div>
     {% if columns %}
     <div class="companies-column-picker">
       <button type="button" class="btn btn-ghost companies-columns-btn" id="companies-columns-btn"
@@ -287,6 +301,22 @@
             {% else %}
               <span class="tag tag-neutral">{{ c['status'] }}</span>
             {% endif %}
+            {# One-click toggle, not the fuller reason-picker Settings > Admin >
+               Companies offers -- "manual" (a real entry in ARCHIVE_REASONS)
+               covers the common case here; anyone who wants a specific reason
+               (delisted/acquired/merged/renamed/duplicate) still has that
+               fuller form in Admin. return_to brings the redirect back to this
+               list instead of jumping into Settings. #}
+            <form method="post" action="{{ url_for('admin_update_company', company_id=c['company_id']) }}" class="companies-status-toggle">
+              <input type="hidden" name="return_to" value="{{ url_for('companies') }}">
+              {% if c['status'] == 'active' %}
+              <input type="hidden" name="archive_reason" value="manual">
+              <button type="submit" name="action" value="archive" class="companies-status-toggle-btn"
+                      onclick='return confirm("Archive " + {{ c["display_name"]|tojson }} + "?");'>Archive</button>
+              {% else %}
+              <button type="submit" name="action" value="restore" class="companies-status-toggle-btn">Restore</button>
+              {% endif %}
+            </form>
           </td>
             {% elif col['key'] == 'tags' %}
           <td data-col="tags">
@@ -335,6 +365,7 @@
       const sectorSelect = document.getElementById('companies-sector');
       const industrySelect = document.getElementById('companies-industry');
       const tagSelect = document.getElementById('companies-tag');
+      const statusSelect = document.getElementById('companies-status');
       const pageSizeSelect = document.getElementById('companies-page-size');
       const rows = Array.from(document.querySelectorAll('#companies-tbody tr'));
       const noMatchesEl = document.getElementById('companies-no-matches');
@@ -372,6 +403,7 @@
         const sector = sectorSelect.value;
         const industry = industrySelect.value;
         const tag = tagSelect ? tagSelect.value : '';
+        const status = statusSelect ? statusSelect.value : '';
         matchingRows = sortedRows.filter((row) => {
           const haystack = row.dataset.search;
           return (
@@ -379,7 +411,8 @@
             (!country || row.dataset.country === country) &&
             (!sector || row.dataset.sector === sector) &&
             (!industry || row.dataset.industry === industry) &&
-            (!tag || row.dataset.tags.includes('|' + tag + '|'))
+            (!tag || row.dataset.tags.includes('|' + tag + '|')) &&
+            (!status || row.dataset.status === status)
           );
         });
         currentPage = 1;
@@ -424,7 +457,8 @@
       if (countrySelect) countrySelect.addEventListener('change', applyFilters);
       sectorSelect.addEventListener('change', applyFilters);
       industrySelect.addEventListener('change', applyFilters);
-      applyFilters();
+      if (statusSelect) statusSelect.addEventListener('change', applyFilters);
+      applyFilters(); // runs once on load -- statusSelect's own "Active" default (see its <option selected> above) means this first pass already shows active-only, not a separate "all, then narrow" step.
 
       // Click-to-sort on every column header — reorders the same <tr>
       // elements applyFilters() above toggles visibility on, so a sort

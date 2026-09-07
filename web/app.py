@@ -12,8 +12,11 @@ ingested financial data from the web UI.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
-from storage.db_types import DBConnection
+from storage.db_types import DBConnection, Row
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -37,6 +40,8 @@ from companies.lifecycle import (
     restore_company,
 )
 from companies.registry import get_company, list_companies, register_company, search_companies
+from ingestion.onboarding import onboard_new_company
+from sources.yfinance_company_lookup import CompanyLookupError, search_companies as search_yfinance_companies
 from companies.stock_actions import (
     ACTION_TYPES,
     InvalidStockActionError,
@@ -78,17 +83,22 @@ from indicators.settings import (
 )
 from ingestion.detector import ADAPTER_CLASSES
 from ingestion.pipeline import ingest_file
-from sources.nse_fetch import NSEFetchError, refresh_company_filings
 from research.assistant import answer_question
 from research.insights import NoDataToSummarizeError, generate_key_insights
+from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
+from retrieval.tag_resolver import resolve_tags_in_text
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
+from scripts.batch_fetch_fred import run_fred_batch, TRACKED_SERIES
 from scripts.batch_fetch_nse import run_nse_batch
+from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
+from scripts.batch_generate_insights import run_key_insights_batch
 from scripts.db_shard import run_db_shard_job
 from scripts.fetch_daily_prices import run_price_history_update
 from scripts.fetch_daily_prices_usa import run_price_history_update_usa
-from storage.company_repository import select_company_ids_by_index
+from scripts.process_pending_documents_batch import run_document_processing_batch
+from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
 from storage.database import init_db
 from storage.investigation_repository import (
     count_investigation_hypotheses,
@@ -118,10 +128,17 @@ from storage.repositories import (
     create_user,
     delete_company_note,
     delete_generated_report,
+    hide_generated_report,
+    hide_investigation,
+    soft_delete_generated_report,
+    soft_delete_investigation,
+    unhide_generated_report,
+    unhide_investigation,
     delete_index_definition,
     delete_industry,
     delete_note_attachment,
     delete_sector,
+    finish_batch_job_run,
     get_company_document,
     get_note_attachment,
     get_company_index_tags,
@@ -132,8 +149,10 @@ from storage.repositories import (
     get_generated_report,
     get_investigation,
     get_investigation_cost_summary,
+    get_strongest_verdict_by_investigation,
     get_batch_job_run_live_progress,
     get_latest_batch_job_run,
+    get_latest_batch_item_for_company,
     get_llm_usage_summary,
     get_macro_series,
     get_user_by_email,
@@ -156,7 +175,10 @@ from storage.repositories import (
     list_latest_shares_outstanding,
     list_llm_call_log,
     list_macro_series_summary,
+    list_distinct_batch_job_names,
     list_reconciliation_log_by_company,
+    list_running_batch_job_runs,
+    list_sec_edgar_migration_status,
     list_xbrl_migration_status,
     list_note_attachments_for_company,
     list_report_evidence,
@@ -194,7 +216,25 @@ from web.rich_text import sanitize_note_html
 from web.charts_feed import build_charts_feed
 from web.valuation_feed import build_valuation_feed
 
+logger = logging.getLogger(__name__)
+
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _redirect_to_return_or(default_endpoint: str, **default_kwargs):
+    """A POST handler reachable from more than one page (admin_update_company
+    from both Settings > Admin > Companies and the public /companies list;
+    case_hide/case_delete from the Cases list) redirects back to wherever
+    the form was actually submitted from, via an explicit return_to hidden
+    field, instead of always landing on one hardcoded page. Restricted to a
+    same-origin relative path (must start with "/", never "//" -- a
+    protocol-relative URL still points off-site) so this can't be turned
+    into an open redirect via a crafted form post; falls back to
+    `default_endpoint` when return_to is absent or fails that check."""
+    return_to = request.form.get("return_to", "")
+    if return_to.startswith("/") and not return_to.startswith("//"):
+        return redirect(return_to)
+    return redirect(url_for(default_endpoint, **default_kwargs))
 
 # For now, every tab is browsable without signing in — login only gates
 # Admin (needs is_admin on a real user). Settings used to be gated too (a
@@ -566,7 +606,12 @@ def create_app() -> Flask:
             return f"${value:,.0f}M"
 
         rows = []
-        for c in list_companies(db):
+        # include_archived=True -- the Status filter below (client-side,
+        # defaulting to "Active" on load) needs archived companies actually
+        # present in the DOM to filter INTO view when switched to "Archived"
+        # or "All"; excluding them server-side (this route's old default)
+        # would leave nothing for that filter option to ever show.
+        for c in list_companies(db, include_archived=True):
             row = dict(c)
             row["latest_price"] = _latest_price(row["valuation_model_file"]) if row["valuation_model_file"] else None
             row["price_change_pct"] = None
@@ -773,6 +818,24 @@ def create_app() -> Flask:
     def _run_db_shard(conn) -> int:
         return run_db_shard_job(conn)
 
+    def _run_fred_macro(conn) -> int:
+        return run_fred_batch(conn, TRACKED_SERIES, scope_label=f"FRED ({len(TRACKED_SERIES)} series)")
+
+    def _run_doc_analysis(conn) -> int:
+        return run_document_processing_batch(conn)
+
+    def _run_insights_companies(conn) -> int:
+        return run_key_insights_batch(conn)
+
+    def _run_financials_usa(conn) -> int:
+        """Every active US company on file (a dozen today, same "no
+        index-membership filter" reasoning select_active_companies_by_country's
+        own docstring gives -- a couple of them aren't tagged into any of
+        the US indices in company_index_membership, so filtering by one of
+        those would silently drop them)."""
+        companies = [r["company_id"] for r in select_active_companies_by_country(conn, "US")]
+        return run_sec_edgar_batch(conn, companies, scope_label=f"US companies ({len(companies)})")
+
     def _run_price_history_usa(conn) -> int:
         # Same shape as _run_price_history_india above: run_price_history_
         # update_usa() opens its own main-db/price-db connections
@@ -781,7 +844,7 @@ def create_app() -> Flask:
         # underneath either way.
         return run_price_history_update_usa()
 
-    # Eleven jobs get a real "Run now" button; the other six render as a
+    # Fifteen jobs get a real "Run now" button; the other two render as a
     # disabled row with `reason` as subtext (see ScheduledJob's docstring
     # above). Order here is the display order in the Schedule panel table.
     _SCHEDULED_JOBS: list[ScheduledJob] = [
@@ -807,27 +870,99 @@ def create_app() -> Flask:
                      "nse_shareholding_fetch_nifty_midcap150", None, _run_shareholding_nifty_midcap150),
         ScheduledJob("shareholding_india_smallcap250", "Shareholding pattern — India (Nifty Smallcap 250)", "Quarterly",
                      "nse_shareholding_fetch_nifty_smallcap250", None, _run_shareholding_nifty_smallcap250),
-        ScheduledJob("financials_usa", "Financials — USA", "Quarterly", None,
-                     "yfinance's quarterly data doesn't align to fiscal quarters — needs a "
-                     "per-company fiscal-quarter mapping first", None),
-        ScheduledJob("doc_analysis", "Document analysis (transcripts/concalls)", "Quarterly", None,
-                     "No scheduled trigger exists for the manual \"process pending documents\" "
-                     "action, and there's no automated fetch source — this would only ever "
-                     "process what's already been manually uploaded", None),
-        ScheduledJob("insights_companies", "Company insights", "Monthly", None,
-                     "Per-company generation exists but only as a one-click, one-company "
-                     "action — no batch-loop script yet", None),
+        ScheduledJob("financials_usa", "Financials — USA", "Quarterly",
+                     "sec_edgar_financials_fetch", None, _run_financials_usa),
+        ScheduledJob("doc_analysis", "Document analysis (transcripts/concalls)", "Quarterly",
+                     "document_processing", None, _run_doc_analysis),
+        ScheduledJob("insights_companies", "Company insights", "Monthly",
+                     "key_insights_batch", None, _run_insights_companies),
         ScheduledJob("insights_macro", "Macro insights", "Monthly", None,
                      "The generation function itself doesn't exist yet — needs a design "
                      "decision on what a macro insight is first", None),
-        ScheduledJob("fred_macro", "FRED macro data", "Weekly", None,
-                     "Live fetch works one series at a time — needs a loop over a configured "
-                     "series list", None),
+        ScheduledJob("fred_macro", "FRED macro data", "Quarterly",
+                     "fred_macro_fetch", None, _run_fred_macro),
         ScheduledJob("rbi_macro", "RBI / IITM macro data", "Weekly", None,
                      "These sources are file-based parsers over manually-downloaded files, "
                      "not live fetchers — \"weekly\" here still means a human stages the file "
                      "first", None),
     ]
+
+    def _resume_interrupted_batch_jobs() -> None:
+        """Called once, at process startup (see the WERKZEUG_RUN_MAIN-guarded
+        call near the bottom of create_app()) -- admin_schedule_run's "Run
+        now" is synchronous and blocking with no background-job
+        infrastructure, so a batch_job_runs row can only be at
+        status='running' while its own request is still in flight in a
+        live process. On a *fresh* process start there is no such request,
+        so every row list_running_batch_job_runs() finds here is left over
+        from a previous process that died (crashed, or was restarted)
+        mid-run -- never a run to leave alone.
+
+        Marked 'failed' (the schema's status CHECK has no 'interrupted'
+        value, and this run genuinely didn't complete) with a note
+        explaining why, then replayed via the exact same runner used for a
+        manual "Run now" click -- safe to just replay the whole scope
+        rather than reconstructing "which companies are left" from
+        batch_job_items, since every runner's own per-company work is
+        already idempotent (NSE's dest_path-exists check, the
+        shareholding detail_fetched_at flag, SEC EDGAR's reconciliation
+        step): a replay cheaply re-confirms whatever the dead run already
+        finished and only does real work for what's left. Run in a
+        background thread, each on its own db connection (this isn't a
+        request, so there's no request-scoped `g` connection to reuse, and
+        a sqlite3 connection can't cross threads) -- startup itself must
+        not block on what could be a several-minute crawl.
+        """
+        conn = init_db()
+        try:
+            stale_runs = list_running_batch_job_runs(conn)
+            for run in stale_runs:
+                finish_batch_job_run(
+                    conn, run["run_id"], status="failed",
+                    notes="Interrupted by a server restart — auto re-queued.",
+                )
+        finally:
+            conn.close()
+
+        if not stale_runs:
+            return
+
+        jobs_by_name = {job.job_name: job for job in _SCHEDULED_JOBS if job.job_name}
+        to_resume = []
+        for run in stale_runs:
+            job = jobs_by_name.get(run["job_name"])
+            if job is None or job.runner is None:
+                logger.warning(
+                    "Interrupted batch run_id=%s (job_name=%r) has no registered runner to resume",
+                    run["run_id"], run["job_name"],
+                )
+                continue
+            to_resume.append((job, run))
+
+        if to_resume:
+            # One worker thread processing the list in sequence, not one
+            # thread per job -- these are exactly the several-minute,
+            # several-hundred-company NSE/SEC crawls admin_schedule_run's
+            # own docstring describes; several of them hammering NSE's WAF
+            # at once (a real, previously-observed failure mode in this app
+            # -- see sources/nse_fetch.py's _bootstrap()) would be worse
+            # than the interruption this is meant to recover from, not
+            # better.
+            threading.Thread(target=_run_resumed_jobs_sequentially, args=(to_resume,), daemon=True).start()
+
+    def _run_resumed_jobs_sequentially(to_resume: list) -> None:
+        for job, run in to_resume:
+            logger.info(
+                "Auto-resuming interrupted batch job %r (was run_id=%s, scope=%r)",
+                job.job_id, run["run_id"], run["scope_label"],
+            )
+            conn = init_db()
+            try:
+                job.runner(conn)
+            except Exception:  # noqa: BLE001 -- one job's resume failing shouldn't block the rest of the queue
+                logger.exception("Auto-resume of interrupted job %r failed", job.job_id)
+            finally:
+                conn.close()
 
     def _schedule_panel_context(db) -> dict:
         """Only computed when the Schedule panel is actually being viewed,
@@ -954,8 +1089,42 @@ def create_app() -> Flask:
         runs at a handful of items each is small, the same "just eager-load
         it, it's cheap" call this function already makes for recent_log
         above."""
-        active_tab = "job_runs" if request.args.get("al_tab") == "job_runs" else "reconciliation"
-        job_runs = list_batch_job_runs(db, limit=50)
+        _AUDIT_TABS = ("reconciliation", "usa_reconciliation", "job_runs")
+        active_tab = request.args.get("al_tab") if request.args.get("al_tab") in _AUDIT_TABS else "reconciliation"
+
+        # Schwab "Transfer Activity"-style filter bar: a job picker (their
+        # account picker) + a time-period picker, instead of always
+        # dumping the last 50 runs across every job unfiltered -- with 13+
+        # jobs now sharing this one table (NSE x4 tiers x2 kinds, SEC
+        # EDGAR, FRED, price history x2, DB shard), an unfiltered view
+        # buries any one job's history under whichever jobs happen to run
+        # most often. "All jobs" + "All time" (both empty string) reproduces
+        # the old unfiltered behavior exactly, so this is additive, not a
+        # behavior change for anyone who ignores the new controls.
+        job_filter = request.args.get("al_job") or ""
+        period_filter = request.args.get("al_period") or ""
+        # Hour-granularity options (1h/4h/8h/24h) alongside the original
+        # day-granularity ones -- a stuck/failing job needs "what happened
+        # in the last hour" far more than "the last 5 days" while actively
+        # debugging it, so a suffix-keyed dict (rather than the old
+        # bare-day-count one) is what lets both units share one filter.
+        _PERIOD_DELTAS = {
+            "1h": timedelta(hours=1), "4h": timedelta(hours=4),
+            "8h": timedelta(hours=8), "24h": timedelta(hours=24),
+            "5d": timedelta(days=5), "30d": timedelta(days=30),
+            "90d": timedelta(days=90), "365d": timedelta(days=365),
+        }
+        since_iso = None
+        if period_filter in _PERIOD_DELTAS:
+            since_iso = (datetime.now(timezone.utc) - _PERIOD_DELTAS[period_filter]).isoformat()
+
+        job_labels = {job.job_name: job.label for job in _SCHEDULED_JOBS if job.job_name}
+        job_filter_options = [
+            {"job_name": name, "label": job_labels.get(name, name)}
+            for name in list_distinct_batch_job_names(db)
+        ]
+
+        job_runs = list_batch_job_runs(db, job_name=job_filter or None, since_iso=since_iso, limit=200)
         for run in job_runs:
             run["items"] = list_batch_job_items(db, run["run_id"])
             # Derived from the already-eager-loaded items above, not
@@ -974,6 +1143,7 @@ def create_app() -> Flask:
 
         status_filter = request.args.get("al_status") or ""
         query = (request.args.get("al_q") or "").strip().lower()
+        index_filter = request.args.get("al_index") or ""
         migration_rows = list_xbrl_migration_status(db)
 
         filtered_rows = migration_rows
@@ -984,6 +1154,9 @@ def create_app() -> Flask:
                 or query in (r["display_name"] or "").lower()
                 or query in (r["nse_symbol"] or "").lower()
             ]
+        if index_filter:
+            index_company_ids = {r["company_id"] for r in select_company_ids_by_index(db, index_filter)}
+            filtered_rows = [r for r in filtered_rows if r["company_id"] in index_company_ids]
 
         page_size = ADMIN_INGEST_PAGE_SIZE
         page = _filter_and_paginate(
@@ -997,6 +1170,29 @@ def create_app() -> Flask:
         for row in page["rows"]:
             row["recent_log"] = recent_log_by_company.get(row["company_id"], [])
 
+        # USA Reconciliation -- list_sec_edgar_migration_status()'s own
+        # docstring explains why this is a sibling table to the NSE one
+        # above, not a country branch of it. No pagination here (unlike
+        # the India table's 2,600 rows): the whole US universe is ~25
+        # companies today, small enough to render in one page without the
+        # complexity earning its keep yet -- revisit if that ever changes.
+        usa_status_filter = request.args.get("al_usa_status") or ""
+        usa_query = (request.args.get("al_usa_q") or "").strip().lower()
+        usa_migration_rows_all = list_sec_edgar_migration_status(db)
+        usa_migration_rows = usa_migration_rows_all
+        if usa_status_filter:
+            usa_migration_rows = [r for r in usa_migration_rows if r["migration_status"] == usa_status_filter]
+        if usa_query:
+            usa_migration_rows = [
+                r for r in usa_migration_rows
+                if usa_query in (r["company_id"] or "").lower() or usa_query in (r["display_name"] or "").lower()
+            ]
+        usa_recent_log_by_company = list_reconciliation_log_by_company(
+            db, [r["company_id"] for r in usa_migration_rows], limit_per_company=20,
+        )
+        for row in usa_migration_rows:
+            row["recent_log"] = usa_recent_log_by_company.get(row["company_id"], [])
+
         return {
             "audit_rows": page["rows"],
             "audit_total": page["total"],
@@ -1005,10 +1201,20 @@ def create_app() -> Flask:
             "audit_page_size": page["page_size"],
             "audit_status_filter": status_filter,
             "audit_query": request.args.get("al_q", ""),
+            "audit_index_filter": index_filter,
+            "audit_index_options": list_index_definitions(db),
             "audit_pending_count": sum(1 for r in migration_rows if r["migration_status"] == "pending"),
             "audit_not_started_count": sum(1 for r in migration_rows if r["migration_status"] == "not_started"),
             "audit_active_tab": active_tab,
+            "audit_usa_rows": usa_migration_rows,
+            "audit_usa_status_filter": usa_status_filter,
+            "audit_usa_query": request.args.get("al_usa_q", ""),
+            "audit_usa_pending_count": sum(1 for r in usa_migration_rows_all if r["migration_status"] == "pending"),
+            "audit_usa_not_started_count": sum(1 for r in usa_migration_rows_all if r["migration_status"] == "not_started"),
             "audit_job_runs": job_runs,
+            "audit_job_filter": job_filter,
+            "audit_job_filter_options": job_filter_options,
+            "audit_period_filter": period_filter,
         }
 
     @app.route("/admin")
@@ -1061,7 +1267,16 @@ def create_app() -> Flask:
         sector_filter = request.args.get("sector") or ""
         industry_filter = request.args.get("industry") or ""
         tag_filter = request.args.get("tag") or ""
-        status_filter = request.args.get("status") or ""
+        country_filter = request.args.get("country") or ""
+        # Defaults to "active" on a fresh page load (no `status` query param
+        # at all) rather than "all statuses" -- with ~2,580 active companies
+        # and a much smaller archived set, landing on a mixed list by
+        # default buried the common case (browsing active companies) under
+        # rows nobody's usually looking for. request.args still lets
+        # "status=" (present but empty, e.g. from the Clear link below)
+        # explicitly ask for all statuses -- only a fully absent param
+        # falls back to "active".
+        status_filter = request.args.get("status", "active")
 
         filtered_companies = all_companies
         if query:
@@ -1080,6 +1295,8 @@ def create_app() -> Flask:
             filtered_companies = [c for c in filtered_companies if c["industry"] == industry_filter]
         if tag_filter:
             filtered_companies = [c for c in filtered_companies if tag_filter in c["index_tags"]]
+        if country_filter:
+            filtered_companies = [c for c in filtered_companies if c["country"] == country_filter]
         if status_filter:
             filtered_companies = [c for c in filtered_companies if c["status"] == status_filter]
 
@@ -1117,12 +1334,21 @@ def create_app() -> Flask:
             "companies_sector_filter": sector_filter,
             "companies_industry_filter": industry_filter,
             "companies_tag_filter": tag_filter,
+            "companies_country_filter": country_filter,
             "companies_status_filter": status_filter,
-            "companies_filters_active": bool(query or sector_filter or industry_filter or tag_filter or status_filter),
+            # status_filter alone no longer implies an active filter --
+            # "active" is now the unset default (see status_filter's own
+            # comment above), so the Clear link would otherwise show on
+            # every fresh, untouched page load with nothing to clear.
+            "companies_filters_active": bool(
+                query or sector_filter or industry_filter or tag_filter or country_filter
+                or (status_filter and status_filter != "active")
+            ),
             "active_companies": [c for c in all_companies if c["status"] == "active"],
             "archive_reasons": sorted(ARCHIVE_REASONS),
             "sectors": sectors,
             "industries": industries,
+            "countries": sorted({c["country"] for c in all_companies if c.get("country")}),
             "index_names": index_tag_names,
             "taxonomy": taxonomy,
             "list_columns": COMPANY_LIST_COLUMNS,
@@ -1289,53 +1515,78 @@ def create_app() -> Flask:
         flash(f"Reconciled {count} metric/period combinations for {company_id}.", "success")
         return redirect(url_for("company_report", company_id=company_id))
 
-    @app.route("/companies/<company_id>/refresh", methods=["POST"])
-    def admin_refresh_company(company_id: str):
-        """Live-fetch this company's latest NSE filings and ingest whatever's
-        new — the same fetch+filter+download logic scripts/fetch_nse_xbrl.py's
-        CLI runs (sources/nse_fetch.py's refresh_company_filings(), one
-        capability, two triggers), followed by the same ingest_file() +
-        reconcile_batch() any other file ingestion here uses. Synchronous —
-        a company's worth of NSE requests is normally a few seconds, worst
-        case under a minute with retries (see refresh_company_filings'
-        pacing); no background-job infrastructure exists in this app to
-        defer it to."""
+    # (job_label, job_name) pairs run_now_status()/admin_company_run_now()
+    # both key off of -- job_name literals match _JOB_NAMES in
+    # scripts/batch_fetch_nse.py / _JOB_NAME in scripts/batch_fetch_sec_edgar.py
+    # (same literals the Schedule panel's own ScheduledJob entries already
+    # use below), so this reads back the very same audit trail those bulk
+    # jobs write to, not a parallel one.
+    _RUN_NOW_JOBS_IN = [("Financials", "nse_xbrl_fetch"), ("Shareholding", "nse_shareholding_fetch")]
+    _RUN_NOW_JOBS_US = [("Financials", "sec_edgar_financials_fetch")]
+
+    def _run_now_jobs_for(company: Row) -> list[tuple[str, str]]:
+        return _RUN_NOW_JOBS_US if company["country"] == "US" else _RUN_NOW_JOBS_IN
+
+    def run_now_status(company: Row) -> list[dict]:
+        """This company's own latest attempt at each applicable job
+        (Financials, and Shareholding for an NSE-listed company) -- the
+        status badges Company Report shows next to "Run now"
+        (running/complete/failed, from whatever batch_job_items row this
+        company most recently appeared in for that job_name, via
+        get_latest_batch_item_for_company()). A company that's never been
+        run gets a "never run" placeholder rather than being left off the
+        list entirely, so the badge for a brand-new company doesn't just
+        silently not appear."""
+        db = get_db()
+        statuses = []
+        for label, job_name in _run_now_jobs_for(company):
+            item = get_latest_batch_item_for_company(db, job_name, company["company_id"])
+            statuses.append({
+                "label": label,
+                "status": item["status"] if item else "never_run",
+                "detail": item["detail"] if item else None,
+                "finished_at": item["finished_at"] if item else None,
+            })
+        return statuses
+
+    @app.route("/companies/<company_id>/run-now", methods=["POST"])
+    def admin_company_run_now(company_id: str):
+        """Company Report's "Run now" — pulls this one company's latest
+        financials (SEC EDGAR for a US company, NSE filings for an Indian
+        one) plus, for an NSE-listed company, its shareholding pattern —
+        through the exact same audited batch runners
+        (scripts/batch_fetch_nse.py::run_nse_batch / scripts/
+        batch_fetch_sec_edgar.py::run_sec_edgar_batch) the Schedule panel's
+        bulk jobs use, just given a single-company list instead of an
+        index/country-wide one. That's why this replaces the old
+        admin_refresh_company route rather than sitting alongside it: same
+        NSE-financials-refresh logic (refresh_company_filings + ingest_file),
+        now also recorded to batch_job_runs/batch_job_items (Audit Log ->
+        Job Runs gets a real, queryable entry) instead of a plain flash
+        message and nothing else. force=True on the US path bypasses
+        run_sec_edgar_batch's own skip-if-recently-succeeded check — an
+        explicit "Run now" click means fetch now, not "only if it's been
+        24h". Synchronous, same no-background-job tradeoff as every other
+        admin action in this file."""
         db = get_db()
         company = get_company(db, company_id)
         if company is None:
             abort(404, f"No company registered with company_id={company_id!r}")
-        if not company["nse_symbol"]:
-            abort(404, f"{company_id} has no nse_symbol on file — nothing to refresh from NSE")
 
-        dest_dir = app_settings.RAW_DIR / company_id / "nse"
-        try:
-            result = refresh_company_filings(company["nse_symbol"], dest_dir)
-        except NSEFetchError as exc:
-            flash(f"Refresh failed: {exc}", "error")
-            return redirect(url_for("company_report", company_id=company_id))
-
-        reconciled = 0
-        for path in result.downloaded_files:
-            # statement_type is encoded in the filename
-            # (refresh_company_filings' own dest_path convention:
-            # "<date>_<statement_type>_<seq>.xml") rather than re-derived
-            # here — ingest_file's own default ("consolidated") would be
-            # wrong for half of what this just downloaded.
-            statement_type = path.stem.split("_")[1]
-            ingest_result = ingest_file(db, path, company_id=company_id, source_id="nse", statement_type=statement_type)
-            reconciled += ingest_result.reconciled_count
-
-        if result.downloaded_files:
-            flash(
-                f"Refreshed {company_id}: downloaded {len(result.downloaded_files)} new filing(s), "
-                f"{reconciled} metric/period combination(s) reconciled.",
-                "success",
-            )
+        if company["country"] == "US":
+            run_sec_edgar_batch(db, [company_id], scope_label=f"{company_id} (manual run)", force=True)
         else:
-            suffix = f" (most recent on NSE: {result.most_recent_date})" if result.most_recent_date else ""
-            flash(f"Up to date — no new filings from NSE{suffix}.", "success")
-        if result.error_count:
-            flash(f"{result.error_count} request(s) to NSE failed during refresh — see server logs.", "error")
+            if not company["nse_symbol"]:
+                flash(f"{company_id} has no nse_symbol on file — nothing to fetch.", "error")
+                return redirect(url_for("company_report", company_id=company_id))
+            run_nse_batch(db, "financials", [company_id], scope_label=f"{company_id} (manual run)")
+            run_nse_batch(db, "shareholding", [company_id], scope_label=f"{company_id} (manual run)")
+
+        for status in run_now_status(company):
+            if status["status"] == "ok":
+                flash(f"{status['label']}: {status['detail'] or 'done'}", "success")
+            else:
+                flash(f"{status['label']} failed: {status['detail'] or 'see Audit Log for details'}", "error")
 
         return redirect(url_for("company_report", company_id=company_id))
 
@@ -1507,6 +1758,48 @@ def create_app() -> Flask:
             abort(404, str(exc))
         return redirect(url_for("settings", panel="admin-stock_actions", sa_company_id=company_id))
 
+    @app.route("/admin/companies/search")
+    def admin_companies_search():
+        """Add Company's type-ahead -- plausible company names as the admin
+        types a ticker/name, via sources.yfinance_company_lookup.
+        search_companies() (Yahoo Finance's own search, filtered to the
+        requested country's home exchange). Read-only, no DB write; just a
+        JSON list for the front-end <datalist> to render."""
+        query = request.args.get("q", "")
+        country = (request.args.get("country", "IN").strip() or "IN").upper()
+        return jsonify(results=search_yfinance_companies(query, country))
+
+    @app.route("/admin/companies/add", methods=["POST"])
+    def admin_add_company():
+        """Admin Companies panel's "Add Company" form -- just a ticker +
+        country. Everything else (legal/display name, currency, sector,
+        industry, website) is looked up from Yahoo Finance, then the
+        company is registered and its financials (SEC EDGAR + Yahoo
+        Finance for a US company, NSE filings for an Indian one) and a 10y
+        price history are fetched, all via ingestion/onboarding.py::
+        onboard_new_company(). Synchronous and blocking, same
+        no-background-job tradeoff as admin_refresh_company/
+        admin_schedule_run above -- a first backfill is the heaviest single
+        admin action in this file, so this can take a while to return."""
+        db = get_db()
+        company_id = request.form.get("company_id", "").strip()
+        if not company_id:
+            abort(400, "company_id is required")
+        country = (request.form.get("country", "IN").strip() or "IN").upper()
+
+        try:
+            result = onboard_new_company(db, get_price_db(), app_settings.RAW_DIR, company_id=company_id, country=country)
+        except CompanyLookupError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("settings", panel="admin-companies"))
+        except Exception as exc:  # noqa: BLE001 -- surface as a flash, not a 500, same as admin_schedule_run
+            flash(f"Add company failed: {exc}", "error")
+            return redirect(url_for("settings", panel="admin-companies"))
+
+        for step in result.steps:
+            flash(f"{step.label}: {step.detail}", "success" if step.ok else "error")
+        return redirect(url_for("company_report", company_id=result.company_id))
+
     @app.route("/admin/<company_id>", methods=["POST"])
     def admin_update_company(company_id: str):
         db = get_db()
@@ -1579,7 +1872,10 @@ def create_app() -> Flask:
         else:
             abort(400, f"Unknown action: {action!r}")
 
-        return redirect(url_for("settings", panel="admin-companies"))
+        # Archive/restore is also reachable from the public /companies list
+        # (a plain status toggle there, not the fuller edit form) -- see
+        # _redirect_to_return_or's own docstring.
+        return _redirect_to_return_or("settings", panel="admin-companies")
 
     @app.route("/companies/<company_id>")
     def company_report(company_id: str):
@@ -1823,6 +2119,11 @@ def create_app() -> Flask:
             indicator_columns=indicator_columns,
             indicator_total=indicator_total,
             api_key_set=ANTHROPIC_API_KEY_SET,
+            # Only worth computing for the admin who'll actually see the
+            # "Run now" button next to it (company.html gates both on
+            # g.user.is_admin) -- two more small, indexed lookups on every
+            # anonymous/non-admin page view otherwise.
+            run_now_status=run_now_status(company) if g.user and g.user["is_admin"] else None,
         )
 
     @app.route("/companies/<company_id>/insights/generate", methods=["POST"])
@@ -2373,7 +2674,7 @@ def create_app() -> Flask:
         )
         return redirect(url_for("settings", panel="indicators") + "#indicator-rules")
 
-    _DOCS_SECTIONS = ("sources", "xbrl")
+    _DOCS_SECTIONS = ("sources", "xbrl", "research", "point_in_time", "model_routing", "macro_data", "release_notes")
 
     @app.route("/docs")
     def docs():
@@ -2437,6 +2738,17 @@ def create_app() -> Flask:
         question = (payload.get("question") or "").strip()
         if company_ids is None:
             company_ids = payload.get("company_ids") or []
+            # Tag resolution ("Nifty 50", "Technology companies") -- same
+            # mechanism /investigate/generate uses (retrieval/tag_resolver.py),
+            # applied here too so "Ask"/"/chat" don't behave differently
+            # from "Run structured investigation" for the identical
+            # question text. Only reached via this branch, never when a
+            # company_id was passed in explicitly by the caller (the
+            # per-company Ask AI drawer's URL-scoped call) -- see this
+            # function's own docstring on why that path must never widen
+            # past the company it was opened on.
+            if not company_ids and question:
+                company_ids = resolve_tags_in_text(get_db(), question)
         statement_type = payload.get("statement_type", "consolidated")
 
         if not ANTHROPIC_API_KEY_SET:
@@ -2455,6 +2767,40 @@ def create_app() -> Flask:
             if get_company(db, company_id) is None:
                 return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
 
+        # A group question ("Nifty 50 net profit CAGR") is a sum-then-CAGR
+        # arithmetic problem, not something an LLM should reason about
+        # company-by-company -- a real, observed failure otherwise: handing
+        # 50 companies' worth of evidence to answer_question() below
+        # produced an illegible comparison chart and a non-answer, not a
+        # number. research/aggregate_query.py's own docstring covers why
+        # the intent-extraction call is STANDARD tier, not QUICK. Only
+        # attempted for >1 company -- a single company's own metric history
+        # already has a real per-share/ratio answer path, no aggregation
+        # needed. Falls through to the normal answer_question() flow
+        # unchanged whenever is_aggregate comes back False (most questions).
+        if len(company_ids) > 1:
+            aggregate_intent = extract_aggregate_intent(db, question)
+            if aggregate_intent.is_aggregate:
+                aggregate_result = compute_group_aggregate(db, company_ids, aggregate_intent)
+                answer = format_aggregate_answer(aggregate_result, len(company_ids))
+                thread_id = uuid.uuid4().hex[:12]
+                question_embedding, question_embedding_model = _embed_question_for_reuse(question)
+                save_generated_report(
+                    db, thread_id, question, company_ids, statement_type, answer,
+                    question_embedding=question_embedding, question_embedding_model=question_embedding_model,
+                )
+                return jsonify(
+                    question=question,
+                    company_ids=company_ids,
+                    answer_html=str(_render_markdown_with_tags(answer)),
+                    charts={},
+                    comparison_charts={},
+                    comparison_chart_company_count=0,
+                    total_company_count=len(company_ids),
+                    thread_id=thread_id,
+                    thread_url=url_for("research_thread", thread_id=thread_id),
+                )
+
         try:
             answer = answer_question(db, question, company_ids, statement_type=statement_type)
         except anthropic.APIError as exc:
@@ -2465,12 +2811,26 @@ def create_app() -> Flask:
         # company's own scale — the whole point of a comparison chart is
         # putting both companies on one axis over the same overlapping period,
         # not six small charts a reader has to eyeball against each other.
+        #
+        # Capped independently of company_ids itself (which still goes into
+        # answer_question() above at full size, e.g. all 50 Nifty 50 members
+        # a tag-resolved question produces — retrieval/tag_resolver.py) --
+        # a real, observed bug otherwise, not hypothetical: 50 companies on
+        # one indexed-line chart is an illegible wall of overlapping colors
+        # and a 50-row legend that runs off the page. compare.js's own
+        # Quick/Detailed Comparison tabs already cap interactive multi-
+        # company work at MAX_COMPARISONS=4 for the same legibility reason;
+        # this is the equivalent cap for the one-shot chart a text answer
+        # embeds, a bit more generous since there's no legend-hover
+        # interactivity here to lean on.
+        MAX_COMPARISON_CHART_COMPANIES = 8
         comparison_charts = {}
         charts_by_company = {}
         if len(company_ids) > 1:
+            chart_company_ids = company_ids[:MAX_COMPARISON_CHART_COMPANIES]
             comparison_charts = {
                 chart_key: figure_to_base64_png(figure)
-                for chart_key, figure in build_comparison_charts(db, company_ids, statement_type=statement_type).items()
+                for chart_key, figure in build_comparison_charts(db, chart_company_ids, statement_type=statement_type).items()
             }
         else:
             charts_by_company = {
@@ -2495,6 +2855,11 @@ def create_app() -> Flask:
             answer_html=str(_render_markdown_with_tags(answer)),
             charts=charts_by_company,
             comparison_charts=comparison_charts,
+            # So the UI can caption "showing 8 of 50 companies" instead of
+            # silently rendering a chart with fewer lines than company_ids
+            # would imply -- see MAX_COMPARISON_CHART_COMPANIES above.
+            comparison_chart_company_count=len(company_ids[:MAX_COMPARISON_CHART_COMPANIES]) if comparison_charts else 0,
+            total_company_count=len(company_ids),
             thread_id=thread_id,
             thread_url=thread_url,
         )
@@ -2523,6 +2888,13 @@ def create_app() -> Flask:
         payload = request.get_json(silent=True) or {}
         question = (payload.get("question") or "").strip()
         company_ids = payload.get("company_ids") or []
+        # Tag resolution -- same mechanism as /research/ask and
+        # /investigate/generate (retrieval/tag_resolver.py), so "Generate
+        # full report" doesn't reject a tag-only question ("Nifty 50
+        # companies...") with "Select at least one company" the way the
+        # other two flows used to before this was wired in everywhere.
+        if not company_ids and question:
+            company_ids = resolve_tags_in_text(get_db(), question)
         statement_type = payload.get("statement_type", "consolidated")
 
         if not ANTHROPIC_API_KEY_SET:
@@ -2538,6 +2910,22 @@ def create_app() -> Flask:
         for company_id in company_ids:
             if get_company(db, company_id) is None:
                 return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
+
+        # Same deterministic short-circuit as /research/ask -- see that
+        # route's own comment (web/app.py's _answer_question_response) for
+        # why a group aggregate question never reaches generate_signals_report.
+        if len(company_ids) > 1:
+            aggregate_intent = extract_aggregate_intent(db, question)
+            if aggregate_intent.is_aggregate:
+                aggregate_result = compute_group_aggregate(db, company_ids, aggregate_intent)
+                answer = format_aggregate_answer(aggregate_result, len(company_ids))
+                thread_id = uuid.uuid4().hex[:12]
+                question_embedding, question_embedding_model = _embed_question_for_reuse(question)
+                save_generated_report(
+                    db, thread_id, question, company_ids, statement_type, answer,
+                    question_embedding=question_embedding, question_embedding_model=question_embedding_model,
+                )
+                return jsonify(thread_id=thread_id, url=url_for("research_thread", thread_id=thread_id))
 
         try:
             result = generate_signals_report(db, question, company_ids, statement_type=statement_type)
@@ -2603,6 +2991,48 @@ def create_app() -> Flask:
         remove_watchlist_item(db, "thread", thread_id)
         return jsonify(ok=True)
 
+    @app.route("/cases/<case_type>/<case_id>/hide", methods=["POST"])
+    def case_hide(case_type: str, case_id: str):
+        """Toggles hidden_at on/off for one Cases-list entry (either table --
+        case_type is "generated" or "structured", matching the same values
+        the entry dicts in investigations() already use). Reversible by
+        design: the button that posts here relabels itself Hide/Unhide
+        based on current state, so this reads the row first rather than
+        taking a fixed direction as a form field."""
+        db = get_db()
+        if case_type == "generated":
+            report = get_generated_report(db, case_id)
+            if report is None:
+                abort(404, f"No case with id={case_id!r}")
+            (unhide_generated_report if report["hidden_at"] else hide_generated_report)(db, case_id)
+        elif case_type == "structured":
+            inv = get_investigation(db, case_id)
+            if inv is None:
+                abort(404, f"No case with id={case_id!r}")
+            (unhide_investigation if inv["hidden_at"] else hide_investigation)(db, case_id)
+        else:
+            abort(400, f"Unknown case_type: {case_type!r}")
+        return _redirect_to_return_or("investigations")
+
+    @app.route("/cases/<case_type>/<case_id>/delete", methods=["POST"])
+    def case_delete(case_type: str, case_id: str):
+        """"Archived forever" -- see soft_delete_generated_report/
+        soft_delete_investigation's own docstrings: deleted_at is set, the
+        row is never actually removed, and no route/button anywhere clears
+        it back. Deliberately not the same as research_thread_delete's real
+        DELETE above -- that pre-existing hard-delete path (the individual
+        thread page's own Delete action) is untouched."""
+        db = get_db()
+        if case_type == "generated":
+            ok = soft_delete_generated_report(db, case_id)
+        elif case_type == "structured":
+            ok = soft_delete_investigation(db, case_id)
+        else:
+            abort(400, f"Unknown case_type: {case_type!r}")
+        if not ok:
+            abort(404, f"No case with id={case_id!r}")
+        return _redirect_to_return_or("investigations")
+
     @app.route("/investigate/generate", methods=["POST"])
     def investigate_generate():
         """Run the Steps 2E-2H hypothesis-driven investigation
@@ -2616,6 +3046,12 @@ def create_app() -> Flask:
         payload = request.get_json(silent=True) or {}
         question = (payload.get("question") or "").strip()
         company_ids = payload.get("company_ids") or []
+        # Tag resolution ("Nifty 50", "Technology companies") -- only when
+        # nothing was already explicitly picked (see retrieval/
+        # tag_resolver.py's own docstring for why a tag mention alongside
+        # an explicit selection is left alone rather than widening it).
+        if not company_ids and question:
+            company_ids = resolve_tags_in_text(get_db(), question)
         statement_type = payload.get("statement_type", "consolidated")
         # Optional point-in-time cutoff (research/temporal.py) — a "could this
         # have been detected at the time?" question runs with every evidence
@@ -2703,12 +3139,34 @@ def create_app() -> Flask:
         # the other. They still have a real home — the Research page's own
         # "try an example" showcase (research.html) links into the same
         # /research/thread/<id> fixture-rendering branch.
+        # Two distinct status vocabularies sharing one filter dropdown, per
+        # instruction (kept separate, not forced into one shared label set):
+        # a Quick Answer's parsed confidence (research/signals_report.py's
+        # own _CONFIDENCE_RE: High|Moderate|Low, or "Unknown" when the
+        # model didn't follow the template) vs. a Deep Dive's strongest
+        # hypothesis verdict (Step 2G's investigation_hypotheses.verdict).
+        _VERDICT_STATUS = {
+            "SUPPORTED": ("supported", "Supported"),
+            "PARTIALLY_SUPPORTED": ("partially_supported", "Partially Supported"),
+            "REFUTED": ("refuted", "Refuted"),
+            "INSUFFICIENT_EVIDENCE": ("insufficient_evidence", "Insufficient Evidence"),
+        }
+        _STATUS_FILTER_OPTIONS = [
+            ("high", "High confidence"), ("moderate", "Moderate confidence"),
+            ("low", "Low confidence"), ("unknown", "Unknown confidence"),
+            ("supported", "Supported"), ("partially_supported", "Partially Supported"),
+            ("refuted", "Refuted"), ("insufficient_evidence", "Insufficient Evidence"),
+            ("no_verdict", "No verdict yet"),
+        ]
+
         entries = []
         for generated in list_generated_reports(get_db()):
             meta = extract_report_meta(generated["report_markdown"])
+            confidence = meta["confidence"] or "Unknown"
             entries.append(
                 {
                     "type": "generated",
+                    "id": generated["thread_id"],
                     "type_label": "Quick Answer",
                     "href": url_for("research_thread", thread_id=generated["thread_id"]),
                     "title": meta["title"] or generated["question"],
@@ -2717,22 +3175,42 @@ def create_app() -> Flask:
                     # company_ids can be empty for a macro-only question
                     # (research/macro_evidence.py) — no company to list.
                     "companies_label": ", ".join(generated["company_ids"]) or "Macro/regulatory",
-                    "right_tag": (meta["confidence"] or "Unknown") + " confidence",
+                    "right_tag": confidence + " confidence",
+                    "status_key": confidence.lower(),
                     "generated_at": generated["generated_at"] or "",
+                    "hidden": bool(generated["hidden_at"]),
                 }
             )
-        for inv in list_investigations(get_db()):
+        all_investigations = list_investigations(get_db())
+        # Batched, not one list_investigation_hypotheses() call per
+        # investigation -- see get_strongest_verdict_by_investigation's own
+        # docstring. Verdict of the strongest (synthesis-ranked) hypothesis
+        # is the Deep Dive equivalent of a Quick Answer's parsed confidence
+        # -- the two are genuinely different concepts (one's an LLM's
+        # stated confidence in its own single-pass answer, the other's
+        # Step 2G's evidence-based verdict on a specific competing
+        # explanation), kept as distinct labels rather than forced into one
+        # shared vocabulary, per instruction.
+        verdict_by_investigation = get_strongest_verdict_by_investigation(
+            get_db(), [inv["investigation_id"] for inv in all_investigations]
+        )
+        for inv in all_investigations:
             company_ids = json.loads(inv["company_ids"] or "[]")
+            verdict = verdict_by_investigation.get(inv["investigation_id"])
+            status_key, status_label = _VERDICT_STATUS.get(verdict, ("no_verdict", "No verdict yet"))
             entries.append(
                 {
                     "type": "structured",
+                    "id": inv["investigation_id"],
                     "type_label": "Deep Dive",
                     "href": url_for("investigate_view", investigation_id=inv["investigation_id"]),
                     "title": inv["question"],
                     "subtitle": "",
                     "companies_label": ", ".join(company_ids) or "Macro/regulatory",
-                    "right_tag": inv["generated_at"],
+                    "right_tag": status_label,
+                    "status_key": status_key,
                     "generated_at": inv["generated_at"] or "",
+                    "hidden": bool(inv["hidden_at"]),
                 }
             )
         entries.sort(key=lambda r: r["generated_at"], reverse=True)
@@ -2740,6 +3218,15 @@ def create_app() -> Flask:
         iv_type_filter = request.args.get("iv_type") or ""
         if iv_type_filter:
             entries = [r for r in entries if r["type"] == iv_type_filter]
+        iv_status_filter = request.args.get("iv_status") or ""
+        if iv_status_filter:
+            entries = [r for r in entries if r["status_key"] == iv_status_filter]
+        # Hidden entries tucked away by default -- "Show hidden" flips this
+        # into a dedicated review mode (only hidden entries, so Unhide is
+        # findable) rather than interleaving hidden/visible together, which
+        # would make "is this hidden or not" a per-card guessing game.
+        iv_show_hidden = request.args.get("iv_hidden") == "1"
+        entries = [r for r in entries if r["hidden"] == iv_show_hidden]
         iv_query = (request.args.get("iv_q") or "").strip()
         iv = _paginate(
             entries, query=iv_query,
@@ -2752,6 +3239,8 @@ def create_app() -> Flask:
             entries=iv["rows"], entries_total=iv["total"],
             entries_page=iv["page"], entries_total_pages=iv["total_pages"],
             entries_query=iv_query, entries_type_filter=iv_type_filter,
+            entries_status_filter=iv_status_filter, status_options=_STATUS_FILTER_OPTIONS,
+            entries_show_hidden=iv_show_hidden,
         )
 
     def _tools_macro_context(db) -> dict:
@@ -3036,5 +3525,16 @@ def create_app() -> Flask:
     @app.route("/chat", methods=["POST"])
     def chat_ask():
         return _answer_question_response()
+
+    # Guarded so this runs exactly once in the process that actually serves
+    # requests -- with the debug reloader on, create_app() executes once in
+    # Werkzeug's monitor process (which never serves anything, just watches
+    # files and re-execs a child) and again in the reloader's child, which
+    # sets WERKZEUG_RUN_MAIN=true; without this guard the monitor process
+    # would also mark runs failed / spawn resume threads it then immediately
+    # abandons. Without the reloader (debug=False, or no --debug) that env
+    # var is never set, so the `not app.debug` half covers that case.
+    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        _resume_interrupted_batch_jobs()
 
     return app

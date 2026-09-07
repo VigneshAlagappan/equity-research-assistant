@@ -256,6 +256,38 @@ def select_company_ids_by_index(conn: DBConnection, index_name: str) -> list[Row
     ).fetchall()
 
 
+_TAG_GROUP_COLUMNS = {"sector": "sector", "industry": "industry"}
+
+
+def select_company_ids_by_tag_column(conn: DBConnection, column: str, value: str) -> list[Row]:
+    """company_id for every active company whose `sector`/`industry` column
+    equals `value`, across BOTH countries -- unlike select_companies_by_
+    sector_column() above (India-only basic_industry/macro_economic_sector,
+    NSE's own 4-level classification), the plain sector/industry columns
+    this queries are populated for US companies too (e.g. sector=
+    "Technology" for AAPL/MSFT/GOOGL/NVDA, verified against real data), so
+    this is the one a cross-country tag lookup (retrieval/tag_resolver.py:
+    "Technology companies") needs. `column` is re-checked against this
+    module's own fixed allowlist before being interpolated into the query
+    (a column name can't be a bind parameter), same defense
+    select_companies_by_sector_column() already applies for its own
+    allowlist."""
+    if column not in _TAG_GROUP_COLUMNS:
+        raise ValueError(f"column must be one of {sorted(_TAG_GROUP_COLUMNS)}, got {column!r}")
+    sql = f"SELECT company_id FROM companies WHERE {_TAG_GROUP_COLUMNS[column]} = ? AND status = 'active' ORDER BY company_id"
+    return conn.execute(sql, (value,)).fetchall()
+
+
+def select_company_ids_by_status(conn: DBConnection, status: str) -> list[Row]:
+    """company_id for every company at this lifecycle status ("active" |
+    "archived", companies.status's own CHECK constraint) -- retrieval/
+    tag_resolver.py's "archived companies" tag, the one dimension of that
+    resolver with no country/index/sector precedent to reuse."""
+    return conn.execute(
+        "SELECT company_id FROM companies WHERE status = ? ORDER BY company_id", (status,)
+    ).fetchall()
+
+
 def select_active_companies_by_country(conn: DBConnection, country: str) -> list[Row]:
     """company_id for every active company registered under `country`
     (companies.country -- "IN"/"US" today) -- scripts/

@@ -3,6 +3,12 @@
 {% block title %}Log in — Signals{% endblock %}
 
 {% block use_sidebar %}false{% endblock %}
+{# Same "simple public header, no app chrome" treatment landing.html/about.html
+   get (base.html's own comment on use_sidebar above states this intent for
+   Login/Signup too, but never actually set this) — a pre-auth screen showing
+   the full logged-in nav (Research/Companies/Compare/... plus the company
+   search box) doesn't belong here. #}
+{% set hide_nav_links = true %}
 
 {% block extra_style %}
   .auth-wrap { max-width: 380px; margin: 3rem auto 0; }

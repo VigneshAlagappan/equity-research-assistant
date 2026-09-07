@@ -110,11 +110,26 @@ def _load_ticker_cik_map() -> dict[str, int]:
     return _ticker_cik_cache
 
 
+# SEC's own directory keys dual-class tickers with a hyphen ("BRK-A",
+# "BRK-B"), but this app's company_id for each is the plain, unhyphenated
+# form (BRKA/BRKB) -- same mismatch sources/yfinance_prices.py's own
+# US_TICKER_OVERRIDES already solves for yfinance, just needed here too:
+# a real, observed failure otherwise (a scheduled Financials — USA run
+# failing BRKB with "could not resolve a SEC CIK", confirmed BRKA hits the
+# identical wall -- neither "BRKA" nor "BRKB" exists verbatim in SEC's
+# ~10,400-ticker file, only the hyphenated forms do). Extend this table if
+# another US company_id/ticker mismatch turns up, same as that module's
+# own comment says for its list.
+_TICKER_OVERRIDES = {"BRKA": "BRK-A", "BRKB": "BRK-B"}
+
+
 def get_cik_for_ticker(ticker: str) -> int | None:
     """SEC's own free ticker->CIK directory (~10,400 entries, refreshed
     periodically) -- cached in-process for the life of this run since it's
     the same file for every company a batch job resolves."""
-    return _load_ticker_cik_map().get(ticker.upper())
+    ticker = ticker.upper()
+    ticker = _TICKER_OVERRIDES.get(ticker, ticker)
+    return _load_ticker_cik_map().get(ticker)
 
 
 def fetch_company_facts(cik: int) -> dict:
@@ -297,12 +312,23 @@ _INSTANT_CONCEPTS = frozenset({
     "LoansReceivableNet",
 })
 
-# Per-unit concepts (already dollars-per-share or a share count) -- must
-# NOT be divided by _UNIT_DIVISOR the way an aggregate dollar figure is.
-# Mirrors sources/yfinance_financials.py's own _PER_UNIT_ROW_LABELS split.
+# Per-unit concepts (already dollars-per-share) -- must NOT be divided by
+# _UNIT_DIVISOR the way an aggregate dollar figure is. Share-count concepts
+# (CommonStockSharesOutstanding/CommonStockSharesIssued) deliberately do NOT
+# belong here, despite also being "not a dollar amount" -- this app's
+# shares_outstanding convention (matching sources/yfinance_financials.py's
+# own docstring reasoning, "Ordinary Shares Number" -> _UNIT_DIVISOR) is
+# millions of shares, not a raw count, specifically so a downstream
+# aggregate_in_millions / shares ratio (book value per share, market cap)
+# comes out correctly regardless of which source ingested shares_outstanding.
+# A real bug this exempted, not hypothetical: with these two in this set,
+# a raw share count (e.g. ~7.02 billion for a mega-cap bank) times a
+# per-share price produced an actual-dollar market cap that every
+# consumer (web/app.py's company-list market cap, valuation_dashboard.js)
+# then mis-scaled by 1e6 on display, rendering (e.g.) a real ~$440B market
+# cap as "$439,886.20T".
 _PER_UNIT_CONCEPTS = frozenset({
     "EarningsPerShareDiluted", "EarningsPerShareBasic",
-    "CommonStockSharesOutstanding", "CommonStockSharesIssued",
 })
 
 _UNIT_DIVISOR = 1_000_000  # raw USD -> this app's USD_MILLION "big" convention

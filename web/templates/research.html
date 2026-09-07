@@ -191,7 +191,12 @@
   <div class="examples-section">
     <div class="examples-grid">
       {% for ex in examples %}
-      <a class="example-card" href="{{ url_for('research_thread', thread_id=ex.thread_id) }}">
+      {# ex.href, when present, points at a real already-run case
+         (/investigate/<id> or /research/thread/<real thread_id>) rather
+         than the hand-written wireframe fixture branch every entry used
+         to route through -- see web/fixtures.py's own comments on the two
+         entries that were swapped to this. #}
+      <a class="example-card" href="{{ ex.href if ex.href else url_for('research_thread', thread_id=ex.thread_id) }}">
         <div class="card-kicker">{{ ex.kicker }}</div>
         <div class="card-title">{{ ex.title }}</div>
       </a>
@@ -296,10 +301,21 @@
       if (comparisonKeys.length > 0) {
         const grid = document.createElement('div');
         grid.className = 'research-result-charts';
+        // Chart is capped independently of company_ids itself (see web/
+        // app.py's MAX_COMPARISON_CHART_COMPANIES) -- a tag-resolved
+        // question ("Nifty 50 companies...") can carry 50 company_ids into
+        // the answer while only the first few are actually plotted, so say
+        // so rather than silently rendering fewer lines than the question
+        // implied.
+        const shown = data.comparison_chart_company_count || 0;
+        const total = data.total_company_count || 0;
+        const cappedNote = total > shown
+          ? ' — showing ' + shown + ' of ' + total + ' companies'
+          : ' — comparison';
         for (const chartKey of comparisonKeys) {
           const figure = document.createElement('figure');
           const caption = document.createElement('figcaption');
-          caption.textContent = chartKey.replace(/_/g, ' ') + ' — comparison';
+          caption.textContent = chartKey.replace(/_/g, ' ') + cappedNote;
           const img = document.createElement('img');
           img.src = 'data:image/png;base64,' + comparisonCharts[chartKey];
           img.alt = chartKey + ' comparison chart';

@@ -264,6 +264,27 @@
   }
   .admin-pagination-links { display: flex; align-items: center; gap: var(--space-2); }
 
+  .admin-add-company { margin-top: var(--space-3); }
+  .admin-add-company-form {
+    margin-top: var(--space-3); padding: var(--space-3); border: 1px solid var(--color-divider);
+    border-radius: 8px; background: var(--color-surface-alt, transparent);
+  }
+  .admin-add-company-grid {
+    display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: var(--space-3);
+    margin-bottom: var(--space-3);
+  }
+  .admin-add-company-grid .field label {
+    display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--ink-muted); margin-bottom: 4px;
+  }
+  .admin-add-company-grid .admin-other-input { margin-top: 6px; }
+  @media (max-width: 900px) {
+    .admin-add-company-grid { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 600px) {
+    .admin-add-company-grid { grid-template-columns: 1fr; }
+  }
+
   .admin-companies-filters {
     display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;
     margin-top: var(--space-3);
@@ -641,6 +662,101 @@
     <div class="settings-panel" id="settings-panel-admin-companies" {{ 'hidden' if active_admin_panel != 'companies' }}>
       <p class="muted">Edit a company's name, sector, industry, and active/archived status. Ingested financial data is edited only via Import Data (this tab) or the CLI, never here.</p>
 
+      <details class="admin-add-company">
+        <summary class="btn btn-primary" style="display: inline-block; cursor: pointer;">+ Add Company</summary>
+        <form class="admin-add-company-form" method="post" action="{{ url_for('admin_add_company') }}">
+          <p class="muted">
+            Looks the ticker up on Yahoo Finance for its name, sector, and currency, registers it, then fetches
+            financials (SEC EDGAR + Yahoo Finance for a US company, NSE filings for an Indian one) and a 10-year
+            price history &mdash; no other fields needed. This can take a while to return; each step's outcome is
+            reported once it finishes, and anything Yahoo Finance got wrong (sector, industry, name) can be
+            corrected afterward in the row below.
+          </p>
+          <div class="admin-add-company-grid">
+            <div class="field">
+              <label for="add-company-country">Country</label>
+              <select class="input" id="add-company-country" name="country">
+                <option value="IN" selected>India (NSE)</option>
+                <option value="US">United States (SEC EDGAR)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="add-company-search">Company <span class="muted">(name or ticker)</span></label>
+              <input class="input" type="text" id="add-company-search" autocomplete="off"
+                     placeholder="Start typing a company name or ticker&hellip;" list="add-company-suggestions">
+              <datalist id="add-company-suggestions"></datalist>
+              <input type="hidden" id="add-company-id" name="company_id" required>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary">Look up &amp; add</button>
+        </form>
+      </details>
+      <script>
+        (function () {
+          var search = document.getElementById("add-company-search");
+          var country = document.getElementById("add-company-country");
+          var hiddenId = document.getElementById("add-company-id");
+          var datalist = document.getElementById("add-company-suggestions");
+          if (!search) return;
+
+          var byLabel = {};
+          var debounceTimer = null;
+
+          function renderSuggestions(results) {
+            byLabel = {};
+            datalist.innerHTML = "";
+            results.forEach(function (r) {
+              var label = r.name + " (" + r.ticker + ")";
+              byLabel[label] = r.ticker;
+              var opt = document.createElement("option");
+              opt.value = label;
+              datalist.appendChild(opt);
+            });
+          }
+
+          function fetchSuggestions() {
+            var q = search.value.trim();
+            if (q.length < 2) {
+              renderSuggestions([]);
+              return;
+            }
+            fetch("{{ url_for('admin_companies_search') }}?q=" + encodeURIComponent(q) + "&country=" + encodeURIComponent(country.value))
+              .then(function (resp) { return resp.json(); })
+              .then(function (data) { renderSuggestions(data.results || []); })
+              .catch(function () { renderSuggestions([]); });
+          }
+
+          search.addEventListener("input", function () {
+            // A selection from the datalist replaces the input's value
+            // outright with the full "Name (TICKER)" label -- if that
+            // exact label is already a known suggestion, resolve it
+            // straight to a ticker instead of re-querying for it.
+            if (byLabel[search.value]) {
+              hiddenId.value = byLabel[search.value];
+            } else {
+              hiddenId.value = "";
+            }
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(fetchSuggestions, 300);
+          });
+
+          search.closest("form").addEventListener("submit", function (e) {
+            if (!hiddenId.value) {
+              // No exact suggestion picked -- fall back to whatever was
+              // typed, trimmed of any "(TICKER)" suffix, as a plain ticker;
+              // onboard_new_company's own Yahoo Finance lookup is the real
+              // validation step, this is just a reasonable guess.
+              var typed = search.value.trim();
+              var match = typed.match(/\(([^)]+)\)\s*$/);
+              hiddenId.value = match ? match[1] : typed;
+            }
+            if (!hiddenId.value) {
+              e.preventDefault();
+            }
+          });
+        })();
+      </script>
+
       <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
         <input type="hidden" name="panel" value="admin-companies">
         <div class="field">
@@ -667,6 +783,13 @@
           <select class="input" id="admin-companies-tag" name="tag" onchange="this.form.requestSubmit()">
             <option value="">All indices</option>
             {% for t in index_names %}<option value="{{ t }}" {{ 'selected' if t == companies_tag_filter }}>{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="admin-companies-country">Country</label>
+          <select class="input" id="admin-companies-country" name="country" onchange="this.form.requestSubmit()">
+            <option value="">All countries</option>
+            {% for co in countries %}<option value="{{ co }}" {{ 'selected' if co == companies_country_filter }}>{{ co }}</option>{% endfor %}
           </select>
         </div>
         <div class="field">
@@ -757,7 +880,7 @@
           of {{ companies_total }} companies
         </span>
         <div class="admin-pagination-links">
-          {% set pagination_args = {'panel': 'admin-companies', 'q': companies_query, 'sector': companies_sector_filter, 'industry': companies_industry_filter, 'tag': companies_tag_filter, 'status': companies_status_filter} %}
+          {% set pagination_args = {'panel': 'admin-companies', 'q': companies_query, 'sector': companies_sector_filter, 'industry': companies_industry_filter, 'tag': companies_tag_filter, 'country': companies_country_filter, 'status': companies_status_filter} %}
           {% if companies_page > 1 %}
           <a class="btn btn-ghost" href="{{ url_for('settings', page=companies_page - 1, **pagination_args) }}">&larr; Previous</a>
           {% endif %}
@@ -772,8 +895,8 @@
       <div class="empty-state">No companies match these filters.</div>
       {% else %}
       <div class="empty-state">
-        No companies registered yet. Run <code>python main.py seed-companies</code> or
-        <code>python main.py add-company &lt;ID&gt; ...</code> from the CLI.
+        No companies registered yet. Use "+ Add Company" above, or run
+        <code>python main.py seed-companies</code> from the CLI.
       </div>
       {% endif %}
     </div>
@@ -1322,13 +1445,15 @@
          panel already uses for Financial Data / Documents, reused rather
          than inventing a second visual pattern for the same interaction. #}
       <div class="admin-audit-subnav">
-        <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab != 'job_runs' }}"
-           href="{{ url_for('settings', panel='admin-audit', al_tab='reconciliation') }}">Data Reconciliation</a>
+        <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab == 'reconciliation' }}"
+           href="{{ url_for('settings', panel='admin-audit', al_tab='reconciliation') }}">Data Reconciliation — India</a>
+        <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab == 'usa_reconciliation' }}"
+           href="{{ url_for('settings', panel='admin-audit', al_tab='usa_reconciliation') }}">Data Reconciliation — USA</a>
         <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab == 'job_runs' }}"
            href="{{ url_for('settings', panel='admin-audit', al_tab='job_runs') }}">Job Runs ({{ audit_job_runs|length }})</a>
       </div>
 
-      <div class="admin-audit-subpanel" id="admin-audit-subpanel-reconciliation" {{ 'hidden' if audit_active_tab == 'job_runs' }}>
+      <div class="admin-audit-subpanel" id="admin-audit-subpanel-reconciliation" {{ 'hidden' if audit_active_tab != 'reconciliation' }}>
       <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
         <input type="hidden" name="panel" value="admin-audit">
         <div class="field">
@@ -1345,8 +1470,17 @@
             <option value="no_data" {{ 'selected' if audit_status_filter == 'no_data' }}>No data</option>
           </select>
         </div>
+        <div class="field">
+          <label for="audit-index">Index</label>
+          <select class="input" id="audit-index" name="al_index" onchange="this.form.requestSubmit()">
+            <option value="">All indices</option>
+            {% for index_name in audit_index_options %}
+            <option value="{{ index_name }}" {{ 'selected' if audit_index_filter == index_name }}>{{ index_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
         <button type="submit" class="btn btn-ghost">Filter</button>
-        {% if audit_status_filter or audit_query %}
+        {% if audit_status_filter or audit_query or audit_index_filter %}
         <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-audit') }}">Clear</a>
         {% endif %}
       </form>
@@ -1406,7 +1540,7 @@
           of {{ audit_total }}
         </span>
         <div class="admin-pagination-links">
-          {% set audit_pagination_args = {'panel': 'admin-audit', 'al_status': audit_status_filter, 'al_q': audit_query} %}
+          {% set audit_pagination_args = {'panel': 'admin-audit', 'al_status': audit_status_filter, 'al_q': audit_query, 'al_index': audit_index_filter} %}
           {% if audit_page > 1 %}
           <a class="btn btn-ghost" href="{{ url_for('settings', al_page=audit_page - 1, **audit_pagination_args) }}">&larr; Previous</a>
           {% endif %}
@@ -1422,6 +1556,95 @@
       {% endif %}
       </div>
 
+      <div class="admin-audit-subpanel" id="admin-audit-subpanel-usa-reconciliation" {{ 'hidden' if audit_active_tab != 'usa_reconciliation' }}>
+      <p class="muted">
+        The USA equivalent of Data Reconciliation — India, just without a "legacy" era to migrate off: SEC
+        EDGAR's own structured XBRL data (<code>sources/sec_edgar.py</code>) has been the target source of
+        truth for every US company since it was built, unlike NSE's real migration off pre-XBRL filings.
+        "Pending" here means yfinance (a secondary provider) has a more recent quarter on file than SEC EDGAR
+        does for that company — worth re-running <code>ingest-sec-edgar</code> for.
+      </p>
+      <p class="muted" style="margin-top: 0;">
+        {{ audit_usa_pending_count }} compan{{ 'y' if audit_usa_pending_count == 1 else 'ies' }} with yfinance
+        data more recent than their SEC EDGAR coverage &middot; {{ audit_usa_not_started_count }} with no SEC
+        EDGAR coverage yet.
+      </p>
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-audit">
+        <input type="hidden" name="al_tab" value="usa_reconciliation">
+        <div class="field">
+          <label for="usa-audit-q">Search</label>
+          <input class="input" type="text" id="usa-audit-q" name="al_usa_q" placeholder="Name or company ID&hellip;" value="{{ audit_usa_query }}">
+        </div>
+        <div class="field">
+          <label for="usa-audit-status">Status</label>
+          <select class="input" id="usa-audit-status" name="al_usa_status" onchange="this.form.requestSubmit()">
+            <option value="">All statuses</option>
+            <option value="pending" {{ 'selected' if audit_usa_status_filter == 'pending' }}>Pending</option>
+            <option value="not_started" {{ 'selected' if audit_usa_status_filter == 'not_started' }}>Not started</option>
+            <option value="up_to_date" {{ 'selected' if audit_usa_status_filter == 'up_to_date' }}>Up to date</option>
+            <option value="no_data" {{ 'selected' if audit_usa_status_filter == 'no_data' }}>No data</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-ghost">Filter</button>
+        {% if audit_usa_status_filter or audit_usa_query %}
+        <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-audit', al_tab='usa_reconciliation') }}">Clear</a>
+        {% endif %}
+      </form>
+
+      {% if audit_usa_rows %}
+      <table class="table admin-audit-table">
+        <thead>
+          <tr><th></th><th>Company</th><th>Latest yfinance-or-any period</th><th>Latest SEC EDGAR period</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {% for row in audit_usa_rows %}
+          <tr class="admin-audit-row" data-audit-toggle>
+            <td><button type="button" class="admin-audit-expand" aria-expanded="false" aria-label="Show reconciliation history">&rsaquo;</button></td>
+            <td><a href="{{ url_for('company_report', company_id=row['company_id']) }}">{{ row['display_name'] }}</a> ({{ row['company_id'] }})</td>
+            <td>{{ row['latest_legacy_period'] or '—' }}</td>
+            <td>{{ row['latest_edgar_period'] or '—' }}</td>
+            <td>
+              <span class="tag {{ 'tag-outline' if row['migration_status'] == 'pending' else 'tag-neutral' if row['migration_status'] == 'not_started' else 'tag-success' if row['migration_status'] == 'up_to_date' else 'tag-neutral' }}">
+                {{ row['migration_status']|replace('_', ' ') }}
+              </span>
+            </td>
+          </tr>
+          <tr class="admin-audit-detail-row" hidden>
+            <td colspan="5">
+              {% if row['recent_log'] %}
+              <table class="table admin-audit-detail-table">
+                <thead>
+                  <tr><th>When</th><th>Metric</th><th>Period</th><th>Statement</th><th>Source</th><th>Chosen</th><th>Note</th></tr>
+                </thead>
+                <tbody>
+                  {% for log in row['recent_log'] %}
+                  <tr>
+                    <td><span class="local-time" data-utc="{{ log['considered_at'] }}">{{ log['considered_at'] }}</span></td>
+                    <td>{{ log['metric_key'] }}</td>
+                    <td>{{ log['fiscal_year'] }}{{ log['quarter'] or '' }}</td>
+                    <td>{{ log['statement_type'] or '—' }}</td>
+                    <td>{{ log['source'] }}</td>
+                    <td><span class="tag {{ 'tag-success' if log['was_chosen'] else 'tag-neutral' }}">{{ 'yes' if log['was_chosen'] else 'no' }}</span></td>
+                    <td>{{ log['note'] }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              {% else %}
+              <div class="empty-state">No reconciliation activity recorded for this company yet.</div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">No active US companies match this filter.</div>
+      {% endif %}
+      </div>
+
       <div class="admin-audit-subpanel" id="admin-audit-subpanel-job-runs" {{ 'hidden' if audit_active_tab != 'job_runs' }}>
       <p class="muted">
         One row per BatchRun-wrapped job execution — every Schedule panel "Run now" click, plus any other job
@@ -1430,6 +1653,39 @@
         per-item outcomes (per-company for the NSE/price jobs, a single summary item for DB sharding, which
         isn't per-company).
       </p>
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-audit">
+        <input type="hidden" name="al_tab" value="job_runs">
+        <div class="field">
+          <label for="jobrun-job">Job</label>
+          <select class="input" id="jobrun-job" name="al_job">
+            <option value="">All jobs</option>
+            {% for opt in audit_job_filter_options %}
+            <option value="{{ opt.job_name }}" {{ 'selected' if audit_job_filter == opt.job_name }}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="jobrun-period">Time period</label>
+          <select class="input" id="jobrun-period" name="al_period">
+            <option value="" {{ 'selected' if audit_period_filter == '' }}>All time</option>
+            <option value="1h" {{ 'selected' if audit_period_filter == '1h' }}>Last 1 hour</option>
+            <option value="4h" {{ 'selected' if audit_period_filter == '4h' }}>Last 4 hours</option>
+            <option value="8h" {{ 'selected' if audit_period_filter == '8h' }}>Last 8 hours</option>
+            <option value="24h" {{ 'selected' if audit_period_filter == '24h' }}>Last 24 hours</option>
+            <option value="5d" {{ 'selected' if audit_period_filter == '5d' }}>Last 5 days</option>
+            <option value="30d" {{ 'selected' if audit_period_filter == '30d' }}>Last 30 days</option>
+            <option value="90d" {{ 'selected' if audit_period_filter == '90d' }}>Last 90 days</option>
+            <option value="365d" {{ 'selected' if audit_period_filter == '365d' }}>Last year</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Apply</button>
+        {% if audit_job_filter or audit_period_filter %}
+        <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-audit', al_tab='job_runs') }}">Clear</a>
+        {% endif %}
+      </form>
+
       {% if audit_job_runs %}
       <table class="table admin-audit-table">
         <thead>
