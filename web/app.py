@@ -93,9 +93,11 @@ from research.system_insights import SystemInsightGenerationError, generate_syst
 from scripts.batch_fetch_fred import run_fred_batch, TRACKED_SERIES
 from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
+from scripts.batch_generate_insights import run_key_insights_batch
 from scripts.db_shard import run_db_shard_job
 from scripts.fetch_daily_prices import run_price_history_update
 from scripts.fetch_daily_prices_usa import run_price_history_update_usa
+from scripts.process_pending_documents_batch import run_document_processing_batch
 from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
 from storage.database import init_db
 from storage.investigation_repository import (
@@ -819,6 +821,12 @@ def create_app() -> Flask:
     def _run_fred_macro(conn) -> int:
         return run_fred_batch(conn, TRACKED_SERIES, scope_label=f"FRED ({len(TRACKED_SERIES)} series)")
 
+    def _run_doc_analysis(conn) -> int:
+        return run_document_processing_batch(conn)
+
+    def _run_insights_companies(conn) -> int:
+        return run_key_insights_batch(conn)
+
     def _run_financials_usa(conn) -> int:
         """Every active US company on file (a dozen today, same "no
         index-membership filter" reasoning select_active_companies_by_country's
@@ -836,7 +844,7 @@ def create_app() -> Flask:
         # underneath either way.
         return run_price_history_update_usa()
 
-    # Thirteen jobs get a real "Run now" button; the other four render as a
+    # Fifteen jobs get a real "Run now" button; the other two render as a
     # disabled row with `reason` as subtext (see ScheduledJob's docstring
     # above). Order here is the display order in the Schedule panel table.
     _SCHEDULED_JOBS: list[ScheduledJob] = [
@@ -864,13 +872,10 @@ def create_app() -> Flask:
                      "nse_shareholding_fetch_nifty_smallcap250", None, _run_shareholding_nifty_smallcap250),
         ScheduledJob("financials_usa", "Financials — USA", "Quarterly",
                      "sec_edgar_financials_fetch", None, _run_financials_usa),
-        ScheduledJob("doc_analysis", "Document analysis (transcripts/concalls)", "Quarterly", None,
-                     "No scheduled trigger exists for the manual \"process pending documents\" "
-                     "action, and there's no automated fetch source — this would only ever "
-                     "process what's already been manually uploaded", None),
-        ScheduledJob("insights_companies", "Company insights", "Monthly", None,
-                     "Per-company generation exists but only as a one-click, one-company "
-                     "action — no batch-loop script yet", None),
+        ScheduledJob("doc_analysis", "Document analysis (transcripts/concalls)", "Quarterly",
+                     "document_processing", None, _run_doc_analysis),
+        ScheduledJob("insights_companies", "Company insights", "Monthly",
+                     "key_insights_batch", None, _run_insights_companies),
         ScheduledJob("insights_macro", "Macro insights", "Monthly", None,
                      "The generation function itself doesn't exist yet — needs a design "
                      "decision on what a macro insight is first", None),

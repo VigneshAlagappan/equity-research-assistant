@@ -165,6 +165,20 @@ scheduling policy and gap analysis only.
 
 **Verdict — gap on two fronts now: (i) an "annual report presentation" type decision, (ii) a scheduled trigger for the existing process-all action (the Knowledge Builder extraction itself is real, see above) — and there's no fetch source at all, so this can only ever process manually-uploaded files, never auto-discover new ones.**
 
+- **Update (2026-09-07):** front (ii) is closed — `scripts/
+  process_pending_documents_batch.py` (`run_document_processing_batch()`,
+  `job_name="document_processing"`) is now wired into Settings > Data
+  Operations > Schedule's "Run now" (`doc_analysis` row). No new loop was
+  written: `ingestion/coordinator.py`'s `process_all_pending_documents()`
+  already sweeps every pending document and already records its own
+  `BatchRun` under that same `job_name` — the script is a thin entry point
+  that reuses it (per ADR-015, a scheduled trigger and the existing manual
+  "Process All Pending" button must converge on one job implementation, not
+  grow a second), then looks up the run it just created via
+  `get_latest_batch_job_run()` to hand back a `run_id` for the Schedule
+  panel's flash message. The (i) type-decision and "no automated fetch
+  source" gaps above are unchanged.
+
 ## 5. Analytics + insights — monthly (Nifty 50, USA, and Macro — India and USA)
 
 - **Per-company generation exists, human-triggered only.** The "Generate
@@ -200,6 +214,31 @@ scheduling policy and gap analysis only.
   cost/rate control, not just courtesy to an external API).
 
 **Verdict — company insights (Nifty 50 + USA): gap, but a shallow one — the per-company generation function is reusable as-is, only the batch-loop script and scheduler trigger need building. Macro insights (India + USA): deeper gap — the generation function itself doesn't exist, and needs a design decision (what a "macro insight" is) before any code. Also worth deciding up front: 62 companies × monthly LLM calls, plus whatever the macro job turns out to cost, is real recurring spend — confirm that's wanted before automating either.**
+
+- **Update (2026-09-07):** the company-insights half of this gap is closed
+  — `scripts/batch_generate_insights.py` (`run_key_insights_batch()`,
+  `job_name="key_insights_batch"`) loops Nifty 50 + every active US
+  company (81 on file as of this update, not 62 — the company universe has
+  grown since this section was first written) through the existing
+  `research/insights.py` `generate_key_insights()` + `save_company_
+  insights()`, wired into Settings > Data Operations > Schedule's "Run
+  now" (`insights_companies` row), same `BatchRun` audit trail every other
+  job here uses. Paced at 3s between calls (real Anthropic spend per
+  call, unlike the price/XBRL jobs' rate-limit-driven pacing), and refuses
+  to run at all (`RuntimeError`, before touching any company or opening a
+  `BatchRun`) if `ANTHROPIC_API_KEY` isn't configured — `generate_key_
+  insights()` itself doesn't raise on that, it returns a "temporarily
+  unavailable" placeholder string that the existing single-company button
+  route already persists as if it were a real insight; fine for one
+  accidental click, not something this job should do to 81 companies'
+  saved insights in one unattended run. A company with no financials
+  ingested yet (`NoDataToSummarizeError`) is recorded as skipped, not
+  failed. Macro insights are still the deeper, unbuilt-generation-function
+  gap described above — unchanged by this update. The recurring-spend
+  question this section originally raised is still a real one to confirm
+  before actually enabling this on a live cron cadence (today it's
+  schedulable but not scheduled — cron/timer wiring is still a separate
+  step, see this file's own summary table).
 
 ## 6. Macro data ingestion — weekly
 
@@ -254,19 +293,22 @@ scheduling policy and gap analysis only.
 | Financials | Quarterly | Ready | Gap (fiscal-quarter mapping) |
 | Shareholding pattern | Quarterly | Ready | N/A (SEBI LODR Reg 31 — India-only regulation) |
 | Price history | Weekly | Ready (already daily) | Ready (`fetch_daily_prices_usa.py`) |
-| Doc analysis (transcripts/concalls) | Quarterly | Partial (typing exists, extraction is real, no trigger, no fetch source) | Same |
-| Analytics/insights — companies | Monthly | Gap (no batch script; generation fn reusable) | Same |
+| Doc analysis (transcripts/concalls) | Quarterly | Ready to schedule (trigger only — still no fetch source, manually-uploaded files only) | Same |
+| Analytics/insights — companies | Monthly | Ready to schedule (Nifty 50 + USA) | Same |
 | Analytics/insights — macro | Monthly | Gap (generation fn doesn't exist yet) | Same |
 | Macro data | Weekly | FRED ready; RBI/IITM/DBIE gap | N/A (US macro not in scope here) |
 | DB sharding | Daily | Ready (shard step only) | Commit+push needs a separate explicit decision |
 
-Price history (India and USA), financials (India), shareholding pattern
-(India), and the DB sharding step are ready to actually put on a schedule
-today — all four are also wired into Settings > Data Operations >
-Schedule's manual "Run now" trigger (11 rows total: 2 price-history + 1
-sharding + 4 each for financials/shareholding — Nifty 50, Next 50, Midcap
-150, Smallcap 250), with every run's status visible in Audit Log > Job
-Runs. Everything else needs real implementation work first — not just a
-cron entry. And even for sharding, "ready" is the local file-writing part
+Price history (India and USA), financials (India and USA), shareholding
+pattern (India), DB sharding, FRED macro data, document analysis, and
+company insights are ready to actually put on a schedule today — all of
+them are also wired into Settings > Data Operations > Schedule's manual
+"Run now" trigger (15 rows total: 2 price-history + 1 sharding + 4 each
+for financials/shareholding India tiers — Nifty 50, Next 50, Midcap 150,
+Smallcap 250 — + 1 financials USA + 1 FRED macro + 1 doc analysis + 1
+company insights), with every run's status visible in Audit Log > Job
+Runs. Everything else (macro insights, RBI/IITM/DBIE macro data) needs
+real implementation work first — not just a cron entry. And even for
+sharding, "ready" is the local file-writing part
 only — turning that into an actual git backup still needs the commit+push
 decision above made explicitly.
