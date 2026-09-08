@@ -28,8 +28,8 @@ The platform deliberately separates:
 
 ### Architecture Visuals
 
-- [Open Product / Executive Architecture Visual](Architecture-Visual-Executive.png) — product capability and executive view
-- [Open Technical Architecture Visual](Architecture-Visual-Technical.png) — detailed system architecture view
+- [Open Product / Executive Architecture Visual](docs/Architecture-Visual-Executive.png) — product capability and executive view
+- [Open Technical Architecture Visual](docs/Architecture-Visual-Technical.png) — detailed system architecture view
 
 ---
 
@@ -54,15 +54,15 @@ Different documents serve different purposes:
 
 | Document | Purpose |
 |---|---|
-| [`Architecture-Visual-Investor.png`](Architecture-Visual-Investor.png) | Product capability / executive architecture view |
-| [`Architecture-Visual-Technical.png`](Architecture-Visual-Technical.png) | Detailed technical architecture view |
-| [`architecture.md`](architecture.md) | Current implementation and technical architecture |
-| [`DESIGN_RATIONALE.md`](DESIGN_RATIONALE.md) | Why the major architecture choices were made |
-| [`ADR/`](ADR/) | Durable Architecture Decision Records for individual major decisions |
-| [`FeatureList.md`](FeatureList.md) | Shipped vs. open capabilities |
-| [`SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md`](SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md) | Research-loop validation |
-| [`SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md`](SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md) | Hybrid-retrieval validation |
-| [`USER_GUIDE.md`](USER_GUIDE.md) | How to run and use Signals |
+| [`Architecture-Visual-Investor.png`](docs/Architecture-Visual-Investor.png) | Product capability / executive architecture view |
+| [`Architecture-Visual-Technical.png`](docs/Architecture-Visual-Technical.png) | Detailed technical architecture view |
+| [`architecture.md`](docs/architecture.md) | Current implementation and technical architecture |
+| [`DESIGN_RATIONALE.md`](docs/DESIGN_RATIONALE.md) | Why the major architecture choices were made |
+| [`docs/ADR/`](docs/ADR/) | Durable Architecture Decision Records for individual major decisions |
+| [`FeatureList.md`](docs/FeatureList.md) | Shipped vs. open capabilities |
+| [`SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md`](docs/SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md) | Research-loop validation |
+| [`SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md`](docs/SIGNAL_HYBRID_RETRIEVAL_VALIDATION.md) | Hybrid-retrieval validation |
+| [`USER_GUIDE.md`](docs/USER_GUIDE.md) | How to run and use Signals |
 
 > **How to read this repository**
 >
@@ -133,12 +133,12 @@ See [`LICENSE`](LICENSE) for the governing terms.
 > the way it was. They should **not** be treated as the source of truth for the current
 > implementation.
 >
-> For the current technical architecture, see [`architecture.md`](architecture.md).
+> For the current technical architecture, see [`architecture.md`](docs/architecture.md).
 > For the reasoning behind major design decisions, see
-> [`DESIGN_RATIONALE.md`](DESIGN_RATIONALE.md).
-> For durable individual architecture decisions and trade-offs, see [`ADR/`](ADR/).
-> For shipped vs. open capabilities, see [`FeatureList.md`](FeatureList.md).
-> For operating instructions, see [`USER_GUIDE.md`](USER_GUIDE.md).
+> [`DESIGN_RATIONALE.md`](docs/DESIGN_RATIONALE.md).
+> For durable individual architecture decisions and trade-offs, see [`docs/ADR/`](docs/ADR/).
+> For shipped vs. open capabilities, see [`FeatureList.md`](docs/FeatureList.md).
+> For operating instructions, see [`USER_GUIDE.md`](docs/USER_GUIDE.md).
 >
 > The numbered implementation sequences below are retained as historical roadmap and
 > scoping context. Their current implementation status lives in `FeatureList.md`.
@@ -211,7 +211,7 @@ price history, and more) — so read "No multi-agent framework, no orchestrator/
 
 agents" below as *\*this proposal's original scope\**, not a claim about what's built
 
-today. See [architecture.md's High-level architecture]\(architecture.md#high-level-architecture)
+today. See [architecture.md's High-level architecture]\(docs/architecture.md#high-level-architecture)
 
 for the current, accurate diagram.
 
@@ -273,7 +273,7 @@ others exist that this proposal didn't anticipate — \`context/\`, \`llm/\`,
 
 \`web/\`). For the real, current module map, see
 
-[architecture.md's Module map]\(architecture.md#module-map).
+[architecture.md's Module map]\(docs/architecture.md#module-map).
 
 \`\`\`
 
@@ -463,7 +463,7 @@ they'd reuse the existing \`documents\`/\`document\_chunks\` pipeline as-is
 
 schema change). That pipeline itself now exists (page-scoped chunking + FTS5
 
-keyword search, see [architecture.md's Document Retrieval]\(architecture.md#document-retrieval-retrievaldocument\_searchpy)),
+keyword search, see [architecture.md's Document Retrieval]\(docs/architecture.md#document-retrieval-retrievaldocument\_searchpy)),
 
 but nothing in \`sources/\` fetches a macro narrative file in the first place —
 
@@ -519,7 +519,7 @@ source of truth; it has grown well past what's sketched here, e.g.
 
 \`macro\_observations\`, \`generated\_reports\`, \`llm\_call\_log\`, \`users\`,
 
-\`watchlist\_items\`), or [architecture.md's Data model]\(architecture.md#data-model-sqlite-schemassqlite\_schemasql)
+\`watchlist\_items\`), or [architecture.md's Data model]\(docs/architecture.md#data-model-sqlite-schemassqlite\_schemasql)
 
 for a current, grouped summary.
 
@@ -609,7 +609,7 @@ for non-company data) is actually built today — NSE, BSE, and Investor Relatio
 
 below are the original design for [Implementation Sequence]\(#implementation-sequence)
 
-steps 6-7, not yet started; see [FeatureList.md]\(FeatureList.md) for current status.
+steps 6-7, not yet started; see [FeatureList.md]\(docs/FeatureList.md) for current status.
 
 **\*\*Screener\*\*** (\`ScreenerAdapter\`) — \`.xlsx\` exports with fixed-ish sheet names (Profit &
 
@@ -673,7 +673,7 @@ for its design rationale. Semantic retrieval, Qdrant, and a real
 
 \`hybrid\_search.py\` module all exist today — see [architecture.md's Hybrid
 
-Document Retrieval]\(architecture.md#hybrid-document-retrieval-retrievalhybrid\_searchpy)
+Document Retrieval]\(docs/architecture.md#hybrid-document-retrieval-retrievalhybrid\_searchpy)
 
 and [Open Decisions]\(#open-decisions) below for current state.
 
@@ -697,13 +697,13 @@ Document evidence *\*for Q&A/Signals reports\** took a leaner shape than propose
 
 here — \`research/documents.py\` does direct PDF extraction per question, no
 
-caching (see [architecture.md's Known gaps]\(architecture.md#documents--docs-tab)).
+caching (see [architecture.md's Known gaps]\(docs/architecture.md#documents--docs-tab)).
 
 Page-scoped chunking + FTS5 keyword search were since built as their own
 
 standalone capability (\`research/document\_chunker.py\`, \`retrieval/document\_search.py\`
 
-— see [architecture.md's Document Retrieval]\(architecture.md#document-retrieval-retrievaldocument\_searchpy)),
+— see [architecture.md's Document Retrieval]\(docs/architecture.md#document-retrieval-retrievaldocument\_searchpy)),
 
 and — unlike when this section was first drafted — \`retrieval/hybrid\_search.py\`
 
@@ -759,7 +759,7 @@ facts — never presented as confirmed). This is still the current tagging schem
 
 unchanged since this proposal — see [architecture.md's Key design
 
-principles]\(architecture.md#key-design-principles) #1-#2 for how it's actually
+principles]\(docs/architecture.md#key-design-principles) #1-#2 for how it's actually
 
 enforced in code today (every LLM claim traces back to a specific retrieved
 
@@ -803,7 +803,7 @@ models are even allowed to run) have moved since this was written and now
 
 live in one place: [\`config/settings.py\`]\(config/settings.py)'s "Model
 
-tiering policy" section. See [architecture.md's Research / AI layer]\(architecture.md#research--ai-layer-context-optimization--model-routing--fallback)
+tiering policy" section. See [architecture.md's Research / AI layer]\(docs/architecture.md#research--ai-layer-context-optimization--model-routing--fallback)
 
 for the full current pipeline (Context Optimizer → Hardness Evaluator → Model
 
@@ -815,7 +815,7 @@ The roadmap as originally sequenced, kept stable so other docs (and code
 
 comments) can cross-reference a step by number. \*\*Status against each step
 
-lives in [FeatureList.md]\(FeatureList.md), not here\*\* — this section is the
+lives in [FeatureList.md]\(docs/FeatureList.md), not here\*\* — this section is the
 
 plan and its rationale, not a running checklist.
 
@@ -881,7 +881,7 @@ that section: \*\*this is the plan and its rationale — current status and the
 
 actual (sometimes differently-shaped) implementation live in
 
-[FeatureList.md]\(FeatureList.md) and [architecture.md]\(architecture.md)\*\*, not
+[FeatureList.md]\(docs/FeatureList.md) and [architecture.md]\(docs/architecture.md)\*\*, not
 
 here. In particular, several tables proposed below by name
 
@@ -967,7 +967,7 @@ supported it, mocked only where it depended on ingestion that didn't exist
 
 yet). **\*\*Decided and largely built: Track B\*\*** — see
 
-[FeatureList.md]\(FeatureList.md) for exactly what's real vs. still mocked
+[FeatureList.md]\(docs/FeatureList.md) for exactly what's real vs. still mocked
 
 today. The reasoning that led there: a wireframe's own information
 
@@ -1093,7 +1093,7 @@ the chain to mean what the confidence badge claims it means.
 
 The step-by-step build checklist, what's shipped since, and the open backlog
 
-now live in [FeatureList.md]\(FeatureList.md) — split out to keep this
+now live in [FeatureList.md]\(docs/FeatureList.md) — split out to keep this
 
 document focused on architecture and scoping decisions rather than a running
 
@@ -1115,7 +1115,7 @@ Two calls made while drafting this architecture, both since settled:
 
   the Investigation Planner. See [architecture.md's Hybrid Document
 
-  Retrieval]\(architecture.md#hybrid-document-retrieval-retrievalhybrid\_searchpy)
+  Retrieval]\(docs/architecture.md#hybrid-document-retrieval-retrievalhybrid\_searchpy)
 
   for the current implementation.
 
@@ -1127,7 +1127,7 @@ Two calls made while drafting this architecture, both since settled:
 
   NSE XBRL ingestion is real today ([Source / Provenance]\(#source--provenance--reconciliation));
 
-  BSE still has no adapter — see [FeatureList.md]\(FeatureList.md).
+  BSE still has no adapter — see [FeatureList.md]\(docs/FeatureList.md).
 
 **## Engineering Principles**
 
