@@ -53,9 +53,15 @@ def _run_financials(conn, company_id: str) -> str:
 
     dest_dir = app_settings.RAW_DIR / company_id / "nse"
     result = refresh_company_filings(symbol, dest_dir)
-    if not result.downloaded_files and result.error_count:
-        # Nothing usable came back at all -- a real failure, not "0 new
-        # filings, up to date" (that case has error_count == 0).
+    if not result.downloaded_files and not result.skipped_count and result.error_count:
+        # Nothing usable at all -- no new download, and nothing already on
+        # disk either. Without the skipped_count check, a company whose
+        # current filings are already on disk (skipped, so downloaded_files
+        # is empty) but which also has one permanently-dead old-filing URL
+        # (verified against IDFCFIRSTB/AUBANK: NSE 404s on specific old
+        # 2019/2023 archive links on every run, unrelated to whether recent
+        # data is up to date) would be marked a total failure every single
+        # run even though its data is complete and current.
         raise NSEFetchError(f"{result.error_count} NSE request(s) failed, nothing downloaded")
 
     reconciled = 0

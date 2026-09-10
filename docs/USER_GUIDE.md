@@ -67,6 +67,31 @@ ANTHROPIC_API_KEY=sk-ant-...
 `.env` is git-ignored and loaded automatically by every `python main.py ...` command —
 you don't need to `export` or `source` anything yourself.
 
+**Optional infrastructure — Neo4j (graph) and Qdrant (semantic search):** neither is
+required. Out of the box, `GRAPH_BACKEND=sqlite` (the default) runs relationship
+traversal as pure Python over the existing SQLite tables, and semantic search degrades
+to FTS5/BM25-only if Qdrant isn't reachable. Both are local-first — this app never
+starts, stops, or manages them; you run them yourself, the same way you'd run Ollama:
+
+```bash
+# Neo4j — only needed if you set GRAPH_BACKEND=neo4j
+docker run -d --name neo4j -p 7474:7474 -p 7687:7687 \
+    -e NEO4J_AUTH=neo4j/<your-password> neo4j:5
+# then in .env: GRAPH_BACKEND=neo4j, NEO4J_PASSWORD=<your-password>
+# browse the graph at http://localhost:7474
+
+# Qdrant — only needed for semantic (vector) search; VECTOR_STORE_BACKEND
+# already defaults to "qdrant", so this is the one worth starting if you
+# want feature 9's chat and the AI assistant to use semantic retrieval
+docker run -d --name qdrant -p 6333:6333 -p 6334:6334 qdrant/qdrant
+# set VECTOR_STORE_BACKEND=none in .env to disable the vector layer entirely
+# instead (e.g. no Docker available) — everything falls back to FTS5/BM25
+```
+
+If a configured Neo4j or Qdrant instance is unreachable at request time, both
+degrade automatically rather than failing — see `config/settings.py`'s
+`GRAPH_BACKEND`/`VECTOR_STORE_BACKEND` comments for the full set of env vars.
+
 ---
 
 ## Features
@@ -372,6 +397,33 @@ python main.py ingest-fred UNRATE --unit PERCENT
   can draw on this series alongside India's RBI/IITM data — each is attributed to
   `"USA"` or `"INDIA"` in the evidence the assistant cites, so nothing gets conflated
   across countries.
+
+**Any FRED series works** — `ingest-fred` isn't limited to the three examples above;
+pass any series ID visible in a series' URL on
+[fred.stlouisfed.org](https://fred.stlouisfed.org) (with the matching `--unit`).
+
+**Batch job (starter set):** `scripts/batch_fetch_fred.py` loops over a small,
+curated list of broad US indicators relevant regardless of which company/sector is
+under review — useful for a first-time pull or a scheduled refresh instead of
+ingesting series one at a time:
+
+| Series ID | Meaning | Unit |
+|---|---|---|
+| `FEDFUNDS` | Federal funds rate | PERCENT |
+| `DGS10` | 10-Year Treasury yield | PERCENT |
+| `CPIAUCSL` | CPI (inflation) | INDEX |
+| `UNRATE` | Unemployment rate | PERCENT |
+| `GDP` | US GDP | USD_BILLION |
+
+```bash
+python -m scripts.batch_fetch_fred                    # every series above
+python -m scripts.batch_fetch_fred --series FEDFUNDS,DGS10   # just these two
+```
+
+This list (`TRACKED_SERIES` in that script) is a plain Python list, not a database
+table — add a series by adding one `FredSeries(...)` entry; each is independent, so
+adding one never touches the others. This is also the job the Settings > Data
+Operations > Schedule panel's "FRED macro data" row runs.
 
 ---
 
