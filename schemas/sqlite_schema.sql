@@ -816,6 +816,56 @@ CREATE TABLE IF NOT EXISTS stock_actions (
 CREATE INDEX IF NOT EXISTS idx_stock_actions_company ON stock_actions(company_id, action_date);
 
 -- ============================================================
+-- Corporate actions, raw feed -- NSE's corporates-corporateActions listing
+-- (Bonus, Dividend, Split, Face-Value Split, Rights), fetched and stored
+-- verbatim with zero interpretation (see sources/nse_corporate_actions.py).
+-- `subject` is NSE's own freeform text -- classifying it into a type is a
+-- separate ingestion-layer concern, deliberately not done at fetch time,
+-- same "raw feed, decide how to process it separately" split this app
+-- already uses for financial_observations vs canonical_financials.
+-- Independent of stock_actions above: that table is hand-curated
+-- share-count-adjustment ratios feeding indicator math; this one is the
+-- full auto-fetched history (including dividends, which don't fit
+-- stock_actions' ratio_from/ratio_to shape at all).
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS corporate_actions_raw (
+  raw_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  subject TEXT NOT NULL,            -- NSE's raw free-text label, verbatim (may carry leading/trailing whitespace)
+  ex_date TEXT NOT NULL,            -- ISO date
+  record_date TEXT,                 -- ISO date, nullable -- some older actions carry "-" and use bc_start/end_date instead
+  face_value REAL,
+  bc_start_date TEXT,               -- book-closure window, when this action used one instead of a record date
+  bc_end_date TEXT,
+  raw_json TEXT NOT NULL,           -- the full NSE row, verbatim, for anything not modeled in columns above
+  source TEXT NOT NULL DEFAULT 'nse',
+  retrieved_at TEXT NOT NULL,
+  processed_at TEXT,                -- NULL until a future ingestion step classifies this row (not built yet)
+  UNIQUE(company_id, ex_date, subject)
+);
+CREATE INDEX IF NOT EXISTS idx_corp_actions_raw_unprocessed ON corporate_actions_raw(company_id) WHERE processed_at IS NULL;
+
+-- Processed/display-ready rows, produced by ingestion/corporate_actions.py
+-- classifying corporate_actions_raw.subject -- see that module for the
+-- keyword rules. classifier_version lets a future rule change be
+-- re-applied to history (re-run ingestion) without re-fetching from NSE.
+CREATE TABLE IF NOT EXISTS corporate_actions (
+  action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  raw_id INTEGER NOT NULL REFERENCES corporate_actions_raw(raw_id),
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  action_type TEXT NOT NULL,        -- bonus | dividend | split | fv_split | rights | other
+  subject TEXT NOT NULL,
+  ex_date TEXT NOT NULL,
+  record_date TEXT,
+  face_value REAL,
+  classifier_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(raw_id)
+);
+CREATE INDEX IF NOT EXISTS idx_corporate_actions_company ON corporate_actions(company_id, ex_date);
+
+-- ============================================================
 -- Users -- sign-up is email-based (no verification, self-use system).
 -- The one seeded admin account logs in by username instead of email, so
 -- it's a separate nullable column rather than a fake "admin@..." email.

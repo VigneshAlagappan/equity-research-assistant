@@ -768,6 +768,23 @@ def create_app() -> Flask:
         companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
         return run_nse_batch(conn, "shareholding", companies, scope_label=f"Nifty 50 ({len(companies)})")
 
+    def _run_corporate_actions_india(conn) -> int:
+        """Nifty 50 only, hardcoded rather than via _make_nse_tier_runner
+        like its sibling tiers below -- same scoping reasoning as
+        _run_financials_india above -- raw fetch only (see
+        scripts/batch_fetch_nse.py's _run_corporate_actions)."""
+        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
+        return run_nse_batch(conn, "corporate_actions", companies, scope_label=f"Nifty 50 ({len(companies)})")
+
+    def _run_corporate_actions_ingest_india(conn) -> int:
+        """Classifies whatever _run_corporate_actions_india above has
+        fetched into corporate_actions -- a separate scheduled job (not a
+        step of the fetch job itself) so re-classifying later never
+        requires re-fetching, same as canonical_financials' own
+        reconciliation being a distinct action from ingestion."""
+        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
+        return run_nse_batch(conn, "corporate_actions_ingest", companies, scope_label=f"Nifty 50 ({len(companies)})")
+
     # The other ~449 Nifty 500 constituents (everything not already covered
     # by the Nifty 50 job above) used to be one "Nifty 500 remaining" job --
     # replaced with three smaller ones along NSE's own standard tiering
@@ -806,6 +823,28 @@ def create_app() -> Flask:
     _run_shareholding_nifty_smallcap250 = _make_nse_tier_runner(
         "shareholding", "Nifty Smallcap 250", "nse_shareholding_fetch_nifty_smallcap250")
 
+    _run_corporate_actions_nifty_next50 = _make_nse_tier_runner(
+        "corporate_actions", "Nifty Next 50", "nse_corporate_actions_fetch_nifty_next50")
+    _run_corporate_actions_nifty_midcap150 = _make_nse_tier_runner(
+        "corporate_actions", "Nifty Midcap 150", "nse_corporate_actions_fetch_nifty_midcap150")
+    _run_corporate_actions_nifty_smallcap250 = _make_nse_tier_runner(
+        "corporate_actions", "Nifty Smallcap 250", "nse_corporate_actions_fetch_nifty_smallcap250")
+    _run_corporate_actions_ingest_nifty_next50 = _make_nse_tier_runner(
+        "corporate_actions_ingest", "Nifty Next 50", "nse_corporate_actions_ingest_nifty_next50")
+    _run_corporate_actions_ingest_nifty_midcap150 = _make_nse_tier_runner(
+        "corporate_actions_ingest", "Nifty Midcap 150", "nse_corporate_actions_ingest_nifty_midcap150")
+    _run_corporate_actions_ingest_nifty_smallcap250 = _make_nse_tier_runner(
+        "corporate_actions_ingest", "Nifty Smallcap 250", "nse_corporate_actions_ingest_nifty_smallcap250")
+
+    _run_financials_nifty_microcap = _make_nse_tier_runner(
+        "financials", "Nifty Micro-Cap", "nse_xbrl_fetch_nifty_microcap")
+    _run_shareholding_nifty_microcap = _make_nse_tier_runner(
+        "shareholding", "Nifty Micro-Cap", "nse_shareholding_fetch_nifty_microcap")
+    _run_corporate_actions_nifty_microcap = _make_nse_tier_runner(
+        "corporate_actions", "Nifty Micro-Cap", "nse_corporate_actions_fetch_nifty_microcap")
+    _run_corporate_actions_ingest_nifty_microcap = _make_nse_tier_runner(
+        "corporate_actions_ingest", "Nifty Micro-Cap", "nse_corporate_actions_ingest_nifty_microcap")
+
     def _run_price_history_india(conn) -> int:
         # run_price_history_update() opens its own main-db/price-db
         # connections internally (see scripts/fetch_daily_prices.py's own
@@ -814,6 +853,11 @@ def create_app() -> Flask:
         # ignored here, not reused, which is fine: it's the same main db
         # underneath, just a second connection to it.
         return run_price_history_update()
+
+    def _run_price_history_nifty_microcap(conn) -> int:
+        # Same "conn ignored, own connections opened internally" shape as
+        # _run_price_history_india above.
+        return run_price_history_update(index_name="Nifty Micro-Cap", job_name="price_history_india_nifty_microcap")
 
     def _run_db_shard(conn) -> int:
         return run_db_shard_job(conn)
@@ -844,12 +888,14 @@ def create_app() -> Flask:
         # underneath either way.
         return run_price_history_update_usa()
 
-    # Fifteen jobs get a real "Run now" button; the other two render as a
+    # Twenty-eight jobs get a real "Run now" button; the other two render as a
     # disabled row with `reason` as subtext (see ScheduledJob's docstring
     # above). Order here is the display order in the Schedule panel table.
     _SCHEDULED_JOBS: list[ScheduledJob] = [
         ScheduledJob("price_history_india", "Price history — India", "Daily",
                      "price_history_india", None, _run_price_history_india),
+        ScheduledJob("price_history_india_nifty_microcap", "Price history — India (Nifty Micro-Cap)", "Monthly",
+                     "price_history_india_nifty_microcap", None, _run_price_history_nifty_microcap),
         ScheduledJob("price_history_usa", "Price history — USA", "Weekly",
                      "price_history_usa", None, _run_price_history_usa),
         ScheduledJob("db_shard", "DB sharding", "Daily",
@@ -862,6 +908,8 @@ def create_app() -> Flask:
                      "nse_xbrl_fetch_nifty_midcap150", None, _run_financials_nifty_midcap150),
         ScheduledJob("financials_india_smallcap250", "Financials — India (Nifty Smallcap 250)", "Quarterly",
                      "nse_xbrl_fetch_nifty_smallcap250", None, _run_financials_nifty_smallcap250),
+        ScheduledJob("financials_india_microcap", "Financials — India (Nifty Micro-Cap)", "Monthly",
+                     "nse_xbrl_fetch_nifty_microcap", None, _run_financials_nifty_microcap),
         ScheduledJob("shareholding_india", "Shareholding pattern — India (Nifty 50)", "Quarterly",
                      "nse_shareholding_fetch", None, _run_shareholding_india),
         ScheduledJob("shareholding_india_next50", "Shareholding pattern — India (Nifty Next 50)", "Quarterly",
@@ -870,6 +918,28 @@ def create_app() -> Flask:
                      "nse_shareholding_fetch_nifty_midcap150", None, _run_shareholding_nifty_midcap150),
         ScheduledJob("shareholding_india_smallcap250", "Shareholding pattern — India (Nifty Smallcap 250)", "Quarterly",
                      "nse_shareholding_fetch_nifty_smallcap250", None, _run_shareholding_nifty_smallcap250),
+        ScheduledJob("shareholding_india_microcap", "Shareholding pattern — India (Nifty Micro-Cap)", "Monthly",
+                     "nse_shareholding_fetch_nifty_microcap", None, _run_shareholding_nifty_microcap),
+        ScheduledJob("corporate_actions_india", "Corporate actions — India (Nifty 50)", "Quarterly",
+                     "nse_corporate_actions_fetch", None, _run_corporate_actions_india),
+        ScheduledJob("corporate_actions_ingest_india", "Corporate actions ingest — India (Nifty 50)", "Quarterly",
+                     "nse_corporate_actions_ingest", None, _run_corporate_actions_ingest_india),
+        ScheduledJob("corporate_actions_india_next50", "Corporate actions — India (Nifty Next 50)", "Quarterly",
+                     "nse_corporate_actions_fetch_nifty_next50", None, _run_corporate_actions_nifty_next50),
+        ScheduledJob("corporate_actions_ingest_india_next50", "Corporate actions ingest — India (Nifty Next 50)", "Quarterly",
+                     "nse_corporate_actions_ingest_nifty_next50", None, _run_corporate_actions_ingest_nifty_next50),
+        ScheduledJob("corporate_actions_india_midcap150", "Corporate actions — India (Nifty Midcap 150)", "Quarterly",
+                     "nse_corporate_actions_fetch_nifty_midcap150", None, _run_corporate_actions_nifty_midcap150),
+        ScheduledJob("corporate_actions_ingest_india_midcap150", "Corporate actions ingest — India (Nifty Midcap 150)", "Quarterly",
+                     "nse_corporate_actions_ingest_nifty_midcap150", None, _run_corporate_actions_ingest_nifty_midcap150),
+        ScheduledJob("corporate_actions_india_smallcap250", "Corporate actions — India (Nifty Smallcap 250)", "Quarterly",
+                     "nse_corporate_actions_fetch_nifty_smallcap250", None, _run_corporate_actions_nifty_smallcap250),
+        ScheduledJob("corporate_actions_ingest_india_smallcap250", "Corporate actions ingest — India (Nifty Smallcap 250)", "Quarterly",
+                     "nse_corporate_actions_ingest_nifty_smallcap250", None, _run_corporate_actions_ingest_nifty_smallcap250),
+        ScheduledJob("corporate_actions_india_microcap", "Corporate actions — India (Nifty Micro-Cap)", "Monthly",
+                     "nse_corporate_actions_fetch_nifty_microcap", None, _run_corporate_actions_nifty_microcap),
+        ScheduledJob("corporate_actions_ingest_india_microcap", "Corporate actions ingest — India (Nifty Micro-Cap)", "Monthly",
+                     "nse_corporate_actions_ingest_nifty_microcap", None, _run_corporate_actions_ingest_nifty_microcap),
         ScheduledJob("financials_usa", "Financials — USA", "Quarterly",
                      "sec_edgar_financials_fetch", None, _run_financials_usa),
         ScheduledJob("doc_analysis", "Document analysis (transcripts/concalls)", "Quarterly",

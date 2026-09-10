@@ -39,7 +39,9 @@ BATCH_PAUSE_SECONDS = 5
 FETCH_PERIOD = "5d"
 
 
-def run_price_history_update(main_conn=None, price_conn=None) -> int:
+def run_price_history_update(
+    main_conn=None, price_conn=None, *, index_name: str = "Nifty 500", job_name: str = "price_history_india"
+) -> int:
     """The actual per-company fetch+upsert loop, factored out of main() so
     the Settings > Data Operations > Schedule panel's "Run now" button
     (web/app.py) can trigger the identical daily job on demand -- one
@@ -56,6 +58,11 @@ def run_price_history_update(main_conn=None, price_conn=None) -> int:
     through the separate price db. Get this backwards and the run would
     silently write its audit rows into a db nothing else queries them from.
 
+    `index_name`/`job_name` default to this job's original Nifty 500/
+    price_history_india scope so every existing zero-arg caller keeps its
+    current behavior -- web/app.py's Nifty Micro-Cap tier closure is the
+    first caller to override either.
+
     Returns the BatchRun's run_id."""
     owns_main_conn = main_conn is None
     if main_conn is None:
@@ -65,12 +72,12 @@ def run_price_history_update(main_conn=None, price_conn=None) -> int:
         price_conn = init_price_db()
 
     try:
-        rows = select_index_members_with_nse_symbol(main_conn, "Nifty 500")
+        rows = select_index_members_with_nse_symbol(main_conn, index_name)
         total = len(rows)
-        print(f"{total} Nifty 500 companies with an nse_symbol on file", flush=True)
+        print(f"{total} {index_name} companies with an nse_symbol on file", flush=True)
 
         updated = no_data = errors = 0
-        with BatchRun(main_conn, "price_history_india", scope_label=f"Nifty 500 ({total} companies)") as run:
+        with BatchRun(main_conn, job_name, scope_label=f"{index_name} ({total} companies)") as run:
             for i, (company_id, nse_symbol) in enumerate(rows, 1):
                 with run.item(company_id) as item:
                     try:
