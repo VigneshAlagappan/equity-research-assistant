@@ -15,6 +15,8 @@ rules a caller already enforced.
 
 from __future__ import annotations
 
+import json
+
 from storage.db_types import DBConnection, Row
 
 _SECTOR_PEER_COLUMNS = {"basic_industry": "basic_industry", "macro_economic_sector": "macro_economic_sector"}
@@ -190,6 +192,104 @@ def delete_stock_action_row(conn: DBConnection, company_id: str, action_id: int)
     return cursor.rowcount
 
 
+def insert_corporate_actions_raw(conn: DBConnection, company_id: str, actions: list, *, now: str) -> int:
+    """Bulk-insert NSE's raw corporate-actions rows for one company --
+    `INSERT OR IGNORE` on (company_id, ex_date, subject) makes a re-fetch
+    idempotent (same convention as shareholding's "already fetched"
+    tracking), so calling this again with an overlapping/full history is
+    always safe. `actions` is a list of
+    sources.nse_corporate_actions.CorporateActionRef. Returns how many rows
+    were newly inserted (0 if every row was already on file)."""
+    changes_before = conn.total_changes
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO corporate_actions_raw (
+            company_id, subject, ex_date, record_date, face_value,
+            bc_start_date, bc_end_date, raw_json, source, retrieved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'nse', ?)
+        """,
+        [
+            (
+                company_id, a.subject, a.ex_date.isoformat(),
+                a.record_date.isoformat() if a.record_date else None,
+                a.face_value,
+                a.bc_start_date.isoformat() if a.bc_start_date else None,
+                a.bc_end_date.isoformat() if a.bc_end_date else None,
+                json.dumps(a.raw), now,
+            )
+            for a in actions
+        ],
+    )
+    conn.commit()
+    # executemany()'s own cursor.rowcount isn't reliable for INSERT OR
+    # IGNORE (ignored conflicts aren't consistently excluded across sqlite3
+    # versions) -- conn.total_changes only increments for rows actually
+    # written, so a before/after diff is the correct "how many new" count.
+    return conn.total_changes - changes_before
+
+
+def select_unprocessed_corporate_actions_raw(conn: DBConnection, company_id: str) -> list[Row]:
+    return conn.execute(
+        "SELECT * FROM corporate_actions_raw WHERE company_id = ? AND processed_at IS NULL ORDER BY ex_date",
+        (company_id,),
+    ).fetchall()
+
+
+def select_all_corporate_actions_raw(conn: DBConnection, company_id: str) -> list[Row]:
+    """Every raw row for this company regardless of processed_at -- for
+    re-classifying history after a classify_action_type() rule change
+    (ingestion/corporate_actions.py's reclassify_company_corporate_actions),
+    as opposed to select_unprocessed_corporate_actions_raw's "only what's
+    new" scope used by the normal ingest pass."""
+    return conn.execute(
+        "SELECT * FROM corporate_actions_raw WHERE company_id = ? ORDER BY ex_date",
+        (company_id,),
+    ).fetchall()
+
+
+def mark_corporate_actions_raw_processed(conn: DBConnection, raw_id: int, *, now: str) -> None:
+    conn.execute("UPDATE corporate_actions_raw SET processed_at = ? WHERE raw_id = ?", (now, raw_id))
+    conn.commit()
+
+
+def insert_corporate_action(
+    conn: DBConnection, *, raw_id: int, company_id: str, action_type: str, subject: str,
+    ex_date: str, record_date: str | None, face_value: float | None, classifier_version: str, now: str,
+) -> Row:
+    """Upsert on raw_id (UNIQUE) -- doubles as both "classify this new raw
+    row" (the normal ingest pass) and "re-classify this already-processed
+    row under a newer classifier_version" (reclassify_company_corporate_
+    actions, after a classify_action_type() rule change), without needing
+    two separate SQL statements. created_at is intentionally left alone on
+    a re-classify -- it's this action's original discovery time, not the
+    classifier's last-run time."""
+    conn.execute(
+        """
+        INSERT INTO corporate_actions (
+            raw_id, company_id, action_type, subject, ex_date, record_date,
+            face_value, classifier_version, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(raw_id) DO UPDATE SET
+            action_type = excluded.action_type,
+            subject = excluded.subject,
+            ex_date = excluded.ex_date,
+            record_date = excluded.record_date,
+            face_value = excluded.face_value,
+            classifier_version = excluded.classifier_version
+        """,
+        (raw_id, company_id, action_type, subject, ex_date, record_date, face_value, classifier_version, now),
+    )
+    conn.commit()
+    return conn.execute("SELECT * FROM corporate_actions WHERE raw_id = ?", (raw_id,)).fetchone()
+
+
+def select_corporate_actions(conn: DBConnection, company_id: str) -> list[Row]:
+    return conn.execute(
+        "SELECT * FROM corporate_actions WHERE company_id = ? ORDER BY ex_date DESC",
+        (company_id,),
+    ).fetchall()
+
+
 # ------------------------------------------------------------------
 # One-off/scheduled backfill scripts (scripts/backfill_company_websites.py,
 # scripts/backfill_sector_industry.py, scripts/fetch_daily_prices.py,
@@ -302,6 +402,41 @@ def select_active_companies_by_country(conn: DBConnection, country: str) -> list
         "SELECT company_id FROM companies WHERE country = ? AND status = 'active' ORDER BY company_id",
         (country,),
     ).fetchall()
+
+
+def select_india_companies_not_in_index(conn: DBConnection, exclude_index_name: str) -> list[Row]:
+    """company_id for every Indian company NOT tagged `exclude_index_name` in
+    company_index_membership -- scripts/tag_nifty_microcap.py's source set
+    (everything country='IN' outside Nifty 500, the tier NSE's own index
+    universe stops covering)."""
+    return conn.execute(
+        """
+        SELECT company_id FROM companies
+        WHERE country = 'IN' AND company_id NOT IN (
+            SELECT company_id FROM company_index_membership WHERE index_name = ?
+        )
+        ORDER BY company_id
+        """,
+        (exclude_index_name,),
+    ).fetchall()
+
+
+def tag_companies_index(conn: DBConnection, company_ids: list[str], index_name: str) -> int:
+    """Additive tag, not set_company_index_tags()'s "replace this company's
+    whole tag set" -- that function DELETEs a company's existing
+    company_index_membership rows first, which would silently drop any
+    other index tags (BSE indices, Nifty sub-variants) these companies
+    already carry. INSERT OR IGNORE keyed on the table's own (company_id,
+    index_name) uniqueness makes re-running this against an overlapping
+    company_ids list free. Returns how many rows were newly tagged (0 if
+    every company was already tagged)."""
+    changes_before = conn.total_changes
+    conn.executemany(
+        "INSERT OR IGNORE INTO company_index_membership (company_id, index_name) VALUES (?, ?)",
+        [(company_id, index_name) for company_id in company_ids],
+    )
+    conn.commit()
+    return conn.total_changes - changes_before
 
 
 def update_company_valuation_model_file(conn: DBConnection, company_id: str, valuation_model_file: str) -> None:

@@ -30,10 +30,12 @@ from ingestion.batch_log import BatchRun
 from ingestion.event_bus import publish
 from ingestion.events import DatasetIngestedEvent
 from ingestion.pipeline import ingest_file
+from ingestion.corporate_actions import process_company_corporate_actions
+from sources.nse_corporate_actions import fetch_corporate_actions
 from sources.nse_fetch import NSEFetchError, refresh_company_filings
 from sources.nse_shareholding import fetch_shareholding_detail, fetch_shareholding_master
-from storage.company_repository import select_company_ids_by_index
-from storage.database import init_db
+from storage.company_repository import insert_corporate_actions_raw, select_company_ids_by_index
+from storage.database import init_db, utcnow_iso
 from storage.repositories import (
     get_shareholding_detail_fetched_periods,
     insert_shareholding_holders,
@@ -53,9 +55,15 @@ def _run_financials(conn, company_id: str) -> str:
 
     dest_dir = app_settings.RAW_DIR / company_id / "nse"
     result = refresh_company_filings(symbol, dest_dir)
-    if not result.downloaded_files and result.error_count:
-        # Nothing usable came back at all -- a real failure, not "0 new
-        # filings, up to date" (that case has error_count == 0).
+    if not result.downloaded_files and not result.skipped_count and result.error_count:
+        # Nothing usable at all -- no new download, and nothing already on
+        # disk either. Without the skipped_count check, a company whose
+        # current filings are already on disk (skipped, so downloaded_files
+        # is empty) but which also has one permanently-dead old-filing URL
+        # (verified against IDFCFIRSTB/AUBANK: NSE 404s on specific old
+        # 2019/2023 archive links on every run, unrelated to whether recent
+        # data is up to date) would be marked a total failure every single
+        # run even though its data is complete and current.
         raise NSEFetchError(f"{result.error_count} NSE request(s) failed, nothing downloaded")
 
     reconciled = 0
@@ -67,6 +75,33 @@ def _run_financials(conn, company_id: str) -> str:
     if result.error_count:
         detail += f" errors={result.error_count}"
     return detail
+
+
+def _run_corporate_actions(conn, company_id: str) -> str:
+    """Fetch NSE's raw corporate-actions history for one company and store
+    it verbatim in corporate_actions_raw -- no classification here (see
+    sources/nse_corporate_actions.py's module docstring for why that's a
+    separate, not-yet-built ingestion step)."""
+    company = get_company(conn, company_id)
+    if company is None:
+        raise ValueError(f"no company registered as {company_id!r}")
+    symbol = company["nse_symbol"]
+    if not symbol:
+        raise ValueError(f"{company_id} has no nse_symbol on file")
+
+    actions = fetch_corporate_actions(symbol)
+    inserted = insert_corporate_actions_raw(conn, company_id, actions, now=utcnow_iso())
+    return f"fetched={len(actions)} new={inserted}"
+
+
+def _run_corporate_actions_ingest(conn, company_id: str) -> str:
+    """Classify this company's not-yet-processed corporate_actions_raw rows
+    into corporate_actions -- see ingestion/corporate_actions.py. A
+    separate `kind` from "corporate_actions" above (fetch vs. process),
+    same raw/processed split as financial_observations/canonical_financials,
+    but still driven through this same per-company batch loop/audit trail
+    for schedule-panel and audit-log parity with every other job here."""
+    return process_company_corporate_actions(conn, company_id)
 
 
 def _run_shareholding(conn, company_id: str) -> str:
@@ -139,8 +174,18 @@ def _run_shareholding(conn, company_id: str) -> str:
     return detail
 
 
-_RUNNERS = {"financials": _run_financials, "shareholding": _run_shareholding}
-_JOB_NAMES = {"financials": "nse_xbrl_fetch", "shareholding": "nse_shareholding_fetch"}
+_RUNNERS = {
+    "financials": _run_financials,
+    "shareholding": _run_shareholding,
+    "corporate_actions": _run_corporate_actions,
+    "corporate_actions_ingest": _run_corporate_actions_ingest,
+}
+_JOB_NAMES = {
+    "financials": "nse_xbrl_fetch",
+    "shareholding": "nse_shareholding_fetch",
+    "corporate_actions": "nse_corporate_actions_fetch",
+    "corporate_actions_ingest": "nse_corporate_actions_ingest",
+}
 
 
 def _resolve_companies(conn, args: argparse.Namespace) -> list[str]:
