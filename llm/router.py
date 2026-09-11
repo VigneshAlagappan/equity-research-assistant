@@ -22,10 +22,10 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from config.settings import TIER_PREFERRED_MODEL
+from config.settings import TIER_FALLBACK_CHAIN_OVERRIDE, TIER_PREFERRED_MODEL
 from llm import capability_registry
 from llm.hardness import TIER_MIN_REASONING_STRENGTH, HardnessResult, Tier
-from llm.providers import anthropic_provider, local_provider
+from llm.providers import anthropic_provider, local_provider, openrouter_provider
 from llm.providers.base import ProviderResponse, ProviderUnavailable
 
 # Looked up by provider name at call time (not bound into a dict at import
@@ -34,6 +34,7 @@ from llm.providers.base import ProviderResponse, ProviderUnavailable
 _PROVIDER_MODULES = {
     anthropic_provider.PROVIDER_NAME: anthropic_provider,
     local_provider.PROVIDER_NAME: local_provider,
+    openrouter_provider.PROVIDER_NAME: openrouter_provider,
 }
 
 # TIER_PREFERRED_MODEL (imported above, config/settings.py): the top-of-chain
@@ -85,6 +86,21 @@ def _fallback_chain(
         # override the operator policy that model is turned off entirely.
         return ([spec] if spec and spec.enabled else []), []
 
+    if tier.value in TIER_FALLBACK_CHAIN_OVERRIDE:
+        # "quick" (today's only member): an explicit, hand-ordered chain
+        # (config.settings.TIER_FALLBACK_CHAIN_OVERRIDE's own comment has
+        # the full reasoning) instead of the derived preferred/other-cloud/
+        # local chain below — bypasses the reasoning_strength gate entirely
+        # (an explicit chain is already an operator decision every listed
+        # model is acceptable here), and silently drops any listed model
+        # that isn't enabled (e.g. no OPENROUTER_API_KEY configured) rather
+        # than erroring, so the remaining steps still work.
+        chain = [
+            spec for model_id in TIER_FALLBACK_CHAIN_OVERRIDE[tier.value]
+            if (spec := capability_registry.get_model(model_id)) and spec.enabled
+        ]
+        return chain, []
+
     min_strength = TIER_MIN_REASONING_STRENGTH[tier.value]
     preferred_id = TIER_PREFERRED_MODEL[tier.value]
     enabled = capability_registry.enabled_models()
@@ -92,11 +108,11 @@ def _fallback_chain(
     excluded = [m for m in enabled if m.reasoning_strength < min_strength]
 
     preferred = [m for m in eligible if m.model_id == preferred_id]
+    local = [m for m in eligible if m.local]
     other_cloud = sorted(
         (m for m in eligible if not m.local and m.model_id != preferred_id),
         key=lambda m: -m.reasoning_strength,
     )
-    local = [m for m in eligible if m.local]
     return preferred + other_cloud + local, excluded
 
 

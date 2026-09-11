@@ -1,0 +1,12 @@
+GRAPH_BACKEND=neo4j
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=""
+VECTOR_STORE_BACKEND=qdrant
+QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY=
+LOCAL_MODEL_ID=gemma4:latest
+OPENROUTER_API_KEY="sk-or-..."
+OPENROUTER_MODEL_ID=google/gemma-2-27b-it
+ANTHROPIC_API_KEY="sk-ant-..."
+NEON=

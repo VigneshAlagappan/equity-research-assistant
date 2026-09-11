@@ -11,6 +11,11 @@ Ollama, README §20):
 Then set QDRANT_URL (defaults to http://localhost:6333) if it's running
 somewhere other than localhost.
 
+Qdrant Cloud (a managed cluster instead of a local container): set
+QDRANT_URL to the cluster's own https://....qdrant.io URL and QDRANT_API_KEY
+to the cluster's API key (both in .env) — QDRANT_API_KEY is None for the
+local, unauthenticated setup above and only sent as a header when set.
+
 The collection is created lazily, on first upsert, sized to whatever
 embedding dimension that first batch of vectors carries — there is no
 migration step to run by hand. Every method translates qdrant_client's own
@@ -28,19 +33,26 @@ class QdrantVectorStore:
     """VectorStore backed by a Qdrant collection — satisfies
     retrieval.vector_store.VectorStore structurally."""
 
-    def __init__(self, *, url: str | None = None, collection: str | None = None, timeout: float | None = None) -> None:
+    def __init__(
+        self, *, url: str | None = None, collection: str | None = None, timeout: float | None = None,
+        api_key: str | None = None,
+    ) -> None:
         from config import settings
 
         self._url = url or settings.QDRANT_URL
         self._collection = collection or settings.QDRANT_COLLECTION
         self._timeout = timeout if timeout is not None else settings.QDRANT_TIMEOUT_SECONDS
+        # api_key stays None for a local, unauthenticated instance — Qdrant
+        # Cloud rejects a connection without one, so this is only required
+        # once QDRANT_URL points at a *.qdrant.io cluster.
+        self._api_key = api_key if api_key is not None else settings.QDRANT_API_KEY
         self._client = None  # lazy — constructing a QdrantClient doesn't itself prove connectivity
 
     def _get_client(self):
         if self._client is None:
             from qdrant_client import QdrantClient
 
-            self._client = QdrantClient(url=self._url, timeout=self._timeout)
+            self._client = QdrantClient(url=self._url, api_key=self._api_key, timeout=self._timeout)
         return self._client
 
     def health_check(self) -> bool:

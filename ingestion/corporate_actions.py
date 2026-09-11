@@ -25,7 +25,7 @@ from storage.company_repository import (
 from storage.database import utcnow_iso
 from storage.db_types import DBConnection
 
-CLASSIFIER_VERSION = "v2"  # v2: recognizes older filings' abbreviated "Div"/"Rhs" alongside "Dividend"/"Rights"
+CLASSIFIER_VERSION = "v3"  # v3: adds scheme_of_arrangement (real subject seen: "Scheme Of Arrangement", ADANIENT/GRASIM)
 
 
 def classify_action_type(subject: str) -> str:
@@ -43,8 +43,20 @@ def classify_action_type(subject: str) -> str:
     word because it already covers "dividend" itself (no need for two
     checks) -- the one collision risk, "(Sub-Division)"/"Sub-Division"
     containing "div", is already resolved by fv_split/split being checked
-    earlier in this same order."""
+    earlier in this same order. scheme_of_arrangement is checked first of
+    all -- ADANIENT's real "Scheme Of Arrangement" rows carry no other
+    action-type wording, but a hypothetical one that also mentioned e.g.
+    "bonus" as part of the scheme's terms should still be tracked as the
+    scheme, not miscategorized as the share-count action alone.
+
+    "other" (the company-page Corporate Actions tab labels this filter
+    pill "Capital Structure", not "other") stays the catch-all for
+    everything not in this closed vocabulary -- Annual General Meeting
+    alone, Buyback, Demerger, and anything else NSE's subject field
+    reports that isn't one of the tracked action types."""
     s = subject.strip().lower()
+    if "scheme of arrangement" in s:
+        return "scheme_of_arrangement"
     if "face value" in s and ("split" in s or "sub-division" in s or "subdivision" in s):
         return "fv_split"
     if "bonus" in s:

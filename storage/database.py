@@ -6,10 +6,13 @@ later phase. This module only owns connecting and creating the schema.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+import psycopg2
+import psycopg2.extras
 from werkzeug.security import generate_password_hash
 
 from config import settings
@@ -62,6 +65,43 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _seed_sectors_and_industries(conn)
     _seed_index_definitions(conn)
     _seed_admin_user(conn)
+    conn.commit()
+    return conn
+
+
+def init_postgres_db(
+    connection_string: str | None = None, schema_path: Path | None = None
+) -> psycopg2.extensions.connection:
+    """Open a Neon/Postgres connection and create the ported tables (if missing).
+
+    Checkpoint-1 of the SQLite -> Postgres migration (schemas/postgres_schema.sql
+    is the companion of schemas/sqlite_schema.sql, see that file's header for the
+    exact table list/exclusions). This is purely additive: it does not touch
+    init_db()/get_connection() above, isn't called by any existing repository
+    module, and isn't wired into any caller yet -- that's a later checkpoint.
+
+    connection_string defaults to the `NEON` env var (a working connection
+    string is expected to already be present, e.g. loaded via python-dotenv
+    from .env). The connection uses psycopg2.extras.RealDictCursor so fetched
+    rows behave like dicts (row["column_name"]), matching storage/db_types.py's
+    Row contract the same way sqlite3.Row already does for the SQLite path.
+
+    Safe to call repeatedly: the schema file's CREATE TABLE IF NOT EXISTS /
+    CREATE INDEX IF NOT EXISTS statements no-op on tables/indexes that already
+    exist.
+    """
+    connection_string = connection_string or os.environ["NEON"]
+    schema_path = (
+        schema_path if schema_path is not None else settings.BASE_DIR / "schemas" / "postgres_schema.sql"
+    )
+    schema_sql = schema_path.read_text()
+
+    conn = psycopg2.connect(connection_string, cursor_factory=psycopg2.extras.RealDictCursor)
+    with conn.cursor() as cur:
+        # psycopg2's cursor.execute() happily runs a full script of
+        # semicolon-separated statements in one call (verified against real
+        # Neon) -- no executescript()-equivalent split-and-loop needed.
+        cur.execute(schema_sql)
     conn.commit()
     return conn
 

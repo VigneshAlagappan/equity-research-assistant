@@ -207,6 +207,7 @@ from storage.repositories import (
     update_user_theme,
 )
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
+from web.corporate_actions_feed import build_corporate_actions_feed
 from web.shareholding_feed import build_shareholding_feed
 from web.fixtures import EXAMPLES, THREADS
 from web.fx_rate import get_usd_inr_rate
@@ -2180,6 +2181,7 @@ def create_app() -> Flask:
             financials_data_url=financials_data_url,
             docs_data_url=url_for("company_docs_feed", company_id=company_id),
             shareholding_data_url=url_for("company_shareholding_feed", company_id=company_id),
+            corporate_actions_data_url=url_for("company_corporate_actions_feed", company_id=company_id),
             insights=insights,
             insights_preview=insights_preview,
             insights_history=insights_history,
@@ -2383,6 +2385,13 @@ def create_app() -> Flask:
         if get_company(db, company_id) is None:
             abort(404, f"No company registered with company_id={company_id!r}")
         return jsonify(build_shareholding_feed(db, company_id))
+
+    @app.route("/companies/<company_id>/corporate-actions-feed.json")
+    def company_corporate_actions_feed(company_id: str):
+        db = get_db()
+        if get_company(db, company_id) is None:
+            abort(404, f"No company registered with company_id={company_id!r}")
+        return jsonify(build_corporate_actions_feed(db, company_id))
 
     @app.route("/companies/<company_id>/compare-meta.json")
     def company_compare_meta(company_id: str):

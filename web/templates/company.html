@@ -14,6 +14,7 @@
   <script defer src="{{ static_url('js/notes_panel.js') }}"></script>
   <script defer src="{{ static_url('js/threads_panel.js') }}"></script>
   <script defer src="{{ static_url('js/shareholding_panel.js') }}"></script>
+  <script defer src="{{ static_url('js/corporate_actions_panel.js') }}"></script>
 {% endblock %}
 
 {% block extra_style %}
@@ -659,6 +660,17 @@
   .shp-delta.is-down { color: #b3453f; }
   .shp-delta.is-flat { color: var(--ink-muted); }
   .shp-footnote { margin-top: var(--space-3); }
+
+  /* — Corporate Actions tab — real data (web/corporate_actions_feed.py),
+     rendered client-side by web/static/js/corporate_actions_panel.js.
+     Type badges and the filter bar reuse this app's existing .tag-accent/
+     .tag-neutral/.tag-outline and .statement-toggle components as-is (no
+     new color tokens) so this tab matches whichever theme is active,
+     same reasoning as the Shareholding tab's own token reuse above. */
+  .ca-loading, .ca-error, .ca-empty { color: var(--ink-muted); }
+  .ca-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
+  .ca-table td, .ca-table th { white-space: nowrap; }
+  .ca-table td:last-child { white-space: normal; }
 {% endblock %}
 
 {% block content %}
@@ -773,6 +785,7 @@
       <a href="#sec-docs" data-target="sec-docs" class="{{ 'active' if tab == 'docs' else '' }}">Docs</a>
       <a href="#sec-notes" data-target="sec-notes" class="{{ 'active' if tab == 'notes' else '' }}">Notes</a>
       <a href="#sec-shareholding" data-target="sec-shareholding" class="{{ 'active' if tab == 'shareholding' else '' }}">Shareholding Pattern</a>
+      <a href="#sec-corp-actions" data-target="sec-corp-actions" class="{{ 'active' if tab == 'corp_actions' else '' }}">Corporate Actions</a>
       <a href="#sec-investigations" data-target="sec-investigations" class="{{ 'active' if tab == 'investigations' else '' }}">Investigations</a>
       <a href="#sec-threads" data-target="sec-threads" class="{{ 'active' if tab == 'threads' else '' }}">Threads</a>
       <a href="#sec-commentary" data-target="sec-commentary" class="{{ 'active' if tab == 'commentary' else '' }}">Commentary</a>
@@ -1023,6 +1036,13 @@
          web/shareholding_feed.py's real data — see that JS file's header
          comment for the empty-company fallback message. -->
     <div id="shp-root" data-url="{{ shareholding_data_url }}" data-company-id="{{ company_id }}"></div>
+  </section>
+
+  <section class="merged-section" id="sec-corp-actions">
+    <h2>Corporate Actions</h2>
+    <!-- Rendered client-side by web/static/js/corporate_actions_panel.js
+         from web/corporate_actions_feed.py's real data. -->
+    <div id="ca-root" data-url="{{ corporate_actions_data_url }}" data-company-id="{{ company_id }}"></div>
   </section>
 
   {#- Structured 2E-2H investigations (research/investigation.py) covering this

@@ -14,7 +14,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from config.settings import DISABLED_MODELS, LOCAL_MODEL_ENABLED, LOCAL_MODEL_ID
+from config.settings import (
+    DISABLED_MODELS,
+    LOCAL_MODEL_ENABLED,
+    LOCAL_MODEL_ID,
+    OPENROUTER_API_KEY_SET,
+    OPENROUTER_MODEL_ID,
+)
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,18 @@ MODELS: list[ModelSpec] = [
         "claude-haiku-4-5", provider="anthropic", local=False, context_window=200_000,
         reasoning_strength=2, cost_class="low", speed_class="fast",
         enabled="claude-haiku-4-5" not in DISABLED_MODELS,
+    ),
+    # "quick" tier's second-choice model, reached only through
+    # config.settings.TIER_FALLBACK_CHAIN_OVERRIDE's explicit chain (Haiku,
+    # then this, then local Ollama) — not through the generic strongest-
+    # first "other cloud models" step every other tier uses, which bypasses
+    # reasoning_strength entirely for this model anyway. reasoning_strength=1
+    # just keeps it out of that generic step on the off chance a future tier
+    # ever stops using an explicit override.
+    ModelSpec(
+        OPENROUTER_MODEL_ID, provider="openrouter", local=False, context_window=8_192,
+        reasoning_strength=1, cost_class="low", speed_class="fast",
+        enabled=OPENROUTER_API_KEY_SET and OPENROUTER_MODEL_ID not in DISABLED_MODELS,
     ),
     # Last-resort fallback — see config.settings.LOCAL_MODEL_ENABLED/LOCAL_MODEL_ID
     # to turn it off or point it at a different Ollama model without touching code.
