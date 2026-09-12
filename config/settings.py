@@ -394,6 +394,19 @@ KNOWLEDGE_EXTRACTION_MAX_CHARS = int(os.environ.get("KNOWLEDGE_EXTRACTION_MAX_CH
 # falls back to the sqlite traversal rather than failing the request.
 # ------------------------------------------------------------------
 
+# ------------------------------------------------------------------
+# Database backend — "sqlite" (default, unchanged behavior) or "postgres"
+# (Neon, via storage.database.init_postgres_db()). Same config-flag-selects-
+# backend shape as GRAPH_BACKEND/VECTOR_STORE_BACKEND below. The actual
+# swap happens in storage/backend_bootstrap.py, which MUST run before any
+# module imports storage.repositories/company_repository/fact_store/
+# indicator_repository/investigation_repository for the first time --
+# web/app.py (gunicorn's entry point) does this as its very first
+# statement, before its own storage imports (see that file's top).
+# ------------------------------------------------------------------
+
+DATABASE_BACKEND = os.environ.get("DATABASE_BACKEND", "sqlite")
+
 GRAPH_BACKEND = os.environ.get("GRAPH_BACKEND", "sqlite")
 NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
@@ -425,6 +438,25 @@ QDRANT_TIMEOUT_SECONDS = float(os.environ.get("QDRANT_TIMEOUT_SECONDS", "3"))
 # requires this (its "api-key" header) alongside a QDRANT_URL pointed at the
 # cluster's own https://...qdrant.io URL rather than localhost.
 QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY")
+
+# ------------------------------------------------------------------
+# Document storage backend (storage/document_store.py)
+#
+# Same optional-infra shape as GRAPH_BACKEND/VECTOR_STORE_BACKEND above:
+# DOCUMENT_STORE_BACKEND selects which concrete DocumentStore backs
+# DOCUMENTS_DIR-rooted content (narrative PDFs/audio — the Docs tab, note
+# attachments, investor-relations downloads). "local" (default) is a pure
+# refactor of the pre-existing on-disk behaviour under DOCUMENTS_DIR, so an
+# existing deployment sees zero change until this is explicitly switched.
+# "s3" routes the same content to the real S3 bucket below instead (a
+# dedicated, access-key-scoped bucket — see storage/document_store.py's
+# S3DocumentStore docstring). RAW_DIR (financial XBRL source files) is
+# deliberately NOT covered by this setting — out of scope per the
+# architecture review, unchanged (ingestion/pipeline.py, sources/nse_xbrl.py
+# still read/write it directly).
+DOCUMENT_STORE_BACKEND = os.environ.get("DOCUMENT_STORE_BACKEND", "local")
+S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "signals-app-documents-862938824222")
+S3_REGION_NAME = os.environ.get("AWS_REGION", "us-east-2")
 
 # EMBEDDING_PROVIDER selects which concrete EmbeddingProvider
 # (retrieval/embedding_provider.py) computes chunk/query vectors. "local"

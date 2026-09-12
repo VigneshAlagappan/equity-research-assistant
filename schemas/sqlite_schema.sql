@@ -99,6 +99,12 @@ CREATE TABLE IF NOT EXISTS documents (
   retrieved_at TEXT,
   raw_file_path TEXT,               -- points into data/documents/... ; NULL when source_url is a plain link (no uploaded file)
   file_hash TEXT,
+  storage_object_key TEXT,          -- storage/document_store.py DocumentStore key (same value as raw_file_path today;
+                                     -- lets a document's bytes be resolved through the active DocumentStore backend
+                                     -- (local disk or S3) without re-deriving a key from raw_file_path's on-disk shape)
+  content_hash TEXT,                -- sha256 of the stored bytes, computed via storage/document_store.py's active
+                                     -- backend rather than a direct file_path.read_bytes() (works whether the backend
+                                     -- is local disk or S3); file_hash above is the older, RAW_DIR-style equivalent
   source_url TEXT,
   parser_version TEXT,
   added_by_user TEXT,               -- NULL = officially sourced; set = manually added via the Docs tab, by whom

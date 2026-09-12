@@ -21,13 +21,16 @@ to `schemas/postgres_schema.sql` at all). Those are ported for their
 kept-table half, with the excluded half clearly flagged in a comment at the
 call site -- see:
     - `reconcile()` -- writes `canonical_financials` (ported) and
-      `reconciliation_log` (skipped; flagged inline).
-    - `replace_document_chunks()` -- writes `document_chunks` (ported) and
-      `document_chunks_fts` (skipped; FTS5->tsvector port is a separate,
-      later task per schemas/postgres_schema.sql's own header comment).
-    - `search_document_chunks()` -- reads ONLY `document_chunks_fts`, which
-      has no Postgres table at all yet -- not portable at all in this
-      checkpoint; flagged and omitted.
+      `reconciliation_log` (skipped; accepted loss -- pure audit data, not
+      blocking, not revisited).
+    - `replace_document_chunks()` -- FTS5->tsvector gap is now closed
+      (`document_chunks.search_vector`, a GIN-indexed tsvector column, exists
+      on Neon -- see schemas/postgres_schema.sql). This function now writes
+      both `document_chunks` and its `search_vector` column on insert.
+    - `search_document_chunks()` -- now implemented in
+      `storage/fact_store_pg.py` (not here, mirroring where the SQLite
+      original's `default_fact_store()` sources it from `repositories.py`),
+      querying `document_chunks.search_vector` via `ts_rank`.
     - `hide_investigation`/`unhide_investigation`/`soft_delete_investigation`/
       `list_investigations`, and the equivalent `generated_reports` quartet
       -- these target `hidden_at`/`deleted_at` columns that
@@ -1296,35 +1299,36 @@ def _sanitize_fts_query(query: str) -> str:
 
 
 def replace_document_chunks(conn: DBConnection, document_id: int, chunks: list[dict]) -> None:
-    """Ports the `document_chunks` half only. The SQLite version also
-    deletes/inserts matching rows in `document_chunks_fts` (an FTS5 virtual
-    table) -- schemas/postgres_schema.sql's own header comment defers the
-    FTS5->tsvector/GIN reimplementation to a separate, later task, and no
-    Postgres table for it exists yet. That half is skipped here (flagged in
-    the checkpoint report), not silently dropped without a trace: a future
-    tsvector-based index would need its own maintenance call inserted where
-    the `-- FTS5 side skipped` comment below marks it."""
+    """Ports the `document_chunks` half, now WITH its FTS write half too:
+    the SQLite version also deletes/inserts matching rows in
+    `document_chunks_fts` (an FTS5 virtual table); this version computes and
+    sets `search_vector = to_tsvector('english', text)` on insert instead,
+    so a newly-(re)chunked document stays searchable via
+    `search_document_chunks()` without a separate backfill step. (Earlier
+    checkpoint skipped this half because no `search_vector` column existed
+    yet -- it now does, see schemas/postgres_schema.sql.)"""
     now = _utcnow_iso()
     with conn.cursor() as cur:
         cur.execute("DELETE FROM document_chunks WHERE document_id = %s", (document_id,))
         for chunk in chunks:
             cur.execute(
                 "INSERT INTO document_chunks "
-                "(document_id, company_id, page_number, chunk_index, text, section_heading, created_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                "(document_id, company_id, page_number, chunk_index, text, section_heading, created_at, "
+                " search_vector) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, to_tsvector('english', %s))",
                 (
                     chunk["document_id"], chunk["company_id"], chunk["page_number"], chunk["chunk_index"],
                     chunk["text"], chunk.get("section_heading"), now,
+                    chunk["text"],
                 ),
             )
-            # FTS5 side skipped -- see docstring above.
     conn.commit()
 
 
-# search_document_chunks() is NOT ported: it reads exclusively from
-# `document_chunks_fts` (an FTS5 MATCH query), which has no Postgres
-# counterpart yet at all (schemas/postgres_schema.sql defers the
-# tsvector/GIN reimplementation). There is no kept-table half to port here.
+# search_document_chunks() itself stays defined in storage/fact_store_pg.py
+# (mirroring where storage/fact_store.py's own default_fact_store() sources
+# its search_document_chunks from storage/repositories.py) -- it now has a
+# real Postgres tsvector/GIN-backed implementation there.
 
 
 def list_document_chunks(conn: DBConnection, document_id: int) -> list[Row]:

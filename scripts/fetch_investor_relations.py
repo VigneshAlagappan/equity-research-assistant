@@ -24,7 +24,6 @@ import argparse
 import asyncio
 
 from companies.registry import get_company
-from config.settings import to_repo_relative
 from sources.investor_relations import (
     BERKSHIRE_COMPANY_IDS,
     DEFAULT_IR_DOCUMENTS_DIR,
@@ -76,7 +75,7 @@ async def fetch_one_company(conn, company_id: str) -> str:
             continue
 
         try:
-            local_path = download_document(ref, dest_dir)
+            storage_key = download_document(ref, dest_dir)
         except IRFetchError as exc:
             errors += 1
             print(f"  ERROR downloading {ref.url}: {exc}", flush=True)
@@ -87,8 +86,9 @@ async def fetch_one_company(conn, company_id: str) -> str:
             fiscal_year=ref.fiscal_year or "FY0000",
             quarter=ref.quarter,
             added_by_user=None,  # officially sourced -- see documents.added_by_user's own docstring
-            raw_file_path=to_repo_relative(local_path),
+            raw_file_path=storage_key,
             source_url=ref.url,
+            storage_object_key=storage_key,
         )
         downloaded += 1
         print(f"  {ref.document_type:22s} {ref.fiscal_year or '?':8s} {ref.quarter or '':3s} {ref.title[:50]}", flush=True)

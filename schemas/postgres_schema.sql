@@ -128,6 +128,8 @@ CREATE TABLE IF NOT EXISTS documents (
   retrieved_at TEXT,
   raw_file_path TEXT,               -- points into data/documents/... ; NULL when source_url is a plain link (no uploaded file)
   file_hash TEXT,
+  storage_object_key TEXT,          -- storage/document_store.py DocumentStore key (mirrors schemas/sqlite_schema.sql)
+  content_hash TEXT,                -- sha256 via the active DocumentStore backend (mirrors schemas/sqlite_schema.sql)
   source_url TEXT,
   parser_version TEXT,
   added_by_user TEXT,               -- NULL = officially sourced; set = manually added via the Docs tab, by whom
@@ -143,32 +145,17 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE INDEX IF NOT EXISTS idx_documents_company ON documents(company_id, document_type);
 
 -- ============================================================
--- Financial Observations (raw, per-source, pre-reconciliation)
+-- Financial Observations (raw, per-source, pre-reconciliation) --
+-- deliberately EXCLUDED from this Postgres schema (2026-09-11): the single
+-- largest table (869K rows, 269MB on Postgres -- more than half of Neon
+-- free tier's 512MB cap), and confirmed no live-facing feature reads it
+-- directly (research/web/financials/context all read canonical_financials
+-- instead) -- only the SQLite-side reconciliation pipeline touches it, to
+-- produce canonical_financials. Same "stays SQLite-only, never ported"
+-- treatment as the 8 audit-log tables, added here after the fact once
+-- Neon's storage cap made keeping it not worth the cost. Stays in
+-- schemas/sqlite_schema.sql and storage/repositories.py exactly as before.
 -- ============================================================
-
-CREATE TABLE IF NOT EXISTS financial_observations (
-  observation_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  company_id TEXT NOT NULL REFERENCES companies(company_id),
-  metric_key TEXT NOT NULL REFERENCES metrics_dictionary(metric_key),
-  period_type TEXT NOT NULL,               -- annual | quarterly
-  fiscal_year TEXT NOT NULL,               -- e.g. FY2025
-  quarter TEXT,                            -- Q1..Q4, NULL for annual
-  statement_type TEXT,                     -- consolidated | standalone
-  value REAL NOT NULL,
-  unit TEXT NOT NULL,                      -- INR_CRORE, INR_LAKH, PERCENT, RATIO, NUMBER
-  currency TEXT NOT NULL DEFAULT 'INR',
-  source TEXT NOT NULL REFERENCES sources(source_id),
-  source_document_id INTEGER REFERENCES documents(document_id),
-  source_file TEXT,
-  source_url TEXT,
-  retrieved_at TEXT NOT NULL,
-  parser_version TEXT NOT NULL,
-  normalization_version TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_obs_lookup
-  ON financial_observations(company_id, metric_key, fiscal_year, quarter);
 
 -- ============================================================
 -- Canonical (reconciled) financials
@@ -188,7 +175,7 @@ CREATE TABLE IF NOT EXISTS canonical_financials (
   statement_type TEXT,
   canonical_value REAL NOT NULL,
   unit TEXT NOT NULL,
-  chosen_observation_id INTEGER REFERENCES financial_observations(observation_id),
+  chosen_observation_id INTEGER,    -- no FK: financial_observations is excluded from this schema (see above)
   reconciliation_reason TEXT,       -- "official filing preferred over screener"
   normalization_version TEXT,
   decided_at TEXT NOT NULL,
@@ -278,8 +265,17 @@ CREATE TABLE IF NOT EXISTS document_chunks (
   embedding_status TEXT NOT NULL DEFAULT 'pending',
   embedding_model TEXT,
   embedded_at TEXT,
-  created_at TEXT
+  created_at TEXT,
+  -- Postgres tsvector/GIN full-text search replacement for SQLite's FTS5
+  -- `document_chunks_fts` virtual table -- backfilled via
+  -- `to_tsvector('english', text)`, kept current on insert by
+  -- storage/repositories_pg.py::replace_document_chunks(), queried by
+  -- storage/fact_store_pg.py::search_document_chunks() via `ts_rank`.
+  search_vector tsvector
 );
+
+CREATE INDEX IF NOT EXISTS idx_document_chunks_search_vector
+  ON document_chunks USING GIN (search_vector);
 
 -- ============================================================
 -- Watchlist (single shared list -- no per-user model yet,

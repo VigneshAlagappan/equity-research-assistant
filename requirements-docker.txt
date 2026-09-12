@@ -1,0 +1,28 @@
+# Production/deployed-web-app dependency set -- a trimmed view of
+# requirements.txt for the Docker image only (local dev/test/scripts still
+# use the full requirements.txt unchanged). Verified this exact exclusion
+# is safe: `python3 -c "import web.app"` (exactly what gunicorn does to
+# serve the app) pulls in zero of the two packages excluded below --
+# neither is imported by the deployed web app at all, only by
+# tooling/scripts that don't run inside this container.
+#
+# Excluded vs. requirements.txt:
+#   pytest      -- test framework, not part of the running application.
+#   crawl4ai    -- used only by sources/investor_relations.py, a
+#                  standalone ingestion script (scripts/fetch_investor_
+#                  relations.py), never imported by web/app.py. Pulls in
+#                  playwright+patchright (~274MB) for zero runtime benefit
+#                  to the deployed web service.
+openpyxl>=3.1
+flask>=3.0
+gunicorn>=23.0
+matplotlib>=3.8
+anthropic>=0.40
+python-dotenv>=1.0
+yfinance>=0.2
+pypdf>=5.0
+requests>=2.31
+bleach>=6.4
+neo4j>=5.0
+qdrant-client>=1.9
+sentence-transformers>=3.0

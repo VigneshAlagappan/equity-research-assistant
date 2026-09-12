@@ -1,0 +1,32 @@
+# Secrets -- never baked into the image, injected at deploy time instead.
+.env
+.env.*
+!env-example
+
+# Local dev/tooling, not needed in the image.
+.git
+.venv
+.claude
+.pytest_cache
+.DS_Store
+__pycache__
+**/__pycache__
+*.pyc
+opencode.json
+
+# Local state that must never ship in the image -- 8.6GB of dev data and
+# logs (data/documents, data/charts -- NOT the top-level documents/ and
+# charts/ Python packages, which are source code and must be included).
+# The app creates fresh empty dirs for these at runtime (Dockerfile's
+# `mkdir -p /app/data`); shipping the real local database/documents would
+# both bloat the image enormously and leak this developer's local dataset
+# into a production image.
+data
+logs
+
+# Not needed at runtime.
+tests
+docs
+README.md
+LICENSE
+Signals-App-Demo-Sep-2026.mp4

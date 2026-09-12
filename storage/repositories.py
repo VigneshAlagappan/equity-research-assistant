@@ -1098,18 +1098,29 @@ def save_company_document(
     added_by_user: str,
     raw_file_path: str | None = None,
     source_url: str | None = None,
+    storage_object_key: str | None = None,
+    content_hash: str | None = None,
 ) -> sqlite3.Row:
     """Manually-added documents only, via the Docs tab's Add form —
     officially-sourced rows (added_by_user NULL) would come from a future
-    data-provider ingestion path, which doesn't exist yet."""
+    data-provider ingestion path, which doesn't exist yet.
+
+    storage_object_key/content_hash (storage/document_store.py) default to
+    None for a link-only row (no uploaded file); a caller that stores an
+    upload through the active DocumentStore should pass both — same
+    optional-and-additive shape raw_file_path/source_url already have."""
     now = utcnow_iso()
     cursor = conn.execute(
         """
         INSERT INTO documents (company_id, document_type, fiscal_year, quarter,
-                                raw_file_path, source_url, added_by_user, retrieved_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                raw_file_path, source_url, added_by_user, retrieved_at,
+                                storage_object_key, content_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (company_id, document_type, fiscal_year, quarter, raw_file_path, source_url, added_by_user, now),
+        (
+            company_id, document_type, fiscal_year, quarter, raw_file_path, source_url, added_by_user, now,
+            storage_object_key, content_hash,
+        ),
     )
     conn.commit()
     return conn.execute("SELECT * FROM documents WHERE document_id = ?", (cursor.lastrowid,)).fetchone()

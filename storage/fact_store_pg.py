@@ -36,9 +36,27 @@ NOT wired into any caller.
 
 from __future__ import annotations
 
+import re
+
 from storage.db_types import DBConnection, Row
 
 from storage.fact_store import FactStore
+
+# Same tokenization `storage/repositories.py::_sanitize_fts_query()` uses for
+# FTS5 -- kept identical here so a query behaves the same way against either
+# backend: alphanumeric tokens only, OR-joined (not AND) so a long multi-word
+# blob (e.g. a hypothesis statement + mechanism, per research/investigation_
+# planner.py Step 2F) still matches chunks sharing SOME of the terms, with
+# ranking (ts_rank here, bm25/rank in FTS5) rewarding chunks that share MORE.
+_FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _sanitize_fts_query_pg(query: str) -> str:
+    """Builds a Postgres `to_tsquery` expression equivalent to the SQLite
+    FTS5 version's OR-joined literal tokens. Returns "" for a query with no
+    usable tokens (caller must treat that as "no results", not an error)."""
+    tokens = _FTS_TOKEN_RE.findall(query)
+    return " | ".join(tokens)
 
 
 def get_company(conn: DBConnection, company_id: str) -> Row | None:
@@ -65,20 +83,37 @@ def list_companies_with_sector(conn: DBConnection) -> list[Row]:
     return repo.select_companies_with_sector_column(conn)
 
 
-def search_document_chunks(conn: DBConnection, *args, **kwargs) -> list[Row]:
-    """No Postgres equivalent exists yet -- `document_chunks_fts` (FTS5) has
-    no `tsvector` counterpart on Neon, same gap `storage/repositories_pg.py`
-    documents for its own omitted `search_document_chunks()`. `FactStore` is
-    a frozen dataclass with no optional fields, so this slot cannot simply
-    be left unset; this stub raises clearly instead of silently returning an
-    empty/wrong result, and is the one field callers must not exercise
-    against a `default_fact_store()`-built store until that later task lands.
+def search_document_chunks(
+    conn: DBConnection, query: str, *, company_id: str | None = None, limit: int = 10
+) -> list[Row]:
+    """Postgres tsvector/GIN counterpart of
+    `storage/repositories.py::search_document_chunks()`'s FTS5 MATCH query --
+    same return shape (chunk_id, document_id, company_id, page_number,
+    chunk_index, text, document_type, fiscal_year, quarter, source,
+    published_at, retrieved_at), ranked (`ts_rank` here vs FTS5's bm25
+    `rank`), same `company_id` filter and `limit`, and the same "[] for a
+    query with no usable tokens" contract. Requires `document_chunks.
+    search_vector` (a `tsvector` column, GIN-indexed, backfilled via
+    `to_tsvector('english', text)`) to exist -- see schemas/postgres_schema.sql.
     """
-    raise NotImplementedError(
-        "search_document_chunks has no Postgres port yet -- document_chunks_fts (FTS5) "
-        "-> tsvector is a separate, later task (see storage/repositories_pg.py's own "
-        "header comment for the same gap)."
+    tsquery = _sanitize_fts_query_pg(query)
+    if not tsquery:
+        return []
+    sql = (
+        "SELECT dc.chunk_id, dc.document_id, dc.company_id, dc.page_number, dc.chunk_index, dc.text, "
+        "       d.document_type, d.fiscal_year, d.quarter, d.source, d.published_at, d.retrieved_at "
+        "FROM document_chunks dc "
+        "JOIN documents d ON d.document_id = dc.document_id "
+        "WHERE dc.search_vector @@ to_tsquery('english', %(q)s)"
     )
+    params: dict[str, object] = {"q": tsquery, "limit": limit}
+    if company_id is not None:
+        sql += " AND dc.company_id = %(company_id)s"
+        params["company_id"] = company_id
+    sql += " ORDER BY ts_rank(dc.search_vector, to_tsquery('english', %(q)s)) DESC LIMIT %(limit)s"
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
 
 
 def default_fact_store() -> FactStore:

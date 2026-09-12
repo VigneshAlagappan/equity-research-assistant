@@ -7,15 +7,28 @@ no chunking/FTS5/hybrid_search yet, just direct extraction into the prompt.
 Today's per-company doc volume is a handful of files (added one at a time via
 the Docs tab's Add form), not a corpus that needs a search/ranking layer.
 
-Documents contribute evidence two ways: an uploaded PDF (raw_file_path) is
-read straight off disk; a link-only row (source_url, no uploaded file) is
-fetched over HTTP if the URL looks like a PDF. Today's real Docs-tab usage is
-almost entirely link-only (pasted BSE/company-site URLs), so upload-only
-support would ground nothing for those companies. Fetches happen fresh on
-every call — no caching of downloaded bytes yet, a known tradeoff for a
-handful of small requests per question rather than a bigger cache-invalidation
-design. Non-PDF documents (recordings, plain announcement links) have no text
-to extract, so they're silently skipped rather than erroring.
+Documents contribute evidence two ways: an uploaded PDF (raw_file_path /
+storage_object_key) is read through the active DocumentStore
+(storage/document_store.py — local disk or S3, whichever
+config.settings.DOCUMENT_STORE_BACKEND selects); a link-only row (source_url,
+no uploaded file) is fetched over HTTP if the URL looks like a PDF.
+Today's real Docs-tab usage is almost entirely link-only (pasted
+BSE/company-site URLs), so upload-only support would ground nothing for
+those companies. Non-PDF documents (recordings, plain announcement links)
+have no text to extract, so they're silently skipped rather than erroring.
+
+Fixed a P0 perf bug (architecture review, document/raw-content storage
+investigation): get_document_evidence() is called live, uncached, on every
+single-company investigation (research/investigation_planner.py), so every
+question used to re-open/re-fetch and re-parse every one of a company's
+documents from scratch. _document_bytes() below caches each document's raw
+bytes (the expensive disk read or HTTP fetch) in a per-process dict keyed by
+(document_id, file_hash) — good enough for this app's "a handful of gunicorn
+workers, not a distributed fleet" deployment shape; no cross-process/
+cross-request-boundary invalidation is attempted, and a document that's
+re-uploaded (new file_hash) simply gets a fresh cache entry rather than
+evicting the old one, since a handful of small PDFs per company never grows
+large enough for that to matter.
 """
 
 from __future__ import annotations
@@ -30,11 +43,11 @@ from urllib.parse import urlparse
 import requests
 from pypdf import PdfReader
 
-from config.settings import from_repo_relative
 from pypdf.errors import DependencyError, PyPdfError
 
 from research.evidence import Evidence
 from research.temporal import date_visible
+from storage.document_store import DocumentStoreError, default_document_store
 from storage.fact_store import FactStore, default_fact_store
 
 # Bounds a single link-only document fetch — avoids hanging on a slow host or
@@ -115,6 +128,12 @@ def _text_from_reader(reader: PdfReader) -> str | None:
 
 
 def _extract_pdf_text(path: str) -> str | None:
+    """Path-based PDF text extraction — kept as a standalone helper (used
+    directly by tests/test_documents.py against arbitrary filesystem paths,
+    not necessarily anything under DOCUMENTS_DIR/BASE_DIR) separate from
+    _extract_pdf_text_from_bytes(), which is what document_text()/
+    document_pages() actually use once a document's bytes have been
+    resolved through the active DocumentStore or an HTTP fetch."""
     try:
         return _text_from_reader(PdfReader(path))
     except (PyPdfError, DependencyError, OSError):
@@ -125,6 +144,13 @@ def _extract_pdf_text(path: str) -> str | None:
         # of just this one unreadable document, same "absence isn't an
         # error" rule this function already follows for every other
         # unreadable-PDF case.
+        return None
+
+
+def _extract_pdf_text_from_bytes(data: bytes) -> str | None:
+    try:
+        return _text_from_reader(PdfReader(BytesIO(data)))
+    except (PyPdfError, DependencyError, OSError):
         return None
 
 
@@ -155,24 +181,62 @@ def _fetch_url_bytes(url: str) -> bytes | None:
         return None
 
 
-def _extract_pdf_text_from_url(url: str) -> str | None:
-    data = _fetch_url_bytes(url)
-    if data is None:
-        return None
-    try:
-        return _text_from_reader(PdfReader(BytesIO(data)))
-    except (PyPdfError, DependencyError):
-        return None
+#: Per-process cache of a document's raw bytes, keyed by (document_id,
+def _fetch_document_bytes(row: Row) -> bytes | None:
+    """Source resolution shared by document_text()/document_pages(): an
+    uploaded file (raw_file_path / storage_object_key) is read through the
+    active DocumentStore (storage/document_store.py); a link-only row
+    (source_url) is fetched over HTTP if it looks like a PDF. None under the
+    same conditions the old direct-disk/direct-HTTP code returned None
+    (non-PDF, missing/unfetchable file or link)."""
+    key = row["storage_object_key"] or row["raw_file_path"]
+    if key:
+        if Path(key).suffix.lower() != ".pdf":
+            return None
+        store = default_document_store()
+        if not store.exists(key):
+            return None
+        try:
+            return store.retrieve(key)
+        except DocumentStoreError:
+            return None
+    if row["source_url"] and _looks_like_pdf_url(row["source_url"]):
+        return _fetch_url_bytes(row["source_url"])
+    return None
+
+
+#: Per-process cache of document_text()'s result, keyed by (document_id,
+#: file_hash, pointer) — see this module's docstring for why this exists
+#: (the P0 uncached-refetch-and-reparse-per-question bug the architecture
+#: review flagged) and why a plain dict is enough (a handful of gunicorn
+#: workers, not a distributed fleet; a handful of small documents per
+#: company, not a corpus). Only document_text() is cached, not
+#: document_pages() — the latter is exercised once per document by the
+#: ingestion/chunking pipeline (research/document_chunker.py), never
+#: repeatedly per question, so caching it would only add staleness risk
+#: (e.g. a document reprocessed in place, same path, no file_hash change
+#: yet) for zero benefit. `pointer` (the row's raw_file_path/
+#: storage_object_key/source_url) is included alongside file_hash because
+#: file_hash is only refreshed by ingestion/coordinator.py's
+#: process_documents() AFTER a reprocessed document is re-extracted — a
+#: document whose pointer changed is never served stale cached text even
+#: when file_hash hasn't caught up yet. Deliberately never evicted — a
+#: document reprocessed in place (same pointer AND file_hash) is the one
+#: case this cache can go stale for; accepted as a known tradeoff for a
+#: simple per-process dict, per the architecture review's "don't
+#: over-engineer this" guidance.
+_DOCUMENT_TEXT_CACHE: dict[tuple[int, str | None, str | None], str | None] = {}
 
 
 def document_text(row: Row) -> str | None:
-    if row["raw_file_path"]:
-        if Path(row["raw_file_path"]).suffix.lower() != ".pdf":
-            return None
-        return _extract_pdf_text(str(from_repo_relative(row["raw_file_path"])))
-    if row["source_url"] and _looks_like_pdf_url(row["source_url"]):
-        return _extract_pdf_text_from_url(row["source_url"])
-    return None
+    pointer = row["storage_object_key"] or row["raw_file_path"] or row["source_url"]
+    cache_key = (row["document_id"], row["file_hash"], pointer)
+    if cache_key in _DOCUMENT_TEXT_CACHE:
+        return _DOCUMENT_TEXT_CACHE[cache_key]
+    data = _fetch_document_bytes(row)
+    text = None if data is None else _extract_pdf_text_from_bytes(data)
+    _DOCUMENT_TEXT_CACHE[cache_key] = text
+    return text
 
 
 def document_pages(row: Row) -> list[str] | None:
@@ -182,23 +246,15 @@ def document_pages(row: Row) -> list[str] | None:
     page_number to each chunk, which the single flattened string
     document_text() returns can't do. Returns None under the exact same
     conditions document_text() would (non-PDF, unfetchable link) rather
-    than a list of one flattened page."""
-    if row["raw_file_path"]:
-        if Path(row["raw_file_path"]).suffix.lower() != ".pdf":
-            return None
-        try:
-            return _pages_from_reader(PdfReader(str(from_repo_relative(row["raw_file_path"]))))
-        except (PyPdfError, DependencyError, OSError):
-            return None
-    if row["source_url"] and _looks_like_pdf_url(row["source_url"]):
-        data = _fetch_url_bytes(row["source_url"])
-        if data is None:
-            return None
-        try:
-            return _pages_from_reader(PdfReader(BytesIO(data)))
-        except (PyPdfError, DependencyError):
-            return None
-    return None
+    than a list of one flattened page. Not cached — see
+    _DOCUMENT_TEXT_CACHE's docstring for why."""
+    data = _fetch_document_bytes(row)
+    if data is None:
+        return None
+    try:
+        return _pages_from_reader(PdfReader(BytesIO(data)))
+    except (PyPdfError, DependencyError, OSError):
+        return None
 
 
 def get_document_evidence(

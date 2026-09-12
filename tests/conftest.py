@@ -24,6 +24,24 @@ def db_conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     conn.close()
 
 
+@pytest.fixture(autouse=True)
+def _reset_document_text_cache() -> Iterator[None]:
+    """research.documents._DOCUMENT_TEXT_CACHE is a module-level, per-process
+    cache keyed by (document_id, file_hash, pointer) — see that module's
+    docstring for why (fixing a P0 uncached-refetch-per-question bug). Every
+    test gets a fresh db_conn (document_id resets to 1 each time) with
+    file_hash usually NULL and often the same tmp_path-derived raw_file_path
+    shape too, so without resetting this cache between tests, a document
+    written in one test can serve another test's document_id=1 its stale
+    cached text. Real deployments never see this — document_id is unique
+    for the life of one database, never reused."""
+    from research.documents import _DOCUMENT_TEXT_CACHE
+
+    _DOCUMENT_TEXT_CACHE.clear()
+    yield
+    _DOCUMENT_TEXT_CACHE.clear()
+
+
 # ------------------------------------------------------------------
 # Hybrid retrieval test doubles (section 14: "VectorStore is accessed only
 # through its abstraction" / "EmbeddingProvider is independent of

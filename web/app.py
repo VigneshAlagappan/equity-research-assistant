@@ -11,6 +11,17 @@ ingested financial data from the web UI.
 
 from __future__ import annotations
 
+# Must run before any other import in this file (or any module this file
+# transitively imports) touches storage.repositories/company_repository/
+# fact_store/indicator_repository/investigation_repository -- see
+# storage/backend_bootstrap.py's own docstring for why. web/app.py is
+# gunicorn's entry point (web.app:create_app()), so this is the earliest
+# possible point in the whole process for it to run.
+import storage.backend_bootstrap
+
+storage.backend_bootstrap.install()
+
+import hashlib
 import json
 import logging
 import os
@@ -51,7 +62,7 @@ from companies.stock_actions import (
     list_stock_actions,
 )
 from config import settings as app_settings
-from config.settings import ANTHROPIC_API_KEY_SET, SECRET_KEY, from_repo_relative, to_repo_relative
+from config.settings import ANTHROPIC_API_KEY_SET, DATABASE_BACKEND, SECRET_KEY, from_repo_relative, to_repo_relative
 from ingestion.coordinator import (
     archive_documents,
     archive_financial_items,
@@ -99,7 +110,8 @@ from scripts.fetch_daily_prices import run_price_history_update
 from scripts.fetch_daily_prices_usa import run_price_history_update_usa
 from scripts.process_pending_documents_batch import run_document_processing_batch
 from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
-from storage.database import init_db
+from storage.database import init_db, init_postgres_db
+from storage.document_store import default_document_store
 from storage.investigation_repository import (
     count_investigation_hypotheses,
     select_investigations_for_company,
@@ -409,6 +421,15 @@ def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
 
+    @app.route("/health")
+    def health():
+        # Deliberately no DB/Qdrant/Neo4j dependency -- a container
+        # orchestrator's liveness check should reflect "is this process up
+        # and serving," not cascade-fail every instance because one
+        # external managed service had a blip. Deeper dependency checks
+        # belong in a separate readiness probe if one is ever needed.
+        return {"status": "ok"}, 200
+
     @app.template_global("static_url")
     def static_url(filename: str) -> str:
         """url_for('static', filename=...) plus a ?v=<mtime> cache-buster.
@@ -448,11 +469,37 @@ def create_app() -> Flask:
         price_conn: DBConnection | None = g.pop("price_db_conn", None)
         if price_conn is not None:
             price_conn.close()
+        logs_conn: DBConnection | None = g.pop("logs_db_conn", None)
+        if logs_conn is not None:
+            logs_conn.close()
 
     def get_db() -> DBConnection:
+        """DATABASE_BACKEND=postgres routes this at Neon instead of SQLite
+        -- every route already calls get_db() uniformly, so this one
+        function is the entire "main data" half of the backend switch (the
+        storage.backend_bootstrap swap above is the other half, making
+        `from storage.repositories import X` resolve correctly against
+        whichever backend this connection actually is)."""
         if "db_conn" not in g:
-            g.db_conn = init_db()
+            g.db_conn = init_postgres_db() if DATABASE_BACKEND == "postgres" else init_db()
         return g.db_conn
+
+    def get_logs_db() -> DBConnection:
+        """Always SQLite, regardless of DATABASE_BACKEND -- batch_job_runs/
+        items, dataset_events, worker_processing_log, retrieval_diagnostics,
+        llm_call_log, ingestion_queue_items, and reconciliation_log stay
+        SQLite-only forever (see storage/backend_bootstrap.py's docstring).
+        Every route reading/writing those tables must use this, not
+        get_db(), once DATABASE_BACKEND=postgres -- get_db() would hand back
+        a Postgres connection those functions' `?`-placeholder SQL can't
+        run against. A separate connection object, not just "the same
+        get_db() result under a different name," since under postgres mode
+        they're genuinely two different databases."""
+        if DATABASE_BACKEND != "postgres":
+            return get_db()
+        if "logs_db_conn" not in g:
+            g.logs_db_conn = init_db()
+        return g.logs_db_conn
 
     def get_price_db() -> DBConnection:
         if "price_db_conn" not in g:
@@ -1065,7 +1112,7 @@ def create_app() -> Flask:
             })
         return {"scheduled_jobs": scheduled_jobs}
 
-    def _ingest_panel_context(db) -> dict:
+    def _ingest_panel_context(db, logs_db) -> dict:
         """Only computed when the Ingest panel is actually being viewed —
         discover_pending_financial_items() walks the whole data/raw/ tree,
         which is wasted work on every /admin load otherwise (same reasoning
@@ -1080,16 +1127,16 @@ def create_app() -> Flask:
         (Type) dropdown options come from *every* row regardless of the
         current Status filter, so switching Status doesn't make options
         disappear out from under the user."""
-        discover_pending_financial_items(db)
+        discover_pending_financial_items(logs_db)
 
         active_ingest_tab = "documents" if request.args.get("ingest_tab") == "documents" else "financial"
 
-        fq_all = list_ingestion_queue_items(db)
+        fq_all = list_ingestion_queue_items(logs_db)
         fq_status_filter = request.args.get("fq_status") or ""
         fq_company_filter = request.args.get("fq_company") or ""
         fq_kind_filter = request.args.get("fq_kind") or ""
         fq = _filter_and_paginate(
-            list_ingestion_queue_items(db, status=fq_status_filter or None),
+            list_ingestion_queue_items(logs_db, status=fq_status_filter or None),
             filters={"company_id": fq_company_filter, "item_kind": fq_kind_filter},
             page_arg="fq_page", page_size=ADMIN_INGEST_PAGE_SIZE,
         )
@@ -1128,7 +1175,7 @@ def create_app() -> Flask:
             "ingest_dq_types": _distinct_values(dq_all, "document_type"),
         }
 
-    def _audit_panel_context(db) -> dict:
+    def _audit_panel_context(db, logs_db) -> dict:
         """Only computed when the Audit Log panel is actually being viewed,
         same reasoning _ingest_panel_context() gives for the Ingest panel.
 
@@ -1192,12 +1239,12 @@ def create_app() -> Flask:
         job_labels = {job.job_name: job.label for job in _SCHEDULED_JOBS if job.job_name}
         job_filter_options = [
             {"job_name": name, "label": job_labels.get(name, name)}
-            for name in list_distinct_batch_job_names(db)
+            for name in list_distinct_batch_job_names(logs_db)
         ]
 
-        job_runs = list_batch_job_runs(db, job_name=job_filter or None, since_iso=since_iso, limit=200)
+        job_runs = list_batch_job_runs(logs_db, job_name=job_filter or None, since_iso=since_iso, limit=200)
         for run in job_runs:
-            run["items"] = list_batch_job_items(db, run["run_id"])
+            run["items"] = list_batch_job_items(logs_db, run["run_id"])
             # Derived from the already-eager-loaded items above, not
             # run['items_total']/etc -- those columns are only written once,
             # at the very end, by finish_batch_job_run(), so they're still
@@ -1236,7 +1283,7 @@ def create_app() -> Flask:
         )
 
         recent_log_by_company = list_reconciliation_log_by_company(
-            db, [r["company_id"] for r in page["rows"]], limit_per_company=20,
+            logs_db, [r["company_id"] for r in page["rows"]], limit_per_company=20,
         )
         for row in page["rows"]:
             row["recent_log"] = recent_log_by_company.get(row["company_id"], [])
@@ -1259,7 +1306,7 @@ def create_app() -> Flask:
                 if usa_query in (r["company_id"] or "").lower() or usa_query in (r["display_name"] or "").lower()
             ]
         usa_recent_log_by_company = list_reconciliation_log_by_company(
-            db, [r["company_id"] for r in usa_migration_rows], limit_per_company=20,
+            logs_db, [r["company_id"] for r in usa_migration_rows], limit_per_company=20,
         )
         for row in usa_migration_rows:
             row["recent_log"] = usa_recent_log_by_company.get(row["company_id"], [])
@@ -1436,9 +1483,13 @@ def create_app() -> Flask:
                 list_stock_actions(db, request.args["sa_company_id"])
                 if request.args.get("sa_company_id") else []
             ),
-            **(_ingest_panel_context(db) if admin_sub == "ingest" else {}),
-            **(_audit_panel_context(db) if admin_sub == "audit" else {}),
-            **(_schedule_panel_context(db) if admin_sub == "schedule" else {}),
+            # logs_db (always SQLite, regardless of DATABASE_BACKEND) is
+            # passed alongside db (backend-dependent) since batch_job_runs/
+            # items, ingestion_queue_items, and reconciliation_log stay
+            # SQLite-only forever -- see get_logs_db()'s own docstring.
+            **(_ingest_panel_context(db, get_logs_db()) if admin_sub == "ingest" else {}),
+            **(_audit_panel_context(db, get_logs_db()) if admin_sub == "audit" else {}),
+            **(_schedule_panel_context(get_logs_db()) if admin_sub == "schedule" else {}),
         }
 
     @app.route("/admin/usage")
@@ -1450,7 +1501,7 @@ def create_app() -> Flask:
         Admin-only (endpoint name starts with "admin" — see _require_login
         above) since spend data is an operator concern, not a general
         end-user one."""
-        db = get_db()
+        db = get_logs_db()
         return render_template(
             "usage.html",
             summary=get_llm_usage_summary(db),
@@ -1608,7 +1659,7 @@ def create_app() -> Flask:
         run gets a "never run" placeholder rather than being left off the
         list entirely, so the badge for a brand-new company doesn't just
         silently not appear."""
-        db = get_db()
+        db = get_logs_db()
         statuses = []
         for label, job_name in _run_now_jobs_for(company):
             item = get_latest_batch_item_for_company(db, job_name, company["company_id"])
@@ -1697,7 +1748,7 @@ def create_app() -> Flask:
         waiting for the next /admin?panel=ingest load (which already
         refreshes on its own, but an explicit action makes "did my newly
         dropped file show up" not depend on remembering that)."""
-        db = get_db()
+        db = get_logs_db()
         touched = discover_pending_financial_items(db)
         flash(f"Rescanned data/raw/ — {touched} item(s) added or updated.", "success")
         return redirect(url_for("settings", panel="admin-ingest"))
@@ -2283,15 +2334,19 @@ def create_app() -> Flask:
             return jsonify(error="That filename isn't valid."), 400
 
         # data/documents/<COMPANY>/note_attachments/<timestamp>__<file> —
-        # same never-overwrite convention as company_add_document.
-        dest_dir = app_settings.DOCUMENTS_DIR / company_id / _NOTE_ATTACHMENTS_DIR_NAME
-        dest_dir.mkdir(parents=True, exist_ok=True)
+        # same never-overwrite convention as company_add_document. Routed
+        # through the active DocumentStore (storage/document_store.py)
+        # rather than upload.save() directly, so this works unchanged
+        # whether DOCUMENT_STORE_BACKEND is "local" (default, identical
+        # on-disk behaviour) or "s3".
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        dest_path = dest_dir / f"{stamp}__{filename}"
-        upload.save(dest_path)
-        size_bytes = dest_path.stat().st_size
+        dest_dir = app_settings.DOCUMENTS_DIR / company_id / _NOTE_ATTACHMENTS_DIR_NAME
+        key = to_repo_relative(dest_dir / f"{stamp}__{filename}")
+        content = upload.read()
+        storage_key = default_document_store().store(key, content)
+        size_bytes = len(content)
 
-        row = save_note_attachment(db, note_id, filename, to_repo_relative(dest_path), size_bytes)
+        row = save_note_attachment(db, note_id, filename, storage_key, size_bytes)
         return jsonify(
             attachment_id=row["attachment_id"],
             filename=row["filename"],
@@ -2308,6 +2363,15 @@ def create_app() -> Flask:
         row = get_note_attachment(db, note_id, attachment_id)
         if row is None:
             abort(404)
+        # Mixed-mode during migration: a presigned URL when the active
+        # backend can produce one (S3), falling back to today's send_file
+        # for a document still only on local disk (LocalDocumentStore's
+        # presigned_url() always returns None, same as before this routed
+        # through DocumentStore).
+        store = default_document_store()
+        url = store.presigned_url(row["raw_file_path"])
+        if url:
+            return redirect(url)
         return send_file(from_repo_relative(row["raw_file_path"]), download_name=row["filename"])
 
     @app.route("/companies/<company_id>/notes/<int:note_id>/attachments/<int:attachment_id>/delete", methods=["POST"])
@@ -2316,7 +2380,7 @@ def create_app() -> Flask:
         row = delete_note_attachment(db, note_id, attachment_id)
         if row is None:
             abort(404)
-        from_repo_relative(row["raw_file_path"]).unlink(missing_ok=True)
+        default_document_store().delete(row["raw_file_path"])
         return jsonify(ok=True)
 
     @app.route("/companies/<company_id>/valuation-feed.json")
@@ -2507,6 +2571,8 @@ def create_app() -> Flask:
             return jsonify(error=str(exc)), 400
 
         raw_file_path = None
+        storage_object_key = None
+        content_hash = None
         source_url = None
         if source == "upload":
             upload = request.files.get("file")
@@ -2519,12 +2585,17 @@ def create_app() -> Flask:
             # never-overwrite, company-scoped convention admin_import_raw_file
             # uses for data/raw/, just under DOCUMENTS_DIR since these are
             # narrative documents, not financial-statement source files.
-            dest_dir = app_settings.DOCUMENTS_DIR / company_id
-            dest_dir.mkdir(parents=True, exist_ok=True)
+            # Routed through the active DocumentStore (storage/document_store.py)
+            # rather than upload.save() directly, so this works unchanged
+            # whether DOCUMENT_STORE_BACKEND is "local" (default, identical
+            # on-disk behaviour) or "s3".
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            dest_path = dest_dir / f"{stamp}__{filename}"
-            upload.save(dest_path)
-            raw_file_path = to_repo_relative(dest_path)
+            dest_dir = app_settings.DOCUMENTS_DIR / company_id
+            key = to_repo_relative(dest_dir / f"{stamp}__{filename}")
+            content = upload.read()
+            storage_object_key = default_document_store().store(key, content)
+            content_hash = hashlib.sha256(content).hexdigest()
+            raw_file_path = storage_object_key
         elif source == "link":
             source_url = (data.get("ref") or "").strip()
             if not source_url:
@@ -2542,6 +2613,8 @@ def create_app() -> Flask:
             added_by_user=added_by_user,
             raw_file_path=raw_file_path,
             source_url=source_url,
+            storage_object_key=storage_object_key,
+            content_hash=content_hash,
         )
         return jsonify(
             document_id=row["document_id"],
@@ -2560,6 +2633,16 @@ def create_app() -> Flask:
         row = get_company_document(db, company_id, document_id)
         if row is None or not row["raw_file_path"]:
             abort(404)
+        # Mixed-mode during migration: a presigned URL when the active
+        # backend can produce one (S3), falling back to today's send_file
+        # for a document still only on local disk (LocalDocumentStore's
+        # presigned_url() always returns None, same as before this routed
+        # through DocumentStore).
+        key = row["storage_object_key"] or row["raw_file_path"]
+        store = default_document_store()
+        url = store.presigned_url(key)
+        if url:
+            return redirect(url)
         return send_file(from_repo_relative(row["raw_file_path"]))
 
     def _safe_login_next() -> str:
@@ -3197,7 +3280,10 @@ def create_app() -> Flask:
                 "additional_evidence_needed": json.loads(investigation["additional_evidence_needed"] or "[]"),
             },
             hypotheses=hypotheses,
-            cost=get_investigation_cost_summary(db, investigation_id),
+            # llm_call_log stays SQLite-only regardless of DATABASE_BACKEND
+            # -- get_logs_db(), not db (which may be a Postgres connection
+            # here, used for the investigation/hypotheses queries above).
+            cost=get_investigation_cost_summary(get_logs_db(), investigation_id),
         )
 
     INVESTIGATIONS_PAGE_SIZE = 20

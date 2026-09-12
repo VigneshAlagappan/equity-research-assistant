@@ -11,8 +11,6 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-import psycopg2
-import psycopg2.extras
 from werkzeug.security import generate_password_hash
 
 from config import settings
@@ -51,6 +49,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_document_chunks_fk_reference(conn)
     _migrate_documents_processing_status_columns(conn)
     _migrate_raw_file_paths_to_repo_relative(conn)
+    _migrate_documents_storage_columns(conn)
     _migrate_company_notes_updated_at(conn)
     _migrate_llm_call_log_columns(conn)
     _migrate_shareholding_observations_columns(conn)
@@ -69,9 +68,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     return conn
 
 
-def init_postgres_db(
-    connection_string: str | None = None, schema_path: Path | None = None
-) -> psycopg2.extensions.connection:
+def init_postgres_db(connection_string: str | None = None, schema_path: Path | None = None):
     """Open a Neon/Postgres connection and create the ported tables (if missing).
 
     Checkpoint-1 of the SQLite -> Postgres migration (schemas/postgres_schema.sql
@@ -89,7 +86,17 @@ def init_postgres_db(
     Safe to call repeatedly: the schema file's CREATE TABLE IF NOT EXISTS /
     CREATE INDEX IF NOT EXISTS statements no-op on tables/indexes that already
     exist.
-    """
+
+    `psycopg2` is imported here, not at module level: this keeps it an
+    optional dependency of the SQLite-only live app (not in requirements.txt
+    by design, still, as of the Lightsail deployment work -- a module-level
+    import broke the entire app, including the unrelated SQLite path, in any
+    environment without psycopg2 installed, e.g. a fresh Docker image; found
+    via that deployment's local container test, fixed here since it's a
+    real bug independent of Docker)."""
+    import psycopg2
+    import psycopg2.extras
+
     connection_string = connection_string or os.environ["NEON"]
     schema_path = (
         schema_path if schema_path is not None else settings.BASE_DIR / "schemas" / "postgres_schema.sql"
@@ -565,6 +572,31 @@ def _migrate_documents_processing_status_columns(conn: sqlite3.Connection) -> No
         conn.execute("ALTER TABLE documents ADD COLUMN processed_at TEXT")
     if "error_message" not in columns:
         conn.execute("ALTER TABLE documents ADD COLUMN error_message TEXT")
+
+
+def _migrate_documents_storage_columns(conn: sqlite3.Connection) -> None:
+    """storage/document_store.py's DocumentStore abstraction (architecture
+    review: swap DOCUMENTS_DIR's on-disk storage for S3 without touching
+    every call site). storage_object_key is the key the active DocumentStore
+    resolves — deliberately backfilled from raw_file_path for every existing
+    row on the local backend (same repo-relative string, per
+    storage/document_store.py's module docstring), so a database that
+    predates this column doesn't need a separate one-time backfill script.
+    content_hash starts NULL and is only ever computed going forward (by
+    whichever call site now routes through DocumentStore), same reasoning
+    _migrate_documents_processing_status_columns already follows for adding
+    a column with no retroactive computation."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(documents)")}
+    if not columns:
+        return
+    if "storage_object_key" not in columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN storage_object_key TEXT")
+        conn.execute(
+            "UPDATE documents SET storage_object_key = raw_file_path WHERE raw_file_path IS NOT NULL"
+        )
+    if "content_hash" not in columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN content_hash TEXT")
+    conn.commit()
 
 
 def _migrate_raw_file_paths_to_repo_relative(conn: sqlite3.Connection) -> None:
