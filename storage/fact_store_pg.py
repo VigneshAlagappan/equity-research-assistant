@@ -149,6 +149,7 @@ def default_fact_store() -> FactStore:
         save_investigation,
         save_investigation_hypothesis,
         save_investigation_hypothesis_evidence,
+        update_investigation_s3_metadata,
         save_system_insight,
         set_document_chunks_embedding_status,
     )
@@ -184,6 +185,7 @@ def default_fact_store() -> FactStore:
         save_investigation=save_investigation,
         save_investigation_hypothesis=save_investigation_hypothesis,
         save_investigation_hypothesis_evidence=save_investigation_hypothesis_evidence,
+        update_investigation_s3_metadata=update_investigation_s3_metadata,
         list_recent_high_confidence_claims=list_recent_high_confidence_claims,
         save_system_insight=save_system_insight,
         list_company_ids_with_financial_data=list_company_ids_with_financial_data,

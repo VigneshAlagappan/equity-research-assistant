@@ -81,6 +81,7 @@ class FactStore:
     save_investigation: Callable[..., None]
     save_investigation_hypothesis: Callable[..., None]
     save_investigation_hypothesis_evidence: Callable[..., None]
+    update_investigation_s3_metadata: Callable[..., None]
 
     # System Insights (Tools tab, research/system_insights.py)
     list_recent_high_confidence_claims: Callable[..., list[sqlite3.Row]]
@@ -126,6 +127,7 @@ def default_fact_store() -> FactStore:
         save_investigation,
         save_investigation_hypothesis,
         save_investigation_hypothesis_evidence,
+        update_investigation_s3_metadata,
         save_system_insight,
         search_document_chunks,
         get_document_chunks_by_ids,
@@ -164,6 +166,7 @@ def default_fact_store() -> FactStore:
         save_investigation=save_investigation,
         save_investigation_hypothesis=save_investigation_hypothesis,
         save_investigation_hypothesis_evidence=save_investigation_hypothesis_evidence,
+        update_investigation_s3_metadata=update_investigation_s3_metadata,
         list_recent_high_confidence_claims=list_recent_high_confidence_claims,
         save_system_insight=save_system_insight,
         list_company_ids_with_financial_data=list_company_ids_with_financial_data,

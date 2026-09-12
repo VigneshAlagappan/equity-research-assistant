@@ -91,7 +91,18 @@ def run_price_history_update(
 
         updated = no_data = errors = 0
         with BatchRun(main_conn, job_name, scope_label=f"{index_name} ({total} companies)") as run:
-            for i, (company_id, nse_symbol) in enumerate(rows, 1):
+            for i, row in enumerate(rows, 1):
+                # Dict-style access, not positional tuple-unpacking --
+                # sqlite3.Row iterates by VALUE (so `company_id, nse_symbol
+                # = row` used to work by accident), but psycopg2's
+                # RealDictRow iterates by KEY once DATABASE_BACKEND=
+                # postgres, silently unpacking the literal strings
+                # "company_id"/"nse_symbol" instead of the row's actual
+                # data (found this the hard way: every company came back
+                # as ticker "NSE_SYMBOL.NS", not a real symbol). row["..."]
+                # works identically on both backends' Row types.
+                company_id = row["company_id"]
+                nse_symbol = row["nse_symbol"]
                 with run.item(company_id) as item:
                     try:
                         bars = fetch_daily_bars(nse_symbol, period=FETCH_PERIOD)

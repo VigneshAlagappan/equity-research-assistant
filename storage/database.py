@@ -44,6 +44,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_company_insights_history(conn)
     _migrate_users_theme_column(conn)
     _migrate_case_visibility_columns(conn)
+    _migrate_investigation_s3_columns(conn)
     _migrate_documents_table(conn)
     _migrate_documents_old_fk_references(conn)
     _migrate_document_chunks_fk_reference(conn)
@@ -380,6 +381,33 @@ def _migrate_case_visibility_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN hidden_at TEXT")
         if "deleted_at" not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT")
+
+
+def _migrate_investigation_s3_columns(conn: sqlite3.Connection) -> None:
+    """Persistence architecture update: an investigation's full content
+    (hypotheses + evidence) now also gets written as one JSON artifact to
+    S3 (research/investigation.py::_persist(), storage/document_store.py)
+    -- investigation_hypotheses/investigation_hypothesis_evidence keep
+    being written exactly as before (nothing here changes that pipeline),
+    but web/app.py's investigate_view() now prefers reading the S3
+    artifact over the normalized tables when s3_key is set. abstract is a
+    short preview (Cases list / future search) derived from the synthesis
+    narrative; strongest_verdict is get_strongest_verdict_by_investigation's
+    result computed once at persist time and stored directly, so the Cases
+    list Status filter reads one column instead of a live JOIN across
+    every investigation's hypotheses. version is the S3 artifact's
+    generation, bumped on any future re-persist. All four are NULL for
+    every investigation that predates this column -- investigate_view()
+    falls back to the original table-based read for those, so no backfill
+    is required for old data to keep rendering."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(investigations)")}
+    if not columns:
+        return
+    for column, ddl in (
+        ("s3_key", "TEXT"), ("abstract", "TEXT"), ("version", "INTEGER"), ("strongest_verdict", "TEXT"),
+    ):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE investigations ADD COLUMN {column} {ddl}")
 
 
 def _migrate_documents_table(conn: sqlite3.Connection) -> None:

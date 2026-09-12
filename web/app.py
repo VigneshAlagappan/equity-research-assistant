@@ -1054,7 +1054,7 @@ def create_app() -> Flask:
         status_filter = request.args.get("al_status") or ""
         query = (request.args.get("al_q") or "").strip().lower()
         index_filter = request.args.get("al_index") or ""
-        migration_rows = list_xbrl_migration_status(db)
+        migration_rows = list_xbrl_migration_status(db, logs_db)
 
         filtered_rows = migration_rows
         if query:
@@ -1088,7 +1088,7 @@ def create_app() -> Flask:
         # complexity earning its keep yet -- revisit if that ever changes.
         usa_status_filter = request.args.get("al_usa_status") or ""
         usa_query = (request.args.get("al_usa_q") or "").strip().lower()
-        usa_migration_rows_all = list_sec_edgar_migration_status(db)
+        usa_migration_rows_all = list_sec_edgar_migration_status(db, logs_db)
         usa_migration_rows = usa_migration_rows_all
         if usa_status_filter:
             usa_migration_rows = [r for r in usa_migration_rows if r["migration_status"] == usa_status_filter]
@@ -3093,36 +3093,57 @@ def create_app() -> Flask:
     @app.route("/investigate/<investigation_id>")
     def investigate_view(investigation_id: str):
         db = get_db()
-        investigation = get_investigation(db, investigation_id)
-        if investigation is None:
+        investigation_row = get_investigation(db, investigation_id)
+        if investigation_row is None:
             abort(404, f"No investigation with id={investigation_id!r}")
 
-        hypotheses = []
-        for h in list_investigation_hypotheses(db, investigation_id):
-            evidence = [dict(e) for e in list_investigation_hypothesis_evidence(db, h["hypothesis_id"])]
-            hypotheses.append(
-                {
-                    **dict(h),
-                    "unknowns": json.loads(h["unknowns"] or "[]"),
-                    # chain_steps/confidence_score predate a hypothesis generated/
-                    # evaluated before those columns existed — "[]" and NULL are
-                    # the correct fallback (see storage/database.py's migration),
-                    # not an error.
-                    "chain_steps": json.loads(h["chain_steps"] or "[]") if "chain_steps" in h.keys() else [],
-                    "supporting_evidence": [e for e in evidence if e["stance"] == "supporting"],
-                    "contradicting_evidence": [e for e in evidence if e["stance"] == "contradicting"],
-                    "missing_evidence": [e for e in evidence if e["stance"] == "missing"],
-                }
-            )
+        # Persistence architecture: full content (hypotheses + evidence)
+        # now lives in S3 (research/investigation.py::_persist()); the
+        # investigations row only carries s3_key/abstract/metadata. NULL
+        # s3_key means this investigation predates the migration -- fall
+        # back to the original table-based read so old data keeps
+        # rendering without needing a backfill (see storage/database.py's
+        # _migrate_investigation_s3_columns docstring).
+        if investigation_row["s3_key"]:
+            artifact = json.loads(default_document_store().retrieve(investigation_row["s3_key"]))
+            investigation = {
+                "investigation_id": artifact["investigation_id"], "question": artifact["question"],
+                "company_ids": artifact["company_ids"], "statement_type": artifact["statement_type"],
+                "strongest_explanation": artifact["strongest_explanation"],
+                "unanswered_questions": artifact["unanswered_questions"],
+                "additional_evidence_needed": artifact["additional_evidence_needed"],
+                "generated_at": investigation_row["generated_at"], "as_of": artifact["as_of"],
+                "hidden_at": investigation_row["hidden_at"], "deleted_at": investigation_row["deleted_at"],
+            }
+            hypotheses = artifact["hypotheses"]
+        else:
+            hypotheses = []
+            for h in list_investigation_hypotheses(db, investigation_id):
+                evidence = [dict(e) for e in list_investigation_hypothesis_evidence(db, h["hypothesis_id"])]
+                hypotheses.append(
+                    {
+                        **dict(h),
+                        "unknowns": json.loads(h["unknowns"] or "[]"),
+                        # chain_steps/confidence_score predate a hypothesis generated/
+                        # evaluated before those columns existed — "[]" and NULL are
+                        # the correct fallback (see storage/database.py's migration),
+                        # not an error.
+                        "chain_steps": json.loads(h["chain_steps"] or "[]") if "chain_steps" in h.keys() else [],
+                        "supporting_evidence": [e for e in evidence if e["stance"] == "supporting"],
+                        "contradicting_evidence": [e for e in evidence if e["stance"] == "contradicting"],
+                        "missing_evidence": [e for e in evidence if e["stance"] == "missing"],
+                    }
+                )
+            investigation = {
+                **dict(investigation_row),
+                "company_ids": json.loads(investigation_row["company_ids"] or "[]"),
+                "unanswered_questions": json.loads(investigation_row["unanswered_questions"] or "[]"),
+                "additional_evidence_needed": json.loads(investigation_row["additional_evidence_needed"] or "[]"),
+            }
 
         return render_template(
             "investigation.html",
-            investigation={
-                **dict(investigation),
-                "company_ids": json.loads(investigation["company_ids"] or "[]"),
-                "unanswered_questions": json.loads(investigation["unanswered_questions"] or "[]"),
-                "additional_evidence_needed": json.loads(investigation["additional_evidence_needed"] or "[]"),
-            },
+            investigation=investigation,
             hypotheses=hypotheses,
             # llm_call_log stays SQLite-only regardless of DATABASE_BACKEND
             # -- get_logs_db(), not db (which may be a Postgres connection
@@ -3200,12 +3221,16 @@ def create_app() -> Flask:
         # Step 2G's evidence-based verdict on a specific competing
         # explanation), kept as distinct labels rather than forced into one
         # shared vocabulary, per instruction.
-        verdict_by_investigation = get_strongest_verdict_by_investigation(
-            get_db(), [inv["investigation_id"] for inv in all_investigations]
-        )
+        # strongest_verdict is now computed once at persist time and
+        # stored directly on the row (storage/database.py's
+        # _migrate_investigation_s3_columns) -- the batched live-JOIN
+        # fallback below only ever runs for investigations that predate
+        # that column, never for new ones.
+        legacy_ids = [inv["investigation_id"] for inv in all_investigations if inv["strongest_verdict"] is None]
+        verdict_by_investigation = get_strongest_verdict_by_investigation(get_db(), legacy_ids) if legacy_ids else {}
         for inv in all_investigations:
             company_ids = json.loads(inv["company_ids"] or "[]")
-            verdict = verdict_by_investigation.get(inv["investigation_id"])
+            verdict = inv["strongest_verdict"] or verdict_by_investigation.get(inv["investigation_id"])
             status_key, status_label = _VERDICT_STATUS.get(verdict, ("no_verdict", "No verdict yet"))
             entries.append(
                 {

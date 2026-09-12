@@ -40,7 +40,7 @@ def test_migration_status_pending_when_legacy_ahead_of_xbrl(conn: sqlite3.Connec
     insert_financial_observations(conn, [legacy_q2, xbrl_q1])
     reconcile_batch(conn, [legacy_q2, xbrl_q1])
 
-    status = {row["company_id"]: row for row in list_xbrl_migration_status(conn)}
+    status = {row["company_id"]: row for row in list_xbrl_migration_status(conn, conn)}
     assert status["ACME"]["migration_status"] == "pending"
     assert status["ACME"]["latest_xbrl_period"] == "FY2025Q1"
     assert status["ACME"]["latest_legacy_period"] == "FY2025Q2"
@@ -53,7 +53,7 @@ def test_migration_status_up_to_date_when_xbrl_covers_latest(conn: sqlite3.Conne
     insert_financial_observations(conn, [legacy_q1, xbrl_q2])
     reconcile_batch(conn, [legacy_q1, xbrl_q2])
 
-    status = {row["company_id"]: row for row in list_xbrl_migration_status(conn)}
+    status = {row["company_id"]: row for row in list_xbrl_migration_status(conn, conn)}
     assert status["ACME"]["migration_status"] == "up_to_date"
 
 
@@ -63,7 +63,7 @@ def test_migration_status_not_started_when_no_xbrl_at_all(conn: sqlite3.Connecti
     insert_financial_observations(conn, [legacy])
     reconcile_batch(conn, [legacy])
 
-    status = {row["company_id"]: row for row in list_xbrl_migration_status(conn)}
+    status = {row["company_id"]: row for row in list_xbrl_migration_status(conn, conn)}
     assert status["ACME"]["migration_status"] == "not_started"
     assert status["ACME"]["latest_xbrl_period"] is None
 
@@ -71,13 +71,13 @@ def test_migration_status_not_started_when_no_xbrl_at_all(conn: sqlite3.Connecti
 def test_migration_status_no_data_when_nothing_on_file(conn: sqlite3.Connection) -> None:
     register_company(conn, "ACME", "Acme Ltd", "Acme", nse_symbol="ACME")
 
-    status = {row["company_id"]: row for row in list_xbrl_migration_status(conn)}
+    status = {row["company_id"]: row for row in list_xbrl_migration_status(conn, conn)}
     assert status["ACME"]["migration_status"] == "no_data"
 
 
 def test_migration_status_excludes_companies_without_nse_symbol(conn: sqlite3.Connection) -> None:
     register_company(conn, "NOEXCH", "No Exchange Ltd", "No Exchange")  # no nse_symbol
-    status = {row["company_id"]: row for row in list_xbrl_migration_status(conn)}
+    status = {row["company_id"]: row for row in list_xbrl_migration_status(conn, conn)}
     assert "NOEXCH" not in status
 
 

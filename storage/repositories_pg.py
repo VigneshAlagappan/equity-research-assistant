@@ -450,102 +450,16 @@ def reconcile_company(conn: DBConnection, company_id: str) -> int:
     )
 
 
-def list_xbrl_migration_status(conn: DBConnection) -> list[dict]:
-    """MAX(CASE WHEN ... THEN ... END) conditional aggregate + GROUP BY --
-    verified against real Neon."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT company_id,
-                   MAX(CASE WHEN source = 'nse' THEN fiscal_year || quarter END) AS latest_xbrl_period,
-                   MAX(fiscal_year || quarter) AS latest_any_period
-            FROM financial_observations
-            WHERE period_type = 'quarterly'
-            GROUP BY company_id
-            """
-        )
-        coverage_rows = cur.fetchall()
-        coverage_by_company = {row["company_id"]: row for row in coverage_rows}
-
-        cur.execute(
-            """
-            SELECT company_id, display_name, nse_symbol FROM companies
-            WHERE nse_symbol IS NOT NULL AND nse_symbol != '' AND status = 'active'
-            """
-        )
-        companies = cur.fetchall()
-
-    _STATUS_ORDER = {"pending": 0, "not_started": 1, "no_data": 2, "up_to_date": 3}
-    results: list[dict] = []
-    for company in companies:
-        coverage = coverage_by_company.get(company["company_id"])
-        latest_xbrl = coverage["latest_xbrl_period"] if coverage else None
-        latest_any = coverage["latest_any_period"] if coverage else None
-        if latest_any is None:
-            migration_status = "no_data"
-        elif latest_xbrl is None:
-            migration_status = "not_started"
-        elif latest_xbrl < latest_any:
-            migration_status = "pending"
-        else:
-            migration_status = "up_to_date"
-        results.append(
-            {
-                "company_id": company["company_id"],
-                "display_name": company["display_name"],
-                "nse_symbol": company["nse_symbol"],
-                "latest_xbrl_period": latest_xbrl,
-                "latest_legacy_period": latest_any,
-                "migration_status": migration_status,
-            }
-        )
-    results.sort(key=lambda r: (_STATUS_ORDER[r["migration_status"]], r["display_name"] or ""))
-    return results
-
-
-def list_sec_edgar_migration_status(conn: DBConnection) -> list[dict]:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT company_id,
-                   MAX(CASE WHEN source = 'sec_edgar' THEN fiscal_year || quarter END) AS latest_edgar_period,
-                   MAX(fiscal_year || quarter) AS latest_any_period
-            FROM financial_observations
-            WHERE period_type = 'quarterly'
-            GROUP BY company_id
-            """
-        )
-        coverage_rows = cur.fetchall()
-        coverage_by_company = {row["company_id"]: row for row in coverage_rows}
-
-        cur.execute("SELECT company_id, display_name FROM companies WHERE country = 'US' AND status = 'active'")
-        companies = cur.fetchall()
-
-    _STATUS_ORDER = {"pending": 0, "not_started": 1, "no_data": 2, "up_to_date": 3}
-    results: list[dict] = []
-    for company in companies:
-        coverage = coverage_by_company.get(company["company_id"])
-        latest_edgar = coverage["latest_edgar_period"] if coverage else None
-        latest_any = coverage["latest_any_period"] if coverage else None
-        if latest_any is None:
-            migration_status = "no_data"
-        elif latest_edgar is None:
-            migration_status = "not_started"
-        elif latest_edgar < latest_any:
-            migration_status = "pending"
-        else:
-            migration_status = "up_to_date"
-        results.append(
-            {
-                "company_id": company["company_id"],
-                "display_name": company["display_name"],
-                "latest_edgar_period": latest_edgar,
-                "latest_legacy_period": latest_any,
-                "migration_status": migration_status,
-            }
-        )
-    results.sort(key=lambda r: (_STATUS_ORDER[r["migration_status"]], r["display_name"] or ""))
-    return results
+# list_xbrl_migration_status / list_sec_edgar_migration_status deliberately
+# NOT defined here -- financial_observations was excluded from the Postgres
+# migration entirely (Neon's free-tier storage cap), so both functions now
+# live only in storage/repositories.py, take a second, always-SQLite
+# connection for that table, and are exposed to the hybrid module via
+# storage/backend_bootstrap.py's _SQLITE_ONLY_REPOSITORY_FUNCTIONS list --
+# same as this file's other deliberate omissions (see that module's own
+# docstring). A from-here Postgres-only version used to exist and crashed
+# every time with `UndefinedTable: relation "financial_observations" does
+# not exist` the moment anyone opened the Admin Audit Log panel.
 
 
 # ------------------------------------------------------------------
@@ -1142,6 +1056,21 @@ def list_investigation_hypothesis_evidence(conn: DBConnection, hypothesis_id: st
             "SELECT * FROM investigation_hypothesis_evidence WHERE hypothesis_id = %s ORDER BY id", (hypothesis_id,)
         )
         return cur.fetchall()
+
+
+def update_investigation_s3_metadata(
+    conn: DBConnection, investigation_id: str, *, s3_key: str, abstract: str | None,
+    version: int, strongest_verdict: str | None,
+) -> None:
+    """Postgres counterpart of storage/repositories.py's function of the
+    same name -- see its docstring for the full reasoning."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE investigations SET s3_key = %s, abstract = %s, version = %s, strongest_verdict = %s "
+            "WHERE investigation_id = %s",
+            (s3_key, abstract, version, strongest_verdict, investigation_id),
+        )
+    conn.commit()
 
 
 # ------------------------------------------------------------------

@@ -1,0 +1,40 @@
+{
+  "investigation_id": "inv-test-2",
+  "question": "Why did TESTCO margins compress?",
+  "company_ids": [
+    "TESTCO"
+  ],
+  "statement_type": "consolidated",
+  "strongest_explanation": "Cost inflation is the primary driver of margin compression.",
+  "unanswered_questions": [
+    "q1"
+  ],
+  "additional_evidence_needed": [
+    "e1"
+  ],
+  "as_of": null,
+  "hypotheses": [
+    {
+      "hypothesis_id": "h1",
+      "statement": "Cost inflation",
+      "mechanism": "Input costs rose",
+      "chain_steps": [
+        "costs up",
+        "margin down"
+      ],
+      "category": "financial",
+      "rationale": "raw material prices",
+      "unknowns": [
+        "exact magnitude"
+      ],
+      "generation_order": 1,
+      "verdict": "SUPPORTED",
+      "confidence_basis": "strong evidence",
+      "confidence_score": 80,
+      "synthesis_rank": 1,
+      "supporting_evidence": [],
+      "contradicting_evidence": [],
+      "missing_evidence": []
+    }
+  ]
+}

@@ -68,6 +68,7 @@ _SQLITE_ONLY_REPOSITORY_FUNCTIONS = (
     "list_ingestion_queue_items", "get_ingestion_queue_item", "get_ingestion_queue_item_by_path",
     "upsert_ingestion_queue_item", "update_ingestion_queue_item_result", "set_ingestion_queue_item_status",
     "list_reconciliation_log", "list_reconciliation_log_by_company",
+    "list_xbrl_migration_status", "list_sec_edgar_migration_status",
 )
 
 _WHOLESALE_SWAP_MODULES = (

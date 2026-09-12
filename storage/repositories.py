@@ -18,6 +18,7 @@ from pathlib import Path
 from config.settings import to_repo_relative
 from ingestion.events import DatasetIngestedEvent
 from sources.base import NormalizedObservation
+from storage.db_types import DBConnection
 from sources.macro import MacroNormalizedObservation
 from sources.rbi_bank_infrastructure import BankInfrastructureObservation
 from storage.database import utcnow_iso
@@ -614,7 +615,7 @@ def list_reconciliation_log_by_company(
     return by_company
 
 
-def list_xbrl_migration_status(conn: sqlite3.Connection) -> list[dict]:
+def list_xbrl_migration_status(main_conn: DBConnection, financial_obs_conn: sqlite3.Connection) -> list[dict]:
     """Per NSE-listed active company: the latest quarterly period on file
     from ANY source vs the latest one specifically validated on NSE XBRL —
     the Admin Audit Log panel's "what's pending" view (source policy: NSE
@@ -633,8 +634,23 @@ def list_xbrl_migration_status(conn: sqlite3.Connection) -> list[dict]:
     since fiscal_year is always "FY" + 4 digits and quarter is always a
     single "Q1".."Q4" — MAX()/< on that concatenation is a valid
     chronological comparison without parsing it apart.
+
+    Two connections, not one: `financial_observations` was excluded from
+    the Postgres migration entirely (Neon's free-tier storage cap; see
+    schemas/postgres_schema.sql's own note), so it stays SQLite-only
+    forever and must be read from a dedicated SQLite connection (web/
+    app.py's get_logs_db()) regardless of DATABASE_BACKEND — while
+    `companies` is a live, actively-written table that must be read from
+    whichever backend is actually current (get_db()), or this would show
+    a stale/empty company list in production. Found this the hard way:
+    a single-connection version of this function (this one, before the
+    fix) crashed with `UndefinedTable: relation "financial_observations"
+    does not exist` the instant the Admin Audit Log panel was opened
+    against Postgres. `main_conn.cursor()`/`.execute()`/`.fetchall()`
+    works identically on both backends here since neither query below
+    takes a bind parameter (no ?/%s placeholder mismatch to worry about).
     """
-    coverage_rows = conn.execute(
+    fo_cur = financial_obs_conn.execute(
         """
         SELECT company_id,
                MAX(CASE WHEN source = 'nse' THEN fiscal_year || quarter END) AS latest_xbrl_period,
@@ -643,15 +659,18 @@ def list_xbrl_migration_status(conn: sqlite3.Connection) -> list[dict]:
         WHERE period_type = 'quarterly'
         GROUP BY company_id
         """
-    ).fetchall()
+    )
+    coverage_rows = fo_cur.fetchall()
     coverage_by_company = {row["company_id"]: row for row in coverage_rows}
 
-    companies = conn.execute(
+    main_cur = main_conn.cursor()
+    main_cur.execute(
         """
         SELECT company_id, display_name, nse_symbol FROM companies
         WHERE nse_symbol IS NOT NULL AND nse_symbol != '' AND status = 'active'
         """
-    ).fetchall()
+    )
+    companies = main_cur.fetchall()
 
     _STATUS_ORDER = {"pending": 0, "not_started": 1, "no_data": 2, "up_to_date": 3}
     results: list[dict] = []
@@ -681,7 +700,7 @@ def list_xbrl_migration_status(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-def list_sec_edgar_migration_status(conn: sqlite3.Connection) -> list[dict]:
+def list_sec_edgar_migration_status(main_conn: DBConnection, financial_obs_conn: sqlite3.Connection) -> list[dict]:
     """Per active US company: the same "is the target source of truth
     caught up with everything else on file" question
     list_xbrl_migration_status() answers for NSE, just source='sec_edgar'
@@ -704,7 +723,7 @@ def list_sec_edgar_migration_status(conn: sqlite3.Connection) -> list[dict]:
     (India vs USA) shouldn't be tempted to reuse an NSE-only field name
     that has no US equivalent (company_id itself is the closest thing to
     a "ticker" for a US company, already returned)."""
-    coverage_rows = conn.execute(
+    fo_cur = financial_obs_conn.execute(
         """
         SELECT company_id,
                MAX(CASE WHEN source = 'sec_edgar' THEN fiscal_year || quarter END) AS latest_edgar_period,
@@ -713,12 +732,15 @@ def list_sec_edgar_migration_status(conn: sqlite3.Connection) -> list[dict]:
         WHERE period_type = 'quarterly'
         GROUP BY company_id
         """
-    ).fetchall()
+    )
+    coverage_rows = fo_cur.fetchall()
     coverage_by_company = {row["company_id"]: row for row in coverage_rows}
 
-    companies = conn.execute(
+    main_cur = main_conn.cursor()
+    main_cur.execute(
         "SELECT company_id, display_name FROM companies WHERE country = 'US' AND status = 'active'"
-    ).fetchall()
+    )
+    companies = main_cur.fetchall()
 
     _STATUS_ORDER = {"pending": 0, "not_started": 1, "no_data": 2, "up_to_date": 3}
     results: list[dict] = []
@@ -1448,6 +1470,29 @@ def list_investigation_hypothesis_evidence(conn: sqlite3.Connection, hypothesis_
     return conn.execute(
         "SELECT * FROM investigation_hypothesis_evidence WHERE hypothesis_id = ? ORDER BY id", (hypothesis_id,)
     ).fetchall()
+
+
+def update_investigation_s3_metadata(
+    conn: sqlite3.Connection, investigation_id: str, *, s3_key: str, abstract: str | None,
+    version: int, strongest_verdict: str | None,
+) -> None:
+    """research/investigation.py::_persist() calls this right after writing
+    the same investigation via save_investigation()/save_investigation_
+    hypothesis()/save_investigation_hypothesis_evidence() (unchanged,
+    still the source of truth for anything that queries those tables
+    directly) -- this just records where the equivalent full-content JSON
+    artifact landed in S3, plus two summary fields (abstract,
+    strongest_verdict) so web/app.py's investigate_view()/investigations()
+    list route can serve from this row alone without a live JOIN. See
+    storage/database.py::_migrate_investigation_s3_columns for the
+    backward-compatibility contract (NULL here means "pre-migration,
+    fall back to the normalized tables")."""
+    conn.execute(
+        "UPDATE investigations SET s3_key = ?, abstract = ?, version = ?, strongest_verdict = ? "
+        "WHERE investigation_id = ?",
+        (s3_key, abstract, version, strongest_verdict, investigation_id),
+    )
+    conn.commit()
 
 
 def get_or_create_knowledge_entity(

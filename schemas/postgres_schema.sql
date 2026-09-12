@@ -633,7 +633,13 @@ CREATE TABLE IF NOT EXISTS investigations (
   hidden_at TEXT,                   -- ported from storage/database.py's
                                      -- _migrate_case_visibility_columns -- see
                                      -- generated_reports above for the same columns' reasoning
-  deleted_at TEXT
+  deleted_at TEXT,
+  s3_key TEXT,                      -- ported from storage/database.py's
+                                     -- _migrate_investigation_s3_columns --
+                                     -- full hypotheses+evidence JSON artifact's S3 key
+  abstract TEXT,                    -- short preview derived from the synthesis narrative
+  version INTEGER,
+  strongest_verdict TEXT            -- computed once at persist time (was a live JOIN before)
 );
 
 -- One investigation <-> many companies. `investigations.company_ids` above
