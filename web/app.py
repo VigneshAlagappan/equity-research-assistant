@@ -101,15 +101,10 @@ from research.investigation import InvestigationError, run_investigation
 from retrieval.tag_resolver import resolve_tags_in_text
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
-from scripts.batch_fetch_fred import run_fred_batch, TRACKED_SERIES
+from scheduling.jobs import ScheduledJob, SCHEDULED_JOBS, get_job
 from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
-from scripts.batch_generate_insights import run_key_insights_batch
-from scripts.db_shard import run_db_shard_job
-from scripts.fetch_daily_prices import run_price_history_update
-from scripts.fetch_daily_prices_usa import run_price_history_update_usa
-from scripts.process_pending_documents_batch import run_document_processing_batch
-from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
+from storage.company_repository import select_company_ids_by_index
 from storage.database import init_db, init_postgres_db
 from storage.document_store import default_document_store
 from storage.investigation_repository import (
@@ -153,6 +148,7 @@ from storage.repositories import (
     finish_batch_job_run,
     get_company_document,
     get_note_attachment,
+    get_all_company_index_tags,
     get_company_index_tags,
     get_company_insights,
     get_company_list_column_settings,
@@ -614,6 +610,12 @@ def create_app() -> Flask:
         daily_change_by_company = list_latest_daily_change(price_db)
         week52_by_company = list_52_week_range(price_db)
         all_time_by_company = list_all_time_range(price_db)
+        # Same one-query-total reasoning as the price/shares lookups above —
+        # a get_company_index_tags() call per row was fine on local SQLite
+        # (no network round trip) but turned a ~2,600-row page load into
+        # minutes once DATABASE_BACKEND=postgres put each of those queries
+        # over the network to Neon.
+        index_tags_by_company = get_all_company_index_tags(db)
 
         def _range_pct(price, low, high):
             """Where `price` sits between `low` and `high`, as 0-100 — for
@@ -705,7 +707,7 @@ def create_app() -> Flask:
             all_time = all_time_by_company.get(row["company_id"])
             row["all_time_low"], row["all_time_high"] = all_time if all_time else (None, None)
             row["all_time_pct"] = _range_pct(row["latest_price"], row["all_time_low"], row["all_time_high"])
-            row["index_tags"] = get_company_index_tags(db, row["company_id"])
+            row["index_tags"] = index_tags_by_company.get(row["company_id"], [])
             rows.append(row)
         sectors = sorted({row["sector"] for row in rows if row["sector"]})
         industries = sorted({row["industry"] for row in rows if row["industry"]})
@@ -784,226 +786,8 @@ def create_app() -> Flask:
     def _distinct_values(rows: list, column: str) -> list[str]:
         return sorted({r[column] for r in rows if r[column]})
 
-    @dataclass
-    class ScheduledJob:
-        """One row of the Settings > Data Operations > Schedule panel's
-        registry -- see SCHEDULED_JOBS.md for the underlying gap analysis
-        this table is a UI over. `runner` is None for the seven jobs that
-        aren't wired to anything real yet (a design gap, a missing fetch
-        source, or a batch-loop script nobody's written) -- those render as
-        a disabled row with `reason` as subtext, pulled verbatim from
-        SCHEDULED_JOBS.md's own verdict so the UI can't drift from the
-        actual gap analysis by inventing softer wording. `job_name` is the
-        batch_job_runs.job_name to look up "last run" by (None for the
-        disabled rows, which have never run anything)."""
-
-        job_id: str
-        label: str
-        cadence: str
-        job_name: str | None
-        reason: str | None
-        runner: Callable[[DBConnection], int] | None
-
-    def _run_financials_india(conn) -> int:
-        """Nifty 50 constituents only (not the full Nifty 500 the doc-level
-        gap analysis mentions for "planned") -- matches the registry table
-        in this task's own spec, and keeps a manual "Run now" click from
-        accidentally kicking off a several-hundred-company NSE crawl."""
-        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
-        return run_nse_batch(conn, "financials", companies, scope_label=f"Nifty 50 ({len(companies)})")
-
-    def _run_shareholding_india(conn) -> int:
-        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
-        return run_nse_batch(conn, "shareholding", companies, scope_label=f"Nifty 50 ({len(companies)})")
-
-    def _run_corporate_actions_india(conn) -> int:
-        """Nifty 50 only, hardcoded rather than via _make_nse_tier_runner
-        like its sibling tiers below -- same scoping reasoning as
-        _run_financials_india above -- raw fetch only (see
-        scripts/batch_fetch_nse.py's _run_corporate_actions)."""
-        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
-        return run_nse_batch(conn, "corporate_actions", companies, scope_label=f"Nifty 50 ({len(companies)})")
-
-    def _run_corporate_actions_ingest_india(conn) -> int:
-        """Classifies whatever _run_corporate_actions_india above has
-        fetched into corporate_actions -- a separate scheduled job (not a
-        step of the fetch job itself) so re-classifying later never
-        requires re-fetching, same as canonical_financials' own
-        reconciliation being a distinct action from ingestion."""
-        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
-        return run_nse_batch(conn, "corporate_actions_ingest", companies, scope_label=f"Nifty 50 ({len(companies)})")
-
-    # The other ~449 Nifty 500 constituents (everything not already covered
-    # by the Nifty 50 job above) used to be one "Nifty 500 remaining" job --
-    # replaced with three smaller ones along NSE's own standard tiering
-    # instead, so a single "Run now" click is a few dozen-to-150 companies,
-    # not 449 in one blocking synchronous request. Nifty Next 50 (50) +
-    # Nifty Midcap 150 (150) + Nifty Smallcap 250 (249) is a clean,
-    # verified, non-overlapping partition of exactly that same 449-company
-    # pool (Nifty 100 = Nifty 50 + Nifty Next 50, and Nifty 500 = Nifty 100
-    # + Midcap 150 + Smallcap 250 -- NSE's own tier composition, not
-    # something picked arbitrarily) -- deliberately Next 50, not the full
-    # Nifty 100 tier, so this doesn't re-fetch the 50 companies the
-    # standalone Nifty 50 job above already covers.
-    #
-    # One factory instead of six near-identical closures (financials x
-    # shareholding, each x 3 tiers) that would otherwise drift out of sync
-    # with each other if one got edited and the other five didn't.
-    def _make_nse_tier_runner(kind: str, index_name: str, job_name: str):
-        def _runner(conn) -> int:
-            companies = [r["company_id"] for r in select_company_ids_by_index(conn, index_name)]
-            return run_nse_batch(
-                conn, kind, companies,
-                scope_label=f"{index_name} ({len(companies)})", job_name=job_name,
-            )
-        return _runner
-
-    _run_financials_nifty_next50 = _make_nse_tier_runner(
-        "financials", "Nifty Next 50", "nse_xbrl_fetch_nifty_next50")
-    _run_financials_nifty_midcap150 = _make_nse_tier_runner(
-        "financials", "Nifty Midcap 150", "nse_xbrl_fetch_nifty_midcap150")
-    _run_financials_nifty_smallcap250 = _make_nse_tier_runner(
-        "financials", "Nifty Smallcap 250", "nse_xbrl_fetch_nifty_smallcap250")
-    _run_shareholding_nifty_next50 = _make_nse_tier_runner(
-        "shareholding", "Nifty Next 50", "nse_shareholding_fetch_nifty_next50")
-    _run_shareholding_nifty_midcap150 = _make_nse_tier_runner(
-        "shareholding", "Nifty Midcap 150", "nse_shareholding_fetch_nifty_midcap150")
-    _run_shareholding_nifty_smallcap250 = _make_nse_tier_runner(
-        "shareholding", "Nifty Smallcap 250", "nse_shareholding_fetch_nifty_smallcap250")
-
-    _run_corporate_actions_nifty_next50 = _make_nse_tier_runner(
-        "corporate_actions", "Nifty Next 50", "nse_corporate_actions_fetch_nifty_next50")
-    _run_corporate_actions_nifty_midcap150 = _make_nse_tier_runner(
-        "corporate_actions", "Nifty Midcap 150", "nse_corporate_actions_fetch_nifty_midcap150")
-    _run_corporate_actions_nifty_smallcap250 = _make_nse_tier_runner(
-        "corporate_actions", "Nifty Smallcap 250", "nse_corporate_actions_fetch_nifty_smallcap250")
-    _run_corporate_actions_ingest_nifty_next50 = _make_nse_tier_runner(
-        "corporate_actions_ingest", "Nifty Next 50", "nse_corporate_actions_ingest_nifty_next50")
-    _run_corporate_actions_ingest_nifty_midcap150 = _make_nse_tier_runner(
-        "corporate_actions_ingest", "Nifty Midcap 150", "nse_corporate_actions_ingest_nifty_midcap150")
-    _run_corporate_actions_ingest_nifty_smallcap250 = _make_nse_tier_runner(
-        "corporate_actions_ingest", "Nifty Smallcap 250", "nse_corporate_actions_ingest_nifty_smallcap250")
-
-    _run_financials_nifty_microcap = _make_nse_tier_runner(
-        "financials", "Nifty Micro-Cap", "nse_xbrl_fetch_nifty_microcap")
-    _run_shareholding_nifty_microcap = _make_nse_tier_runner(
-        "shareholding", "Nifty Micro-Cap", "nse_shareholding_fetch_nifty_microcap")
-    _run_corporate_actions_nifty_microcap = _make_nse_tier_runner(
-        "corporate_actions", "Nifty Micro-Cap", "nse_corporate_actions_fetch_nifty_microcap")
-    _run_corporate_actions_ingest_nifty_microcap = _make_nse_tier_runner(
-        "corporate_actions_ingest", "Nifty Micro-Cap", "nse_corporate_actions_ingest_nifty_microcap")
-
-    def _run_price_history_india(conn) -> int:
-        # run_price_history_update() opens its own main-db/price-db
-        # connections internally (see scripts/fetch_daily_prices.py's own
-        # refactor notes on why its BatchRun must live on the main db, not
-        # the price db) -- the `conn` this route hands every runner is
-        # ignored here, not reused, which is fine: it's the same main db
-        # underneath, just a second connection to it.
-        return run_price_history_update()
-
-    def _run_price_history_nifty_microcap(conn) -> int:
-        # Same "conn ignored, own connections opened internally" shape as
-        # _run_price_history_india above.
-        return run_price_history_update(index_name="Nifty Micro-Cap", job_name="price_history_india_nifty_microcap")
-
-    def _run_db_shard(conn) -> int:
-        return run_db_shard_job(conn)
-
-    def _run_fred_macro(conn) -> int:
-        return run_fred_batch(conn, TRACKED_SERIES, scope_label=f"FRED ({len(TRACKED_SERIES)} series)")
-
-    def _run_doc_analysis(conn) -> int:
-        return run_document_processing_batch(conn)
-
-    def _run_insights_companies(conn) -> int:
-        return run_key_insights_batch(conn)
-
-    def _run_financials_usa(conn) -> int:
-        """Every active US company on file (a dozen today, same "no
-        index-membership filter" reasoning select_active_companies_by_country's
-        own docstring gives -- a couple of them aren't tagged into any of
-        the US indices in company_index_membership, so filtering by one of
-        those would silently drop them)."""
-        companies = [r["company_id"] for r in select_active_companies_by_country(conn, "US")]
-        return run_sec_edgar_batch(conn, companies, scope_label=f"US companies ({len(companies)})")
-
-    def _run_price_history_usa(conn) -> int:
-        # Same shape as _run_price_history_india above: run_price_history_
-        # update_usa() opens its own main-db/price-db connections
-        # internally, so the `conn` this route hands every runner is
-        # ignored here rather than reused -- it's the same main db
-        # underneath either way.
-        return run_price_history_update_usa()
-
-    # Twenty-eight jobs get a real "Run now" button; the other two render as a
-    # disabled row with `reason` as subtext (see ScheduledJob's docstring
-    # above). Order here is the display order in the Schedule panel table.
-    _SCHEDULED_JOBS: list[ScheduledJob] = [
-        ScheduledJob("price_history_india", "Price history — India", "Daily",
-                     "price_history_india", None, _run_price_history_india),
-        ScheduledJob("price_history_india_nifty_microcap", "Price history — India (Nifty Micro-Cap)", "Monthly",
-                     "price_history_india_nifty_microcap", None, _run_price_history_nifty_microcap),
-        ScheduledJob("price_history_usa", "Price history — USA", "Weekly",
-                     "price_history_usa", None, _run_price_history_usa),
-        ScheduledJob("db_shard", "DB sharding", "Daily",
-                     "db_shard", None, _run_db_shard),
-        ScheduledJob("financials_india", "Financials — India (Nifty 50)", "Quarterly",
-                     "nse_xbrl_fetch", None, _run_financials_india),
-        ScheduledJob("financials_india_next50", "Financials — India (Nifty Next 50)", "Quarterly",
-                     "nse_xbrl_fetch_nifty_next50", None, _run_financials_nifty_next50),
-        ScheduledJob("financials_india_midcap150", "Financials — India (Nifty Midcap 150)", "Quarterly",
-                     "nse_xbrl_fetch_nifty_midcap150", None, _run_financials_nifty_midcap150),
-        ScheduledJob("financials_india_smallcap250", "Financials — India (Nifty Smallcap 250)", "Quarterly",
-                     "nse_xbrl_fetch_nifty_smallcap250", None, _run_financials_nifty_smallcap250),
-        ScheduledJob("financials_india_microcap", "Financials — India (Nifty Micro-Cap)", "Monthly",
-                     "nse_xbrl_fetch_nifty_microcap", None, _run_financials_nifty_microcap),
-        ScheduledJob("shareholding_india", "Shareholding pattern — India (Nifty 50)", "Quarterly",
-                     "nse_shareholding_fetch", None, _run_shareholding_india),
-        ScheduledJob("shareholding_india_next50", "Shareholding pattern — India (Nifty Next 50)", "Quarterly",
-                     "nse_shareholding_fetch_nifty_next50", None, _run_shareholding_nifty_next50),
-        ScheduledJob("shareholding_india_midcap150", "Shareholding pattern — India (Nifty Midcap 150)", "Quarterly",
-                     "nse_shareholding_fetch_nifty_midcap150", None, _run_shareholding_nifty_midcap150),
-        ScheduledJob("shareholding_india_smallcap250", "Shareholding pattern — India (Nifty Smallcap 250)", "Quarterly",
-                     "nse_shareholding_fetch_nifty_smallcap250", None, _run_shareholding_nifty_smallcap250),
-        ScheduledJob("shareholding_india_microcap", "Shareholding pattern — India (Nifty Micro-Cap)", "Monthly",
-                     "nse_shareholding_fetch_nifty_microcap", None, _run_shareholding_nifty_microcap),
-        ScheduledJob("corporate_actions_india", "Corporate actions — India (Nifty 50)", "Quarterly",
-                     "nse_corporate_actions_fetch", None, _run_corporate_actions_india),
-        ScheduledJob("corporate_actions_ingest_india", "Corporate actions ingest — India (Nifty 50)", "Quarterly",
-                     "nse_corporate_actions_ingest", None, _run_corporate_actions_ingest_india),
-        ScheduledJob("corporate_actions_india_next50", "Corporate actions — India (Nifty Next 50)", "Quarterly",
-                     "nse_corporate_actions_fetch_nifty_next50", None, _run_corporate_actions_nifty_next50),
-        ScheduledJob("corporate_actions_ingest_india_next50", "Corporate actions ingest — India (Nifty Next 50)", "Quarterly",
-                     "nse_corporate_actions_ingest_nifty_next50", None, _run_corporate_actions_ingest_nifty_next50),
-        ScheduledJob("corporate_actions_india_midcap150", "Corporate actions — India (Nifty Midcap 150)", "Quarterly",
-                     "nse_corporate_actions_fetch_nifty_midcap150", None, _run_corporate_actions_nifty_midcap150),
-        ScheduledJob("corporate_actions_ingest_india_midcap150", "Corporate actions ingest — India (Nifty Midcap 150)", "Quarterly",
-                     "nse_corporate_actions_ingest_nifty_midcap150", None, _run_corporate_actions_ingest_nifty_midcap150),
-        ScheduledJob("corporate_actions_india_smallcap250", "Corporate actions — India (Nifty Smallcap 250)", "Quarterly",
-                     "nse_corporate_actions_fetch_nifty_smallcap250", None, _run_corporate_actions_nifty_smallcap250),
-        ScheduledJob("corporate_actions_ingest_india_smallcap250", "Corporate actions ingest — India (Nifty Smallcap 250)", "Quarterly",
-                     "nse_corporate_actions_ingest_nifty_smallcap250", None, _run_corporate_actions_ingest_nifty_smallcap250),
-        ScheduledJob("corporate_actions_india_microcap", "Corporate actions — India (Nifty Micro-Cap)", "Monthly",
-                     "nse_corporate_actions_fetch_nifty_microcap", None, _run_corporate_actions_nifty_microcap),
-        ScheduledJob("corporate_actions_ingest_india_microcap", "Corporate actions ingest — India (Nifty Micro-Cap)", "Monthly",
-                     "nse_corporate_actions_ingest_nifty_microcap", None, _run_corporate_actions_ingest_nifty_microcap),
-        ScheduledJob("financials_usa", "Financials — USA", "Quarterly",
-                     "sec_edgar_financials_fetch", None, _run_financials_usa),
-        ScheduledJob("doc_analysis", "Document analysis (transcripts/concalls)", "Quarterly",
-                     "document_processing", None, _run_doc_analysis),
-        ScheduledJob("insights_companies", "Company insights", "Monthly",
-                     "key_insights_batch", None, _run_insights_companies),
-        ScheduledJob("insights_macro", "Macro insights", "Monthly", None,
-                     "The generation function itself doesn't exist yet — needs a design "
-                     "decision on what a macro insight is first", None),
-        ScheduledJob("fred_macro", "FRED macro data", "Quarterly",
-                     "fred_macro_fetch", None, _run_fred_macro),
-        ScheduledJob("rbi_macro", "RBI / IITM macro data", "Weekly", None,
-                     "These sources are file-based parsers over manually-downloaded files, "
-                     "not live fetchers — \"weekly\" here still means a human stages the file "
-                     "first", None),
-    ]
+    # Job registry moved to scheduling/jobs.py (ScheduledJob, SCHEDULED_JOBS,
+    # get_job) -- see that module's docstring for why.
 
     def _resume_interrupted_batch_jobs() -> None:
         """Called once, at process startup (see the WERKZEUG_RUN_MAIN-guarded
@@ -1045,7 +829,7 @@ def create_app() -> Flask:
         if not stale_runs:
             return
 
-        jobs_by_name = {job.job_name: job for job in _SCHEDULED_JOBS if job.job_name}
+        jobs_by_name = {job.job_name: job for job in SCHEDULED_JOBS if job.job_name}
         to_resume = []
         for run in stale_runs:
             job = jobs_by_name.get(run["job_name"])
@@ -1098,7 +882,7 @@ def create_app() -> Flask:
         until it finishes, since batch_job_runs' own items_total/succeeded/
         failed columns are only written once, at the very end."""
         scheduled_jobs = []
-        for job in _SCHEDULED_JOBS:
+        for job in SCHEDULED_JOBS:
             last_run = get_latest_batch_job_run(db, job.job_name) if job.job_name else None
             if last_run is not None and last_run["status"] == "running":
                 last_run = {**last_run, "live_progress": get_batch_job_run_live_progress(db, last_run["run_id"])}
@@ -1236,7 +1020,7 @@ def create_app() -> Flask:
         if period_filter in _PERIOD_DELTAS:
             since_iso = (datetime.now(timezone.utc) - _PERIOD_DELTAS[period_filter]).isoformat()
 
-        job_labels = {job.job_name: job.label for job in _SCHEDULED_JOBS if job.job_name}
+        job_labels = {job.job_name: job.label for job in SCHEDULED_JOBS if job.job_name}
         job_filter_options = [
             {"job_name": name, "label": job_labels.get(name, name)}
             for name in list_distinct_batch_job_names(logs_db)
@@ -1714,24 +1498,20 @@ def create_app() -> Flask:
 
     @app.route("/admin/schedule/run/<job_id>", methods=["POST"])
     def admin_schedule_run(job_id: str):
-        """Settings > Data Operations > Schedule's "Run now" button — the
-        manual-trigger stand-in for real cron scheduling, which doesn't
-        exist in this app yet (see SCHEDULED_JOBS.md). Every registered
-        job's runner already writes its own BatchRun audit trail (this
-        route doesn't do that bookkeeping itself), so all this does is look
-        the job up, call its runner with the current request-scoped db
-        connection, and turn the result into a flash message pointing at
-        where the details actually live.
+        """Settings > Data Operations > Schedule's "Run now" button —
+        deliberately kept synchronous and blocking (see admin_refresh_
+        company's own docstring above for the same tradeoff at
+        single-company scale): an admin clicking "Run now" is expected to
+        wait for the response. Real unattended scheduling goes through
+        admin_schedule_run_async below instead, not this route — see its
+        docstring for why a cron trigger can't just POST here directly.
 
-        Synchronous and blocking, same as every other admin action in this
-        file (see admin_refresh_company's own docstring above) — no
-        background-job infrastructure exists here to defer it to. That's
-        exactly why financials/shareholding/price-history (each a
-        several-minute, several-company live NSE/yfinance crawl) are real
-        buttons here at all, not queued: an admin clicking "Run now" is
-        expected to wait for the response, same tradeoff
-        admin_refresh_company already makes for one company at a time."""
-        job = next((j for j in _SCHEDULED_JOBS if j.job_id == job_id), None)
+        Every registered job's runner already writes its own BatchRun
+        audit trail (this route doesn't do that bookkeeping itself), so
+        all this does is look the job up, call its runner with the
+        current request-scoped db connection, and turn the result into a
+        flash message pointing at where the details actually live."""
+        job = get_job(job_id)
         if job is None or job.runner is None:
             abort(404)
         db = get_db()
@@ -2855,11 +2635,22 @@ def create_app() -> Flask:
         # Split by country now that non-Indian companies are tracked too —
         # a bare count(*) would silently blend the two into a number neither
         # "NSE companies" nor "US companies" honestly describes.
-        stat_companies = db.execute("SELECT count(*) FROM companies WHERE country = 'IN'").fetchone()[0]
-        stat_us_companies = db.execute("SELECT count(*) FROM companies WHERE country = 'US'").fetchone()[0]
-        stat_sectors = db.execute("SELECT count(DISTINCT sector) FROM companies WHERE sector IS NOT NULL").fetchone()[0]
-        stat_documents = db.execute("SELECT count(*) FROM documents WHERE processing_status = 'processed'").fetchone()[0]
-        stat_claims = db.execute("SELECT count(*) FROM knowledge_claims").fetchone()[0]
+        # Uses a cursor + aliased column (not db.execute(...)[0]) so this
+        # works against both sqlite3.Row (index or key access) and Postgres's
+        # RealDictCursor rows (key access only, no integer indexing).
+        # execute()/fetchone() are split (not chained) because psycopg2's
+        # cursor.execute() returns None, unlike sqlite3's which returns self.
+        cur = db.cursor()
+
+        def _count(sql: str) -> int:
+            cur.execute(sql)
+            return cur.fetchone()["n"]
+
+        stat_companies = _count("SELECT count(*) AS n FROM companies WHERE country = 'IN'")
+        stat_us_companies = _count("SELECT count(*) AS n FROM companies WHERE country = 'US'")
+        stat_sectors = _count("SELECT count(DISTINCT sector) AS n FROM companies WHERE sector IS NOT NULL")
+        stat_documents = _count("SELECT count(*) AS n FROM documents WHERE processing_status = 'processed'")
+        stat_claims = _count("SELECT count(*) AS n FROM knowledge_claims")
         return render_template(
             "landing.html",
             stat_companies=stat_companies, stat_us_companies=stat_us_companies, stat_sectors=stat_sectors,
