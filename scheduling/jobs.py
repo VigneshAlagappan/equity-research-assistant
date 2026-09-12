@@ -28,8 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-import storage.backend_bootstrap
-from config.settings import DATABASE_BACKEND
+from storage.backend_bootstrap import open_db
 from scripts.batch_fetch_fred import run_fred_batch, TRACKED_SERIES
 from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
@@ -40,22 +39,6 @@ from scripts.fetch_daily_prices_usa import run_price_history_update_usa
 from scripts.fetch_investor_relations import run_investor_relations_batch, SUPPORTED_COMPANY_IDS
 from scripts.process_pending_documents_batch import run_document_processing_batch
 from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
-from storage.database import init_db
-from storage.db_types import DBConnection
-
-
-def open_db() -> DBConnection:
-    """Same backend resolution as web/app.py's get_db(): install the
-    Postgres sys.modules swap (a no-op unless DATABASE_BACKEND=postgres),
-    then open a connection on whichever backend is actually configured.
-    Every entry point in this module (CLI, web route, cron route) should
-    open its connection through this, not init_db() directly."""
-    storage.backend_bootstrap.install()
-    if DATABASE_BACKEND == "postgres":
-        from storage.database import init_postgres_db
-
-        return init_postgres_db()
-    return init_db()
 
 
 @dataclass

@@ -583,6 +583,73 @@ python main.py ask "What stands out about HDFC Bank's last 10 years?" --company 
 
 ---
 
+## Deployment (AWS Lightsail)
+
+The app runs as a single container on AWS Lightsail Container Service
+(`signals-app`, `us-east-2`), backed by Neon (Postgres), S3 (documents),
+and Qdrant Cloud. Local SQLite/`data/` never ships in the image — see
+`.dockerignore`.
+
+### 1. Build the Docker image
+
+```bash
+# --platform linux/amd64 is required even on Apple Silicon -- Lightsail
+# runs amd64, and Docker defaults to your host's architecture (arm64)
+# otherwise, producing an image that won't start there.
+docker build --platform linux/amd64 -t signals-app:pg-s3 .
+
+# Test locally against the real backends before pushing anything --
+# DATABASE_BACKEND/DOCUMENT_STORE_BACKEND aren't set in the Dockerfile
+# itself, only passed at run time (here and in the Lightsail deployment
+# below), so local `docker run` without them defaults to local
+# SQLite/disk -- add them to actually exercise Postgres/S3 locally first.
+docker run -d --name signals-test -p 8081:8080 \
+  --env-file <(grep -v '^#' .env | grep -v '^$') \
+  -e DATABASE_BACKEND=postgres \
+  -e DOCUMENT_STORE_BACKEND=s3 \
+  -e S3_BUCKET_NAME=signals-app-documents-862938824222 \
+  -e AWS_REGION=us-east-2 \
+  signals-app:pg-s3
+
+curl http://localhost:8081/health   # expect {"status": "ok"}
+docker rm -f signals-test           # once you're satisfied
+```
+
+### 2. Push the image and deploy to Lightsail
+
+```bash
+# Needs the lightsailctl plugin (aws lightsail push-container-image errors
+# with a download link the first time if it's missing).
+aws lightsail push-container-image \
+  --service-name signals-app \
+  --label signals-app \
+  --image signals-app:pg-s3
+# → prints the registered image reference, e.g. ":signals-app.signals-app.N"
+# -- use that exact string (N increments every push) in containers.json below.
+
+# containers.json's "image" field must be the ":signals-app.signals-app.N"
+# reference from the push output above, and its "environment" object should
+# carry forward every existing env var (see `aws lightsail get-container-
+# services --service-name signals-app` to read the current ones back) plus:
+#   DATABASE_BACKEND=postgres
+#   DOCUMENT_STORE_BACKEND=s3
+#   S3_BUCKET_NAME=signals-app-documents-862938824222
+#   AWS_REGION=us-east-2
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY  (the signals-app-s3 IAM user's key)
+# public-endpoint.json is the health-check config — reuse the same shape
+# `get-container-services` already shows under currentDeployment.publicEndpoint.
+aws lightsail create-container-service-deployment \
+  --service-name signals-app \
+  --containers file://containers.json \
+  --public-endpoint file://public-endpoint.json
+
+# Poll until state flips from DEPLOYING to RUNNING, then verify:
+aws lightsail get-container-services --service-name signals-app --query 'containerServices[0].state'
+curl https://signals-app.wmmbnsx82cwgc.us-east-2.cs.amazonlightsail.com/health
+```
+
+---
+
 ## Related documentation
 
 - **[README.md](README.md)** — the original design proposal and scoping

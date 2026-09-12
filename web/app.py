@@ -101,7 +101,7 @@ from research.investigation import InvestigationError, run_investigation
 from retrieval.tag_resolver import resolve_tags_in_text
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
-from scheduling.jobs import ScheduledJob, SCHEDULED_JOBS, get_job
+from scheduling.jobs import ScheduledJob, SCHEDULED_JOBS, get_job, open_db as scheduling_open_db
 from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
 from storage.company_repository import select_company_ids_by_index
@@ -253,6 +253,12 @@ def _redirect_to_return_or(default_endpoint: str, **default_kwargs):
 # Revisit if/when the whole app should go back to being login-only.
 _LOGIN_REQUIRED_ENDPOINTS: set[str] = set()
 _LOGIN_REQUIRED_PREFIXES = ("admin",)
+# admin_schedule_run_async is the one "admin"-prefixed route deliberately
+# exempt from the session-login gate below -- a cron trigger (EventBridge
+# Scheduler etc.) has no browser session to log in with. It authenticates
+# via its own X-Cron-Secret header check instead (see its docstring) —
+# excluding it here doesn't skip auth, it just moves auth into the route.
+_LOGIN_EXEMPT_ENDPOINTS = {"admin_schedule_run_async"}
 
 _TAG_RE = re.compile(r"\[(FACT|CALCULATION|INFERENCE)\]")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
@@ -518,6 +524,8 @@ def create_app() -> Flask:
         # either way until something's actually been chosen.
         g.theme = g.user["theme"] if g.user is not None else session.get("theme", DEFAULT_THEME)
         if request.endpoint is None:
+            return None
+        if request.endpoint in _LOGIN_EXEMPT_ENDPOINTS:
             return None
         needs_login = (
             request.endpoint in _LOGIN_REQUIRED_ENDPOINTS
@@ -1521,6 +1529,51 @@ def create_app() -> Flask:
         except Exception as exc:  # noqa: BLE001 -- surface any failure as a flash, not a 500
             flash(f"{job.label} failed: {exc}", "error")
         return redirect(url_for("settings", panel="admin-schedule"))
+
+    @app.route("/admin/schedule/run-async/<job_id>", methods=["POST"])
+    def admin_schedule_run_async(job_id: str):
+        """The cron-trigger counterpart to admin_schedule_run above — for
+        an external scheduler (e.g. AWS EventBridge Scheduler hitting this
+        over HTTPS) rather than a human waiting on a button. Can't just
+        point a scheduler at admin_schedule_run directly: that route is
+        synchronous and blocks for however long the job takes (several
+        minutes for a several-hundred-company NSE crawl), which would
+        exceed gunicorn's worker timeout and get the worker killed
+        mid-batch, leaving a batch_job_runs row stuck at status='running'
+        until _resume_interrupted_batch_jobs cleans it up on next restart.
+
+        Starts the same job.runner(conn) — no different logic, no
+        duplicate audit trail — in a background thread and returns
+        immediately, same "fire off a background thread, own db
+        connection since a connection can't cross threads" shape
+        _resume_interrupted_batch_jobs already uses at startup. The
+        caller never sees success/failure; that's what Audit Log -> Job
+        Runs is for, same as every other trigger of these jobs.
+
+        Authenticated by a shared secret header (not session/cookie auth —
+        a scheduler has no browser session), read from the
+        CRON_TRIGGER_SECRET env var. Refuses every request if that env var
+        isn't set, rather than silently accepting unauthenticated triggers
+        — this endpoint doesn't exist in practice until an operator
+        deliberately configures a secret."""
+        secret = app_settings.CRON_TRIGGER_SECRET
+        if not secret or request.headers.get("X-Cron-Secret") != secret:
+            abort(403)
+        job = get_job(job_id)
+        if job is None or job.runner is None:
+            abort(404)
+
+        def _run_in_background(runner, label: str) -> None:
+            conn = scheduling_open_db()
+            try:
+                runner(conn)
+            except Exception:
+                logger.exception("Cron-triggered job %r failed", label)
+            finally:
+                conn.close()
+
+        threading.Thread(target=_run_in_background, args=(job.runner, job.label), daemon=True).start()
+        return {"status": "started", "job_id": job_id}, 202
 
     @app.route("/admin/ingest/refresh", methods=["POST"])
     def admin_ingest_refresh():

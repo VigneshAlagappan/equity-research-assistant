@@ -28,8 +28,8 @@ import time
 
 from ingestion.batch_log import BatchRun
 from sources.yfinance_prices import fetch_daily_bars
+from storage.backend_bootstrap import open_db
 from storage.company_repository import select_index_members_with_nse_symbol
-from storage.database import init_db
 from storage.price_database import init_price_db
 from storage.price_repository import upsert_daily_bars
 
@@ -63,10 +63,23 @@ def run_price_history_update(
     current behavior -- web/app.py's Nifty Micro-Cap tier closure is the
     first caller to override either.
 
+    main_conn is opened via storage.backend_bootstrap.open_db() (not
+    storage.database.init_db() directly) -- select_index_members_with_
+    nse_symbol below resolves to company_repository_pg's Postgres-
+    flavored version once DATABASE_BACKEND=postgres (a process-wide
+    sys.modules swap, not something this function controls), so main_conn
+    must be on that same backend or every call against it breaks (found
+    this the hard way in fetch_daily_prices_usa.py's sibling function:
+    `'sqlite3.Cursor' object does not support the context manager
+    protocol` the moment "Run now" was clicked against a Postgres-backed
+    deployment). BatchRun below still gets its own dedicated SQLite
+    connection either way (see ingestion/batch_log.py's docstring) --
+    unaffected by this.
+
     Returns the BatchRun's run_id."""
     owns_main_conn = main_conn is None
     if main_conn is None:
-        main_conn = init_db()
+        main_conn = open_db()
     owns_price_conn = price_conn is None
     if price_conn is None:
         price_conn = init_price_db()

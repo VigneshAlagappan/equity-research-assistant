@@ -113,3 +113,37 @@ def install() -> None:
     sys.modules["storage.repositories"] = hybrid
 
     _installed = True
+
+
+def open_db():
+    """The one correct way for ANY entry point (web/app.py's get_db(),
+    scripts/run_job.py's CLI, scripts/fetch_daily_prices*.py's main_conn,
+    scheduling/jobs.py's runners) to open a connection meant for
+    storage.company_repository / storage.repositories / etc. calls --
+    install() first (a no-op if already installed or DATABASE_BACKEND
+    isn't postgres), then return a connection on whichever backend is
+    actually configured.
+
+    Never use storage.database.init_db() directly for this purpose once a
+    module's repository functions might have been swapped to Postgres --
+    passing a plain sqlite3 connection into a Postgres-flavored function
+    (or vice versa) either raises an AttributeError (sqlite3 connections
+    have no `.execute()`... on repositories.py's hybrid path) or, just as
+    broken, `'sqlite3.Cursor' object does not support the context manager
+    protocol` (company_repository_pg.py's `with conn.cursor() as cur:`
+    pattern, called with a sqlite3 cursor that doesn't support `with`).
+    Found exactly this bug in scripts/fetch_daily_prices.py and
+    scripts/fetch_daily_prices_usa.py, both of which hardcoded init_db()
+    for their `main_conn` while calling company_repository functions that
+    resolve to the Postgres flavor once DATABASE_BACKEND=postgres -- fixed
+    by routing them through this function instead."""
+    install()
+    from config.settings import DATABASE_BACKEND
+
+    if DATABASE_BACKEND == "postgres":
+        from storage.database import init_postgres_db
+
+        return init_postgres_db()
+    from storage.database import init_db
+
+    return init_db()

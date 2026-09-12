@@ -508,6 +508,14 @@ def _load_or_create_secret_key() -> str:
 
 SECRET_KEY = _load_or_create_secret_key()
 
+# Shared secret for web/app.py's admin_schedule_run_async cron-trigger
+# route -- unset by default (None), which makes that route refuse every
+# request rather than silently accepting unauthenticated triggers. An
+# operator sets this (e.g. as a Lightsail env var) only once they've
+# actually configured an external scheduler (EventBridge Scheduler etc.)
+# to send it back in the X-Cron-Secret header.
+CRON_TRIGGER_SECRET = os.environ.get("CRON_TRIGGER_SECRET")
+
 # ------------------------------------------------------------------
 # Logging
 # ------------------------------------------------------------------
