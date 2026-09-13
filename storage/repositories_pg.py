@@ -985,17 +985,30 @@ def save_company_document(
     added_by_user: str,
     raw_file_path: str | None = None,
     source_url: str | None = None,
+    storage_object_key: str | None = None,
+    content_hash: str | None = None,
 ) -> Row:
+    """Postgres port of repositories.save_company_document() -- see that
+    function's own docstring. storage_object_key/content_hash were missing
+    from this port (documents.storage_object_key/content_hash already
+    exist in schemas/postgres_schema.sql -- only the function signature
+    was out of sync), which crashed every Docs tab "Add a Document" upload
+    in production with `TypeError: save_company_document() got an
+    unexpected keyword argument 'storage_object_key'`."""
     now = _utcnow_iso()
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO documents (company_id, document_type, fiscal_year, quarter,
-                                    raw_file_path, source_url, added_by_user, retrieved_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                    raw_file_path, source_url, added_by_user, retrieved_at,
+                                    storage_object_key, content_hash)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
-            (company_id, document_type, fiscal_year, quarter, raw_file_path, source_url, added_by_user, now),
+            (
+                company_id, document_type, fiscal_year, quarter, raw_file_path, source_url, added_by_user, now,
+                storage_object_key, content_hash,
+            ),
         )
         row = cur.fetchone()
     conn.commit()
