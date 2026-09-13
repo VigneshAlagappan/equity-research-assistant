@@ -82,6 +82,7 @@ resolves to scripts/, not the repo root):
     python -m scripts.backfill_price_history --years 3 --all-tiers
     python -m scripts.backfill_price_history --years 3 --country US
     python -m scripts.backfill_price_history --years 3 --all-tiers --force  # bypass the skip-if-recent check
+    python -m scripts.backfill_price_history --years 20 --index-name "Nifty Micro-Cap" --time-budget-minutes 25
 """
 
 from __future__ import annotations
@@ -368,11 +369,16 @@ def main() -> None:
     parser.add_argument("--force", action="store_true",
                          help="Bypass the skip-if-already-covers-the-requested-start-date check "
                               "and re-fetch every company regardless of existing coverage.")
+    parser.add_argument("--time-budget-minutes", type=float, default=None,
+                         help="Stop after this many minutes, leaving whatever's left for the next scheduled run "
+                              "-- see run_price_history_backfill()'s own docstring. Applies per tier, not to the "
+                              "whole --all-tiers invocation.")
     args = parser.parse_args()
 
     main_conn = open_db()
     price_conn = open_price_db()
 
+    time_budget_seconds = args.time_budget_minutes * 60 if args.time_budget_minutes is not None else None
     tiers = list(NSE_TIERS) if args.all_tiers else [args.index_name]
     run_ids = []
     for index_name in tiers:
@@ -381,6 +387,7 @@ def main() -> None:
         run_id = run_price_history_backfill(
             main_conn, price_conn, country=args.country, company_id=args.company_id, index_name=index_name,
             years=args.years, period=args.period, job_name=job_name, force=args.force,
+            time_budget_seconds=time_budget_seconds,
         )
         run_ids.append(run_id)
         if args.country != "IN":
