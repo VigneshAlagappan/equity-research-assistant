@@ -34,6 +34,7 @@ large enough for that to matter.
 from __future__ import annotations
 
 import re
+import signal
 from storage.db_types import DBConnection, Row
 import time
 from io import BytesIO
@@ -54,6 +55,44 @@ from storage.fact_store import FactStore, default_fact_store
 # pulling down an unexpectedly huge file just because its URL ends in .pdf.
 REQUEST_TIMEOUT_SECONDS = 15
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
+
+# Bounds pypdf's own text extraction -- found the hard way in production: a
+# real, user-uploaded PDF made pypdf's content-stream parser loop long
+# enough to hit gunicorn's 120s worker timeout, which SIGKILLs the whole
+# worker (not just this request) -- the browser then gets an infrastructure
+# error page instead of JSON ("Unexpected token '<' ... is not valid
+# JSON"), same failure shape as every other "a request ran long enough to
+# get killed out from under it" bug this app has hit. Unlike a clean
+# exception (PyPdfError/DependencyError/OSError, already handled below), a
+# hang can't be caught with try/except -- it needs an actual wall-clock
+# bound. signal.alarm() only works in the main thread of the main
+# interpreter, which is exactly what one of gunicorn's sync workers is
+# (one request at a time, no threading) -- see _with_timeout() below.
+PDF_EXTRACTION_TIMEOUT_SECONDS = 20
+
+
+class _PdfExtractionTimedOut(Exception):
+    pass
+
+
+def _with_timeout(fn, *, seconds: int):
+    """Runs `fn()` under a hard wall-clock bound, raising
+    _PdfExtractionTimedOut if it doesn't finish in time. SIGALRM-based, so
+    Unix-only (fine -- production and every dev machine this runs on are)
+    and only safe called from a process's main thread (gunicorn's sync
+    workers, this function's only real caller via document_text()/
+    document_pages(), qualify)."""
+
+    def _on_alarm(signum, frame):
+        raise _PdfExtractionTimedOut()
+
+    previous_handler = signal.signal(signal.SIGALRM, _on_alarm)
+    signal.alarm(seconds)
+    try:
+        return fn()
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 # BSE (a common Docs-tab source per the module docstring above) 403s a
 # fetch with no User-Agent/requests' default one — confirmed by hand
@@ -135,22 +174,26 @@ def _extract_pdf_text(path: str) -> str | None:
     document_pages() actually use once a document's bytes have been
     resolved through the active DocumentStore or an HTTP fetch."""
     try:
-        return _text_from_reader(PdfReader(path))
-    except (PyPdfError, DependencyError, OSError):
+        return _with_timeout(lambda: _text_from_reader(PdfReader(path)), seconds=PDF_EXTRACTION_TIMEOUT_SECONDS)
+    except (PyPdfError, DependencyError, OSError, _PdfExtractionTimedOut):
         # DependencyError (e.g. an AES-encrypted PDF needing the optional
         # `cryptography` package) is a direct Exception subclass, not a
         # PyPdfError — needs its own arm here, not just a broader PyPdfError
         # catch. Missing it used to crash the whole ingestion batch instead
         # of just this one unreadable document, same "absence isn't an
         # error" rule this function already follows for every other
-        # unreadable-PDF case.
+        # unreadable-PDF case. _PdfExtractionTimedOut is the same rule
+        # applied to a pathological PDF that never raises at all, just
+        # runs long enough to threaten the whole worker.
         return None
 
 
 def _extract_pdf_text_from_bytes(data: bytes) -> str | None:
     try:
-        return _text_from_reader(PdfReader(BytesIO(data)))
-    except (PyPdfError, DependencyError, OSError):
+        return _with_timeout(
+            lambda: _text_from_reader(PdfReader(BytesIO(data))), seconds=PDF_EXTRACTION_TIMEOUT_SECONDS
+        )
+    except (PyPdfError, DependencyError, OSError, _PdfExtractionTimedOut):
         return None
 
 
@@ -252,8 +295,10 @@ def document_pages(row: Row) -> list[str] | None:
     if data is None:
         return None
     try:
-        return _pages_from_reader(PdfReader(BytesIO(data)))
-    except (PyPdfError, DependencyError, OSError):
+        return _with_timeout(
+            lambda: _pages_from_reader(PdfReader(BytesIO(data))), seconds=PDF_EXTRACTION_TIMEOUT_SECONDS
+        )
+    except (PyPdfError, DependencyError, OSError, _PdfExtractionTimedOut):
         return None
 
 
