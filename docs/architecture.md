@@ -1,9 +1,14 @@
 # Architecture
 
 This document describes the current architecture of **Signals**, an Equity AI
-Research Assistant — a self-use, local-first Flask + SQLite application for
-researching listed companies, with a primary focus on the US and India markets,
-with an LLM research assistant grounded in deterministically retrieved evidence.
+Research Assistant — a Flask application for researching listed companies, with
+a primary focus on the US and India markets, with an LLM research assistant
+grounded in deterministically retrieved evidence. In production (AWS Lightsail),
+it runs against Postgres (Neon), S3, and Qdrant Cloud (ADR-021); a local
+Flask + SQLite setup (`main.py serve`) remains the default for development.
+Either way, it's still self-use in scope today — one seeded admin account, no
+multi-tenant data isolation — not a SaaS deployment (see FeatureList.md's
+Deployment model section).
 
 For product/feature scope, see [README.md](README.md) and
 [FeatureList.md](FeatureList.md). For running the app, see
@@ -14,27 +19,30 @@ For product/feature scope, see [README.md](README.md) and
 The guiding division of responsibility across the whole system, each layer
 answering a different question and never doing another layer's job:
 
-- **SQLite knows the facts** — `canonical_financials`, `macro_observations`,
-  `knowledge_claims`, and everything else under [Data model](#data-model-sqlite-schemassqlite_schemasql)
-  is the one source of truth. Nothing downstream invents a fact SQLite
-  doesn't already have.
+- **The relational store knows the facts** — `canonical_financials`, `macro_observations`,
+  `knowledge_claims`, and everything else under [Data model](#data-model-postgres-in-production-sqlite-for-local-dev)
+  is the one source of truth (Postgres in production — ADR-021; see
+  footnote¹ below for local dev). Nothing downstream invents a fact that
+  store doesn't already have.
 - **The Knowledge Graph knows the relationships** — `context/knowledge_graph.py`
   / `context/graph_neo4j.py` answer "what is connected to what, when was it
   true, and what evidence supports that relationship," projected from
-  SQLite, never a second source of truth for the facts themselves (see
+  the relational store, never a second source of truth for the facts
+  themselves (see
   [Ingestion Coordinator & Knowledge Builder](#ingestion-coordinator--knowledge-builder-admin--ingest)).
-- **FTS5 and the Vector DB are retrieval indexes over the same authoritative
-  text, not two different truths** — `document_chunks`/`documents` (SQLite)
-  hold the authoritative textual evidence (annual reports, transcripts,
-  investor presentations, regulatory filings, macro/research reports —
-  anything eligible under [Document Retrieval](#document-retrieval-retrievaldocument_searchpy));
+- **Keyword search and the Vector DB are retrieval indexes over the same
+  authoritative text, not two different truths** — `document_chunks`/
+  `documents` (the relational store) hold the authoritative textual
+  evidence (annual reports, transcripts, investor presentations,
+  regulatory filings, macro/research reports — anything eligible under
+  [Document Retrieval](#document-retrieval-retrievaldocument_searchpy));
   `document_chunks_fts` (FTS5/BM25) is the exact/lexical retrieval index over
   it, and the `VectorStore` (`retrieval/vector_store.py`, Qdrant by default)
   is the semantic retrieval index over it — see
   [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy).
   **Invariant: FTS5, the Vector DB, and Neo4j are retrieval/projection
   structures. They must never silently become competing sources of truth.**
-  Every one of them is fully rebuildable from SQLite's `documents`/
+  Every one of them is fully rebuildable from the relational store's `documents`/
   `document_chunks` at any time (`python main.py vector-backfill`,
   `python main.py replay-events --worker chunk_indexer`) — losing any of
   them loses a retrieval path, never a fact.
@@ -86,9 +94,10 @@ answering a different question and never doing another layer's job:
 |---|---|
 | Language | Python 3.11+ |
 | Web framework | Flask (server-rendered Jinja2, no SPA framework) |
-| Database | SQLite (single file, `data/equity_research.db`) |
-| Knowledge graph | SQLite by default (`context/graph.py`, pure Python traversal over existing tables) — optionally a real Neo4j graph instead (`context/graph_neo4j.py`, `GRAPH_BACKEND=neo4j`), with automatic fallback to SQLite if Neo4j isn't reachable. Not managed by this app (no Docker lifecycle code) — start/stop it yourself, same as the Ollama fallback. |
-| Document retrieval | FTS5/BM25 (SQLite, always on) + semantic/vector search — Qdrant by default (`retrieval/vector_store_qdrant.py`, `VECTOR_STORE_BACKEND=qdrant`), not managed by this app (same as Neo4j/Ollama), with automatic fallback to FTS5-only if unreachable. Embeddings: `sentence-transformers` on-device by default (`EMBEDDING_PROVIDER=local`, zero API cost), Voyage AI optional (`EMBEDDING_PROVIDER=voyage`, needs `VOYAGE_API_KEY`). |
+| Database | Postgres (Neon), `DATABASE_BACKEND=postgres` — ADR-021 (local dev falls back to a single SQLite file) |
+| Object/document storage | S3 (`DOCUMENT_STORE_BACKEND=s3`) — annual reports/filings/transcripts, plus full investigation/thread JSON artifacts (ADR-021); local disk in local dev |
+| Knowledge graph | Neo4j (`context/graph_neo4j.py`, `GRAPH_BACKEND=neo4j`) — not managed by this app (no Docker lifecycle code), a managed/self-hosted instance is pointed to via `NEO4J_URI`. Falls back to a pure-Python/SQL traversal (`context/graph.py`) if unreachable, and is what local dev uses by default. |
+| Document retrieval | Postgres full-text search (`tsvector`/GIN over `document_chunks`) + Qdrant Cloud for semantic/vector search (`retrieval/vector_store_qdrant.py`, `VECTOR_STORE_BACKEND=qdrant`) — the production keyword+semantic hybrid (ADR-021). Falls back to FTS5/BM25 if Qdrant is unreachable, and is what local dev uses by default (`DATABASE_BACKEND=sqlite`). Embeddings: `sentence-transformers` on-device by default (`EMBEDDING_PROVIDER=local`, zero API cost), Voyage AI optional (`EMBEDDING_PROVIDER=voyage`, needs `VOYAGE_API_KEY`). |
 | LLM provider | Anthropic Claude (sonnet/haiku — Opus is registered but policy-disabled, `config/settings.py`'s `DISABLED_MODELS`), with a local Ollama fallback |
 | Frontend | Server-rendered HTML + vanilla JS "islands" (no build step, no bundler, no npm) |
 | Charts | matplotlib (server-rendered PNG) for legacy charts; client-side JS + JSON feeds for the interactive dashboards |
@@ -135,21 +144,20 @@ Loop's hypothesis-driven investigation flow) each zoom into one box below.
                             ▼                                                          ▼
                      ┌──────────────────────────────────────────────────────────────────────────┐
                      │ storage/  —  db_types . repositories . fact_store . company_repository . │
-                     │              indicator_repository . investigation_repository             │
-                     │ the only layer in the codebase that knows SQLite exists                  │
+                     │              indicator_repository . investigation_repository . raw_object_repository │
+                     │ the only layer that knows which backend is active (see footnote¹)        │
                      └──────────────────────────────────────────────────────────────────────────┘
                                                            │
                                                            ▼
                      ┌─────────────────────────────────────────────────────────────────────────┐
-                     │ data/equity_research.db  (SQLite, 46 tables, schemas/sqlite_schema.sql) │
+                     │ Postgres (Neon) — ADR-021                                                │
                      │ the one source of truth every other layer reads and writes through      │
                      └─────────────────────────────────────────────────────────────────────────┘
                                                           │
                                                           ▼
                      ┌──────────────────────────────────────────────────────────────────────────┐
-                     │ Knowledge Graph — projected from SQLite, never a 2nd source of truth     │
-                     │ SQLite traversal by default (context/graph.py); optionally a real Neo4j  │
-                     │ graph (GRAPH_BACKEND=neo4j), automatic fallback to SQLite if unreachable │
+                     │ Neo4j — Knowledge Graph, projected from Postgres, never a 2nd source of  │
+                     │ truth (GRAPH_BACKEND=neo4j, see footnote¹)                                │
                      └──────────────────────────────────────────────────────────────────────────┘
 
 
@@ -173,11 +181,11 @@ elsewhere in this document, not simplified away here):
   validation](#golden-research-loop-validation), now also reads
   `indicators/`'s deterministic output as evidence — shown here under
   `research/` since the orchestration and every LLM call live there.
-- **The Knowledge Graph** is drawn once, fed from SQLite — in reality both
+- **The Knowledge Graph** is drawn once, fed from Postgres — in reality both
   `context/graph.py` (sector-peer traversal) and `context/knowledge_graph.py`
   (cross-entity claim traversal) maintain it, and both are called
   from the Research/AI layer, not from storage directly; the arrow from
-  `data/equity_research.db` represents "projected from," not a literal
+  the relational store represents "projected from," not a literal
   runtime call path.
 - **`main.py`** and **`web/app.py`** are peers calling the same two layers,
   not a hierarchy — the CLI is not routed through the Flask app.
@@ -187,6 +195,17 @@ never calls the LLM**. Everything under `companies/`, `ingestion/`,
 `normalization/`, `financials/`, `indicators/`, `retrieval/` is deterministic Python/SQL —
 the LLM is only ever handed a compact, pre-computed `Evidence` block and asked
 to reason over it, never to fetch or calculate numbers itself.
+
+¹ **Local development** (`DATABASE_BACKEND=sqlite`, the default when no
+environment variable is set) runs this same diagram against a single local
+SQLite file (`data/equity_research.db`, `schemas/sqlite_schema.sql`)
+instead of Postgres, a pure-Python/SQL Knowledge Graph traversal
+(`context/graph.py`) instead of Neo4j, and FTS5/BM25 instead of Postgres
+full-text search + Qdrant — `storage/backend_bootstrap.py` swaps every
+repository module for its Postgres-flavored sibling at process start when
+`DATABASE_BACKEND=postgres` is set, so business/research logic never
+changes between the two. This document otherwise describes the production
+configuration throughout.
 
 ## Backend
 
@@ -205,14 +224,14 @@ to reason over it, never to fetch or calculate numbers itself.
 | `indicators/` | The **Configurable Indicator Framework** — deterministic, rule-based factual patterns over existing facts (never an LLM-generated insight). `framework.py` (`IndicatorRule`/`RULE_REGISTRY`/`TriggeredIndicator` shapes), `rules.py` (the seeded `shareholding` and `financial_trajectory` rule families), `config.py` (pure Global→Sector→Company override resolution), `evaluation.py` (`evaluate_company_indicators()`, the engine), `settings.py` (the Settings page's read/write model). See [Configurable Indicator Framework](#configurable-indicator-framework-indicators) below. |
 | `retrieval/` | `structured_search.py` — turns `financials/`'s calculations into typed `Evidence` for the LLM. `document_search.py` — FTS5 keyword search over `research/document_chunker.py`'s indexed chunks, returning typed `DocumentPassage` results. `embedding_provider.py`/`embedding_provider_local.py`/`embedding_provider_voyage.py` — the `EmbeddingProvider` abstraction (local sentence-transformers default, Voyage AI opt-in), independent of the vector store. `vector_store.py`/`vector_store_qdrant.py` — the `VectorStore` abstraction (Qdrant the only concrete backend; the sole module allowed to import `qdrant_client`). `semantic_search.py` — embeds a query, searches the VectorStore, hydrates hits into `DocumentPassage`. `hybrid_search.py` — Reciprocal-Rank-Fusion combination of FTS5 + semantic results, with graceful degradation and retrieval diagnostics. `observability.py` — logs each hybrid retrieval call. Retrieval only, no LLM calls, in any of them. |
 | `research/` | Four LLM call sites: `assistant.py` (Q&A), `insights.py` (Key Insights summaries), `signals_report.py` (full Signals investigation reports), and `knowledge_builder.py` (structured knowledge extraction from a document — its own section below) — plus `evidence.py` (the `Evidence`/citation model), `documents.py` (extracts `MANAGEMENT_STATEMENT` evidence from uploaded/linked Docs-tab PDFs, and exposes `document_text()`/`document_pages()`, shared with `knowledge_builder.py`/`document_chunker.py`), `document_chunker.py` (no LLM call, purely mechanical page-scoped chunking + FTS5 indexing), and `macro_evidence.py` (the third evidence source — macro/regulatory data spanning both India and US sources, attributed per-series to `"INDIA"` or `"USA"`; a narrow, deliberate exception to "retrieval never calls the LLM," since an LLM call picks which macro series/date-range apply before the deterministic fetch runs). |
-| `context/` | The **Context Optimizer** — `optimizer.py` (dedup, value-scoring, token-budget compression of an `Evidence` list), `reuse.py` (reuse-before-recompute: returns a fresh, near-duplicate prior investigation instead of a new LLM call — now used by both `research/assistant.py`'s Q&A path and `research/signals_report.py`'s full reports), `graph.py`/`graph_neo4j.py` (sector-peer knowledge-graph traversal: surfaces a *different* company's relevant prior investigation, via `config/knowledge_graph_seed.py`'s curated domain relationships), and `knowledge_graph.py` (the Research Knowledge Graph — a distinct, cross-*entity* traversal over the Knowledge Builder's `knowledge_claims`/`knowledge_relationships`, its own section below). Both graphs are pure Python/SQLite by default, or the same real Neo4j instance when `GRAPH_BACKEND=neo4j` (sharing `Company` nodes between the two), with automatic fallback to SQLite if Neo4j isn't reachable. |
+| `context/` | The **Context Optimizer** — `optimizer.py` (dedup, value-scoring, token-budget compression of an `Evidence` list), `reuse.py` (reuse-before-recompute: returns a fresh, near-duplicate prior investigation instead of a new LLM call — now used by both `research/assistant.py`'s Q&A path and `research/signals_report.py`'s full reports), `graph.py`/`graph_neo4j.py` (sector-peer knowledge-graph traversal: surfaces a *different* company's relevant prior investigation, via `config/knowledge_graph_seed.py`'s curated domain relationships), and `knowledge_graph.py` (the Research Knowledge Graph — a distinct, cross-*entity* traversal over the Knowledge Builder's `knowledge_claims`/`knowledge_relationships`, its own section below). Both graphs run against the same real Neo4j instance in production (`GRAPH_BACKEND=neo4j`, sharing `Company` nodes between the two), falling back to a pure relational traversal if Neo4j is unreachable or in local dev (see footnote¹ above). |
 | `llm/` | The **Model Router + Fallback layer** — `hardness.py` (task-complexity classifier), `router.py` (fallback chain across models/providers), `capability_registry.py` (static model metadata; which models are policy-disabled is read from `config/settings.py`'s `DISABLED_MODELS`), `providers/` (Anthropic + local Ollama), `observability.py` (per-call logging/cost tracking). The tier→model policy itself (`TIER_PREFERRED_MODEL`, `TIER_MIN_REASONING_STRENGTH`, `DISABLED_MODELS`) lives in `config/settings.py`, not scattered across these modules — edit that one file to change routing. |
 | `charts/` | matplotlib chart generation for legacy server-rendered PNGs (`financial_charts.py`). |
 | `config/` | `settings.py` (paths, source trust order, LLM/model-tiering policy, repo-relative path helpers), `knowledge_graph_seed.py` (curated sector-peer causal edges — `context/graph.py`'s vocabulary), `knowledge_ontology.py` (the fixed `ENTITY_TYPES`/`RELATIONSHIP_TYPES`/`CLAIM_TYPES` vocabulary `research/knowledge_builder.py`'s extraction validates against, kept distinct from `STRUCTURAL_NODE_TYPES` — Claim/Evidence/Document/TimePeriod, never something the model extracts by name — plus `CANONICAL_HOME`, an explicit map of which subsystem owns each concept's real value). |
-| `storage/` | `database.py` (connection + schema init/migrations), `repositories.py` (general-purpose SQL — reference data, financials, documents, Knowledge Builder, generated reports, LLM observability, the event store), `db_types.py` (`DBConnection`/`Row` — the backend-agnostic types every other module now type-hints against), `fact_store.py` (`FactStore` — the DI seam `research/`/`context/`/`indicators/` call through instead of importing `repositories.py` directly), `company_repository.py` (companies/stock-actions SQL), `indicator_repository.py` (indicator config + audit-trail SQL), `investigation_repository.py` (the `investigation_companies` join table). Together with `price_database.py`/`price_repository.py`/`price_store.py` below, the only place in the codebase that knows SQLite exists — see [Storage layer and database portability](#storage-layer-and-database-portability-storagedb_typespy) below. |
-| `storage/price_database.py`, `price_repository.py`, `price_store.py` | A second, parallel storage stack for daily OHLCV price history (`daily_prices`, `schemas/price_schema.sql`), deliberately kept in its own file (`data/price_history.db`, `config/settings.py`'s `PRICE_DB_PATH`) rather than `equity_research.db` — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below. |
-| `schemas/` | `sqlite_schema.sql` — the main DDL (46 tables). `price_schema.sql` — the separate `daily_prices` price-history DDL (its own db file, not part of the 46). |
-| `scripts/` | One-off/bulk scripts: data-workbook imports (`import_*.py`, `parse_equity_analysis_workbook.py`), NSE XBRL/shareholding batch fetchers (`batch_fetch_nse.py`, `fetch_nse_xbrl.py`, `fetch_nse_shareholding.py`, `xbrl_diagnostic.py`), backfills (`backfill_company_websites.py`, `backfill_sector_industry.py`, `backfill_price_history.py`), the daily price job (`fetch_daily_prices.py`), and db sharding (`db_shard.py`/`db_unshard.py` — see [USER_GUIDE.md](USER_GUIDE.md#13-database-sharding-git-storage)). |
+| `storage/` | `database.py` (SQLite connection + schema init/migrations), `backend_bootstrap.py` (the `DATABASE_BACKEND=postgres` process-wide module swap — see below), `repositories.py` (general-purpose SQL — reference data, financials, documents, Knowledge Builder, generated reports, LLM observability, the event store; becomes a hybrid module under the Postgres swap), `db_types.py` (`DBConnection`/`Row` — the backend-agnostic types every other module type-hints against), `fact_store.py` (`FactStore` — the DI seam `research/`/`context/`/`indicators/` call through instead of importing `repositories.py` directly), `company_repository.py` (companies/stock-actions SQL), `indicator_repository.py` (indicator config + audit-trail SQL), `investigation_repository.py` (the `investigation_companies` join table), `raw_object_repository.py` (the `raw_objects`/`raw_object_lineage` catalog, ADR-022). Each of `company_repository.py`/`fact_store.py`/`indicator_repository.py`/`investigation_repository.py`/`price_repository.py`/`raw_object_repository.py` has a `_pg.py` Postgres-ported sibling — see [Storage layer and database portability](#storage-layer-and-database-portability-storagedb_typespy) below. |
+| `storage/price_database.py`, `price_repository_pg.py`, `price_store.py` | A second, parallel storage stack for daily OHLCV price history (`daily_prices`) — in production, the same Postgres database as everything else (`schemas/postgres_schema.sql`, `storage/backend_bootstrap.py::open_price_db()`); a separate file (`data/price_history.db`) for local dev — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below and ADR-021. |
+| `schemas/` | `sqlite_schema.sql` — the local-dev DDL (52 tables). `postgres_schema.sql` — the production DDL (ADR-021, 44 tables), a near-mirror with the same tables (including `daily_prices`, and now `raw_objects`/`raw_object_lineage` per ADR-022) minus `financial_observations` and the ~8 audit-log tables that stay SQLite-only forever by design. `price_schema.sql` — the separate `daily_prices` DDL used only under the SQLite backend (its own db file there; folded into `postgres_schema.sql` directly under Postgres). |
+| `scripts/` | One-off/bulk scripts: data-workbook imports (`import_*.py`, `parse_equity_analysis_workbook.py`), NSE/SEC EDGAR/FRED batch fetchers (`batch_fetch_nse.py`, `batch_fetch_sec_edgar.py`, `batch_fetch_fred.py`, `fetch_nse_xbrl.py`, `fetch_nse_shareholding.py`, `xbrl_diagnostic.py`), backfills (`backfill_company_websites.py`, `backfill_sector_industry.py`, `backfill_price_history.py`/`backfill_price_history_usa.py` — 3-year windows and per-tier scoping, see USER_GUIDE.md §12), the daily price jobs (`fetch_daily_prices.py`/`fetch_daily_prices_usa.py`), the raw-object catalog reconciliation job (`reconcile_raw_objects.py`, ADR-022), and db sharding (`db_shard.py`/`db_unshard.py` — see [USER_GUIDE.md](USER_GUIDE.md#13-database-sharding-git-storage)). |
 
 ### Storage layer and database portability (`storage/db_types.py`)
 
@@ -252,12 +271,21 @@ already set for everything else:
   `ingestion/coordinator.py`, `ingestion/workers/*.py`, `financials/ratios.py`,
   and `normalization/financials.py`.
 
-Net effect: `storage/*.py` and `schemas/sqlite_schema.sql` are now the only
-places in the codebase that know SQLite exists — swapping the backend means
-replacing `storage/`'s implementations, not touching business logic
-anywhere else. `scripts/db_shard.py`/`db_unshard.py` are a deliberate
-exception, not a gap: they're SQLite-file-splitting utilities with no
-portability story of their own, and stay that way on purpose.
+Net effect: `storage/*.py` and `schemas/sqlite_schema.sql` were the only
+places in the codebase that needed to know SQLite existed — this
+abstraction boundary is exactly what made the later Postgres migration
+(ADR-020/ADR-021) a `storage/`-only change with zero edits to business
+logic. That migration is no longer hypothetical: `storage/backend_
+bootstrap.py` swaps `storage/company_repository.py`, `fact_store.py`,
+`indicator_repository.py`, `investigation_repository.py`, `price_
+repository.py`, and `raw_object_repository.py` for their `_pg.py`
+counterparts at process start when `DATABASE_BACKEND=postgres` (production
+today — see ADR-021), with `storage/repositories.py` itself becoming a
+hybrid module (every Postgres-ported function, plus the ~33 audit-log
+functions that stay SQLite-only forever by design). `scripts/db_shard.py`/
+`db_unshard.py` are a deliberate exception, not a gap: they're SQLite-
+file-splitting utilities with no portability story of their own, and stay
+that way on purpose.
 
 ### Data ingestion flow
 
@@ -441,10 +469,10 @@ doesn't do well: "which claims, from ANY company, are connected to this
 entity?" — e.g. every company's claims touching the `Risk` entity "Interest
 Rate Volatility," not just one company's own. Same backend-choice and
 graceful-degradation shape as `context/graph.py`'s sector-peer traversal:
-SQLite by default (`storage/repositories.py::find_knowledge_claims_about_entity()`,
-a real join, not a stub), a real Neo4j graph when `GRAPH_BACKEND=neo4j`
-(`context/graph_neo4j.py::sync_knowledge_graph()`/`find_claims_about_entity()`),
-with automatic fallback to SQLite if unreachable.
+Neo4j in production (`context/graph_neo4j.py::sync_knowledge_graph()`/
+`find_claims_about_entity()`), falling back to a real relational join
+(`storage/repositories.py::find_knowledge_claims_about_entity()`, not a
+stub) if Neo4j is unreachable or in local dev (see footnote¹ above).
 
 - **Wired into Q&A and Signals reports** (`research/knowledge_evidence.py`,
   single-company only) — `research/assistant.py::answer_question()` and
@@ -475,8 +503,9 @@ with automatic fallback to SQLite if unreachable.
   entity_id})` node, keyed by the SQL primary key (not by name), so two
   different companies' same-named "Growth" strategy entities never collide.
 - **Full idempotent resync before every query**, not incremental sync —
-  same philosophy `sync_graph()` already uses for sector-peer data: SQLite
-  stays the source of truth, cheap to fully rebuild at today's scale.
+  same philosophy `sync_graph()` already uses for sector-peer data: the
+  relational store stays the source of truth, cheap to fully rebuild at
+  today's scale.
 - **`canonical_financials` also auto-syncs to Neo4j now**
   (`context/graph_neo4j.py::sync_financials_if_changed()`, called from
   `context/graph.py::find_related_investigations()`'s own resync step) —
@@ -559,7 +588,7 @@ with automatic fallback to SQLite if unreachable.
   backward compatible) — `path` is a human-readable relationship chain,
   e.g. `"Risk:Input cost inflation --MAY_AFFECT--> Metric:Gross Margin"`,
   the same chain-of-reasoning convention `context/graph.py::GraphCandidate.path`
-  already established. The SQLite path is a BFS, one batched query per hop
+  already established. The relational-store (non-Neo4j) path is a BFS, one batched query per hop
   across the whole frontier (`storage/repositories.py::list_entity_neighbors()`/
   `find_knowledge_claims_for_entity_ids()`, keyed by
   `idx_knowledge_relationships_target` — a new index this feature also
@@ -1163,35 +1192,36 @@ and quick terminal Q&A without the browser.
 
 ### Price history (`storage/price_*.py`, `schemas/price_schema.sql`)
 
-Daily OHLCV bars for NSE 500 companies, in a `daily_prices` table
+Daily OHLCV bars for NSE 500 (+ USA) companies, in a `daily_prices` table
 (`company_id`, `trade_date`, `open`/`high`/`low`/`close`/`volume`, `source`,
-`fetched_at`, PK `(company_id, trade_date)`) — but kept in its own SQLite
-file, `data/price_history.db` (`config/settings.py`'s `PRICE_DB_PATH`),
-separate from `equity_research.db`.
+`fetched_at`, PK `(company_id, trade_date)`).
+
+In production (`storage/price_repository_pg.py`), `daily_prices` lives in
+the same Postgres database as every other structured table, with a real FK
+to `companies` — reached via `storage/backend_bootstrap.py`'s
+`open_price_db()` (the price-history counterpart of `open_db()`). This
+closed a real gap during the Postgres migration: `data/` is excluded from
+the production Docker image and Lightsail's container has no persistent
+volume, so price history was originally being silently wiped on every
+redeploy before this port existed — see ADR-021's Implementation Status
+table. (Local development, `DATABASE_BACKEND=sqlite`, still keeps it in its
+own file, `data/price_history.db` — `schemas/price_schema.sql`'s header
+explains why: cheaply regenerable from yfinance at any time, so gitignored
+rather than tracked.)
 
 ```
 sources/yfinance_prices.py  — fetch_daily_bars()
       │
       ▼
-storage/price_repository.py — upsert_daily_bar()/upsert_daily_bars()
-                               (ON CONFLICT(company_id, trade_date) DO UPDATE)
+storage/price_repository_pg.py — upsert_daily_bar()/upsert_daily_bars()
+                                  (ON CONFLICT... DO UPDATE)
       │
       ▼
-data/price_history.db  — daily_prices, separate file from equity_research.db
+daily_prices (Postgres, production)
       │
       ▼
 web/app.py:1702 — GET /companies/<company_id>/price-feed.json
 ```
-
-- **Why a separate db file**: `schemas/price_schema.sql`'s header comment
-  gives the rationale directly — this data is cheaply regenerable from
-  yfinance at any time, so the file is gitignored (the blanket `*.db` rule)
-  and never git-shard-committed the way `equity_research.db` is
-  (`scripts/db_shard.py` stays `equity_research.db`-only). There's also no
-  cross-db foreign key to `companies` — SQLite can't enforce one anyway —
-  so referential integrity is procedural: `storage/price_repository.py`'s
-  writers only ever receive `company_id`s the caller already read out of
-  the main db's `company_index_membership`.
 - **Populated by two scripts, both module-invoked** (not a `main.py`
   subcommand — `python -m scripts.backfill_price_history` /
   `python -m scripts.fetch_daily_prices`, run as modules so their
@@ -1219,8 +1249,8 @@ web/app.py:1702 — GET /companies/<company_id>/price-feed.json
   frozen dataclass of plain callables matching the repository functions'
   signatures, so every consumer (the two scripts above, the price-feed
   route) takes an optional `price_store` parameter defaulting to
-  `default_price_store()` rather than importing the SQLite functions
-  directly.
+  `default_price_store()` rather than importing the concrete backend's
+  functions directly.
 - **Price/volume only, never a valuation input** — same posture as
   `web/live_quote.py`'s live quote (not authoritative for any valuation
   math, display only): `daily_prices` never feeds `financial_observations`,
@@ -1288,18 +1318,18 @@ data feeds — noted in each file's header comment.
 - `fonts/` — self-hosted font files.
 - `data/` — static JSON fixtures used by a couple of ported dashboards.
 
-## Data model (SQLite, `schemas/sqlite_schema.sql`)
+## Data model (Postgres in production, SQLite for local dev)
 
-46 tables, grouped by concern:
+44 tables in production (`schemas/postgres_schema.sql`, ADR-021); 52 in the SQLite schema used for local dev (`schemas/sqlite_schema.sql`) — see the `schemas/` row above for the exact difference. Grouped by concern:
 
 - **Reference data**: `sources` (trust-ranked data providers), `metrics_dictionary`, `metric_aliases`.
 - **Companies**: `companies` (per-company `country`/`currency`/`fiscal_year_end_month`, not global), `company_identifier_history`, `company_index_membership`, `company_list_column_settings`, `overview_ratio_settings` (global `ratio_key` → `enabled` toggle — which ratios the company page's Overview tab shows, Admin-configurable, same shape/spirit as `company_list_column_settings` but for the Overview tab instead of the company list), `stock_actions` (discrete corporate events — splits/bonus/rights issues — recorded as raw events only; no split-adjustment of historical shares/EPS/price series yet), `sectors`/`industries`/`index_definitions` (Admin-editable lookup vocabularies backing the sector/industry/index-tag dropdowns, seeded from whatever's already in use).
-- **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — 158,759 rows (IITM 116,187 + RBI 42,572); MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet), `bank_infrastructure_observations` (RBI's monthly bank×metric ATM/NEFT/RTGS bulletins — a separate shape from `macro_observations`' flat series). Daily OHLCV price/volume history lives separately, in its own db file — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below.
+- **Financial data**: `financial_observations` (raw, per-source, never overwritten), `canonical_financials` (reconciled, one row per company/metric/period), `reconciliation_log` (audit trail of which source won and why), `macro_observations` (India: RBI + IITM rainfall series real and ingested — 158,759 rows (IITM 116,187 + RBI 42,572); MOSPI/IMD/IRDA registered, no files ingested yet. US: FRED, live-fetched per series on demand, no bulk/scheduled pull yet), `bank_infrastructure_observations` (RBI's monthly bank×metric ATM/NEFT/RTGS bulletins — a separate shape from `macro_observations`' flat series). Daily OHLCV price/volume history lives separately, in the same Postgres database as everything else in production (its own file for local dev) — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below.
 - **Ingestion tracking**: `ingestion_queue_items` — the Admin → Ingest panel's discovery/status tracking for financial/macro files under `data/raw/` (content-hash keyed); orchestration metadata only, never the source of truth for parsed data itself.
 - **Event bus & batch audit**: `dataset_events`, `worker_processing_log`, `batch_job_runs`, `batch_job_items` — the Event Store, per-worker processing log, and general-purpose bulk-operation audit trail (`scripts/`, `vector-backfill`/`graph-backfill`, document processing/archive) behind ingestion's event-driven layer; see [Dataset-centric ingestion: the event bus](#dataset-centric-ingestion-the-event-bus-ingestionevent_buspy) for the full shape of each.
 - **Documents**: `documents` (Docs-tab uploads/links; `processing_status`/`processed_at`/`error_message` track the Ingest queue's state for each one), `document_chunks` + `document_chunks_fts` (page-scoped chunks, FTS5-indexed by `research/document_chunker.py`; `embedding_status`/`embedding_model`/`embedded_at` track semantic-indexing state per chunk — the actual vectors live in the VectorStore, not this table, which stays the rebuildable authoritative source — see [Hybrid Document Retrieval](#hybrid-document-retrieval-retrievalhybrid_searchpy)).
 - **Shareholding Pattern**: `shareholding_observations` (one row per company/fiscal_year/quarter — promoter/public/employee-trust holding percentages, plus an FII/DII/Government/public-non-institutional breakdown read off the SHP XBRL's own category-rollup contexts rather than hand-aggregated), `shareholding_holders` (one row per named holder within a category — `side` promoter/public, `category`, `holder_name`, `num_shares`/`percent_of_shares`, sourced from NSE filings). Backs the company page's Shareholding Pattern tab, rendered by `web/static/js/shareholding_panel.js` against `web/shareholding_feed.py`'s `/companies/<id>/shareholding-feed.json` — not otherwise described elsewhere in this doc.
-- **Knowledge Builder**: `knowledge_entities` (deduped named things — Company/Product/Risk/ManagementPerson/...), `knowledge_claims` (one extracted statement per row, with its own provenance — document, fiscal period, speaker, `claim_type`, confidence — additive, never overwritten), `knowledge_relationships` (typed edges between two entities, optionally traced to the claim that asserted them), `knowledge_evidence` (the supporting quote for one claim). SQLite is the source of truth for all four; `context/knowledge_graph.py`/`context/graph_neo4j.py` project them into the same Neo4j graph the sector-peer traversal uses, sharing `Company` nodes rather than duplicating them — see [Research Knowledge Graph](#research-knowledge-graph-contextknowledge_graphpy).
+- **Knowledge Builder**: `knowledge_entities` (deduped named things — Company/Product/Risk/ManagementPerson/...), `knowledge_claims` (one extracted statement per row, with its own provenance — document, fiscal period, speaker, `claim_type`, confidence — additive, never overwritten), `knowledge_relationships` (typed edges between two entities, optionally traced to the claim that asserted them), `knowledge_evidence` (the supporting quote for one claim). Postgres is the source of truth for all four; `context/knowledge_graph.py`/`context/graph_neo4j.py` project them into the same Neo4j graph the sector-peer traversal uses, sharing `Company` nodes rather than duplicating them — see [Research Knowledge Graph](#research-knowledge-graph-contextknowledge_graphpy).
 - **Research/investigations**: `generated_reports` (persisted Signals reports), `research_thread_evidence`, `research_thread_followups`, `company_insights` (Key Insights history, per-company); `system_insights` (the site-level counterpart — one row per cross-company insight, `company_ids` a JSON array, `source_claim_ids` tracing provenance back into `knowledge_claims`, `status` new/retained/archived — generated from the [`/tools` Insights panel](#web-layer-webapppy), not a single company page); The hypothesis-driven investigation pipeline's `investigations` (one row per structured investigation, including `as_of` — the point-in-time cutoff it ran under, if any — see [Golden Research Loop validation](#golden-research-loop-validation)), `investigation_hypotheses`, `investigation_hypothesis_evidence`; and `investigation_companies` — the investigation↔company join table a company page's Investigations section queries through (`storage/investigation_repository.py`), so a cross-company investigation is one row, listed under every company it covers, never duplicated.
 - **Configurable Indicator Framework**: `indicator_rule_config` (per-user Global/Sector/Company overrides, keyed `(user_id, rule_id, scope_type, scope_value)`, a NULL field meaning "inherit"), `indicator_evaluations` (append-only audit trail of triggered indicators, deduped by `result_hash`). The rules themselves are Python (`indicators/rules.py`), not rows — see [Configurable Indicator Framework](#configurable-indicator-framework-indicators) above.
 - **LLM observability**: `llm_call_log` — one row per `llm/router.py` call or `context/reuse.py` reuse hit (model/provider, fallback, tokens, cost, context-optimization accounting) — covers all four LLM call sites, including `research/knowledge_builder.py` (`task_name="knowledge_extraction"`). `graph_hit`/`graph_hit_thread_id`/`graph_hit_score` are set on the same row as the real call a `context/graph.py` sector-peer match was appended to (`research/signals_report.py`) — a graph hit augments a call rather than replacing it, unlike a reuse hit, so it's never a second row. `investigation_id` tags every call made while running one `research/investigation.py` investigation — see [The four-layer split](#the-four-layer-split) above.
@@ -1321,10 +1351,30 @@ mechanism. That's no longer accurate for a production deployment: as of
 search (`tsvector`/GIN) over `document_chunks` is fully backfilled and is
 what production actually queries, and investigations' full content
 (hypotheses + evidence) now lives in S3, not solely in relational tables.
-**See [ADR-021](adr/021-persistence-and-search-responsibility-split.md)
+**See [ADR-021](ADR/021-persistence-and-search-responsibility-split.md)
 for the authoritative, current statement of which store owns which
 responsibility** — FTS5 remains accurate below only as the local/
 `DATABASE_BACKEND=sqlite` dev-mode description, not the production one.
+
+**A separate, in-progress initiative builds on top of this**: **[ADR-022](ADR/022-s3-raw-processed-object-store-with-lineage-catalog.md)**
+introduces a formal `raw/`-vs-`processed/` S3 prefix layout, a Postgres
+`raw_objects`/`raw_object_lineage` catalog tracking every externally
+fetched artifact's hash/state/lineage, and a weekly S3↔Postgres
+reconciliation job. As of this writing it's partially built — the catalog
+and 6 of 13 external sources are wired — see that ADR's own Implementation
+Status table for the current state; nothing here should be read as fully
+shipped yet.
+
+**A known, currently-unfixed bug** (documented in ADR-021's "Known bug,
+NOT fixed" section): `financial_observations` ingestion (NSE XBRL, SEC
+EDGAR, yfinance financials) crashes under `DATABASE_BACKEND=postgres`
+because `storage/repositories_pg.py` targets a `financial_observations`
+table that doesn't exist in `schemas/postgres_schema.sql` (deliberately
+SQLite-only, per that same ADR). The failure is per-item (caught by
+`ingestion/batch_log.py`'s `BatchRun.item()`), so it doesn't crash the
+server or a batch run — it just means no new financial-statement data has
+landed since the Postgres cutover, silently recoverable-looking in Audit
+Log → Job Runs rather than a loud outage.
 
 ## Known gaps / not yet built
 
@@ -1555,9 +1605,13 @@ pre-existing test failure.
    file is never silently reprocessed, a failed one never silently reset),
    and `knowledge_claims` (every extraction is a fresh, additive row, never
    an update to a prior document's claims).
-5. **Local-first, self-use** — single SQLite file, no external services
-   required beyond the Anthropic API (optional local Ollama fallback), no
-   deployment target, admin account seeded automatically.
+5. **Self-use, not multi-tenant** — one seeded admin account, no per-user
+   data isolation model (see `FeatureList.md`'s Deployment model section).
+   In production this now runs against real managed infrastructure
+   (Postgres/S3/Qdrant Cloud on AWS Lightsail, ADR-021) rather than a
+   single local file — "self-use" describes the product's scope, not the
+   deployment topology; local development (`main.py serve`) still needs
+   nothing beyond the Anthropic API (optional local Ollama fallback).
 6. **Cost-aware LLM execution** — hardness-based model routing, cloud→cloud→
    local fallback, context deduplication/budgeting, and reuse-before-recompute
    are all inspectable via `llm_call_log`, not invisible.

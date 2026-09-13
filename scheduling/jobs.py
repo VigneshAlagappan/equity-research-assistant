@@ -39,6 +39,7 @@ from scripts.fetch_daily_prices import run_price_history_update
 from scripts.fetch_daily_prices_usa import run_price_history_update_usa
 from scripts.fetch_investor_relations import run_investor_relations_batch, SUPPORTED_COMPANY_IDS
 from scripts.process_pending_documents_batch import run_document_processing_batch
+from scripts.reconcile_raw_objects import run_raw_object_reconciliation
 from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
 
 
@@ -233,6 +234,15 @@ def _run_db_shard(conn) -> int:
     return run_db_shard_job(conn)
 
 
+def _run_raw_object_reconciliation(conn) -> int:
+    """ADR-022's S3<->Postgres catalog reconciliation -- report-only,
+    never deletes/recreates anything (see scripts/reconcile_raw_objects.py's
+    own docstring). `conn` is used directly here (unlike the price-history
+    jobs above) since this job only ever touches the main db's raw_objects
+    table, no separate price/S3 connection to juggle."""
+    return run_raw_object_reconciliation(conn)
+
+
 def _run_fred_macro(conn) -> int:
     return run_fred_batch(conn, TRACKED_SERIES, scope_label=f"FRED ({len(TRACKED_SERIES)} series)")
 
@@ -352,6 +362,8 @@ SCHEDULED_JOBS: list[ScheduledJob] = [
                  "investor_relations_fetch", None, _run_investor_relations),
     ScheduledJob("db_shard", "DB sharding", "Daily", "Maintenance",
                  "db_shard", None, _run_db_shard),
+    ScheduledJob("raw_object_reconciliation", "Raw object catalog reconciliation (S3 <-> Postgres)", "Weekly",
+                 "Maintenance", "raw_object_reconciliation", None, _run_raw_object_reconciliation),
 ]
 
 

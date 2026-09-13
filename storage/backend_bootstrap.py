@@ -77,6 +77,7 @@ _WHOLESALE_SWAP_MODULES = (
     ("storage.indicator_repository", "storage.indicator_repository_pg"),
     ("storage.investigation_repository", "storage.investigation_repository_pg"),
     ("storage.price_repository", "storage.price_repository_pg"),
+    ("storage.raw_object_repository", "storage.raw_object_repository_pg"),
 )
 
 _installed = False

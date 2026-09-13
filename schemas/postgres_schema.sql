@@ -145,6 +145,56 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE INDEX IF NOT EXISTS idx_documents_company ON documents(company_id, document_type);
 
 -- ============================================================
+-- Raw object catalog (docs/ADR/022-s3-raw-processed-object-store-with-
+-- lineage-catalog.md) -- Postgres port of the sqlite_schema.sql table of
+-- the same name; see that file's comment for the full rationale. Unlike
+-- financial_observations below, raw_objects is NOT excluded from Postgres
+-- -- it's explicitly the Postgres-side control plane this ADR calls for,
+-- so it lives here as a first-class table, not a SQLite-only exception.
+CREATE TABLE IF NOT EXISTS raw_objects (
+  object_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  source TEXT NOT NULL,
+  entity TEXT,
+  object_type TEXT NOT NULL,
+  period TEXT,
+  source_url TEXT,
+  raw_prefix TEXT NOT NULL,
+  s3_key TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  parser_version TEXT,
+  state TEXT NOT NULL DEFAULT 'fetched',
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  processed_at TEXT,
+  last_error TEXT,
+  CHECK (state IN ('fetched', 'stored', 'validated', 'parsed', 'ingested', 'reconciled', 'failed', 'quarantined')),
+  CHECK (raw_prefix IN ('companies', 'market-data', 'macro', 'regulatory'))
+);
+
+-- Same NULL-uniqueness caveat as the SQLite version: Postgres also treats
+-- each NULL as distinct in a UNIQUE index, so this is a backstop for the
+-- common non-NULL case, not the sole dedup mechanism -- storage/raw_
+-- object_repository_pg.py's find_duplicate() does an explicit
+-- IS NOT DISTINCT FROM query (Postgres's NULL-safe equality, same
+-- translation pattern storage/indicator_repository_pg.py's own docstring
+-- already establishes) before every insert.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_objects_dedup
+  ON raw_objects(source, entity, object_type, period, content_hash);
+CREATE INDEX IF NOT EXISTS idx_raw_objects_entity ON raw_objects(entity, source, period);
+CREATE INDEX IF NOT EXISTS idx_raw_objects_state ON raw_objects(state);
+
+CREATE TABLE IF NOT EXISTS raw_object_lineage (
+  lineage_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  object_id INTEGER NOT NULL REFERENCES raw_objects(object_id),
+  derived_store TEXT NOT NULL,
+  derived_table TEXT NOT NULL,
+  derived_record_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_raw_object_lineage_object ON raw_object_lineage(object_id);
+CREATE INDEX IF NOT EXISTS idx_raw_object_lineage_derived ON raw_object_lineage(derived_store, derived_table, derived_record_id);
+
+-- ============================================================
 -- Financial Observations (raw, per-source, pre-reconciliation) --
 -- deliberately EXCLUDED from this Postgres schema (2026-09-11): the single
 -- largest table (869K rows, 269MB on Postgres -- more than half of Neon

@@ -185,6 +185,15 @@
     <div class="docs-release-shell">
       <div class="docs-release-main">
 
+        <div class="docs-release-entry" id="v2026-1-7">
+          <h3>2026.1.7 <span class="docs-release-date">(2026-09-13)</span></h3>
+          <p class="docs-release-category">Data Operations &amp; Reliability</p>
+          <ul>
+            <li>Enhancement: A new "Raw object catalog reconciliation" job appears under Settings &rarr; Schedule's Maintenance category (weekly) &mdash; checks that every externally fetched data file this app has on record actually exists in storage, and flags anything missing or untracked for review. Never deletes or changes anything on its own.</li>
+            <li>Enhancement: Behind the scenes, external data fetches (company filings, macro/economic data series, corporate actions, shareholding patterns) now durably archive the exact raw data they pulled before processing it, and automatically skip re-saving a fetch that returned unchanged data &mdash; fewer redundant downloads, and a permanent record to fall back on if something needs to be reprocessed later.</li>
+          </ul>
+        </div>
+
         <div class="docs-release-entry" id="v2026-1-6">
           <h3>2026.1.6 <span class="docs-release-date">(2026-09-13)</span></h3>
           <p class="docs-release-category">Data Operations</p>
@@ -282,6 +291,7 @@
 
       <aside class="docs-release-toc">
         <p class="docs-release-toc-title">On this page</p>
+        <a href="#v2026-1-7">2026.1.7 (2026-09-13)</a>
         <a href="#v2026-1-6">2026.1.6 (2026-09-13)</a>
         <a href="#v2026-1-5">2026.1.5 (2026-09-07)</a>
         <a href="#v2026-1-4">2026.1.4 (2026-09-05)</a>

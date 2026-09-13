@@ -21,20 +21,25 @@ Legend: ✅ done · 🟡 partial · ⬜ not started
 
 ## Deployment model
 
-**Current design target: a single individual user, running locally.** This
-isn't an oversight to fix later in the features below — it's the deliberate
-scope this phase was built to (see [architecture.md's Key design principles
-#5](architecture.md#key-design-principles), "Local-first, self-use"): one
+**Originally designed for a single individual user, running locally** — one
 SQLite file (`data/equity_research.db`), one seeded admin account, a Flask
-dev server (`main.py serve`) with no production WSGI/process manager in
-front of it, no connection pooling, no per-request rate limiting, no
-horizontal scaling story. Every "Available" row above assumes this
-single-user, single-process context.
+dev server (`main.py serve`). That local-dev shape is still the default and
+still the accurate description of `main.py serve` today (see
+[architecture.md's Key design principles #5](architecture.md#key-design-principles),
+"Self-use, not multi-tenant").
 
-**Future phase (not started): a server deployment planned for 1000+
-concurrent sessions.** Getting there is a distinct, sizeable body of work —
-not a config flag — and is tracked as its own Pending item below rather than
-implied by anything currently shipped.
+**As of 2026-09-13, a real server deployment is also live in production**
+(AWS Lightsail Container Service, `DATABASE_BACKEND=postgres` against Neon,
+S3 for documents, Qdrant Cloud for vectors, gunicorn as the WSGI server in
+front of Flask — see ADR-021 and `docs/USER_GUIDE.md`'s Deployment section).
+This closes the "no production WSGI server, single-writer SQLite" gap the
+single-user framing above used to describe, but it is **not** yet a
+multi-tenant deployment: there's still one seeded admin account, no
+per-user data isolation/authorization model, no per-user LLM cost/rate
+controls, and no horizontal scaling of the app itself — "1000+ concurrent
+sessions" remains a distinct, not-yet-started future phase (see Pending
+below), just not for the reasons ("no production server, SQLite only")
+this section used to give.
 
 ## Available
 
@@ -98,7 +103,7 @@ implied by anything currently shipped.
 | Medium | Bulk US company-master importer | ⬜ not started | `companies/nse_import.py` bulk-registers from an NSE export; no parallel importer exists for a US index constituent list. Registering a US company is one-at-a-time today (`add-company --country US` / `ingest-yfinance`). |
 | Low | `yfinance` fiscal-year labeling doesn't consult `fiscal_year_end_month` | ⬜ not started | `sources/yfinance_financials.py` labels US fiscal years by calendar close year (`FY{period_end.year}`), not the company's actual `fiscal_year_end_month`. Data is correct either way; only the `FY` label can be cosmetically off for a non-calendar US fiscal year (e.g. Apple's September close). |
 | Low | N-country ticker-suffix / index-tag generalization | ⬜ not started | `web/live_quote.py`/`web/app.py`'s ticker-suffix and index-tag logic is a 2-way IN/US hardcoded branch — matches the app's stated US+India focus, not a general lookup table a third market would need. |
-| Future phase | Multi-user server deployment, 1000+ concurrent sessions | ⬜ not started | Out of scope for the current [single-user, local-first design](#deployment-model) — a distinct future phase, not a natural extension of what's shipped. Would need, at minimum: a production WSGI server/process manager in front of Flask (`main.py serve` is a dev server); SQLite replaced or fronted for concurrent multi-writer access (single-file `data/equity_research.db`, no connection pooling today); real multi-tenant auth/authorization (today: one seeded admin, no per-user data isolation model); per-user/per-session LLM cost and rate controls (today's Model Router/Fallback and `llm_call_log` observability assume one user's traffic); and horizontal scaling for the Flask app itself. None of this is designed against yet. |
+| Future phase | Multi-tenant server deployment, 1000+ concurrent sessions | ⬜ not started | Out of scope for the current [deployment model](#deployment-model) — a distinct future phase, not a natural extension of what's shipped. A production server deployment now exists (gunicorn/Postgres/S3/Qdrant, live since 2026-09-13 — see ADR-021), which already closes the "no WSGI server, single-writer SQLite" gap; what's still missing is real multi-tenant auth/authorization (today: one seeded admin, no per-user data isolation model), per-user/per-session LLM cost and rate controls (today's Model Router/Fallback and `llm_call_log` observability assume one user's traffic), and horizontal scaling for the Flask app itself. None of this is designed against yet. |
 
 Two more backlog areas exist beyond this table and are tracked in
 [pendingList.md](pendingList.md) rather than duplicated here: the

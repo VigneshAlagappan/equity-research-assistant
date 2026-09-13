@@ -86,6 +86,31 @@ class YFinanceAdapter:
     def __init__(self, conn: DBConnection):
         self._conn = conn
 
+    def fetch_raw_statements_json(self, ticker: str) -> bytes:
+        """The three raw statement DataFrames (financials/balance_sheet/
+        cashflow), serialized as one combined JSON document -- the ADR-022
+        raw/companies/ artifact ingestion/pipeline.py::ingest_yfinance_
+        company() catalogs before fetch() below re-fetches and parses.
+        A separate, second yfinance call rather than sharing one fetch
+        with fetch() -- unlike sources/fred.py/sources/sec_edgar.py (a
+        single plain HTTP response byte-for-byte reusable for both raw
+        storage and parsing), reconstructing yfinance's own DataFrames
+        from a serialized round-trip risks subtly different dtypes/
+        precision from a fresh live fetch; this path isn't behind a
+        recurring scheduled job (only company-onboarding/CLI, per this
+        module's own callers), so the extra call is an acceptable,
+        deliberate tradeoff for now rather than a silently-differently-
+        parsed result."""
+        t = yf.Ticker(ticker)
+        payload = {
+            "financials": t.financials.to_json(date_format="iso") if t.financials is not None else None,
+            "balance_sheet": t.balance_sheet.to_json(date_format="iso") if t.balance_sheet is not None else None,
+            "cashflow": t.cashflow.to_json(date_format="iso") if t.cashflow is not None else None,
+        }
+        import json as _json
+
+        return _json.dumps(payload, sort_keys=True).encode("utf-8")
+
     def fetch(
         self, company_id: str, ticker: str, *, currency: str = "USD", statement_type: str = "consolidated"
     ) -> list[NormalizedObservation]:

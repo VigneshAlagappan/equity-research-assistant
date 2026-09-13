@@ -280,17 +280,17 @@ See:
 
 ---
 
-## 5. SQLite today, controlled migration tomorrow
+## 5. SQLite locally, Postgres in production — the migration already happened
 
-SQLite remains the current authoritative relational implementation because the dominant architectural problem today is correctness, provenance, and research-system design rather than distributed database operations.
+SQLite remains the authoritative relational implementation for local development and was the original production implementation, chosen because the dominant early architectural problem was correctness, provenance, and research-system design rather than distributed database operations.
 
-The important long-lived choice is the storage boundary:
+The important long-lived choice was the storage boundary:
 
 > **Business and research logic depend on persistence interfaces; backend-specific behavior stays localized.**
 
-This allows Signals to retain SQLite's simplicity while preserving a future migration path to PostgreSQL or another server RDBMS if operational evidence requires it.
+That boundary is what made the migration itself low-risk when it came: as of 2026-09-13, `DATABASE_BACKEND=postgres` (Neon) is live in production (see ADR-021), with S3 as the authoritative store for large/raw artifacts and Postgres full-text search replacing FTS5 as the production keyword-search path. SQLite remains the default for local development and is still the implementation ADR-001 describes; nothing here reverses that decision for the local case.
 
-A migration should be driven by pressures such as:
+The migration was driven by exactly the kind of pressures ADR-020 anticipated:
 
 - sustained concurrent writes;
 - multiple application replicas;
@@ -301,8 +301,10 @@ A migration should be driven by pressures such as:
 
 See:
 
-- `ADR/001-sqlite-source-of-truth.md`
-- `ADR/020-sqlite-to-server-database-migration.md`
+- `ADR/001-sqlite-source-of-truth.md` (still the accurate local-development story)
+- `ADR/020-sqlite-to-server-database-migration.md` (the migration boundary this decision preserved)
+- `ADR/021-persistence-and-search-responsibility-split.md` (the authoritative, current statement of which store owns which responsibility in production)
+- `ADR/022-s3-raw-processed-object-store-with-lineage-catalog.md` (in-progress: a formal raw/processed S3 layout and Postgres lineage catalog on top of the ADR-021 split)
 
 ---
 

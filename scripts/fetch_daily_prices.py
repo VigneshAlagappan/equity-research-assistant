@@ -24,13 +24,16 @@ lands on sys.path, same as every other script here.)
 
 from __future__ import annotations
 
+import json
 import time
 
 from ingestion.batch_log import BatchRun
 from sources.yfinance_prices import fetch_daily_bars
+from storage import raw_object_repository as ror
 from storage.backend_bootstrap import open_db, open_price_db
 from storage.company_repository import select_index_members_with_nse_symbol
 from storage.price_repository import upsert_daily_bars
+from storage.raw_object_store import store_raw_object
 
 REQUEST_DELAY_SECONDS = 0.4
 BATCH_SIZE = 25
@@ -116,6 +119,32 @@ def run_price_history_update(
                         print(f"[{i}/{total}] {company_id:24s} no price data", flush=True)
                         item.detail = "no data"
                     else:
+                        # ADR-022: land the fetched bars in raw/market-data/
+                        # BEFORE the upsert below touches daily_prices --
+                        # dedup-by-hash means a re-fetch that returns the
+                        # exact same window (e.g. the job re-run same-day)
+                        # never creates a duplicate raw object, only a new
+                        # one when the actual bars changed (a fresh trading
+                        # day, a corrected close). raw_object's own conn is
+                        # main_conn (the catalog lives wherever companies/
+                        # batch_job_runs do), not price_conn.
+                        period = f"{bars[0].trade_date}..{bars[-1].trade_date}"
+                        raw_payload = json.dumps(
+                            [
+                                {
+                                    "trade_date": bar.trade_date, "open": bar.open, "high": bar.high,
+                                    "low": bar.low, "close": bar.close, "volume": bar.volume,
+                                }
+                                for bar in bars
+                            ],
+                            sort_keys=True,
+                        ).encode("utf-8")
+                        raw_result = store_raw_object(
+                            main_conn, source="yfinance_prices", entity=company_id, object_type="ohlcv_batch",
+                            period=period, source_url=None, raw_prefix="market-data",
+                            content=raw_payload, extension="json",
+                        )
+
                         upsert_daily_bars(
                             price_conn,
                             (
@@ -131,10 +160,15 @@ def run_price_history_update(
                                 for bar in bars
                             ),
                         )
+                        ror.update_raw_object_state(main_conn, raw_result.object_id, state="ingested", mark_processed=True)
+                        ror.insert_lineage(
+                            main_conn, object_id=raw_result.object_id, derived_store="price_db",
+                            derived_table="daily_prices", derived_record_id=f"{company_id}:{period}",
+                        )
                         updated += 1
                         latest = bars[-1]
                         print(f"[{i}/{total}] {company_id:24s} rows={len(bars)} latest={latest.trade_date}", flush=True)
-                        item.detail = f"updated rows={len(bars)} latest={latest.trade_date}"
+                        item.detail = f"updated rows={len(bars)} latest={latest.trade_date} raw_object_id={raw_result.object_id}"
 
                     time.sleep(REQUEST_DELAY_SECONDS)
                     if i % BATCH_SIZE == 0 and i < total:

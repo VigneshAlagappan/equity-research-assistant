@@ -101,6 +101,15 @@ class DocumentStore(Protocol):
         the key doesn't exist."""
         ...
 
+    def list_keys(self, prefix: str) -> list[str]:
+        """Every key currently stored under `prefix` (e.g. "raw/market-
+        data/") -- added for docs/ADR/022-s3-raw-processed-object-store-
+        with-lineage-catalog.md's S3<->Postgres catalog reconciliation job
+        (scripts/reconcile_raw_objects.py), which needs to enumerate what
+        actually exists in the store to compare against raw_objects rows.
+        Never raises for a prefix with nothing under it -- returns []."""
+        ...
+
 
 class LocalDocumentStore:
     """Wraps today's exact on-disk behaviour — `key` is the same
@@ -150,6 +159,14 @@ class LocalDocumentStore:
             return path.open("rb")
         except OSError as exc:
             raise DocumentStoreError(f"cannot open {key!r}: {exc}") from exc
+
+    def list_keys(self, prefix: str) -> list[str]:
+        from config import settings
+
+        root = self._path(prefix)
+        if not root.exists():
+            return []
+        return [str(path.relative_to(settings.BASE_DIR)) for path in root.rglob("*") if path.is_file()]
 
 
 class S3DocumentStore:
@@ -236,6 +253,18 @@ class S3DocumentStore:
             return response["Body"]
         except (BotoCoreError, ClientError) as exc:
             raise DocumentStoreError(f"cannot stream {key!r} from s3://{self._bucket}: {exc}") from exc
+
+    def list_keys(self, prefix: str) -> list[str]:
+        from botocore.exceptions import BotoCoreError, ClientError
+
+        keys: list[str] = []
+        try:
+            paginator = self._client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+                keys.extend(obj["Key"] for obj in page.get("Contents", []))
+        except (BotoCoreError, ClientError) as exc:
+            raise DocumentStoreError(f"cannot list keys under {prefix!r} in s3://{self._bucket}: {exc}") from exc
+        return keys
 
 
 def default_document_store() -> DocumentStore:

@@ -245,15 +245,19 @@ def _parse_shp_date(value: str) -> date:
     return datetime.strptime(value.split(" ")[0].title(), "%d-%b-%Y").date()
 
 
-def fetch_shareholding_master(
-    symbol: str,
-    *,
-    session: requests.Session | None = None,
-) -> list[ShareholdingSummary]:
-    """List every quarterly Shareholding Pattern submission NSE has on file
-    for `symbol` — full history in one response, same "no server-side
-    date-range filtering, caller filters client-side if it wants a window"
-    convention as sources/nse_fetch.py's fetch_filing_index()."""
+def shareholding_master_url(symbol: str) -> str:
+    """Public wrapper of the shareholding-master endpoint -- scripts/
+    batch_fetch_nse.py's _run_shareholding() records this as the raw
+    object's source_url (ADR-022)."""
+    return f"{_BASE}{_SHAREHOLDING_MASTER_API_PATH}?symbol={symbol}"
+
+
+def fetch_shareholding_master_raw(symbol: str, *, session: requests.Session | None = None) -> bytes:
+    """Just the network fetch, extracted out of fetch_shareholding_master()
+    below so a caller that needs the raw bytes themselves (ADR-022's
+    raw/regulatory/ persistence) doesn't have to issue a second HTTP
+    request. fetch_shareholding_master() calls this internally -- one
+    network call either way, same as before this split."""
     owns_session = session is None
     session = session or _new_session()
     try:
@@ -264,8 +268,17 @@ def fetch_shareholding_master(
     finally:
         if owns_session:
             session.close()
+    return response.content
 
-    rows = response.json()
+
+def parse_shareholding_master_json(raw_bytes: bytes, symbol: str) -> list[ShareholdingSummary]:
+    """The parsing half of fetch_shareholding_master() below, extracted so
+    a caller that already has the raw bytes (e.g. replaying a cataloged
+    raw/regulatory/ object, per ADR-022) can parse them without a network
+    call."""
+    import json
+
+    rows = json.loads(raw_bytes)
     summaries: list[ShareholdingSummary] = []
     for row in rows:
         date_str = row.get("date")
@@ -287,6 +300,22 @@ def fetch_shareholding_master(
             )
         )
     return summaries
+
+
+def fetch_shareholding_master(
+    symbol: str,
+    *,
+    session: requests.Session | None = None,
+) -> list[ShareholdingSummary]:
+    """List every quarterly Shareholding Pattern submission NSE has on file
+    for `symbol` — full history in one response, same "no server-side
+    date-range filtering, caller filters client-side if it wants a window"
+    convention as sources/nse_fetch.py's fetch_filing_index(). Unchanged
+    public behavior/signature, now composed of fetch_shareholding_master_
+    raw() + parse_shareholding_master_json() rather than doing the HTTP
+    GET and JSON parse inline."""
+    raw_bytes = fetch_shareholding_master_raw(symbol, session=session)
+    return parse_shareholding_master_json(raw_bytes, symbol)
 
 
 def _to_float(value: object) -> float | None:
@@ -481,13 +510,12 @@ def fetch_named_holders(xbrl_url: str, *, session: requests.Session | None = Non
     return parse_shp_xbrl(response.content)
 
 
-def fetch_shareholding_detail(
-    xbrl_url: str, *, session: requests.Session | None = None
-) -> tuple[list[ShareholderHolding], CategoryBreakdown | None]:
-    """Download one submission's SHP XBRL ONCE and run both parses over it
-    — named holders and the category breakdown — rather than the caller
-    fetching the same URL twice (fetch_named_holders() alone, kept for
-    direct/test use, only covers the first)."""
+def fetch_shareholding_detail_raw(xbrl_url: str, *, session: requests.Session | None = None) -> bytes:
+    """Just the network fetch, extracted out of fetch_shareholding_detail()
+    below so a caller that needs the raw bytes themselves (ADR-022's
+    raw/regulatory/ persistence) doesn't have to issue a second HTTP
+    request. fetch_shareholding_detail() calls this internally -- one
+    network call either way, same as before this split."""
     owns_session = session is None
     session = session or _new_session()
     try:
@@ -495,4 +523,17 @@ def fetch_shareholding_detail(
     finally:
         if owns_session:
             session.close()
-    return parse_shp_xbrl(response.content), parse_shp_category_breakdown(response.content)
+    return response.content
+
+
+def fetch_shareholding_detail(
+    xbrl_url: str, *, session: requests.Session | None = None
+) -> tuple[list[ShareholderHolding], CategoryBreakdown | None]:
+    """Download one submission's SHP XBRL ONCE and run both parses over it
+    — named holders and the category breakdown — rather than the caller
+    fetching the same URL twice (fetch_named_holders() alone, kept for
+    direct/test use, only covers the first). Unchanged public behavior/
+    signature, now composed of fetch_shareholding_detail_raw() +
+    parse_shp_xbrl()/parse_shp_category_breakdown()."""
+    content = fetch_shareholding_detail_raw(xbrl_url, session=session)
+    return parse_shp_xbrl(content), parse_shp_category_breakdown(content)

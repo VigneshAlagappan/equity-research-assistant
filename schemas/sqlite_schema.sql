@@ -120,6 +120,76 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE INDEX IF NOT EXISTS idx_documents_company ON documents(company_id, document_type);
 
 -- ============================================================
+-- Raw object catalog (docs/ADR/022-s3-raw-processed-object-store-with-
+-- lineage-catalog.md) -- Postgres/SQLite metadata/control-plane record for
+-- every externally fetched artifact stored immutably under the S3 (or
+-- local-disk, DOCUMENT_STORE_BACKEND=local) raw/ prefix, BEFORE any
+-- downstream parsing touches it. Distinct from `documents` above:
+-- `documents` is user-facing narrative files (Docs tab uploads, IR PDFs);
+-- `raw_objects` is the control plane for every machine-fetched artifact
+-- across every source (NSE XBRL, SEC EDGAR, FRED, RBI, yfinance, ...),
+-- most of which have no narrative-document concept at all (a FRED CSV
+-- pull, a yfinance OHLCV batch).
+--
+-- One row per immutable raw object. A re-fetch that hashes identical to
+-- an existing row for the same (source, entity, object_type, period) is
+-- never inserted as a new row -- see storage/raw_object_repository.py's
+-- dedup-by-hash logic. A re-fetch with different content inserts a NEW
+-- row (never UPDATEs raw_s3_key/content_hash of an existing one) -- the
+-- object it points at in S3 is immutable, so the catalog row describing
+-- it must be too.
+CREATE TABLE IF NOT EXISTS raw_objects (
+  object_id INTEGER PRIMARY KEY,
+  source TEXT NOT NULL,              -- e.g. "nse_xbrl" | "sec_edgar" | "fred" | "rbi" | "yfinance_prices" | "yfinance_financials" | "investor_relations"
+  entity TEXT,                       -- company_id, or NULL for a non-company source (e.g. a national macro series)
+  object_type TEXT NOT NULL,         -- e.g. "xbrl_filing" | "companyfacts" | "fred_series_csv" | "ohlcv_batch"
+  period TEXT,                      -- fiscal year/quarter, trade-date range, or series period, as applicable to object_type
+  source_url TEXT,                   -- the exact URL/endpoint fetched
+  raw_prefix TEXT NOT NULL,          -- which root raw/ prefix this belongs under: companies | market-data | macro | regulatory
+  s3_key TEXT NOT NULL,              -- storage/document_store.py DocumentStore key for the immutable object
+  content_hash TEXT NOT NULL,        -- sha256 of the raw bytes -- the dedup key, see UNIQUE index below
+  fetched_at TEXT NOT NULL,
+  parser_version TEXT,               -- which parser/schema version last processed this object, if any
+  state TEXT NOT NULL DEFAULT 'fetched',  -- fetched|stored|validated|parsed|ingested|reconciled|failed|quarantined
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  processed_at TEXT,
+  last_error TEXT,
+  CHECK (state IN ('fetched', 'stored', 'validated', 'parsed', 'ingested', 'reconciled', 'failed', 'quarantined')),
+  CHECK (raw_prefix IN ('companies', 'market-data', 'macro', 'regulatory'))
+);
+
+-- Dedup key: a re-fetch that hashes identical to an already-cataloged
+-- object for this exact (source, entity, object_type, period) is a no-op
+-- reuse-by-reference, never a new row -- see storage/raw_object_
+-- repository.py::find_duplicate(). NULLs in entity/period are distinct
+-- per SQLite's default unique-index NULL handling, which is fine here:
+-- a source with no entity/period concept (e.g. a single always-current
+-- FRED series with period=NULL) still dedups correctly because its
+-- content_hash naturally changes when the series actually changes.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_objects_dedup
+  ON raw_objects(source, entity, object_type, period, content_hash);
+CREATE INDEX IF NOT EXISTS idx_raw_objects_entity ON raw_objects(entity, source, period);
+CREATE INDEX IF NOT EXISTS idx_raw_objects_state ON raw_objects(state);
+
+-- Lineage: which raw object(s) a derived record was computed from. One
+-- row per (derived record, raw object) contribution -- deliberately a
+-- separate table rather than a source_object_id column bolted onto every
+-- derived table (financial_observations, macro_observations, Qdrant point
+-- payloads, Neo4j node properties, ...), since some derived records
+-- genuinely come from more than one raw object (e.g. a reconciled
+-- canonical value chosen among several source candidates).
+CREATE TABLE IF NOT EXISTS raw_object_lineage (
+  lineage_id INTEGER PRIMARY KEY,
+  object_id INTEGER NOT NULL REFERENCES raw_objects(object_id),
+  derived_store TEXT NOT NULL,       -- "postgres" | "qdrant" | "neo4j"
+  derived_table TEXT NOT NULL,       -- e.g. "financial_observations", "canonical_financials", "document_chunks"
+  derived_record_id TEXT NOT NULL,   -- the derived record's own primary key, as text (tables use different id types)
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_raw_object_lineage_object ON raw_object_lineage(object_id);
+CREATE INDEX IF NOT EXISTS idx_raw_object_lineage_derived ON raw_object_lineage(derived_store, derived_table, derived_record_id);
+
+-- ============================================================
 -- Financial Observations (raw, per-source, pre-reconciliation)
 -- ============================================================
 

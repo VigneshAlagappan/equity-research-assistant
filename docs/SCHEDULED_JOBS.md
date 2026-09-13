@@ -300,15 +300,24 @@ scheduling policy and gap analysis only.
 | DB sharding | Daily | Ready (shard step only) | Commit+push needs a separate explicit decision |
 
 Price history (India and USA), financials (India and USA), shareholding
-pattern (India), DB sharding, FRED macro data, document analysis, and
-company insights are ready to actually put on a schedule today — all of
-them are also wired into Settings > Data Operations > Schedule's manual
-"Run now" trigger (15 rows total: 2 price-history + 1 sharding + 4 each
-for financials/shareholding India tiers — Nifty 50, Next 50, Midcap 150,
-Smallcap 250 — + 1 financials USA + 1 FRED macro + 1 doc analysis + 1
-company insights), with every run's status visible in Audit Log > Job
-Runs. Everything else (macro insights, RBI/IITM/DBIE macro data) needs
-real implementation work first — not just a cron entry. And even for
+pattern (India), corporate actions (India), DB sharding, FRED macro data,
+document analysis, company insights, and investor relations documents are
+ready to actually put on a schedule today — all of them are wired into
+Settings > Data Operations > Schedule's manual "Run now" trigger, which as
+of 2026-09-13 has grown well past this doc's original row count: the panel
+now groups **38 jobs across 9 collapsible categories** (`scheduling/
+jobs.py`'s `SCHEDULED_JOBS`, `category` field) — Daily price, History
+price, Financials, Shareholding, Corporate actions, Macro, Insights,
+Documents, Maintenance — instead of one flat table. Beyond the jobs this
+section already covers, that registry also now includes: 6 on-demand
+"History price" backfill jobs (3-year close price & volume windows, one
+per NSE tier — Nifty 50/Next 50/Midcap 150/Smallcap 250/Micro-Cap — plus
+USA), 10 corporate-actions fetch/ingest jobs (India, per tier), and a new
+Weekly Maintenance job, `raw_object_reconciliation` (docs/ADR/022 — S3↔
+Postgres catalog reconciliation, report-only). Every run's status is
+visible in Audit Log > Job Runs, same as before. Everything the sections
+above call a genuine gap (macro insights, RBI/IITM/DBIE macro data) still
+needs real implementation work first — not just a cron entry. And even for
 sharding, "ready" is the local file-writing part
 only — turning that into an actual git backup still needs the commit+push
 decision above made explicitly.

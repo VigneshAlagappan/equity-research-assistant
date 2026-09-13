@@ -434,6 +434,13 @@ fetched from Yahoo Finance — separate from `analyze`'s fundamentals, this is f
 price charting. Not yet a `main.py` subcommand — run the scripts directly (as
 modules, so their `storage`/`sources` imports resolve):
 
+In production (see §Deployment below), `daily_prices` lives in the same
+Postgres database as everything else, via `storage/price_repository_pg.py`
+and `storage/backend_bootstrap.py`'s `open_price_db()` (ADR-021). Local
+development (`DATABASE_BACKEND=sqlite`, the default) keeps it in its own
+file, `data/price_history.db` — the same commands below work unchanged
+against either backend.
+
 **One-time (or occasional) backfill:**
 
 ```bash
@@ -442,12 +449,20 @@ python -m scripts.backfill_price_history --period 1y
 
 Loops over every company tagged `Nifty 500` (already populated by `add-company`/
 `seed-companies` or a full NSE import — see `companies/nse_import.py`) and upserts
-its history into a dedicated database, `data/price_history.db`. `--period` accepts
-`1y` (default), `5y`, `10y`, or `max`; add `--company-id HDFCBANK` to backfill just
-one company. Safe to re-run any time (e.g. after switching from `1y` to `10y`) —
-existing days are overwritten in place, never duplicated. Expect ~10-15 minutes for
-the full 499-company run (deliberately rate-limited to stay polite to Yahoo's
-endpoint).
+its history into `daily_prices`. `--period` accepts `1y` (default), `5y`, `10y`, or
+`max`; `--years N` backfills an exact N-year window (e.g. `--years 3`, for a
+window `--period` has no name for); `--index-name "Nifty 50"` scopes to one NSE
+tier (`--all-tiers` runs all five standard tiers back to back); add
+`--company-id HDFCBANK` to backfill just one company; `--force` bypasses the
+skip-if-already-covers-the-requested-window check. Safe to re-run any time
+(e.g. after switching from `1y` to `10y`) — existing days are overwritten in
+place, never duplicated, and (for `--years` runs) a company already covered
+back to the requested start date is skipped outright rather than re-fetched.
+The same six tier/country combinations are also available as one-click jobs
+in Settings > Data Operations > Schedule ("History price" category — "Manual"
+cadence, 3-year window). Expect ~10-15 minutes for the full 499-company run
+(deliberately rate-limited to stay polite to Yahoo's endpoint); the Nifty
+Micro-Cap tier (~2,000 companies) takes considerably longer.
 
 **Daily job (keeps it current):**
 

@@ -148,6 +148,12 @@ def test_docs_feed_has_years_for_annual_only_company(tmp_path: Path, monkeypatch
             self.cashflow = pd.DataFrame()
 
     monkeypatch.setattr("sources.yfinance_financials.yf.Ticker", _FakeTicker)
+    # ADR-022: ingest_yfinance_company() now also lands a raw/companies/
+    # artifact via storage.raw_object_store (LocalDocumentStore by
+    # default) -- isolate BASE_DIR here too (same reasoning _build_app's
+    # own DOCUMENTS_DIR/RAW_DIR isolation gives below), since this call
+    # happens before _build_app() runs its own monkeypatching.
+    monkeypatch.setattr("config.settings.BASE_DIR", tmp_path)
     ingest_yfinance_company(conn, "AAPL", "AAPL", currency="USD")
     conn.close()
 
