@@ -515,21 +515,18 @@ def create_app() -> Flask:
         return g.db_conn
 
     def get_logs_db() -> DBConnection:
-        """Always SQLite, regardless of DATABASE_BACKEND -- batch_job_runs/
-        items, dataset_events, worker_processing_log, retrieval_diagnostics,
-        llm_call_log, ingestion_queue_items, and reconciliation_log stay
-        SQLite-only forever (see storage/backend_bootstrap.py's docstring).
-        Every route reading/writing those tables must use this, not
-        get_db(), once DATABASE_BACKEND=postgres -- get_db() would hand back
-        a Postgres connection those functions' `?`-placeholder SQL can't
-        run against. A separate connection object, not just "the same
-        get_db() result under a different name," since under postgres mode
-        they're genuinely two different databases."""
-        if DATABASE_BACKEND != "postgres":
-            return get_db()
-        if "logs_db_conn" not in g:
-            g.logs_db_conn = init_db()
-        return g.logs_db_conn
+        """Same connection as get_db() now -- batch_job_runs/items,
+        dataset_events, worker_processing_log, retrieval_diagnostics,
+        llm_call_log, and ingestion_queue_items were added to schemas/
+        postgres_schema.sql on 2026-09-13 (previously excluded citing a
+        Neon free-tier storage cap production had already grown past --
+        see storage/backend_bootstrap.py's docstring and docs/ADR/021),
+        so they live in the same database as everything else under either
+        backend now. Kept as a distinct name (not simply replaced by
+        get_db() at every call site) purely so those call sites keep
+        reading as "this touches an audit/log table" -- not because the
+        connection is actually different anymore."""
+        return get_db()
 
     def get_price_db() -> DBConnection:
         if "price_db_conn" not in g:
@@ -851,7 +848,7 @@ def create_app() -> Flask:
         a sqlite3 connection can't cross threads) -- startup itself must
         not block on what could be a several-minute crawl.
         """
-        conn = init_db()
+        conn = storage.backend_bootstrap.open_db()
         try:
             stale_runs = list_running_batch_job_runs(conn)
             for run in stale_runs:
@@ -894,7 +891,7 @@ def create_app() -> Flask:
                 "Auto-resuming interrupted batch job %r (was run_id=%s, scope=%r)",
                 job.job_id, run["run_id"], run["scope_label"],
             )
-            conn = init_db()
+            conn = storage.backend_bootstrap.open_db()
             try:
                 job.runner(conn)
             except Exception:  # noqa: BLE001 -- one job's resume failing shouldn't block the rest of the queue
