@@ -12,30 +12,25 @@ see this file's `reconcile()`/`insert_financial_observations()` and
 `docs/ADR/021` for the fuller history) -- `storage.repositories` is now a
 clean wholesale swap (`storage/backend_bootstrap.py`), no hybrid module.
 
-A few functions touch a table/column that exists in `schemas/sqlite_
-schema.sql` but was never added to `schemas/postgres_schema.sql` at all --
-those are ported anyway (so no further edits are needed once the schema
-gap closes), but WILL error until it does. See:
-    - `replace_document_chunks()` -- FTS5->tsvector gap is now closed
-      (`document_chunks.search_vector`, a GIN-indexed tsvector column, exists
-      on Neon -- see schemas/postgres_schema.sql). This function now writes
-      both `document_chunks` and its `search_vector` column on insert.
-    - `search_document_chunks()` -- now implemented in
-      `storage/fact_store_pg.py` (not here, mirroring where the SQLite
-      original's `default_fact_store()` sources it from `repositories.py`),
-      querying `document_chunks.search_vector` via `ts_rank`.
+A few functions used to touch a table/column that existed in `schemas/
+sqlite_schema.sql` but hadn't been added to `schemas/postgres_schema.sql`
+yet -- both gaps below are closed now (2026-09-13), verified directly
+against real Neon (not just import-time/schema-file checks):
+    - `replace_document_chunks()` -- FTS5->tsvector gap is closed
+      (`document_chunks.search_vector`, a GIN-indexed tsvector column,
+      exists on Neon -- see schemas/postgres_schema.sql). This function
+      writes both `document_chunks` and its `search_vector` column on insert.
+    - `search_document_chunks()` -- implemented in `storage/fact_store_
+      pg.py` (not here, mirroring where the SQLite original's `default_
+      fact_store()` sources it from `repositories.py`), querying `document_
+      chunks.search_vector` via `ts_rank`.
     - `hide_investigation`/`unhide_investigation`/`soft_delete_investigation`/
       `list_investigations`, and the equivalent `generated_reports` quartet
-      -- these target `hidden_at`/`deleted_at` columns that
-      `storage/database.py`'s `_migrate_case_visibility_columns` adds to the
-      SQLite `investigations`/`generated_reports` tables via `ALTER TABLE`,
-      but that migration was never carried into `schemas/postgres_schema.sql`
-      -- those two tables have no `hidden_at`/`deleted_at` columns on Neon
-      today. Ported here targeting those columns anyway (so this file needs
-      no further edits once the schema gap is closed), but they cannot be
-      verified against real Neon in this checkpoint and WILL error
-      (`UndefinedColumn`) until that schema gap is fixed -- flagged clearly
-      in the checkpoint report.
+      -- `hidden_at`/`deleted_at` exist on both tables on Neon (schemas/
+      postgres_schema.sql), and every one of these functions has been run
+      directly against real production data (hide + unhide round-tripped
+      on a real investigation and a real generated_reports row) with no
+      error.
 
 Translation notes (see also storage/company_repository_pg.py's own header,
 and each function's own comments where relevant):
@@ -1064,18 +1059,11 @@ def set_document_processing_status(conn: DBConnection, document_id: int, status:
 # ------------------------------------------------------------------
 # Investigations (Steps 2E-2H)
 #
-# NOTE on hide_investigation/unhide_investigation/soft_delete_investigation/
-# list_investigations: these target `hidden_at`/`deleted_at` columns that,
-# on SQLite, storage/database.py's _migrate_case_visibility_columns() adds
-# to `investigations` via ALTER TABLE -- that migration was never carried
-# into schemas/postgres_schema.sql, so the real Neon `investigations` table
-# has NO hidden_at/deleted_at columns today. Ported here targeting those
-# columns anyway (matching names/signatures per the porting brief, and so
-# this file needs no further edits once the schema gap is closed), but they
-# WILL raise psycopg2.errors.UndefinedColumn against the current live Neon
-# schema -- NOT verified against real Neon in this checkpoint. Flagged in
-# the checkpoint report as a pre-existing schema gap, not something
-# introduced by this port.
+# hide_investigation/unhide_investigation/soft_delete_investigation/
+# list_investigations target `hidden_at`/`deleted_at` -- both columns exist
+# directly on Neon's `investigations` table (schemas/postgres_schema.sql),
+# and every one of these functions has been run directly against real
+# production data with no error.
 # ------------------------------------------------------------------
 
 
@@ -1182,16 +1170,12 @@ def get_investigation(conn: DBConnection, investigation_id: str) -> Row | None:
 
 
 def list_investigations(conn: DBConnection) -> list[Row]:
-    """See this file's module-level NOTE -- targets `deleted_at`, which
-    does not exist on the real Neon `investigations` table yet."""
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM investigations WHERE deleted_at IS NULL ORDER BY generated_at DESC")
         return cur.fetchall()
 
 
 def hide_investigation(conn: DBConnection, investigation_id: str) -> bool:
-    """See this file's module-level NOTE -- targets `hidden_at`, which does
-    not exist on the real Neon `investigations` table yet."""
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE investigations SET hidden_at = %s WHERE investigation_id = %s AND deleted_at IS NULL",
@@ -1627,14 +1611,12 @@ def find_knowledge_claims_for_entity_ids(conn: DBConnection, entity_ids: list[in
 # ------------------------------------------------------------------
 # Generated Signals reports (research/signals_report.py)
 #
-# NOTE on hide_generated_report/unhide_generated_report/
-# soft_delete_generated_report/list_generated_reports (via
-# _row_to_generated_report): same schema gap as the investigations quartet
-# above -- `hidden_at`/`deleted_at` are added to SQLite's `generated_reports`
-# by the same _migrate_case_visibility_columns() ALTER TABLE, and were never
-# carried into schemas/postgres_schema.sql. Ported here targeting those
-# columns anyway; NOT verified against real Neon in this checkpoint (will
-# raise UndefinedColumn against the live schema).
+# hide_generated_report/unhide_generated_report/soft_delete_generated_
+# report/list_generated_reports (via _row_to_generated_report) target
+# `hidden_at`/`deleted_at` -- both columns exist directly on Neon's
+# `generated_reports` table (schemas/postgres_schema.sql), and every one
+# of these functions has been run directly against real production data
+# with no error.
 # ------------------------------------------------------------------
 
 
@@ -1694,8 +1676,6 @@ def get_generated_report(conn: DBConnection, thread_id: str) -> dict | None:
 
 
 def list_generated_reports(conn: DBConnection) -> list[dict]:
-    """See this file's module-level NOTE -- targets `deleted_at`, which
-    does not exist on the real Neon `generated_reports` table yet."""
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM generated_reports WHERE deleted_at IS NULL ORDER BY generated_at DESC")
         rows = cur.fetchall()
