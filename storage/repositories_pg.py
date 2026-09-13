@@ -1587,13 +1587,27 @@ def update_generated_report_s3_metadata(
 
 
 def get_latest_data_timestamp(conn: DBConnection, company_ids: list[str]) -> str | None:
-    """UNION ALL inside a subquery -- verified against real Neon."""
+    """UNION ALL inside a subquery -- verified against real Neon.
+
+    storage/repositories.py's SQLite counterpart sources the "financial
+    data" half of this freshness check from financial_observations.
+    created_at -- but that table was deliberately excluded from the
+    Postgres migration (see this module's own comment just above
+    list_xbrl_migration_status/list_sec_edgar_migration_status), so
+    querying it here raised `UndefinedTable: relation "financial_
+    observations" does not exist` on every single /research/ask call for
+    any company (context/reuse.py's find_reusable_report -> this function,
+    on the hot path of every question). canonical_financials.decided_at is
+    the closest Postgres-side equivalent -- the reconciled value's own
+    timestamp, which only advances when new financial data has actually
+    been decided/written, same freshness contract the excluded table's
+    created_at gave the SQLite version."""
     placeholders = ",".join(["%s"] * len(company_ids))
     with conn.cursor() as cur:
         cur.execute(
             f"""
             SELECT MAX(ts) AS latest FROM (
-                SELECT MAX(created_at) AS ts FROM financial_observations WHERE company_id IN ({placeholders})
+                SELECT MAX(decided_at) AS ts FROM canonical_financials WHERE company_id IN ({placeholders})
                 UNION ALL
                 SELECT MAX(retrieved_at) AS ts FROM documents WHERE company_id IN ({placeholders})
             ) sub
