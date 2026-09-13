@@ -53,12 +53,10 @@ from ingestion.detector import (
     detect_macro_source_from_path,
     is_macro_path,
 )
-import sqlite3
-
 from ingestion.event_bus import publish
 from ingestion.events import DatasetIngestedEvent
 from ingestion.pipeline import ingest_bank_infrastructure_file, ingest_file, ingest_macro_file
-from storage.database import init_db, utcnow_iso
+from storage.database import utcnow_iso
 from storage.document_store import DocumentStoreError, default_document_store
 from storage.repositories import (
     get_document,
@@ -98,24 +96,6 @@ class ProcessSummary:
     succeeded: int = 0
     failed: int = 0
     outcomes: list[ProcessOutcome] = field(default_factory=list)
-
-
-def _open_logs_conn(conn):
-    """ingestion_queue_items' repository functions (get_ingestion_queue_
-    item/get_ingestion_queue_item_by_path/list_ingestion_queue_items/
-    set_ingestion_queue_item_status/upsert_ingestion_queue_item/update_
-    ingestion_queue_item_result) are SQLite-only forever (storage/
-    backend_bootstrap.py's docstring) -- every function in this module is
-    called with whatever backend-appropriate connection web/app.py's
-    routes pass (get_db(), a psycopg2 connection under DATABASE_BACKEND=
-    postgres), needed for the *real* ingestion work (ingest_file() etc.
-    and get_company()) those same functions also do. Returns a dedicated
-    SQLite connection specifically when `conn` isn't already one, same
-    fix/reasoning as llm/observability.py's record() and ingestion/
-    event_bus.py's publish()/replay() -- callers must close it themselves
-    via `if logs_conn is not conn: logs_conn.close()` when done, same
-    convention those two already use."""
-    return conn if isinstance(conn, sqlite3.Connection) else init_db()
 
 
 def _content_hash(file_path: Path) -> str | None:
@@ -170,63 +150,58 @@ def discover_pending_financial_items(conn) -> int:
     if not raw_dir.exists():
         return 0
 
-    logs_conn = _open_logs_conn(conn)
-    try:
-        touched = 0
-        for path in sorted(raw_dir.rglob("*")):
-            if not path.is_file():
-                continue
-            if path.name.startswith("."):
-                continue  # OS/editor artifacts (.DS_Store, .gitkeep, ...) are never ingestible data
-            # Stored relative to BASE_DIR, not absolute — an absolute path bakes
-            # in the repo folder's current name/location (config/settings.py's
-            # to_repo_relative/from_repo_relative docstring explains why).
-            relative_path = settings.to_repo_relative(path)
-            content_hash = _content_hash(path)
-            existing = get_ingestion_queue_item_by_path(logs_conn, relative_path)
+    touched = 0
+    for path in sorted(raw_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.name.startswith("."):
+            continue  # OS/editor artifacts (.DS_Store, .gitkeep, ...) are never ingestible data
+        # Stored relative to BASE_DIR, not absolute — an absolute path bakes
+        # in the repo folder's current name/location (config/settings.py's
+        # to_repo_relative/from_repo_relative docstring explains why).
+        relative_path = settings.to_repo_relative(path)
+        content_hash = _content_hash(path)
+        existing = get_ingestion_queue_item_by_path(conn, relative_path)
 
-            unchanged = existing is not None and existing["content_hash"] == content_hash
-            if unchanged and existing["status"] != "NEEDS_REVIEW":
-                continue  # nothing to re-derive — PENDING/PROCESSED/FAILED/PROCESSING/SKIPPED all stand as-is
+        unchanged = existing is not None and existing["content_hash"] == content_hash
+        if unchanged and existing["status"] != "NEEDS_REVIEW":
+            continue  # nothing to re-derive — PENDING/PROCESSED/FAILED/PROCESSING/SKIPPED all stand as-is
 
-            if is_macro_path(path):
-                if _MFIN_SENTINEL in path.parts:
-                    continue  # config.settings.DEFAULT_SOURCES / sources/macro.py's MACRO_SOURCE_IDS
-                              # comment: mfin is archive-only reference PDFs, never queued for ingestion
-                item_kind = (
-                    "bank_infrastructure_file" if path.name.upper().startswith(_BANK_INFRASTRUCTURE_PREFIXES)
-                    else "macro_file"
-                )
-                try:
-                    source_id = detect_macro_source_from_path(path)
-                    status, reason = "PENDING", None
-                except PathConventionError as exc:
-                    source_id, status, reason = None, "NEEDS_REVIEW", str(exc)
-                company_id = None
-            else:
-                item_kind = "financial_file"
-                try:
-                    company_id, source_id = detect_from_path(path)
-                    status, reason = "PENDING", None
-                except PathConventionError as exc:
-                    company_id, source_id, status, reason = None, None, "NEEDS_REVIEW", str(exc)
-                else:
-                    if get_company(conn, company_id) is None:
-                        status, reason = "NEEDS_REVIEW", f"company {company_id!r} is not registered"
-
-            if existing is not None and existing["status"] in ("PROCESSED", "FAILED") and not unchanged:
-                reason = reason or f"file changed since it was last {existing['status'].lower()}"
-
-            upsert_ingestion_queue_item(
-                logs_conn, item_kind=item_kind, file_path=relative_path, content_hash=content_hash,
-                company_id=company_id, source_id=source_id, status=status, status_reason=reason,
+        if is_macro_path(path):
+            if _MFIN_SENTINEL in path.parts:
+                continue  # config.settings.DEFAULT_SOURCES / sources/macro.py's MACRO_SOURCE_IDS
+                          # comment: mfin is archive-only reference PDFs, never queued for ingestion
+            item_kind = (
+                "bank_infrastructure_file" if path.name.upper().startswith(_BANK_INFRASTRUCTURE_PREFIXES)
+                else "macro_file"
             )
-            touched += 1
+            try:
+                source_id = detect_macro_source_from_path(path)
+                status, reason = "PENDING", None
+            except PathConventionError as exc:
+                source_id, status, reason = None, "NEEDS_REVIEW", str(exc)
+            company_id = None
+        else:
+            item_kind = "financial_file"
+            try:
+                company_id, source_id = detect_from_path(path)
+                status, reason = "PENDING", None
+            except PathConventionError as exc:
+                company_id, source_id, status, reason = None, None, "NEEDS_REVIEW", str(exc)
+            else:
+                if get_company(conn, company_id) is None:
+                    status, reason = "NEEDS_REVIEW", f"company {company_id!r} is not registered"
 
-        return touched
-    finally:
-        if logs_conn is not conn:
-            logs_conn.close()
+        if existing is not None and existing["status"] in ("PROCESSED", "FAILED") and not unchanged:
+            reason = reason or f"file changed since it was last {existing['status'].lower()}"
+
+        upsert_ingestion_queue_item(
+            conn, item_kind=item_kind, file_path=relative_path, content_hash=content_hash,
+            company_id=company_id, source_id=source_id, status=status, status_reason=reason,
+        )
+        touched += 1
+
+    return touched
 
 
 def discover_pending_documents(conn) -> int:
@@ -236,10 +211,10 @@ def discover_pending_documents(conn) -> int:
     return len(list_documents_by_status(conn, "pending"))
 
 
-def _process_financial_queue_item(conn, logs_conn, item) -> ProcessOutcome:
+def _process_financial_queue_item(conn, item) -> ProcessOutcome:
     file_path = settings.from_repo_relative(item["file_path"])
     if not file_path.exists():
-        update_ingestion_queue_item_result(logs_conn, item["item_id"], status="FAILED", error_message="file no longer exists on disk")
+        update_ingestion_queue_item_result(conn, item["item_id"], status="FAILED", error_message="file no longer exists on disk")
         return ProcessOutcome(item["item_id"], ok=False, detail="file no longer exists on disk")
 
     if item["status"] == "NEEDS_REVIEW":
@@ -260,12 +235,12 @@ def _process_financial_queue_item(conn, logs_conn, item) -> ProcessOutcome:
             detail = f"parsed={result.parsed_count} inserted={result.inserted_count} skipped={result.skipped_count}"
     except Exception as exc:  # noqa: BLE001 — any adapter/pipeline failure lands here as a retryable FAILED item
         logger.warning("Ingest queue item %s failed: %s", item["item_id"], exc, exc_info=True)
-        update_ingestion_queue_item_result(logs_conn, item["item_id"], status="FAILED", error_message=str(exc))
+        update_ingestion_queue_item_result(conn, item["item_id"], status="FAILED", error_message=str(exc))
         return ProcessOutcome(item["item_id"], ok=False, detail=str(exc))
 
     content_hash = _content_hash(file_path)
     update_ingestion_queue_item_result(
-        logs_conn, item["item_id"], status="PROCESSED", processed_at=utcnow_iso(),
+        conn, item["item_id"], status="PROCESSED", processed_at=utcnow_iso(),
         last_processed_content_hash=content_hash,
     )
     return ProcessOutcome(item["item_id"], ok=True, detail=detail)
@@ -279,59 +254,44 @@ def process_financial_items(conn, item_ids: list[int]) -> ProcessSummary:
     enough, since by the time it re-reads the row here it would already
     see the PROCESSING status this function just wrote, not NEEDS_REVIEW.
     """
-    logs_conn = _open_logs_conn(conn)
-    try:
-        summary = ProcessSummary()
-        for item_id in item_ids:
-            item = get_ingestion_queue_item(logs_conn, item_id)
-            if item is None:
-                continue
-            summary.attempted += 1
-            if item["status"] == "NEEDS_REVIEW":
-                outcome = ProcessOutcome(
-                    item_id, ok=False, detail=item["status_reason"] or "needs review before it can be processed"
-                )
-                summary.outcomes.append(outcome)
-                summary.failed += 1
-                continue
-            if item["status"] == "ARCHIVED":
-                outcome = ProcessOutcome(item_id, ok=False, detail="archived — unarchive first")
-                summary.outcomes.append(outcome)
-                summary.failed += 1
-                continue
-            update_ingestion_queue_item_result(logs_conn, item_id, status="PROCESSING")
-            item = get_ingestion_queue_item(logs_conn, item_id)  # re-read after the PROCESSING stamp
-            outcome = _process_financial_queue_item(conn, logs_conn, item)
+    summary = ProcessSummary()
+    for item_id in item_ids:
+        item = get_ingestion_queue_item(conn, item_id)
+        if item is None:
+            continue
+        summary.attempted += 1
+        if item["status"] == "NEEDS_REVIEW":
+            outcome = ProcessOutcome(
+                item_id, ok=False, detail=item["status_reason"] or "needs review before it can be processed"
+            )
             summary.outcomes.append(outcome)
-            summary.succeeded += int(outcome.ok)
-            summary.failed += int(not outcome.ok)
-        return summary
-    finally:
-        if logs_conn is not conn:
-            logs_conn.close()
+            summary.failed += 1
+            continue
+        if item["status"] == "ARCHIVED":
+            outcome = ProcessOutcome(item_id, ok=False, detail="archived — unarchive first")
+            summary.outcomes.append(outcome)
+            summary.failed += 1
+            continue
+        update_ingestion_queue_item_result(conn, item_id, status="PROCESSING")
+        item = get_ingestion_queue_item(conn, item_id)  # re-read after the PROCESSING stamp
+        outcome = _process_financial_queue_item(conn, item)
+        summary.outcomes.append(outcome)
+        summary.succeeded += int(outcome.ok)
+        summary.failed += int(not outcome.ok)
+    return summary
 
 
 def process_all_pending_financial_items(conn) -> ProcessSummary:
     """Ingest All Pending — every PENDING row, in discovery order."""
-    logs_conn = _open_logs_conn(conn)
-    try:
-        pending = list_ingestion_queue_items(logs_conn, status="PENDING")
-        return process_financial_items(conn, [row["item_id"] for row in pending])
-    finally:
-        if logs_conn is not conn:
-            logs_conn.close()
+    pending = list_ingestion_queue_items(conn, status="PENDING")
+    return process_financial_items(conn, [row["item_id"] for row in pending])
 
 
 def retry_failed_financial_items(conn) -> ProcessSummary:
     """Retry Failed — re-attempts every FAILED row as-is (same file_path/
     detection), without re-running discovery first."""
-    logs_conn = _open_logs_conn(conn)
-    try:
-        failed = list_ingestion_queue_items(logs_conn, status="FAILED")
-        return process_financial_items(conn, [row["item_id"] for row in failed])
-    finally:
-        if logs_conn is not conn:
-            logs_conn.close()
+    failed = list_ingestion_queue_items(conn, status="FAILED")
+    return process_financial_items(conn, [row["item_id"] for row in failed])
 
 
 def archive_financial_items(conn, item_ids: list[int]) -> int:
@@ -343,38 +303,28 @@ def archive_financial_items(conn, item_ids: list[int]) -> int:
     otherwise sit in Failed forever, re-failing every Retry Failed run.
     Reversible via unarchive_financial_items() — this is a parking lot, not
     a delete."""
-    logs_conn = _open_logs_conn(conn)
-    try:
-        archived = 0
-        for item_id in item_ids:
-            item = get_ingestion_queue_item(logs_conn, item_id)
-            if item is None or item["status"] == "ARCHIVED":
-                continue
-            set_ingestion_queue_item_status(logs_conn, item_id, "ARCHIVED")
-            archived += 1
-        return archived
-    finally:
-        if logs_conn is not conn:
-            logs_conn.close()
+    archived = 0
+    for item_id in item_ids:
+        item = get_ingestion_queue_item(conn, item_id)
+        if item is None or item["status"] == "ARCHIVED":
+            continue
+        set_ingestion_queue_item_status(conn, item_id, "ARCHIVED")
+        archived += 1
+    return archived
 
 
 def unarchive_financial_items(conn, item_ids: list[int]) -> int:
     """Unarchive — back to PENDING, so it's picked up by Ingest All Pending/
     the normal queue again. Same "hand it back to the working set" contract
     on the documents side (unarchive_documents)."""
-    logs_conn = _open_logs_conn(conn)
-    try:
-        unarchived = 0
-        for item_id in item_ids:
-            item = get_ingestion_queue_item(logs_conn, item_id)
-            if item is None or item["status"] != "ARCHIVED":
-                continue
-            set_ingestion_queue_item_status(logs_conn, item_id, "PENDING")
-            unarchived += 1
-        return unarchived
-    finally:
-        if logs_conn is not conn:
-            logs_conn.close()
+    unarchived = 0
+    for item_id in item_ids:
+        item = get_ingestion_queue_item(conn, item_id)
+        if item is None or item["status"] != "ARCHIVED":
+            continue
+        set_ingestion_queue_item_status(conn, item_id, "PENDING")
+        unarchived += 1
+    return unarchived
 
 
 def process_documents(conn, document_ids: list[int]) -> ProcessSummary:

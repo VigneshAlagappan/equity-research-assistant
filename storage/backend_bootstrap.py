@@ -15,32 +15,18 @@ haven't been imported yet. This MUST run before the first import of any of
 the five modules below (web/app.py, gunicorn's entry point, does this as
 literally its first statement, before its own storage imports).
 
-Four of the five modules (company_repository, fact_store, indicator_
-repository, investigation_repository) are swapped wholesale -- every
-function in each was ported 1:1 to its _pg sibling, confirmed via a
-function-name diff against the live module (see this session's migration
-notes). storage.repositories is NOT a clean 1:1 swap: 33 of its 172
-functions operate ONLY on the 8 tables that stay SQLite-only forever
-(batch_job_runs/items, dataset_events, worker_processing_log,
-retrieval_diagnostics, llm_call_log, ingestion_queue_items,
-reconciliation_log) -- repositories_pg.py deliberately doesn't define
-these (see that file's own "NOT PORTED" section). A full-module swap would
-make every `from storage.repositories import start_batch_job_run` (etc.)
-raise ImportError at process startup -- web/app.py's Schedule/Audit-Log/
-Ingest-queue/LLM-cost admin pages all import several of these directly.
-
-So storage.repositories gets a HYBRID module instead: every name from
-repositories_pg (Postgres-backed) PLUS the original SQLite implementations
-of those 33 audit-log functions, re-exported unchanged. This makes imports
-succeed either way -- but it does NOT, by itself, make those 33 functions
-work correctly if called with a Postgres connection (they run `?`-
-placeholder SQLite SQL, which is a syntax error against psycopg2). That
-half of the fix is at the CALL SITE: web/app.py's admin/audit routes pass
-a dedicated always-SQLite connection (get_logs_db(), not get_db()) to
-these specific 33 functions, regardless of DATABASE_BACKEND -- see that
-file's own comment where get_logs_db() is defined. This module only
-guarantees "the name exists and does something correct when given the
-right kind of connection"; it can't fix what connection a caller passes.
+All six modules (company_repository, fact_store, indicator_repository,
+investigation_repository, price_repository, raw_object_repository,
+repositories) are swapped wholesale -- every function in each is ported
+1:1 to its _pg sibling. storage.repositories used to need a HYBRID module
+instead of a clean swap: 33 of its functions touched tables schemas/
+postgres_schema.sql excluded (financial_observations, reconciliation_log,
+and the 7 audit/observability tables), citing Neon's free-tier storage
+cap. That cap no longer applied by the time production had already grown
+past it (771MB, current plan) -- all of those tables were added to
+schemas/postgres_schema.sql and storage/repositories_pg.py on 2026-09-13
+(see that file's own docstring and docs/ADR/021), closing the gap and
+making storage.repositories a clean wholesale swap too.
 """
 
 from __future__ import annotations
@@ -49,28 +35,6 @@ import sys
 
 from config.settings import DATABASE_BACKEND
 
-# The 33 real audit-log functions storage.repositories has that
-# storage.repositories_pg deliberately doesn't (verified via a function-name
-# diff: 172 total, 139 ported, 33 audit-log-only + 2 internal-only names
-# --_normalize_source_file, a private helper, and search_document_chunks,
-# reachable only through storage.fact_store.default_fact_store() which is
-# swapped independently below -- neither of those two needs re-exporting
-# here since nothing outside storage/repositories.py imports them directly).
-_SQLITE_ONLY_REPOSITORY_FUNCTIONS = (
-    "start_batch_job_run", "finish_batch_job_run", "start_batch_job_item", "finish_batch_job_item",
-    "get_last_successful_batch_item_times", "get_latest_batch_item_for_company",
-    "list_running_batch_job_runs", "list_batch_job_runs", "list_distinct_batch_job_names",
-    "get_latest_batch_job_run", "list_batch_job_items", "get_batch_job_run_live_progress",
-    "insert_dataset_event", "get_dataset_event", "list_dataset_events",
-    "start_worker_log", "finish_worker_log", "get_worker_log", "list_worker_processing_log",
-    "insert_retrieval_diagnostic", "list_retrieval_diagnostics",
-    "insert_llm_call_log", "list_llm_call_log", "get_llm_usage_summary", "get_investigation_cost_summary",
-    "list_ingestion_queue_items", "get_ingestion_queue_item", "get_ingestion_queue_item_by_path",
-    "upsert_ingestion_queue_item", "update_ingestion_queue_item_result", "set_ingestion_queue_item_status",
-    "list_reconciliation_log", "list_reconciliation_log_by_company",
-    "list_xbrl_migration_status", "list_sec_edgar_migration_status",
-)
-
 _WHOLESALE_SWAP_MODULES = (
     ("storage.company_repository", "storage.company_repository_pg"),
     ("storage.fact_store", "storage.fact_store_pg"),
@@ -78,6 +42,7 @@ _WHOLESALE_SWAP_MODULES = (
     ("storage.investigation_repository", "storage.investigation_repository_pg"),
     ("storage.price_repository", "storage.price_repository_pg"),
     ("storage.raw_object_repository", "storage.raw_object_repository_pg"),
+    ("storage.repositories", "storage.repositories_pg"),
 )
 
 _installed = False
@@ -93,27 +58,9 @@ def install() -> None:
         return
 
     import importlib
-    import importlib.util
 
     for original_name, pg_name in _WHOLESALE_SWAP_MODULES:
         sys.modules[original_name] = importlib.import_module(pg_name)
-
-    # storage.repositories itself must be imported (under its real name)
-    # BEFORE the hybrid replaces it in sys.modules, so the audit-log
-    # functions below are captured from the genuine SQLite module, not
-    # from whatever's already sitting in sys.modules at this point.
-    sqlite_repositories = importlib.import_module("storage.repositories")
-    pg_repositories = importlib.import_module("storage.repositories_pg")
-
-    hybrid = importlib.util.module_from_spec(
-        importlib.util.spec_from_loader("storage.repositories", loader=None)
-    )
-    for name in dir(pg_repositories):
-        if not name.startswith("_"):
-            setattr(hybrid, name, getattr(pg_repositories, name))
-    for name in _SQLITE_ONLY_REPOSITORY_FUNCTIONS:
-        setattr(hybrid, name, getattr(sqlite_repositories, name))
-    sys.modules["storage.repositories"] = hybrid
 
     _installed = True
 
@@ -131,7 +78,7 @@ def open_db():
     module's repository functions might have been swapped to Postgres --
     passing a plain sqlite3 connection into a Postgres-flavored function
     (or vice versa) either raises an AttributeError (sqlite3 connections
-    have no `.execute()`... on repositories.py's hybrid path) or, just as
+    have no `.execute()`) or, just as
     broken, `'sqlite3.Cursor' object does not support the context manager
     protocol` (company_repository_pg.py's `with conn.cursor() as cur:`
     pattern, called with a sqlite3 cursor that doesn't support `with`).

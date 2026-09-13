@@ -1,28 +1,21 @@
 """Postgres (Neon) port of `storage/repositories.py`.
 
-Checkpoint-3 port: every function in `repositories.py` whose tables are part
-of `schemas/postgres_schema.sql` is ported here, same names/signatures,
-targeting a `psycopg2` connection (from `storage.database.init_postgres_db()`)
-instead of `sqlite3.Connection`. This file is purely additive and NOT wired
-into any caller (`research/`, `web/`, `financials/`, `context/`, `ingestion/`
-all keep importing the original SQLite-backed module exactly as today).
+Checkpoint-3 port, extended 2026-09-13: every function in `repositories.py`
+is now ported here, targeting a `psycopg2` connection (from `storage.
+database.init_postgres_db()`) instead of `sqlite3.Connection`. Financial_
+observations/reconciliation_log and the 7 audit/observability tables
+(batch_job_runs/items, dataset_events, worker_processing_log, retrieval_
+diagnostics, llm_call_log, ingestion_queue_items) were added to `schemas/
+postgres_schema.sql` on the same date (previously excluded citing Neon's
+free-tier storage cap, which production had already grown past by then --
+see this file's `reconcile()`/`insert_financial_observations()` and
+`docs/ADR/021` for the fuller history) -- `storage.repositories` is now a
+clean wholesale swap (`storage/backend_bootstrap.py`), no hybrid module.
 
-Scope -- functions deliberately NOT ported here (see this file's bottom
-section header comments for the exact list), because they touch ONLY one of
-the 8 tables that stay SQLite-only forever (confirmed this session that
-nothing reads them to gate a fetch/reprocessing decision):
-    batch_job_runs, batch_job_items, dataset_events, llm_call_log,
-    retrieval_diagnostics, reconciliation_log, worker_processing_log,
-    ingestion_queue_items
-
-A few functions touch BOTH a kept table and one of those excluded tables (or
-a table/column that exists in `schemas/sqlite_schema.sql` but was never added
-to `schemas/postgres_schema.sql` at all). Those are ported for their
-kept-table half, with the excluded half clearly flagged in a comment at the
-call site -- see:
-    - `reconcile()` -- writes `canonical_financials` (ported) and
-      `reconciliation_log` (skipped; accepted loss -- pure audit data, not
-      blocking, not revisited).
+A few functions touch a table/column that exists in `schemas/sqlite_
+schema.sql` but was never added to `schemas/postgres_schema.sql` at all --
+those are ported anyway (so no further edits are needed once the schema
+gap closes), but WILL error until it does. See:
     - `replace_document_chunks()` -- FTS5->tsvector gap is now closed
       (`document_chunks.search_vector`, a GIN-indexed tsvector column, exists
       on Neon -- see schemas/postgres_schema.sql). This function now writes
@@ -163,18 +156,11 @@ def reconcile(
 ) -> int | None:
     """Postgres port of repositories.reconcile() -- see that function's own
     docstring for the full behavioral contract (XBRL migration carve-out,
-    trust_rank tiebreak, stale-canonical-row deletion).
-
-    NOT ported here: every `reconciliation_log` INSERT/UPDATE the SQLite
-    version performs (the audit trail of considered/chosen observations) --
-    `reconciliation_log` is one of the 8 tables staying SQLite-only forever.
-    The `canonical_financials` decision itself (what this function exists to
-    compute) is fully ported and behaves identically; only the side-channel
-    audit write is missing. Flagged for the eventual real cutover: either
-    (a) log to SQLite via a second connection from the same call, or (b)
-    drop this audit trail for Postgres-backed installs -- a real decision
-    needed before this file is wired in, not made here.
-    """
+    trust_rank tiebreak, stale-canonical-row deletion). reconciliation_log
+    writes (the audit trail of considered/chosen observations) are ported
+    too now that table exists in Postgres (schemas/postgres_schema.sql,
+    2026-09-13) -- see this file's own module docstring / docs/ADR/021 for
+    the history of why it didn't before."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -210,12 +196,30 @@ def reconcile(
     for row in rows:
         latest_per_source[row["source"]] = row
     candidates = list(latest_per_source.values())
+    all_candidates = candidates  # kept for the audit-log loop below even once `candidates` is narrowed
 
     migrated = _period_is_xbrl_migrated(conn, company_id, period_type, fiscal_year, quarter, statement_type)
     if migrated:
         xbrl_candidates = [row for row in candidates if row["source"] == XBRL_SOURCE_ID]
         if not xbrl_candidates:
+            # Period is on XBRL now, but this metric wasn't in the filing —
+            # blank, not backfilled from whatever legacy candidates exist.
             _delete_stale_canonical_row()
+            now = _utcnow_iso()
+            with conn.cursor() as cur3:
+                for row in candidates:
+                    cur3.execute(
+                        """
+                        INSERT INTO reconciliation_log (canonical_id, observation_id, considered_at, was_chosen, note)
+                        VALUES (NULL, %s, %s, 0, %s)
+                        """,
+                        (
+                            row["observation_id"], now,
+                            f"not chosen (source={row['source']}): period migrated to validated "
+                            f"{XBRL_SOURCE_ID!r} XBRL and this metric wasn't in the filing — left blank, not legacy-filled",
+                        ),
+                    )
+            conn.commit()
             return None
         candidates = xbrl_candidates
 
@@ -275,8 +279,96 @@ def reconcile(
                 (chosen["value"], chosen["unit"], chosen["observation_id"], reason,
                  NORMALIZATION_VERSION, now, canonical_id),
             )
+
+        for row in all_candidates:
+            was_chosen = row["observation_id"] == chosen["observation_id"]
+            note_for_rejected = (
+                f"not chosen (source={row['source']}, trust_rank={row['trust_rank']}): "
+                f"period validated on NSE XBRL — legacy sources aren't eligible for this period"
+                if migrated and row["source"] != XBRL_SOURCE_ID
+                else None
+            )
+            cur.execute(
+                """
+                INSERT INTO reconciliation_log (canonical_id, observation_id, considered_at, was_chosen, note)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    canonical_id, row["observation_id"], now, int(was_chosen),
+                    reason if was_chosen else (
+                        note_for_rejected or f"not chosen (source={row['source']}, trust_rank={row['trust_rank']})"
+                    ),
+                ),
+            )
     conn.commit()
     return canonical_id
+
+
+def list_reconciliation_log(
+    conn: DBConnection,
+    *,
+    company_id: str | None = None,
+    source: str | None = None,
+    limit: int = 200,
+) -> list[Row]:
+    """Postgres port of repositories.list_reconciliation_log() -- see that
+    function's own docstring for the full behavioral contract (why the
+    join is through financial_observations, not canonical_financials)."""
+    query = """
+        SELECT rl.log_id, rl.considered_at, rl.was_chosen, rl.note,
+               fo.company_id, fo.metric_key, fo.period_type, fo.fiscal_year,
+               fo.quarter, fo.statement_type, fo.source
+        FROM reconciliation_log rl
+        JOIN financial_observations fo ON fo.observation_id = rl.observation_id
+        WHERE 1=1
+    """
+    params: list[object] = []
+    if company_id:
+        query += " AND fo.company_id = %s"
+        params.append(company_id)
+    if source:
+        query += " AND fo.source = %s"
+        params.append(source)
+    query += " ORDER BY rl.considered_at DESC, rl.log_id DESC LIMIT %s"
+    params.append(limit)
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+        return cur.fetchall()
+
+
+def list_reconciliation_log_by_company(
+    conn: DBConnection, company_ids: Iterable[str], *, limit_per_company: int = 20
+) -> dict[str, list[Row]]:
+    """Postgres port of repositories.list_reconciliation_log_by_company() --
+    see that function's own docstring for the full behavioral contract."""
+    ids = list(company_ids)
+    if not ids:
+        return {}
+    placeholders = ",".join(["%s"] * len(ids))
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT * FROM (
+                SELECT rl.log_id, rl.considered_at, rl.was_chosen, rl.note,
+                       fo.company_id, fo.metric_key, fo.period_type, fo.fiscal_year,
+                       fo.quarter, fo.statement_type, fo.source,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY fo.company_id ORDER BY rl.considered_at DESC, rl.log_id DESC
+                       ) AS rn
+                FROM reconciliation_log rl
+                JOIN financial_observations fo ON fo.observation_id = rl.observation_id
+                WHERE fo.company_id IN ({placeholders})
+            ) sub
+            WHERE rn <= %s
+            ORDER BY company_id, considered_at DESC
+            """,
+            (*ids, limit_per_company),
+        )
+        rows = cur.fetchall()
+    by_company: dict[str, list[Row]] = {}
+    for row in rows:
+        by_company.setdefault(row["company_id"], []).append(row)
+    return by_company
 
 
 def get_canonical_value(
@@ -450,16 +542,116 @@ def reconcile_company(conn: DBConnection, company_id: str) -> int:
     )
 
 
-# list_xbrl_migration_status / list_sec_edgar_migration_status deliberately
-# NOT defined here -- financial_observations was excluded from the Postgres
-# migration entirely (Neon's free-tier storage cap), so both functions now
-# live only in storage/repositories.py, take a second, always-SQLite
-# connection for that table, and are exposed to the hybrid module via
-# storage/backend_bootstrap.py's _SQLITE_ONLY_REPOSITORY_FUNCTIONS list --
-# same as this file's other deliberate omissions (see that module's own
-# docstring). A from-here Postgres-only version used to exist and crashed
-# every time with `UndefinedTable: relation "financial_observations" does
-# not exist` the moment anyone opened the Admin Audit Log panel.
+def list_xbrl_migration_status(main_conn: DBConnection, financial_obs_conn: DBConnection) -> list[dict]:
+    """Postgres port of repositories.list_xbrl_migration_status() -- see
+    that function's own docstring for the full behavioral contract. Still
+    takes two connection arguments for call-site compatibility with the
+    SQLite version (web/app.py passes (db, logs_db) either way), but under
+    Postgres both `companies` and `financial_observations` now live in the
+    same database (schemas/postgres_schema.sql, 2026-09-13) -- `financial_
+    obs_conn` is typically the exact same connection as `main_conn` here,
+    not a second SQLite one."""
+    with financial_obs_conn.cursor() as fo_cur:
+        fo_cur.execute(
+            """
+            SELECT company_id,
+                   MAX(CASE WHEN source = 'nse' THEN fiscal_year || quarter END) AS latest_xbrl_period,
+                   MAX(fiscal_year || quarter) AS latest_any_period
+            FROM financial_observations
+            WHERE period_type = 'quarterly'
+            GROUP BY company_id
+            """
+        )
+        coverage_rows = fo_cur.fetchall()
+    coverage_by_company = {row["company_id"]: row for row in coverage_rows}
+
+    with main_conn.cursor() as main_cur:
+        main_cur.execute(
+            """
+            SELECT company_id, display_name, nse_symbol FROM companies
+            WHERE nse_symbol IS NOT NULL AND nse_symbol != '' AND status = 'active'
+            """
+        )
+        companies = main_cur.fetchall()
+
+    _STATUS_ORDER = {"pending": 0, "not_started": 1, "no_data": 2, "up_to_date": 3}
+    results: list[dict] = []
+    for company in companies:
+        coverage = coverage_by_company.get(company["company_id"])
+        latest_xbrl = coverage["latest_xbrl_period"] if coverage else None
+        latest_any = coverage["latest_any_period"] if coverage else None
+        if latest_any is None:
+            migration_status = "no_data"
+        elif latest_xbrl is None:
+            migration_status = "not_started"
+        elif latest_xbrl < latest_any:
+            migration_status = "pending"
+        else:
+            migration_status = "up_to_date"
+        results.append(
+            {
+                "company_id": company["company_id"],
+                "display_name": company["display_name"],
+                "nse_symbol": company["nse_symbol"],
+                "latest_xbrl_period": latest_xbrl,
+                "latest_legacy_period": latest_any,
+                "migration_status": migration_status,
+            }
+        )
+    results.sort(key=lambda r: (_STATUS_ORDER[r["migration_status"]], r["display_name"] or ""))
+    return results
+
+
+def list_sec_edgar_migration_status(main_conn: DBConnection, financial_obs_conn: DBConnection) -> list[dict]:
+    """Postgres port of repositories.list_sec_edgar_migration_status() --
+    see list_xbrl_migration_status() above and that function's own
+    docstring for the full behavioral contract; same two-connection-for-
+    call-site-compatibility shape."""
+    with financial_obs_conn.cursor() as fo_cur:
+        fo_cur.execute(
+            """
+            SELECT company_id,
+                   MAX(CASE WHEN source = 'sec_edgar' THEN fiscal_year || quarter END) AS latest_edgar_period,
+                   MAX(fiscal_year || quarter) AS latest_any_period
+            FROM financial_observations
+            WHERE period_type = 'quarterly'
+            GROUP BY company_id
+            """
+        )
+        coverage_rows = fo_cur.fetchall()
+    coverage_by_company = {row["company_id"]: row for row in coverage_rows}
+
+    with main_conn.cursor() as main_cur:
+        main_cur.execute(
+            "SELECT company_id, display_name FROM companies WHERE country = 'US' AND status = 'active'"
+        )
+        companies = main_cur.fetchall()
+
+    _STATUS_ORDER = {"pending": 0, "not_started": 1, "no_data": 2, "up_to_date": 3}
+    results: list[dict] = []
+    for company in companies:
+        coverage = coverage_by_company.get(company["company_id"])
+        latest_edgar = coverage["latest_edgar_period"] if coverage else None
+        latest_any = coverage["latest_any_period"] if coverage else None
+        if latest_any is None:
+            migration_status = "no_data"
+        elif latest_edgar is None:
+            migration_status = "not_started"
+        elif latest_edgar < latest_any:
+            migration_status = "pending"
+        else:
+            migration_status = "up_to_date"
+        results.append(
+            {
+                "company_id": company["company_id"],
+                "display_name": company["display_name"],
+                "latest_edgar_period": latest_edgar,
+                "latest_legacy_period": latest_any,
+                "migration_status": migration_status,
+            }
+        )
+    results.sort(key=lambda r: (_STATUS_ORDER[r["migration_status"]], r["display_name"] or ""))
+    return results
 
 
 # ------------------------------------------------------------------
@@ -2168,44 +2360,572 @@ def list_shareholding_holders_all(conn: DBConnection, company_id: str) -> list[d
 
 
 # ------------------------------------------------------------------
-# NOT PORTED -- pure audit/observability tables (SQLite-only forever, per
-# schemas/postgres_schema.sql's own header comment and this checkpoint's
-# scoping instructions):
-#
-#   batch_job_runs / batch_job_items:
-#     start_batch_job_run, finish_batch_job_run, start_batch_job_item,
-#     finish_batch_job_item, get_last_successful_batch_item_times,
-#     get_latest_batch_item_for_company, list_running_batch_job_runs,
-#     list_batch_job_runs, list_distinct_batch_job_names,
-#     get_latest_batch_job_run, list_batch_job_items,
-#     get_batch_job_run_live_progress
-#
-#   dataset_events:
-#     insert_dataset_event, get_dataset_event, list_dataset_events
-#
-#   worker_processing_log:
-#     start_worker_log, finish_worker_log, get_worker_log,
-#     list_worker_processing_log
-#
-#   retrieval_diagnostics:
-#     insert_retrieval_diagnostic, list_retrieval_diagnostics
-#
-#   llm_call_log:
-#     insert_llm_call_log, list_llm_call_log, get_llm_usage_summary,
-#     get_investigation_cost_summary
-#
-#   ingestion_queue_items:
-#     list_ingestion_queue_items, get_ingestion_queue_item,
-#     get_ingestion_queue_item_by_path, upsert_ingestion_queue_item,
-#     update_ingestion_queue_item_result, set_ingestion_queue_item_status
-#
-#   reconciliation_log (read-only audit display -- the log table itself has
-#   no Postgres home, so these joins have nothing to read):
-#     list_reconciliation_log, list_reconciliation_log_by_company
-#
-# See this file's module-level docstring for the functions that touch BOTH
-# a kept and an excluded/missing table (reconcile(), replace_document_chunks(),
-# search_document_chunks(), and the hidden_at/deleted_at investigations and
-# generated_reports quartets) -- those are handled with inline flags at the
-# call site above, not silently dropped.
+# batch_job_runs / batch_job_items
 # ------------------------------------------------------------------
+
+
+def start_batch_job_run(conn: DBConnection, job_name: str, scope_label: str | None = None) -> int:
+    now = _utcnow_iso()
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO batch_job_runs (job_name, scope_label, started_at, status) "
+            "VALUES (%s, %s, %s, 'running') RETURNING run_id",
+            (job_name, scope_label, now),
+        )
+        run_id = cur.fetchone()["run_id"]
+    conn.commit()
+    return run_id
+
+
+def finish_batch_job_run(conn: DBConnection, run_id: int, *, status: str, notes: str | None = None) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT "
+            "  COUNT(*) AS total, "
+            "  SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS succeeded, "
+            "  SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed "
+            "FROM batch_job_items WHERE run_id = %s",
+            (run_id,),
+        )
+        counts = cur.fetchone()
+        cur.execute(
+            "UPDATE batch_job_runs SET finished_at = %s, status = %s, notes = %s, "
+            "  items_total = %s, items_succeeded = %s, items_failed = %s "
+            "WHERE run_id = %s",
+            (
+                _utcnow_iso(), status, notes,
+                counts["total"] or 0, counts["succeeded"] or 0, counts["failed"] or 0,
+                run_id,
+            ),
+        )
+    conn.commit()
+
+
+def start_batch_job_item(conn: DBConnection, run_id: int, company_id: str | None) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO batch_job_items (run_id, company_id, started_at, status) "
+            "VALUES (%s, %s, %s, 'running') RETURNING item_id",
+            (run_id, company_id, _utcnow_iso()),
+        )
+        item_id = cur.fetchone()["item_id"]
+    conn.commit()
+    return item_id
+
+
+def finish_batch_job_item(conn: DBConnection, item_id: int, *, status: str, detail: str | None = None) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE batch_job_items SET finished_at = %s, status = %s, detail = %s WHERE item_id = %s",
+            (_utcnow_iso(), status, detail, item_id),
+        )
+    conn.commit()
+
+
+def get_last_successful_batch_item_times(
+    conn: DBConnection, job_name: str, company_ids: list[str]
+) -> dict[str, str]:
+    if not company_ids:
+        return {}
+    placeholders = ",".join(["%s"] * len(company_ids))
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT bi.company_id, MAX(bi.finished_at) AS last_success
+            FROM batch_job_items bi
+            JOIN batch_job_runs br ON br.run_id = bi.run_id
+            WHERE br.job_name = %s AND bi.status = 'ok' AND bi.company_id IN ({placeholders})
+            GROUP BY bi.company_id
+            """,
+            (job_name, *company_ids),
+        )
+        rows = cur.fetchall()
+    return {row["company_id"]: row["last_success"] for row in rows}
+
+
+def get_latest_batch_item_for_company(conn: DBConnection, job_name: str, company_id: str) -> dict | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT bi.*
+            FROM batch_job_items bi
+            JOIN batch_job_runs br ON br.run_id = bi.run_id
+            WHERE br.job_name = %s AND bi.company_id = %s
+            ORDER BY bi.item_id DESC
+            LIMIT 1
+            """,
+            (job_name, company_id),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def list_running_batch_job_runs(conn: DBConnection) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM batch_job_runs WHERE status = 'running' ORDER BY started_at ASC")
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_batch_job_runs(
+    conn: DBConnection, job_name: str | None = None, limit: int = 20, since_iso: str | None = None,
+) -> list[dict]:
+    clauses: list[str] = []
+    params: list[object] = []
+    if job_name is not None:
+        clauses.append("job_name = %s")
+        params.append(job_name)
+    if since_iso is not None:
+        clauses.append("started_at >= %s")
+        params.append(since_iso)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with conn.cursor() as cur:
+        cur.execute(
+            f"SELECT * FROM batch_job_runs {where} ORDER BY started_at DESC LIMIT %s",
+            (*params, limit),
+        )
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_distinct_batch_job_names(conn: DBConnection) -> list[str]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT job_name FROM batch_job_runs ORDER BY job_name")
+        rows = cur.fetchall()
+    return [r["job_name"] for r in rows]
+
+
+def get_latest_batch_job_run(conn: DBConnection, job_name: str) -> dict | None:
+    rows = list_batch_job_runs(conn, job_name=job_name, limit=1)
+    return rows[0] if rows else None
+
+
+def list_batch_job_items(conn: DBConnection, run_id: int) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM batch_job_items WHERE run_id = %s ORDER BY item_id ASC", (run_id,))
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_batch_job_run_live_progress(conn: DBConnection, run_id: int) -> dict:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS items_started,
+                SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS items_succeeded,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS items_failed
+            FROM batch_job_items WHERE run_id = %s
+            """,
+            (run_id,),
+        )
+        row = cur.fetchone()
+    return {
+        "items_started": row["items_started"] or 0,
+        "items_succeeded": row["items_succeeded"] or 0,
+        "items_failed": row["items_failed"] or 0,
+    }
+
+
+# ------------------------------------------------------------------
+# dataset_events / worker_processing_log
+# ------------------------------------------------------------------
+
+
+def insert_dataset_event(conn: DBConnection, event) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO dataset_events (
+                event_id, event_type, dataset_id, dataset_type, source, scope_json,
+                period, storage_reference_json, ingestion_id, ingested_at, metadata_json, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                event.event_id, event.event_type, event.dataset_id, event.dataset_type, event.source,
+                json.dumps(event.scope), event.period, json.dumps(event.storage_reference),
+                event.ingestion_id, event.ingested_at, json.dumps(event.metadata), _utcnow_iso(),
+            ),
+        )
+    conn.commit()
+
+
+def get_dataset_event(conn: DBConnection, event_id: str) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM dataset_events WHERE event_id = %s", (event_id,))
+        return cur.fetchone()
+
+
+def list_dataset_events(
+    conn: DBConnection,
+    *,
+    event_id: str | None = None,
+    dataset_type: str | None = None,
+    source: str | None = None,
+    ingestion_id: str | None = None,
+    since: str | None = None,
+) -> list[Row]:
+    clauses, params = [], []
+    if event_id is not None:
+        clauses.append("event_id = %s")
+        params.append(event_id)
+    if dataset_type is not None:
+        clauses.append("dataset_type = %s")
+        params.append(dataset_type)
+    if source is not None:
+        clauses.append("source = %s")
+        params.append(source)
+    if ingestion_id is not None:
+        clauses.append("ingestion_id = %s")
+        params.append(ingestion_id)
+    if since is not None:
+        clauses.append("ingested_at >= %s")
+        params.append(since)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT * FROM dataset_events {where} ORDER BY ingested_at ASC", params)
+        return cur.fetchall()
+
+
+def start_worker_log(
+    conn: DBConnection, *, event_id: str, ingestion_id: str, worker_name: str, worker_version: str
+) -> int:
+    now = _utcnow_iso()
+    existing = get_worker_log(conn, event_id, worker_name, worker_version)
+    with conn.cursor() as cur:
+        if existing is not None:
+            cur.execute(
+                "UPDATE worker_processing_log SET status = 'running', started_at = %s, completed_at = NULL, "
+                "  retry_count = retry_count + 1 WHERE log_id = %s",
+                (now, existing["log_id"]),
+            )
+            conn.commit()
+            return existing["log_id"]
+        cur.execute(
+            "INSERT INTO worker_processing_log (event_id, ingestion_id, worker_name, worker_version, status, started_at) "
+            "VALUES (%s, %s, %s, %s, 'running', %s) RETURNING log_id",
+            (event_id, ingestion_id, worker_name, worker_version, now),
+        )
+        log_id = cur.fetchone()["log_id"]
+    conn.commit()
+    return log_id
+
+
+def finish_worker_log(
+    conn: DBConnection,
+    log_id: int,
+    *,
+    status: str,
+    output_reference: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE worker_processing_log SET status = %s, completed_at = %s, output_reference = %s, error_message = %s "
+            "WHERE log_id = %s",
+            (status, _utcnow_iso(), output_reference, error_message, log_id),
+        )
+    conn.commit()
+
+
+def get_worker_log(conn: DBConnection, event_id: str, worker_name: str, worker_version: str) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM worker_processing_log WHERE event_id = %s AND worker_name = %s AND worker_version = %s",
+            (event_id, worker_name, worker_version),
+        )
+        return cur.fetchone()
+
+
+def list_worker_processing_log(
+    conn: DBConnection,
+    *,
+    event_id: str | None = None,
+    worker_name: str | None = None,
+    status: str | None = None,
+) -> list[Row]:
+    clauses, params = [], []
+    if event_id is not None:
+        clauses.append("event_id = %s")
+        params.append(event_id)
+    if worker_name is not None:
+        clauses.append("worker_name = %s")
+        params.append(worker_name)
+    if status is not None:
+        clauses.append("status = %s")
+        params.append(status)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT * FROM worker_processing_log {where} ORDER BY log_id ASC", params)
+        return cur.fetchall()
+
+
+# ------------------------------------------------------------------
+# retrieval_diagnostics
+# ------------------------------------------------------------------
+
+
+def insert_retrieval_diagnostic(
+    conn: DBConnection,
+    *,
+    created_at: str,
+    query_excerpt: str | None,
+    company_id: str | None,
+    as_of: str | None,
+    keyword_candidate_count: int,
+    semantic_candidate_count: int,
+    returned_count: int,
+    embedding_latency_ms: float | None,
+    vector_store_latency_ms: float | None,
+    keyword_latency_ms: float | None,
+    degraded: bool,
+    degradation_reason: str | None,
+    passages_json: str,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO retrieval_diagnostics (
+                created_at, query_excerpt, company_id, as_of, keyword_candidate_count,
+                semantic_candidate_count, returned_count, embedding_latency_ms, vector_store_latency_ms,
+                keyword_latency_ms, degraded, degradation_reason, passages_json
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                created_at, query_excerpt, company_id, as_of, keyword_candidate_count,
+                semantic_candidate_count, returned_count, embedding_latency_ms, vector_store_latency_ms,
+                keyword_latency_ms, int(degraded), degradation_reason, passages_json,
+            ),
+        )
+    conn.commit()
+
+
+def list_retrieval_diagnostics(conn: DBConnection, limit: int = 50) -> list[Row]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM retrieval_diagnostics ORDER BY retrieval_id DESC LIMIT %s", (limit,))
+        return cur.fetchall()
+
+
+# ------------------------------------------------------------------
+# llm_call_log
+# ------------------------------------------------------------------
+
+
+def insert_llm_call_log(
+    conn: DBConnection,
+    *,
+    task_name: str,
+    company_ids: str,
+    question: str | None,
+    thread_id: str | None,
+    complexity_tier: str,
+    complexity_level: int,
+    complexity_reason: str,
+    model_used: str,
+    provider_used: str,
+    fallback_used: bool,
+    attempts_json: str,
+    input_tokens: int,
+    output_tokens: int,
+    estimated_cost_usd: float,
+    latency_ms: float,
+    stop_reason: str,
+    context_tokens_before: int | None = None,
+    context_tokens_after: int | None = None,
+    context_items_dropped: int | None = None,
+    reuse_hit: bool = False,
+    reused_thread_id: str | None = None,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
+    graph_hit: bool = False,
+    graph_hit_thread_id: str | None = None,
+    graph_hit_score: float | None = None,
+    investigation_id: str | None = None,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO llm_call_log "
+            "(created_at, task_name, company_ids, question, thread_id, complexity_tier, complexity_level, "
+            "complexity_reason, model_used, provider_used, fallback_used, attempts_json, input_tokens, "
+            "output_tokens, estimated_cost_usd, latency_ms, stop_reason, context_tokens_before, "
+            "context_tokens_after, context_items_dropped, reuse_hit, reused_thread_id, "
+            "cache_creation_input_tokens, cache_read_input_tokens, graph_hit, graph_hit_thread_id, "
+            "graph_hit_score, investigation_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                _utcnow_iso(), task_name, company_ids, question, thread_id, complexity_tier, complexity_level,
+                complexity_reason, model_used, provider_used, int(fallback_used), attempts_json, input_tokens,
+                output_tokens, estimated_cost_usd, latency_ms, stop_reason, context_tokens_before,
+                context_tokens_after, context_items_dropped, int(reuse_hit), reused_thread_id,
+                cache_creation_input_tokens, cache_read_input_tokens, int(graph_hit), graph_hit_thread_id,
+                graph_hit_score, investigation_id,
+            ),
+        )
+    conn.commit()
+
+
+def list_llm_call_log(conn: DBConnection, limit: int = 200) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM llm_call_log ORDER BY call_id DESC LIMIT %s", (limit,))
+        rows = cur.fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_llm_usage_summary(conn: DBConnection) -> dict:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) AS calls, "
+            "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
+            "COALESCE(SUM(output_tokens), 0) AS output_tokens, "
+            "COALESCE(SUM(estimated_cost_usd), 0) AS cost_usd, "
+            "COALESCE(SUM(reuse_hit), 0) AS reused_calls "
+            "FROM llm_call_log"
+        )
+        totals = cur.fetchone()
+
+        cur.execute(
+            "SELECT task_name, COUNT(*) AS calls, "
+            "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
+            "COALESCE(SUM(output_tokens), 0) AS output_tokens, "
+            "COALESCE(SUM(estimated_cost_usd), 0) AS cost_usd "
+            "FROM llm_call_log GROUP BY task_name ORDER BY cost_usd DESC"
+        )
+        by_task = cur.fetchall()
+
+        cur.execute(
+            "SELECT model_used, COUNT(*) AS calls, "
+            "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
+            "COALESCE(SUM(output_tokens), 0) AS output_tokens, "
+            "COALESCE(SUM(estimated_cost_usd), 0) AS cost_usd "
+            "FROM llm_call_log WHERE reuse_hit = 0 GROUP BY model_used ORDER BY cost_usd DESC"
+        )
+        by_model = cur.fetchall()
+
+    return {
+        "calls": totals["calls"],
+        "input_tokens": totals["input_tokens"],
+        "output_tokens": totals["output_tokens"],
+        "cost_usd": totals["cost_usd"],
+        "reused_calls": totals["reused_calls"],
+        "by_task": [dict(row) for row in by_task],
+        "by_model": [dict(row) for row in by_model],
+    }
+
+
+def get_investigation_cost_summary(conn: DBConnection, investigation_id: str) -> dict:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) AS calls, "
+            "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
+            "COALESCE(SUM(output_tokens), 0) AS output_tokens, "
+            "COALESCE(SUM(estimated_cost_usd), 0) AS cost_usd "
+            "FROM llm_call_log WHERE investigation_id = %s",
+            (investigation_id,),
+        )
+        row = cur.fetchone()
+    return dict(row)
+
+
+# ------------------------------------------------------------------
+# ingestion_queue_items
+# ------------------------------------------------------------------
+
+
+def list_ingestion_queue_items(
+    conn: DBConnection, *, status: str | None = None, item_kind: str | None = None
+) -> list[Row]:
+    query = "SELECT * FROM ingestion_queue_items WHERE 1=1"
+    params: list[object] = []
+    if status is not None:
+        query += " AND status = %s"
+        params.append(status)
+    if item_kind is not None:
+        query += " AND item_kind = %s"
+        params.append(item_kind)
+    query += " ORDER BY discovered_at DESC"
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+        return cur.fetchall()
+
+
+def get_ingestion_queue_item(conn: DBConnection, item_id: int) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM ingestion_queue_items WHERE item_id = %s", (item_id,))
+        return cur.fetchone()
+
+
+def get_ingestion_queue_item_by_path(conn: DBConnection, file_path: str) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM ingestion_queue_items WHERE file_path = %s", (file_path,))
+        return cur.fetchone()
+
+
+def upsert_ingestion_queue_item(
+    conn: DBConnection,
+    *,
+    item_kind: str,
+    file_path: str,
+    content_hash: str | None,
+    company_id: str | None,
+    source_id: str | None,
+    status: str,
+    status_reason: str | None,
+) -> Row:
+    now = _utcnow_iso()
+    existing = get_ingestion_queue_item_by_path(conn, file_path)
+    with conn.cursor() as cur:
+        if existing is None:
+            cur.execute(
+                """
+                INSERT INTO ingestion_queue_items (
+                    item_kind, file_path, content_hash, company_id, source_id,
+                    status, status_reason, discovered_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING item_id
+                """,
+                (item_kind, file_path, content_hash, company_id, source_id, status, status_reason, now),
+            )
+            item_id = cur.fetchone()["item_id"]
+        else:
+            cur.execute(
+                """
+                UPDATE ingestion_queue_items SET
+                    item_kind = %s, content_hash = %s, company_id = %s, source_id = %s,
+                    status = %s, status_reason = %s
+                WHERE item_id = %s
+                """,
+                (item_kind, content_hash, company_id, source_id, status, status_reason, existing["item_id"]),
+            )
+            item_id = existing["item_id"]
+    conn.commit()
+    return get_ingestion_queue_item(conn, item_id)
+
+
+def update_ingestion_queue_item_result(
+    conn: DBConnection,
+    item_id: int,
+    *,
+    status: str,
+    error_message: str | None = None,
+    processed_at: str | None = None,
+    last_processed_content_hash: str | None = None,
+) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE ingestion_queue_items SET
+                status = %s, error_message = %s, last_attempt_at = %s,
+                processed_at = COALESCE(%s, processed_at),
+                last_processed_content_hash = COALESCE(%s, last_processed_content_hash)
+            WHERE item_id = %s
+            """,
+            (status, error_message, _utcnow_iso(), processed_at, last_processed_content_hash, item_id),
+        )
+    conn.commit()
+    return get_ingestion_queue_item(conn, item_id)
+
+
+def set_ingestion_queue_item_status(conn: DBConnection, item_id: int, status: str) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("UPDATE ingestion_queue_items SET status = %s WHERE item_id = %s", (status, item_id))
+    conn.commit()
+    return get_ingestion_queue_item(conn, item_id)

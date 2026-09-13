@@ -104,12 +104,12 @@ def _seed_admin_user_pg(conn) -> None:
 
 
 def main() -> None:
-    connection_string = os.environ.get("LOCAL_DEV_DATABASE_URL")
-    if not connection_string:
+    if not os.environ.get("LOCAL_DEV_DATABASE_URL"):
         print("LOCAL_DEV_DATABASE_URL is not set -- refusing to run (see this script's own docstring)", file=sys.stderr)
         sys.exit(1)
 
-    conn = init_postgres_db(connection_string=connection_string)
+    conn = init_postgres_db()
+
     _seed_sources_pg(conn)
     _seed_index_definitions_pg(conn)
     _seed_admin_user_pg(conn)

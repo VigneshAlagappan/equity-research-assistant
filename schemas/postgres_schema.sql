@@ -1,13 +1,14 @@
 -- Global Equity Research Assistant — Postgres/Neon schema (companion to
 -- schemas/sqlite_schema.sql; checkpoint 1 of the SQLite -> Postgres migration).
 --
--- This file ports the 42 tables from sqlite_schema.sql that are moving to
--- Postgres in this checkpoint. It deliberately excludes:
---   - 7 pure audit/observability log tables staying SQLite-only forever:
---     batch_job_runs, batch_job_items, dataset_events, llm_call_log,
---     retrieval_diagnostics, reconciliation_log, worker_processing_log.
---   - ingestion_queue_items (discovery/status tracking only -- the real gate,
---     documents.processing_status, IS ported below).
+-- financial_observations, reconciliation_log, and the 7 audit/observability
+-- log tables (batch_job_runs, batch_job_items, dataset_events, llm_call_log,
+-- retrieval_diagnostics, worker_processing_log, ingestion_queue_items) were
+-- ported 2026-09-13 -- previously excluded citing Neon's free-tier 512MB
+-- storage cap, which production had already grown past (771MB, current
+-- plan) by the time this changed; see docs/ADR/021's "Known bug, NOT
+-- fixed" section for the fuller history of the financial_observations
+-- side of this. This file still deliberately excludes:
 --   - document_chunks_fts (the FTS5 virtual table + its shadow tables) --
 --     full-text search reimplementation via Postgres tsvector/GIN is
 --     deferred to a separate later task. document_chunks itself (the real
@@ -196,23 +197,44 @@ CREATE INDEX IF NOT EXISTS idx_raw_object_lineage_derived ON raw_object_lineage(
 
 -- ============================================================
 -- Financial Observations (raw, per-source, pre-reconciliation) --
--- deliberately EXCLUDED from this Postgres schema (2026-09-11): the single
--- largest table (869K rows, 269MB on Postgres -- more than half of Neon
--- free tier's 512MB cap), and confirmed no live-facing feature reads it
--- directly (research/web/financials/context all read canonical_financials
--- instead) -- only the SQLite-side reconciliation pipeline touches it, to
--- produce canonical_financials. Same "stays SQLite-only, never ported"
--- treatment as the 8 audit-log tables, added here after the fact once
--- Neon's storage cap made keeping it not worth the cost. Stays in
--- schemas/sqlite_schema.sql and storage/repositories.py exactly as before.
+-- ported 2026-09-13 (previously excluded 2026-09-11 citing Neon's
+-- free-tier 512MB storage cap; production is already past that old cap
+-- (771MB total, current plan) by the time this table was added, so the
+-- constraint that justified the exclusion no longer holds -- see docs/
+-- ADR/021's "Known bug, NOT fixed" section for the full history: without
+-- this table, storage/repositories_pg.py's insert_financial_observations()/
+-- reconcile() (already written, never dead code) referenced a table that
+-- didn't exist, silently failing every NSE/SEC/yfinance financials
+-- ingestion under DATABASE_BACKEND=postgres since the original Postgres
+-- cutover. canonical_financials.chosen_observation_id (below) now has a
+-- real FK, impossible before this table existed.
 -- ============================================================
 
+CREATE TABLE IF NOT EXISTS financial_observations (
+  observation_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  metric_key TEXT NOT NULL REFERENCES metrics_dictionary(metric_key),
+  period_type TEXT NOT NULL,
+  fiscal_year TEXT NOT NULL,
+  quarter TEXT,
+  statement_type TEXT,
+  value REAL NOT NULL,
+  unit TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'INR',
+  source TEXT NOT NULL REFERENCES sources(source_id),
+  source_document_id INTEGER REFERENCES documents(document_id),
+  source_file TEXT,
+  source_url TEXT,
+  retrieved_at TEXT NOT NULL,
+  parser_version TEXT NOT NULL,
+  normalization_version TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_obs_lookup
+  ON financial_observations(company_id, metric_key, fiscal_year, quarter);
+
 -- ============================================================
--- Canonical (reconciled) financials
---
--- reconciliation_log (the audit trail of considered/chosen observations) is
--- NOT ported in this checkpoint -- it stays SQLite-only (pure audit log,
--- nothing reads it to gate a fetch/reprocessing decision).
+-- Canonical (reconciled) financials & reconciliation audit trail
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS canonical_financials (
@@ -225,11 +247,20 @@ CREATE TABLE IF NOT EXISTS canonical_financials (
   statement_type TEXT,
   canonical_value REAL NOT NULL,
   unit TEXT NOT NULL,
-  chosen_observation_id INTEGER,    -- no FK: financial_observations is excluded from this schema (see above)
+  chosen_observation_id INTEGER REFERENCES financial_observations(observation_id),
   reconciliation_reason TEXT,       -- "official filing preferred over screener"
   normalization_version TEXT,
   decided_at TEXT NOT NULL,
   UNIQUE(company_id, metric_key, period_type, fiscal_year, quarter, statement_type)
+);
+
+CREATE TABLE IF NOT EXISTS reconciliation_log (
+  log_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  canonical_id INTEGER REFERENCES canonical_financials(canonical_id),
+  observation_id INTEGER REFERENCES financial_observations(observation_id),
+  considered_at TEXT,
+  was_chosen INTEGER,
+  note TEXT
 );
 
 -- ============================================================
@@ -1014,3 +1045,141 @@ CREATE TABLE IF NOT EXISTS daily_prices (
   fetched_at TEXT NOT NULL,
   PRIMARY KEY (company_id, trade_date)
 );
+
+-- ============================================================
+-- Audit/observability log tables -- ported 2026-09-13 (see this file's
+-- own header). Same table definitions as schemas/postgres_schema_dev_
+-- extras.sql, which now exists only for reference/history since these
+-- are the real thing here.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS batch_job_runs (
+  run_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  job_name TEXT NOT NULL,
+  scope_label TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  items_total INTEGER NOT NULL DEFAULT 0,
+  items_succeeded INTEGER NOT NULL DEFAULT 0,
+  items_failed INTEGER NOT NULL DEFAULT 0,
+  notes TEXT,
+  CHECK (status IN ('running', 'completed', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_batch_job_runs_job ON batch_job_runs(job_name, started_at);
+
+CREATE TABLE IF NOT EXISTS batch_job_items (
+  item_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES batch_job_runs(run_id),
+  company_id TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  detail TEXT,
+  CHECK (status IN ('running', 'ok', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_batch_job_items_run ON batch_job_items(run_id);
+
+CREATE TABLE IF NOT EXISTS dataset_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL DEFAULT 'DATASET_INGESTED',
+  dataset_id TEXT NOT NULL,
+  dataset_type TEXT NOT NULL,
+  source TEXT NOT NULL,
+  scope_json TEXT NOT NULL,
+  period TEXT,
+  storage_reference_json TEXT NOT NULL,
+  ingestion_id TEXT NOT NULL,
+  ingested_at TEXT NOT NULL,
+  metadata_json TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dataset_events_type ON dataset_events(dataset_type, ingested_at);
+CREATE INDEX IF NOT EXISTS idx_dataset_events_ingestion ON dataset_events(ingestion_id);
+
+CREATE TABLE IF NOT EXISTS worker_processing_log (
+  log_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES dataset_events(event_id),
+  ingestion_id TEXT NOT NULL,
+  worker_name TEXT NOT NULL,
+  worker_version TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  output_reference TEXT,
+  error_message TEXT,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  CHECK (status IN ('running', 'ok', 'skipped', 'failed')),
+  UNIQUE(event_id, worker_name, worker_version)
+);
+CREATE INDEX IF NOT EXISTS idx_worker_log_event ON worker_processing_log(event_id);
+CREATE INDEX IF NOT EXISTS idx_worker_log_worker ON worker_processing_log(worker_name, status);
+
+CREATE TABLE IF NOT EXISTS retrieval_diagnostics (
+  retrieval_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  query_excerpt TEXT,
+  company_id TEXT,
+  as_of TEXT,
+  keyword_candidate_count INTEGER NOT NULL DEFAULT 0,
+  semantic_candidate_count INTEGER NOT NULL DEFAULT 0,
+  returned_count INTEGER NOT NULL DEFAULT 0,
+  embedding_latency_ms REAL,
+  vector_store_latency_ms REAL,
+  keyword_latency_ms REAL,
+  degraded INTEGER NOT NULL DEFAULT 0,
+  degradation_reason TEXT,
+  passages_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_retrieval_diagnostics_created_at ON retrieval_diagnostics(created_at);
+
+CREATE TABLE IF NOT EXISTS llm_call_log (
+  call_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  task_name TEXT NOT NULL,
+  company_ids TEXT,
+  question TEXT,
+  thread_id TEXT,
+  complexity_tier TEXT NOT NULL,
+  complexity_level INTEGER NOT NULL,
+  complexity_reason TEXT,
+  model_used TEXT NOT NULL,
+  provider_used TEXT NOT NULL,
+  fallback_used INTEGER NOT NULL DEFAULT 0,
+  attempts_json TEXT,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost_usd REAL NOT NULL DEFAULT 0,
+  latency_ms REAL,
+  stop_reason TEXT,
+  context_tokens_before INTEGER,
+  context_tokens_after INTEGER,
+  context_items_dropped INTEGER,
+  reuse_hit INTEGER NOT NULL DEFAULT 0,
+  reused_thread_id TEXT,
+  cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
+  graph_hit INTEGER NOT NULL DEFAULT 0,
+  graph_hit_thread_id TEXT,
+  graph_hit_score REAL,
+  investigation_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_llm_call_log_created_at ON llm_call_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_call_log_investigation_id ON llm_call_log(investigation_id);
+
+CREATE TABLE IF NOT EXISTS ingestion_queue_items (
+  item_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  item_kind TEXT NOT NULL,
+  file_path TEXT NOT NULL UNIQUE,
+  content_hash TEXT,
+  company_id TEXT,
+  source_id TEXT,
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  status_reason TEXT,
+  discovered_at TEXT NOT NULL,
+  last_attempt_at TEXT,
+  processed_at TEXT,
+  last_processed_content_hash TEXT,
+  error_message TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ingestion_queue_status ON ingestion_queue_items(status, item_kind);

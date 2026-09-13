@@ -22,33 +22,13 @@ Usage:
 An exception that escapes the `with run.item(...)` block entirely (i.e.
 outside the per-company try) still propagates out of `with BatchRun(...)`
 normally -- only per-item failures are swallowed, never a bug in the loop
-itself.
-
-BatchRun's four underlying functions (start/finish_batch_job_run,
-start/finish_batch_job_item) are audit/log-only and were never ported to
-Postgres (see storage/backend_bootstrap.py's _SQLITE_ONLY_REPOSITORY_
-FUNCTIONS docstring for the full list and why) -- they stay SQLite-only
-forever, same as web/app.py's get_logs_db() split for the exact same
-reason. Every caller still passes its own `conn` (unchanged from before):
-when that's already a sqlite3.Connection (the common case -- local dev,
-tests, or DATABASE_BACKEND left at its default), BatchRun uses it
-directly, zero behavior change. Only when `conn` is something else (a
-psycopg2 connection, once DATABASE_BACKEND=postgres) does BatchRun open
-its own separate, dedicated SQLite connection for its own bookkeeping
-instead -- discovered the hard way: every caller used to hand its real
-(Postgres, in production) connection straight into these SQLite-only
-functions, which crashed immediately on `AttributeError: 'psycopg2.
-extensions.connection' object has no attribute 'execute'` the moment
-anyone clicked "Run now" against a Postgres-backed deployment (verified
-directly, then fixed here)."""
+itself."""
 
 from __future__ import annotations
 
-import sqlite3
 from contextlib import contextmanager
 from typing import Iterator
 
-from storage.database import init_db
 from storage.db_types import DBConnection
 from storage.repositories import (
     finish_batch_job_item,
@@ -69,11 +49,7 @@ class _Item:
 
 class BatchRun:
     def __init__(self, conn: DBConnection, job_name: str, scope_label: str | None = None) -> None:
-        # Own a separate connection only when `conn` isn't already SQLite
-        # (see this module's docstring) -- _owns_conn tracks that so
-        # __exit__ knows whether it's responsible for closing it.
-        self._owns_conn = not isinstance(conn, sqlite3.Connection)
-        self._conn = init_db() if self._owns_conn else conn
+        self._conn = conn
         self._job_name = job_name
         self._scope_label = scope_label
         self.run_id: int | None = None
@@ -87,15 +63,11 @@ class BatchRun:
         # reach here -- this only fires for a bug in the loop itself
         # (unhandled outside `with run.item(...)`), which the run really
         # did fail on.
-        try:
-            finish_batch_job_run(
-                self._conn, self.run_id,
-                status="failed" if exc_type is not None else "completed",
-                notes=str(exc) if exc_type is not None else None,
-            )
-        finally:
-            if self._owns_conn:
-                self._conn.close()
+        finish_batch_job_run(
+            self._conn, self.run_id,
+            status="failed" if exc_type is not None else "completed",
+            notes=str(exc) if exc_type is not None else None,
+        )
         return False  # never suppress -- let a real bug surface to the caller
 
     @contextmanager
