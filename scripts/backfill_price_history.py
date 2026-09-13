@@ -90,15 +90,47 @@ import argparse
 import time
 from datetime import date
 
+# Must run before any other import in this file touches storage.company_
+# repository/price_repository/etc. -- see storage/backend_bootstrap.py's
+# own docstring for why, and scripts/run_job.py's identical top-of-file
+# comment: `from storage.company_repository import X` below binds X to
+# whatever module object sys.modules["storage.company_repository"] holds
+# AT IMPORT TIME. Calling install() later (e.g. only inside open_db(),
+# the first time this script actually opens a connection) is too late --
+# X is already bound to the pre-swap SQLite functions in this module's own
+# namespace by then, so a Postgres-backed run crashes with
+# `AttributeError: 'psycopg2.extensions.connection' object has no
+# attribute 'execute'` the moment it calls select_index_members_with_nse_
+# symbol()/select_active_companies_by_country() -- found this the hard
+# way running `python -m scripts.backfill_price_history --years 3
+# --all-tiers` directly against DATABASE_BACKEND=postgres (this script's
+# own run_price_history_backfill() was already safe when called via
+# scripts/run_job.py or the Schedule panel, since both of those install()
+# before scheduling.jobs -- and therefore this module -- ever gets
+# imported; only a direct `python -m scripts.backfill_price_history`
+# invocation hit this).
+import storage.backend_bootstrap
+
+storage.backend_bootstrap.install()
+
 from ingestion.batch_log import BatchRun
 from sources.yfinance_prices import fetch_daily_bars
 from storage.backend_bootstrap import open_db, open_price_db
 from storage.company_repository import select_active_companies_by_country, select_index_members_with_nse_symbol
 from storage.price_repository import list_earliest_trade_dates, upsert_daily_bars
 
-REQUEST_DELAY_SECONDS = 0.6
+# Tuned to spread a full --all-tiers (+ USA) run (~2,589 companies as of
+# this writing, Nifty 50/Next 50/Midcap 150/Smallcap 250/Micro-Cap + USA)
+# over roughly 2 hours -- gentler than the original 0.6s/25-company-batch
+# pacing (~50 min total), deliberately loosened once this script started
+# running from a shared cloud IP (AWS Lightsail) rather than a home
+# connection, where the same request volume is more likely to trip
+# Yahoo's anti-bot/rate-limit heuristics. `--company-id`-scoped or small
+# single-tier runs finish proportionally faster; this budget is sized for
+# the full combined run, not any one invocation.
+REQUEST_DELAY_SECONDS = 1.6
 BATCH_SIZE = 25
-BATCH_PAUSE_SECONDS = 15
+BATCH_PAUSE_SECONDS = 30
 
 #: The five standard NSE market-cap tiers, mutually exclusive, together
 #: covering the same universe as "Nifty 500" (the first four) plus Nifty
@@ -136,7 +168,17 @@ def _resolve_ticker_pairs(main_conn, country: str, company_id: str | None, index
     need translating, e.g. BRKA -> BRK-A). `index_name` only applies to
     country="IN" -- US has no equivalent tiering here."""
     if country == "IN":
-        return list(select_index_members_with_nse_symbol(main_conn, index_name, company_id=company_id))
+        # Dict-style access, not positional tuple-unpacking -- sqlite3.Row
+        # iterates by VALUE (so `company_id_, ticker = row` used to work by
+        # accident), but psycopg2's RealDictRow iterates by KEY once
+        # DATABASE_BACKEND=postgres, silently unpacking the literal strings
+        # "company_id"/"nse_symbol" instead of the row's actual data --
+        # same trap scripts/fetch_daily_prices.py's own comment already
+        # flags for its identical loop. Build explicit tuples here so the
+        # caller's `for company_id_, ticker in rows:` never has to unpack a
+        # raw Row at all.
+        rows = select_index_members_with_nse_symbol(main_conn, index_name, company_id=company_id)
+        return [(r["company_id"], r["nse_symbol"]) for r in rows]
     rows = select_active_companies_by_country(main_conn, country)
     return [(r["company_id"], r["company_id"]) for r in rows if company_id is None or r["company_id"] == company_id]
 
