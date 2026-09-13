@@ -228,10 +228,10 @@ configuration throughout.
 | `llm/` | The **Model Router + Fallback layer** — `hardness.py` (task-complexity classifier), `router.py` (fallback chain across models/providers), `capability_registry.py` (static model metadata; which models are policy-disabled is read from `config/settings.py`'s `DISABLED_MODELS`), `providers/` (Anthropic + local Ollama), `observability.py` (per-call logging/cost tracking). The tier→model policy itself (`TIER_PREFERRED_MODEL`, `TIER_MIN_REASONING_STRENGTH`, `DISABLED_MODELS`) lives in `config/settings.py`, not scattered across these modules — edit that one file to change routing. |
 | `charts/` | matplotlib chart generation for legacy server-rendered PNGs (`financial_charts.py`). |
 | `config/` | `settings.py` (paths, source trust order, LLM/model-tiering policy, repo-relative path helpers), `knowledge_graph_seed.py` (curated sector-peer causal edges — `context/graph.py`'s vocabulary), `knowledge_ontology.py` (the fixed `ENTITY_TYPES`/`RELATIONSHIP_TYPES`/`CLAIM_TYPES` vocabulary `research/knowledge_builder.py`'s extraction validates against, kept distinct from `STRUCTURAL_NODE_TYPES` — Claim/Evidence/Document/TimePeriod, never something the model extracts by name — plus `CANONICAL_HOME`, an explicit map of which subsystem owns each concept's real value). |
-| `storage/` | `database.py` (SQLite connection + schema init/migrations), `backend_bootstrap.py` (the `DATABASE_BACKEND=postgres` process-wide module swap — see below), `repositories.py` (general-purpose SQL — reference data, financials, documents, Knowledge Builder, generated reports, LLM observability, the event store; becomes a hybrid module under the Postgres swap), `db_types.py` (`DBConnection`/`Row` — the backend-agnostic types every other module type-hints against), `fact_store.py` (`FactStore` — the DI seam `research/`/`context/`/`indicators/` call through instead of importing `repositories.py` directly), `company_repository.py` (companies/stock-actions SQL), `indicator_repository.py` (indicator config + audit-trail SQL), `investigation_repository.py` (the `investigation_companies` join table), `raw_object_repository.py` (the `raw_objects`/`raw_object_lineage` catalog, ADR-022). Each of `company_repository.py`/`fact_store.py`/`indicator_repository.py`/`investigation_repository.py`/`price_repository.py`/`raw_object_repository.py` has a `_pg.py` Postgres-ported sibling — see [Storage layer and database portability](#storage-layer-and-database-portability-storagedb_typespy) below. |
+| `storage/` | `database.py` (SQLite connection + schema init/migrations), `backend_bootstrap.py` (the `DATABASE_BACKEND=postgres` process-wide module swap — see below), `repositories.py` (general-purpose SQL — reference data, financials, documents, Knowledge Builder, generated reports, LLM observability, the event store; a clean wholesale swap like every other module below, not a hybrid — see below), `db_types.py` (`DBConnection`/`Row` — the backend-agnostic types every other module type-hints against), `fact_store.py` (`FactStore` — the DI seam `research/`/`context/`/`indicators/` call through instead of importing `repositories.py` directly), `company_repository.py` (companies/stock-actions SQL), `indicator_repository.py` (indicator config + audit-trail SQL), `investigation_repository.py` (the `investigation_companies` join table), `raw_object_repository.py` (the `raw_objects`/`raw_object_lineage` catalog, ADR-022). Each of `company_repository.py`/`fact_store.py`/`indicator_repository.py`/`investigation_repository.py`/`price_repository.py`/`raw_object_repository.py` has a `_pg.py` Postgres-ported sibling — see [Storage layer and database portability](#storage-layer-and-database-portability-storagedb_typespy) below. |
 | `storage/price_database.py`, `price_repository_pg.py`, `price_store.py` | A second, parallel storage stack for daily OHLCV price history (`daily_prices`) — in production, the same Postgres database as everything else (`schemas/postgres_schema.sql`, `storage/backend_bootstrap.py::open_price_db()`); a separate file (`data/price_history.db`) for local dev — see [Price history](#price-history-storageprice_py-schemasprice_schemasql) below and ADR-021. |
-| `schemas/` | `sqlite_schema.sql` — the local-dev DDL (52 tables). `postgres_schema.sql` — the production DDL (ADR-021, 44 tables), a near-mirror with the same tables (including `daily_prices`, and now `raw_objects`/`raw_object_lineage` per ADR-022) minus `financial_observations` and the ~8 audit-log tables that stay SQLite-only forever by design. `price_schema.sql` — the separate `daily_prices` DDL used only under the SQLite backend (its own db file there; folded into `postgres_schema.sql` directly under Postgres). |
-| `scripts/` | One-off/bulk scripts: data-workbook imports (`import_*.py`, `parse_equity_analysis_workbook.py`), NSE/SEC EDGAR/FRED batch fetchers (`batch_fetch_nse.py`, `batch_fetch_sec_edgar.py`, `batch_fetch_fred.py`, `fetch_nse_xbrl.py`, `fetch_nse_shareholding.py`, `xbrl_diagnostic.py`), backfills (`backfill_company_websites.py`, `backfill_sector_industry.py`, `backfill_price_history.py`/`backfill_price_history_usa.py` — 3-year windows and per-tier scoping, see USER_GUIDE.md §12), the daily price jobs (`fetch_daily_prices.py`/`fetch_daily_prices_usa.py`), the raw-object catalog reconciliation job (`reconcile_raw_objects.py`, ADR-022), and db sharding (`db_shard.py`/`db_unshard.py` — see [USER_GUIDE.md](USER_GUIDE.md#13-database-sharding-git-storage)). |
+| `schemas/` | `sqlite_schema.sql` — the local-dev DDL (52 tables). `postgres_schema.sql` — the production DDL (53 tables, including `daily_prices`, `raw_objects`/`raw_object_lineage` per ADR-022, and — since 2026-09-13 — `financial_observations`/`reconciliation_log` and every audit/observability table; these were excluded early on citing Neon's free-tier storage cap, which production had already grown past by the time that was revisited, so essentially the same tables exist on both backends now). The one deliberate remaining difference is `document_chunks_fts` (the SQLite FTS5 virtual table), local-dev/legacy-only — Postgres uses `document_chunks.search_vector` (`tsvector`/GIN) instead. `price_schema.sql` — the separate `daily_prices` DDL used only under the SQLite backend (its own db file there; folded into `postgres_schema.sql` directly under Postgres). |
+| `scripts/` | One-off/bulk scripts: data-workbook imports (`import_*.py`, `parse_equity_analysis_workbook.py`), NSE/SEC EDGAR/FRED batch fetchers (`batch_fetch_nse.py`, `batch_fetch_sec_edgar.py`, `batch_fetch_fred.py`, `fetch_nse_xbrl.py`, `fetch_nse_shareholding.py`, `xbrl_diagnostic.py`), backfills (`backfill_company_websites.py`, `backfill_sector_industry.py`, `backfill_price_history.py`/`backfill_price_history_usa.py` — 20-year target depth reached incrementally across scheduled runs via a per-tier time budget, and per-tier scoping, see USER_GUIDE.md §12), the daily price jobs (`fetch_daily_prices.py`/`fetch_daily_prices_usa.py`), the raw-object catalog reconciliation job (`reconcile_raw_objects.py`, ADR-022), and db sharding (`db_shard.py`/`db_unshard.py` — see [USER_GUIDE.md](USER_GUIDE.md#13-database-sharding-git-storage)). |
 
 ### Storage layer and database portability (`storage/db_types.py`)
 
@@ -276,13 +276,16 @@ places in the codebase that needed to know SQLite existed — this
 abstraction boundary is exactly what made the later Postgres migration
 (ADR-020/ADR-021) a `storage/`-only change with zero edits to business
 logic. That migration is no longer hypothetical: `storage/backend_
-bootstrap.py` swaps `storage/company_repository.py`, `fact_store.py`,
-`indicator_repository.py`, `investigation_repository.py`, `price_
-repository.py`, and `raw_object_repository.py` for their `_pg.py`
-counterparts at process start when `DATABASE_BACKEND=postgres` (production
-today — see ADR-021), with `storage/repositories.py` itself becoming a
-hybrid module (every Postgres-ported function, plus the ~33 audit-log
-functions that stay SQLite-only forever by design). `scripts/db_shard.py`/
+bootstrap.py` swaps all seven modules — `storage/company_repository.py`,
+`fact_store.py`, `indicator_repository.py`, `investigation_repository.py`,
+`price_repository.py`, `raw_object_repository.py`, and (since 2026-09-13)
+`repositories.py` itself — for their `_pg.py` counterparts at process start
+when `DATABASE_BACKEND=postgres` (production today — see ADR-021). All
+seven are now clean wholesale swaps; `storage/repositories.py` used to need
+a hybrid module (its own Postgres-ported functions plus ~33 audit-log
+functions forced onto a SQLite-only path) back when those audit tables
+were excluded from Postgres for cost reasons — once they were added, the
+hybrid mechanism became unnecessary and was removed. `scripts/db_shard.py`/
 `db_unshard.py` are a deliberate exception, not a gap: they're SQLite-
 file-splitting utilities with no portability story of their own, and stay
 that way on purpose.
@@ -1227,7 +1230,15 @@ web/app.py:1702 — GET /companies/<company_id>/price-feed.json
   `python -m scripts.fetch_daily_prices`, run as modules so their
   `storage`/`sources` imports resolve against the repo root):
   `scripts/backfill_price_history.py` for a one-time/occasional full
-  historical pull (`--period 1y/5y/10y/max`), and
+  historical pull (`--period 1y/5y/10y/max`, or `--years N`) — the six
+  EventBridge-scheduled "History price" jobs (see USER_GUIDE.md's
+  Automated schedule table) run this with `--years 20` plus a per-tier
+  `time_budget_seconds`, so a single run works backward from whatever's
+  already on file and stops once its budget is spent; coverage is a real,
+  persisted fact (existing `daily_prices` rows, no separate checkpoint),
+  so the following week's/month's run resumes automatically and pushes
+  coverage further back until the full 20 years (or the company's
+  listing date, whichever is sooner) is reached — and
   `scripts/fetch_daily_prices.py`, meant to run daily, which upserts a
   trailing 5-day window per company rather than just "yesterday" — a
   missed run (weekend, transient failure) self-heals on the next run
@@ -1365,16 +1376,19 @@ and 6 of 13 external sources are wired — see that ADR's own Implementation
 Status table for the current state; nothing here should be read as fully
 shipped yet.
 
-**A known, currently-unfixed bug** (documented in ADR-021's "Known bug,
-NOT fixed" section): `financial_observations` ingestion (NSE XBRL, SEC
-EDGAR, yfinance financials) crashes under `DATABASE_BACKEND=postgres`
-because `storage/repositories_pg.py` targets a `financial_observations`
-table that doesn't exist in `schemas/postgres_schema.sql` (deliberately
-SQLite-only, per that same ADR). The failure is per-item (caught by
-`ingestion/batch_log.py`'s `BatchRun.item()`), so it doesn't crash the
-server or a batch run — it just means no new financial-statement data has
-landed since the Postgres cutover, silently recoverable-looking in Audit
-Log → Job Runs rather than a loud outage.
+**A bug found and fixed in this area** (see ADR-021's "`financial_
+observations` under Postgres — RESOLVED 2026-09-13" section): `financial_
+observations` ingestion (NSE XBRL, SEC EDGAR, yfinance financials) used to
+crash under `DATABASE_BACKEND=postgres` because `storage/repositories_
+pg.py` targeted a `financial_observations` table that didn't exist in
+`schemas/postgres_schema.sql`. The failure was per-item (caught by
+`ingestion/batch_log.py`'s `BatchRun.item()`), so it never crashed the
+server or a whole batch run — it just meant no new financial-statement
+data had landed since the Postgres cutover, silently recoverable-looking
+in Audit Log → Job Runs rather than a loud outage. Fixed by adding
+`financial_observations`/`reconciliation_log` (and the historical data
+behind them) to Postgres for real, once measuring their actual size
+showed the original storage-cost concern no longer applied.
 
 ## Known gaps / not yet built
 

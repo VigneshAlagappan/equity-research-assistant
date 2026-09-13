@@ -309,13 +309,16 @@ now groups **38 jobs across 9 collapsible categories** (`scheduling/
 jobs.py`'s `SCHEDULED_JOBS`, `category` field) — Daily price, History
 price, Financials, Shareholding, Corporate actions, Macro, Insights,
 Documents, Maintenance — instead of one flat table. Beyond the jobs this
-section already covers, that registry also now includes: 6 on-demand
-"History price" backfill jobs (3-year close price & volume windows, one
+section already covers, that registry also now includes: 6 automated, EventBridge-scheduled
+"History price" backfill jobs (targeting 20 years of close price & volume
+per company, or since listing if shorter, reached incrementally across
+scheduled runs via a per-tier time budget rather than one long pull — one
 per NSE tier — Nifty 50/Next 50/Midcap 150/Smallcap 250/Micro-Cap — plus
-USA), 10 corporate-actions fetch/ingest jobs (India, per tier), and a new
-Weekly Maintenance job, `raw_object_reconciliation` (docs/ADR/022 — S3↔
-Postgres catalog reconciliation, report-only). Every run's status is
-visible in Audit Log > Job Runs, same as before. Everything the sections
+USA; see USER_GUIDE.md's Automated schedule table), 10 corporate-actions
+fetch/ingest jobs (India, per tier), and a new Weekly Maintenance job,
+`raw_object_reconciliation` (docs/ADR/022 — S3↔ Postgres catalog
+reconciliation, report-only). Every run's status is visible in Audit Log
+> Job Runs, same as before. Everything the sections
 above call a genuine gap (macro insights, RBI/IITM/DBIE macro data) still
 needs real implementation work first — not just a cron entry. And even for
 sharding, "ready" is the local file-writing part
