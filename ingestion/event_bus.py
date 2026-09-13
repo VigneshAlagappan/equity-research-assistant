@@ -32,13 +32,14 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from storage.db_types import DBConnection, Row
 import uuid
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from ingestion.events import DatasetIngestedEvent
-from storage.database import utcnow_iso
+from storage.database import init_db, utcnow_iso
 from storage.repositories import (
     finish_worker_log,
     get_worker_log,
@@ -96,9 +97,18 @@ def registered_workers() -> list[_Registration]:
     return list(_REGISTRY.values())
 
 
-def _run_one(conn: DBConnection, registration: _Registration, event: DatasetIngestedEvent) -> WorkerOutcome:
+def _run_one(
+    conn: DBConnection, logs_conn: DBConnection, registration: _Registration, event: DatasetIngestedEvent
+) -> WorkerOutcome:
+    """`conn` is the real, backend-appropriate connection handed to the
+    worker's own business logic (registration.handler); `logs_conn` is
+    always SQLite (dataset_events/worker_processing_log are SQLite-only
+    forever, storage/backend_bootstrap.py's docstring) -- two different
+    connections, not the same one under two names, since under
+    DATABASE_BACKEND=postgres they're genuinely two different databases.
+    See publish()/replay() for how logs_conn is chosen."""
     log_id = start_worker_log(
-        conn, event_id=event.event_id, ingestion_id=event.ingestion_id,
+        logs_conn, event_id=event.event_id, ingestion_id=event.ingestion_id,
         worker_name=registration.name, worker_version=registration.version,
     )
     try:
@@ -108,11 +118,12 @@ def _run_one(conn: DBConnection, registration: _Registration, event: DatasetInge
             "Worker %s (v%s) failed on event %s: %s",
             registration.name, registration.version, event.event_id, exc, exc_info=True,
         )
-        finish_worker_log(conn, log_id, status="failed", error_message=str(exc))
+        finish_worker_log(logs_conn, log_id, status="failed", error_message=str(exc))
         return WorkerOutcome(registration.name, registration.version, WorkerResult(status="failed", error=str(exc)))
 
     finish_worker_log(
-        conn, log_id, status=result.status, output_reference=result.output_reference, error_message=result.error,
+        logs_conn, log_id, status=result.status, output_reference=result.output_reference,
+        error_message=result.error,
     )
     return WorkerOutcome(registration.name, registration.version, result)
 
@@ -120,14 +131,27 @@ def _run_one(conn: DBConnection, registration: _Registration, event: DatasetInge
 def publish(conn: DBConnection, event: DatasetIngestedEvent) -> list[WorkerOutcome]:
     """Persist `event` to the Event Store, then dispatch it to every
     registered worker exactly once. Fills event_id/ingested_at if the
-    caller left them blank."""
+    caller left them blank.
+
+    dataset_events/worker_processing_log are SQLite-only forever (storage/
+    backend_bootstrap.py's docstring) -- `conn` here is whatever backend-
+    appropriate connection the caller (ingestion/pipeline.py) is using for
+    the real ingestion, a psycopg2 connection under DATABASE_BACKEND=
+    postgres. Opens a dedicated SQLite connection for the event-store/
+    worker-log bookkeeping specifically when `conn` isn't already one, same
+    fix/reasoning as llm/observability.py's record()."""
     if not event.event_id:
         event = replace(event, event_id=str(uuid.uuid4()))
     if not event.ingested_at:
         event = replace(event, ingested_at=utcnow_iso())
 
-    insert_dataset_event(conn, event)
-    return [_run_one(conn, registration, event) for registration in registered_workers()]
+    logs_conn = conn if isinstance(conn, sqlite3.Connection) else init_db()
+    try:
+        insert_dataset_event(logs_conn, event)
+        return [_run_one(conn, logs_conn, registration, event) for registration in registered_workers()]
+    finally:
+        if logs_conn is not conn:
+            logs_conn.close()
 
 
 def _event_from_row(row: Row) -> DatasetIngestedEvent:
@@ -168,17 +192,24 @@ def replay(
     given (event_id, worker_name, worker_version) is left alone. force=True
     re-runs it anyway -- rare; prefer bumping the worker's version so old
     history is preserved under its own row instead of overwritten.
+
+    Same conn/logs_conn split as publish() -- see its docstring.
     """
-    events = list_dataset_events(conn, event_id=event_id, dataset_type=dataset_type, since=since)
-    outcomes: list[WorkerOutcome] = []
-    for row in events:
-        event = _event_from_row(row)
-        for registration in registered_workers():
-            if worker_name is not None and registration.name != worker_name:
-                continue
-            if not force:
-                existing = get_worker_log(conn, event.event_id, registration.name, registration.version)
-                if existing is not None and existing["status"] in ("ok", "skipped"):
+    logs_conn = conn if isinstance(conn, sqlite3.Connection) else init_db()
+    try:
+        events = list_dataset_events(logs_conn, event_id=event_id, dataset_type=dataset_type, since=since)
+        outcomes: list[WorkerOutcome] = []
+        for row in events:
+            event = _event_from_row(row)
+            for registration in registered_workers():
+                if worker_name is not None and registration.name != worker_name:
                     continue
-            outcomes.append(_run_one(conn, registration, event))
-    return outcomes
+                if not force:
+                    existing = get_worker_log(logs_conn, event.event_id, registration.name, registration.version)
+                    if existing is not None and existing["status"] in ("ok", "skipped"):
+                        continue
+                outcomes.append(_run_one(conn, logs_conn, registration, event))
+        return outcomes
+    finally:
+        if logs_conn is not conn:
+            logs_conn.close()
