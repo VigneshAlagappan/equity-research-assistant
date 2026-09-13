@@ -1312,6 +1312,20 @@ EXISTS` handles new tables; a handful of `_migrate_*` functions handle
 SQLite's `ALTER TABLE` can't express, like relaxing `NOT NULL`) against an
 existing database, run unconditionally and idempotently on every `init_db()`.
 
+## Persistence and search backend (2026-09-13 update)
+
+The sections below (Tech stack, Hybrid Document Retrieval, Data model) were
+written for the SQLite-only era and describe FTS5 as *the* keyword-search
+mechanism. That's no longer accurate for a production deployment: as of
+2026-09-13, `DATABASE_BACKEND=postgres` is live (Neon), Postgres full-text
+search (`tsvector`/GIN) over `document_chunks` is fully backfilled and is
+what production actually queries, and investigations' full content
+(hypotheses + evidence) now lives in S3, not solely in relational tables.
+**See [ADR-021](adr/021-persistence-and-search-responsibility-split.md)
+for the authoritative, current statement of which store owns which
+responsibility** — FTS5 remains accurate below only as the local/
+`DATABASE_BACKEND=sqlite` dev-mode description, not the production one.
+
 ## Known gaps / not yet built
 
 Everything below is a real gap today, not a hypothetical — grouped by the

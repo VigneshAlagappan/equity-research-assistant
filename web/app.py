@@ -94,6 +94,7 @@ from indicators.settings import (
 )
 from ingestion.detector import ADAPTER_CLASSES
 from ingestion.pipeline import ingest_file
+from research.abstracts import generate_abstract
 from research.assistant import answer_question
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
@@ -208,6 +209,7 @@ from storage.repositories import (
     save_generated_report,
     save_report_evidence,
     save_report_followups,
+    update_generated_report_s3_metadata,
     set_company_index_tags,
     set_company_list_column_settings,
     set_overview_ratio_settings,
@@ -386,6 +388,32 @@ def _embed_question_for_reuse(question: str) -> tuple[list[float] | None, str | 
         return provider.embed_text(question), provider.model_id
     except EmbeddingProviderUnavailable:
         return None, None
+
+
+def _persist_generated_report_s3(
+    db, thread_id: str, question: str, company_ids: list[str], statement_type: str,
+    report_markdown: str, evidence: list[dict] | None = None, followups: list[str] | None = None,
+) -> None:
+    """ADR-021: alongside save_generated_report()/save_report_evidence()/
+    save_report_followups() (unchanged, still called exactly as before by
+    every caller below — report_markdown stays the live NOT-NULL column,
+    see storage/database.py::_migrate_generated_reports_s3_columns for why
+    it's kept populated rather than moved out), also write the full
+    report (+ evidence + followups) as one JSON artifact to S3 and record
+    its key + an LLM-generated abstract + the current user (if any) on the
+    generated_reports row. Called from all four /research/... routes that
+    save a report, so every one gets identical treatment — no route-
+    specific variation to keep in sync."""
+    artifact = {
+        "thread_id": thread_id, "question": question, "company_ids": company_ids,
+        "statement_type": statement_type, "report_markdown": report_markdown,
+        "evidence": evidence or [], "followups": followups or [],
+    }
+    s3_key = f"threads/{thread_id}/v1.json"
+    default_document_store().store(s3_key, json.dumps(artifact, indent=2).encode("utf-8"))
+    abstract = generate_abstract(db, report_markdown)
+    owner_id = g.user["user_id"] if g.user else None
+    update_generated_report_s3_metadata(db, thread_id, s3_key=s3_key, abstract=abstract, version=1, owner_id=owner_id)
 
 
 def _split_index_tags(tags: list[str]) -> tuple[list[str], list[str], list[str]]:
@@ -2795,6 +2823,7 @@ def create_app() -> Flask:
                     db, thread_id, question, company_ids, statement_type, answer,
                     question_embedding=question_embedding, question_embedding_model=question_embedding_model,
                 )
+                _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer)
                 return jsonify(
                     question=question,
                     company_ids=company_ids,
@@ -2853,6 +2882,7 @@ def create_app() -> Flask:
             db, thread_id, question, company_ids, statement_type, answer,
             question_embedding=question_embedding, question_embedding_model=question_embedding_model,
         )
+        _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer)
         thread_url = url_for("research_thread", thread_id=thread_id)
 
         return jsonify(
@@ -2931,6 +2961,7 @@ def create_app() -> Flask:
                     db, thread_id, question, company_ids, statement_type, answer,
                     question_embedding=question_embedding, question_embedding_model=question_embedding_model,
                 )
+                _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer)
                 return jsonify(thread_id=thread_id, url=url_for("research_thread", thread_id=thread_id))
 
         try:
@@ -2944,17 +2975,18 @@ def create_app() -> Flask:
             db, thread_id, question, company_ids, statement_type, result.report_markdown,
             question_embedding=question_embedding, question_embedding_model=question_embedding_model,
         )
+        evidence_dicts = [
+            {"kind": e.kind, "company_id": e.company_id, "label": e.label, "value": e.value, "citation": e.citation}
+            for e in result.evidence
+        ]
         if result.evidence:
-            save_report_evidence(
-                db,
-                thread_id,
-                [
-                    {"kind": e.kind, "company_id": e.company_id, "label": e.label, "value": e.value, "citation": e.citation}
-                    for e in result.evidence
-                ],
-            )
+            save_report_evidence(db, thread_id, evidence_dicts)
         if result.followups:
             save_report_followups(db, thread_id, result.followups)
+        _persist_generated_report_s3(
+            db, thread_id, question, company_ids, statement_type, result.report_markdown,
+            evidence=evidence_dicts, followups=result.followups,
+        )
         return jsonify(thread_id=thread_id, url=url_for("research_thread", thread_id=thread_id))
 
     @app.route("/research/thread/<thread_id>")
@@ -2962,13 +2994,32 @@ def create_app() -> Flask:
         db = get_db()
         generated = get_generated_report(db, thread_id)
         if generated is not None:
+            # ADR-021: prefer the S3 artifact when present (every report
+            # saved since the persistence split) -- report_markdown/
+            # research_thread_evidence/research_thread_followups stay
+            # populated too (see storage/database.py's
+            # _migrate_generated_reports_s3_columns for why), so this is a
+            # belt-and-suspenders read, not a required fallback the way
+            # investigate_view()'s is -- but reading from S3 here keeps
+            # the two entities' render logic consistent, and proves the
+            # artifact is genuinely the thing served, not just written and
+            # never read.
+            if generated["s3_key"]:
+                artifact = json.loads(default_document_store().retrieve(generated["s3_key"]))
+                report_markdown = artifact["report_markdown"]
+                report_evidence = artifact["evidence"]
+                report_followups = artifact["followups"]
+            else:
+                report_markdown = generated["report_markdown"]
+                report_evidence = list_report_evidence(db, thread_id)
+                report_followups = list_report_followups(db, thread_id)
             return render_template(
                 "research_thread.html",
                 thread_id=thread_id,
                 generated=generated,
-                report_html=_render_markdown_with_tags(generated["report_markdown"]),
-                report_evidence=list_report_evidence(db, thread_id),
-                report_followups=list_report_followups(db, thread_id),
+                report_html=_render_markdown_with_tags(report_markdown),
+                report_evidence=report_evidence,
+                report_followups=report_followups,
                 is_watchlisted=is_watchlisted(db, "thread", thread_id),
             )
 

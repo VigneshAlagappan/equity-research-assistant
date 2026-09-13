@@ -1444,6 +1444,14 @@ def _row_to_generated_report(row: Row) -> dict:
         "question_embedding": json.loads(row["question_embedding"]) if row["question_embedding"] else None,
         "question_embedding_model": row["question_embedding_model"],
         "hidden_at": row["hidden_at"],
+        # ADR-021 persistence-split columns -- live on Neon (see this
+        # session's ALTER TABLE), same reasoning as storage/repositories.py's
+        # sibling function.
+        "s3_key": row.get("s3_key"),
+        "abstract": row.get("abstract"),
+        "version": row.get("version"),
+        "visibility": row.get("visibility", "private"),
+        "owner_id": row.get("owner_id"),
     }
 
 
@@ -1562,6 +1570,20 @@ def list_report_followups(conn: DBConnection, thread_id: str) -> list[str]:
             (thread_id,),
         )
         return [row["followup_text"] for row in cur.fetchall()]
+
+
+def update_generated_report_s3_metadata(
+    conn: DBConnection, thread_id: str, *, s3_key: str, abstract: str | None,
+    version: int, owner_id: int | None = None,
+) -> None:
+    """Postgres counterpart of storage/repositories.py's function of the
+    same name -- see its docstring for the full reasoning."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE generated_reports SET s3_key = %s, abstract = %s, version = %s, owner_id = %s WHERE thread_id = %s",
+            (s3_key, abstract, version, owner_id, thread_id),
+        )
+    conn.commit()
 
 
 def get_latest_data_timestamp(conn: DBConnection, company_ids: list[str]) -> str | None:

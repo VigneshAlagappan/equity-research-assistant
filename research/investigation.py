@@ -63,6 +63,7 @@ from research.hypothesis_evaluator import HypothesisEvaluation, HypothesisEvalua
 from research.hypothesis_generator import Hypothesis, HypothesisGenerationError, generate_hypotheses
 from research.investigation_planner import InvestigationPlan, plan_and_gather
 from research.research_synthesis import ResearchSynthesis, ResearchSynthesisError, synthesize
+from research.abstracts import generate_abstract
 from research.temporal import normalize_as_of
 from storage.document_store import default_document_store
 from storage.fact_store import FactStore, default_fact_store
@@ -322,7 +323,7 @@ def _persist(conn: DBConnection, investigation: Investigation, statement_type: s
     }
     s3_key = f"investigations/{investigation.investigation_id}/v1.json"
     default_document_store().store(s3_key, json.dumps(artifact, indent=2).encode("utf-8"))
-    abstract = (synthesis.strongest_explanation[:500] if synthesis and synthesis.strongest_explanation else None)
+    abstract = generate_abstract(conn, synthesis.strongest_explanation if synthesis else None)
     fact_store.update_investigation_s3_metadata(
         conn, investigation.investigation_id, s3_key=s3_key, abstract=abstract,
         version=1, strongest_verdict=strongest_verdict,

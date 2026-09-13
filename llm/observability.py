@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from storage.db_types import DBConnection
 
 from context.optimizer import OptimizedContext
 from llm.router import RouteResult
+from storage.database import init_db
 from storage.repositories import insert_llm_call_log
 
 logger = logging.getLogger(__name__)
@@ -80,7 +82,20 @@ def record(
     which skips the call entirely. `investigation_id` tags a call made as
     part of one research/investigation.py run (hypothesis generation/
     evaluation, research synthesis, or a macro-retrieval-plan call along the
-    way) so its cost can be totalled per investigation."""
+    way) so its cost can be totalled per investigation.
+
+    insert_llm_call_log is audit/log-only and stays SQLite-only forever
+    (storage/backend_bootstrap.py's _SQLITE_ONLY_REPOSITORY_FUNCTIONS) --
+    every caller of record() (research/investigation.py, assistant.py,
+    signals_report.py, and everything else in research/) passes its own
+    real data connection, which is Postgres in production. Opens a
+    dedicated SQLite connection for the log write specifically when
+    `conn` isn't already one, same fix/reasoning as ingestion/batch_log.py's
+    BatchRun -- found the hard way: this crashed with `AttributeError:
+    'psycopg2.extensions.connection' object has no attribute 'execute'`
+    the moment any LLM-calling feature (Ask AI, Deep Dive investigations,
+    abstract generation) ran against a Postgres-backed deployment,
+    discovered while backfilling historical investigation/report abstracts."""
     response = result.response
     cost = _estimate_cost_usd(
         response.model, response.input_tokens, response.output_tokens,
@@ -104,34 +119,39 @@ def record(
         graph_hit_thread_id is not None, graph_hit_thread_id, graph_hit_score, investigation_id,
     )
 
-    insert_llm_call_log(
-        conn,
-        task_name=task_name,
-        company_ids=",".join(company_ids),
-        question=question,
-        thread_id=thread_id,
-        complexity_tier=result.hardness.tier.value,
-        complexity_level=result.hardness.level,
-        complexity_reason=result.hardness.reason,
-        model_used=response.model,
-        provider_used=response.provider,
-        fallback_used=result.fallback_used,
-        attempts_json=_attempts_json(result.attempts),
-        input_tokens=response.input_tokens,
-        output_tokens=response.output_tokens,
-        estimated_cost_usd=cost,
-        latency_ms=result.latency_ms,
-        stop_reason=response.stop_reason,
-        cache_creation_input_tokens=response.cache_creation_input_tokens,
-        cache_read_input_tokens=response.cache_read_input_tokens,
-        context_tokens_before=optimized.total_tokens_before if optimized else None,
-        context_tokens_after=optimized.total_tokens_after if optimized else None,
-        context_items_dropped=len(optimized.dropped) if optimized else None,
-        graph_hit=graph_hit_thread_id is not None,
-        graph_hit_thread_id=graph_hit_thread_id,
-        graph_hit_score=graph_hit_score,
-        investigation_id=investigation_id,
-    )
+    logs_conn = conn if isinstance(conn, sqlite3.Connection) else init_db()
+    try:
+        insert_llm_call_log(
+            logs_conn,
+            task_name=task_name,
+            company_ids=",".join(company_ids),
+            question=question,
+            thread_id=thread_id,
+            complexity_tier=result.hardness.tier.value,
+            complexity_level=result.hardness.level,
+            complexity_reason=result.hardness.reason,
+            model_used=response.model,
+            provider_used=response.provider,
+            fallback_used=result.fallback_used,
+            attempts_json=_attempts_json(result.attempts),
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            estimated_cost_usd=cost,
+            latency_ms=result.latency_ms,
+            stop_reason=response.stop_reason,
+            cache_creation_input_tokens=response.cache_creation_input_tokens,
+            cache_read_input_tokens=response.cache_read_input_tokens,
+            context_tokens_before=optimized.total_tokens_before if optimized else None,
+            context_tokens_after=optimized.total_tokens_after if optimized else None,
+            context_items_dropped=len(optimized.dropped) if optimized else None,
+            graph_hit=graph_hit_thread_id is not None,
+            graph_hit_thread_id=graph_hit_thread_id,
+            graph_hit_score=graph_hit_score,
+            investigation_id=investigation_id,
+        )
+    finally:
+        if logs_conn is not conn:
+            logs_conn.close()
 
 
 def record_reuse(
@@ -150,24 +170,29 @@ def record_reuse(
         "llm_call task=%s companies=%s reuse_hit=true reused_thread_id=%s similarity=%.2f",
         task_name, ",".join(company_ids), reused_thread_id, similarity,
     )
-    insert_llm_call_log(
-        conn,
-        task_name=task_name,
-        company_ids=",".join(company_ids),
-        question=question,
-        thread_id=None,
-        complexity_tier="n/a",
-        complexity_level=0,
-        complexity_reason=f"reused prior investigation (similarity {similarity:.2f})",
-        model_used="reused",
-        provider_used="cache",
-        fallback_used=False,
-        attempts_json="[]",
-        input_tokens=0,
-        output_tokens=0,
-        estimated_cost_usd=0.0,
-        latency_ms=0.0,
-        stop_reason="reused",
-        reuse_hit=True,
-        reused_thread_id=reused_thread_id,
-    )
+    logs_conn = conn if isinstance(conn, sqlite3.Connection) else init_db()
+    try:
+        insert_llm_call_log(
+            logs_conn,
+            task_name=task_name,
+            company_ids=",".join(company_ids),
+            question=question,
+            thread_id=None,
+            complexity_tier="n/a",
+            complexity_level=0,
+            complexity_reason=f"reused prior investigation (similarity {similarity:.2f})",
+            model_used="reused",
+            provider_used="cache",
+            fallback_used=False,
+            attempts_json="[]",
+            input_tokens=0,
+            output_tokens=0,
+            estimated_cost_usd=0.0,
+            latency_ms=0.0,
+            stop_reason="reused",
+            reuse_hit=True,
+            reused_thread_id=reused_thread_id,
+        )
+    finally:
+        if logs_conn is not conn:
+            logs_conn.close()

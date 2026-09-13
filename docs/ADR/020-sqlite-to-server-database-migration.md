@@ -1,6 +1,6 @@
 # ADR-020 — Preserve a Controlled Migration Path from SQLite to a Server Database
 
-**Status:** Accepted  
+**Status:** Accepted — **historical context; the migration this ADR anticipated has since happened.** `DATABASE_BACKEND=postgres` (Neon) is live in production as of 2026-09-12. See ADR-021 (Persistence and Search Responsibility Split) for the current, actually-deployed architecture and what still runs on SQLite by deliberate design (not because the migration is incomplete).
 **Date:** 2026-09-05
 
 ## Context

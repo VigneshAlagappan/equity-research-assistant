@@ -343,9 +343,16 @@ CREATE TABLE IF NOT EXISTS generated_reports (
                                   -- storage/database.py's _migrate_case_visibility_columns,
                                   -- SQLite added these via ALTER TABLE rather than in the
                                   -- original CREATE TABLE; Postgres gets them directly here
-  deleted_at TEXT                -- permanent-looking in the UI ("archived forever"), but the
+  deleted_at TEXT,               -- permanent-looking in the UI ("archived forever"), but the
                                   -- row itself is never actually DELETEd, same "never truly
                                   -- destroy data" stance as archived companies
+  s3_key TEXT,                   -- ported from storage/database.py's
+                                  -- _migrate_generated_reports_s3_columns -- full report
+                                  -- (markdown+evidence+followups) JSON artifact's S3 key
+  abstract TEXT,                 -- short preview
+  version INTEGER,
+  visibility TEXT NOT NULL DEFAULT 'private',
+  owner_id INTEGER               -- nullable -- see _migrate_case_ownership_visibility_columns
 );
 
 -- ============================================================
@@ -639,7 +646,9 @@ CREATE TABLE IF NOT EXISTS investigations (
                                      -- full hypotheses+evidence JSON artifact's S3 key
   abstract TEXT,                    -- short preview derived from the synthesis narrative
   version INTEGER,
-  strongest_verdict TEXT            -- computed once at persist time (was a live JOIN before)
+  strongest_verdict TEXT,           -- computed once at persist time (was a live JOIN before)
+  visibility TEXT NOT NULL DEFAULT 'private',
+  owner_id INTEGER                  -- nullable -- see _migrate_case_ownership_visibility_columns
 );
 
 -- One investigation <-> many companies. `investigations.company_ids` above

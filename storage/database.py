@@ -45,6 +45,8 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_users_theme_column(conn)
     _migrate_case_visibility_columns(conn)
     _migrate_investigation_s3_columns(conn)
+    _migrate_generated_reports_s3_columns(conn)
+    _migrate_case_ownership_visibility_columns(conn)
     _migrate_documents_table(conn)
     _migrate_documents_old_fk_references(conn)
     _migrate_document_chunks_fk_reference(conn)
@@ -408,6 +410,51 @@ def _migrate_investigation_s3_columns(conn: sqlite3.Connection) -> None:
     ):
         if column not in columns:
             conn.execute(f"ALTER TABLE investigations ADD COLUMN {column} {ddl}")
+
+
+def _migrate_case_ownership_visibility_columns(conn: sqlite3.Connection) -> None:
+    """visibility/owner_id for both Cases-list tables (investigations,
+    generated_reports) -- ADR-021's "ownership and visibility" metadata
+    fields. visibility defaults to 'private' (ADR-021: "Private by
+    default"); no publish workflow exists yet (net-new feature, out of
+    scope for this persistence migration), so every row is 'private'
+    until that's built. owner_id is nullable -- every pre-existing row
+    predates any concept of ownership, and most write paths today run
+    without a logged-in user (g.user is None for an anonymous visitor),
+    so NULL legitimately means "no owner on file", not a data-quality
+    problem to backfill."""
+    for table in ("investigations", "generated_reports"):
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not columns:
+            continue
+        if "visibility" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'")
+        if "owner_id" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN owner_id INTEGER")
+
+
+def _migrate_generated_reports_s3_columns(conn: sqlite3.Connection) -> None:
+    """generated_reports counterpart of _migrate_investigation_s3_columns
+    above -- see that function's docstring for the full reasoning.
+    report_markdown/research_thread_evidence/research_thread_followups
+    keep being written exactly as before (research/signals_report.py's
+    callers in web/app.py are unchanged) -- report_markdown stays NOT
+    NULL and populated on every new row too, deliberately: S3 is the
+    authoritative copy going forward (ADR-021), but relaxing this
+    column's NOT NULL constraint would require a full SQLite table
+    rebuild (ALTER TABLE can't do it directly), and context/graph.py's
+    sector-peer bridging plus context/graph_neo4j.py's sync_graph() both
+    read report_markdown for EVERY historical report in a loop -- one on
+    a live, synchronous planning path, not a background job. Keeping the
+    column populated avoids both the risky rebuild and rewriting those
+    two hot-path consumers to do one S3 fetch per row. See ADR-021 for
+    this tradeoff stated explicitly, not silently."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(generated_reports)")}
+    if not columns:
+        return
+    for column, ddl in (("s3_key", "TEXT"), ("abstract", "TEXT"), ("version", "INTEGER")):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE generated_reports ADD COLUMN {column} {ddl}")
 
 
 def _migrate_documents_table(conn: sqlite3.Connection) -> None:

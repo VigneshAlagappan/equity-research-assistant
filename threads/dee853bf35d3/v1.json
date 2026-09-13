@@ -1,0 +1,12 @@
+{
+  "thread_id": "dee853bf35d3",
+  "question": "What was rainfall in India?",
+  "company_ids": [
+    "HDFCBANK",
+    "ICICIBANK"
+  ],
+  "statement_type": "consolidated",
+  "report_markdown": "Rainfall was steady. [FACT] some fact.",
+  "evidence": [],
+  "followups": []
+}

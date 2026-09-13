@@ -1,0 +1,159 @@
+{
+  "thread_id": "b031e8af12f2",
+  "question": "How did net profit change?",
+  "company_ids": [
+    "HDFCBANK"
+  ],
+  "statement_type": "consolidated",
+  "report_markdown": "## The Short Answer\nNet profit rose. [FACT] x.",
+  "evidence": [
+    {
+      "kind": "FACT",
+      "company_id": "HDFCBANK",
+      "label": "Net Profit FY2023",
+      "value": "17,000.00 INR_CRORE",
+      "citation": "reported for FY2023 (only source available)"
+    },
+    {
+      "kind": "FACT",
+      "company_id": "HDFCBANK",
+      "label": "Net Profit FY2024",
+      "value": "20,500.00 INR_CRORE",
+      "citation": "reported for FY2024 (only source available)"
+    },
+    {
+      "kind": "CALCULATION",
+      "company_id": "HDFCBANK",
+      "label": "net_profit YoY growth (FY2024)",
+      "value": "20.59%",
+      "citation": "YoY growth = 20.6%, calculated from FY2023-FY2024 reported net_profit (17000 -> 20500 INR_CRORE)"
+    },
+    {
+      "kind": "CALCULATION",
+      "company_id": "HDFCBANK",
+      "label": "net_profit CAGR (FY2023-FY2024)",
+      "value": "20.59%",
+      "citation": "CAGR = 20.6%, calculated from FY2023-FY2024 reported net_profit (17000 -> 20500 INR_CRORE)"
+    },
+    {
+      "kind": "FACT",
+      "company_id": "HDFCBANK",
+      "label": "Total Assets FY2023",
+      "value": "2,200,000.00 INR_CRORE",
+      "citation": "reported for FY2023 (only source available)"
+    },
+    {
+      "kind": "FACT",
+      "company_id": "HDFCBANK",
+      "label": "Total Assets FY2024",
+      "value": "2,550,000.00 INR_CRORE",
+      "citation": "reported for FY2024 (only source available)"
+    },
+    {
+      "kind": "CALCULATION",
+      "company_id": "HDFCBANK",
+      "label": "total_assets YoY growth (FY2024)",
+      "value": "15.91%",
+      "citation": "YoY growth = 15.9%, calculated from FY2023-FY2024 reported total_assets (2.2e+06 -> 2.55e+06 INR_CRORE)"
+    },
+    {
+      "kind": "CALCULATION",
+      "company_id": "HDFCBANK",
+      "label": "total_assets CAGR (FY2023-FY2024)",
+      "value": "15.91%",
+      "citation": "CAGR = 15.9%, calculated from FY2023-FY2024 reported total_assets (2.2e+06 -> 2.55e+06 INR_CRORE)"
+    },
+    {
+      "kind": "FACT",
+      "company_id": "HDFCBANK",
+      "label": "Advances (Loans) FY2023",
+      "value": "1,500,000.00 INR_CRORE",
+      "citation": "reported for FY2023 (only source available)"
+    },
+    {
+      "kind": "FACT",
+      "company_id": "HDFCBANK",
+      "label": "Advances (Loans) FY2024",
+      "value": "1,750,000.00 INR_CRORE",
+      "citation": "reported for FY2024 (only source available)"
+    },
+    {
+      "kind": "CALCULATION",
+      "company_id": "HDFCBANK",
+      "label": "advances YoY growth (FY2024)",
+      "value": "16.67%",
+      "citation": "YoY growth = 16.7%, calculated from FY2023-FY2024 reported advances (1.5e+06 -> 1.75e+06 INR_CRORE)"
+    },
+    {
+      "kind": "CALCULATION",
+      "company_id": "HDFCBANK",
+      "label": "advances CAGR (FY2023-FY2024)",
+      "value": "16.67%",
+      "citation": "CAGR = 16.7%, calculated from FY2023-FY2024 reported advances (1.5e+06 -> 1.75e+06 INR_CRORE)"
+    },
+    {
+      "kind": "FACT",
+      "company_id": "HDFCBANK",
+      "label": "Deposits FY2023",
+      "value": "1,800,000.00 INR_CRORE",
+      "citation": "reported for FY2023 (only source available)"
+    },
+    {
+      "kind": "FACT",
+      "company_id": "HDFCBANK",
+      "label": "Deposits FY2024",
+      "value": "2,100,000.00 INR_CRORE",
+      "citation": "reported for FY2024 (only source available)"
+    },
+    {
+      "kind": "CALCULATION",
+      "company_id": "HDFCBANK",
+      "label": "deposits YoY growth (FY2024)",
+      "value": "16.67%",
+      "citation": "YoY growth = 16.7%, calculated from FY2023-FY2024 reported deposits (1.8e+06 -> 2.1e+06 INR_CRORE)"
+    },
+    {
+      "kind": "CALCULATION",
+      "company_id": "HDFCBANK",
+      "label": "deposits CAGR (FY2023-FY2024)",
+      "value": "16.67%",
+      "citation": "CAGR = 16.7%, calculated from FY2023-FY2024 reported deposits (1.8e+06 -> 2.1e+06 INR_CRORE)"
+    },
+    {
+      "kind": "CALCULATION",
+      "company_id": "HDFCBANK",
+      "label": "ROA (FY2024)",
+      "value": "0.86%",
+      "citation": "ROA = 0.86%, calculated as net_profit FY2024 (20500 INR_CRORE) / average total_assets (FY2023-FY2024: 2.375e+06 INR_CRORE)"
+    },
+    {
+      "kind": "CALCULATION",
+      "company_id": "HDFCBANK",
+      "label": "ROE (FY2024)",
+      "value": "8.70%",
+      "citation": "ROE = 8.70%, calculated as net_profit FY2024 (20500 INR_CRORE) / average total_shareholders_funds (FY2023-FY2024: 235552 INR_CRORE)"
+    },
+    {
+      "kind": "FACT",
+      "company_id": "HDFCBANK",
+      "label": "gross_npa_percent (FY2024)",
+      "value": "1.10%",
+      "citation": "1.1%, as reported for FY2024 (only source available)"
+    },
+    {
+      "kind": "FACT",
+      "company_id": "HDFCBANK",
+      "label": "net_npa_percent (FY2024)",
+      "value": "0.20%",
+      "citation": "0.2%, as reported for FY2024 (only source available)"
+    },
+    {
+      "kind": "FACT",
+      "company_id": "HDFCBANK",
+      "label": "return_on_equity_percent (FY2024)",
+      "value": "17.80%",
+      "citation": "17.8%, as reported for FY2024 (only source available)"
+    }
+  ],
+  "followups": []
+}

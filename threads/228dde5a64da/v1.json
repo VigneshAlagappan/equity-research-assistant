@@ -1,0 +1,11 @@
+{
+  "thread_id": "228dde5a64da",
+  "question": "How did net profit change?",
+  "company_ids": [
+    "HDFCBANK"
+  ],
+  "statement_type": "consolidated",
+  "report_markdown": "Net profit rose. [FACT] x.",
+  "evidence": [],
+  "followups": []
+}

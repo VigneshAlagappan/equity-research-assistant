@@ -1971,6 +1971,7 @@ def find_knowledge_claims_for_entity_ids(conn: sqlite3.Connection, entity_ids: l
 
 
 def _row_to_generated_report(row: sqlite3.Row) -> dict:
+    columns = row.keys()
     return {
         "thread_id": row["thread_id"],
         "question": row["question"],
@@ -1981,6 +1982,17 @@ def _row_to_generated_report(row: sqlite3.Row) -> dict:
         "question_embedding": json.loads(row["question_embedding"]) if row["question_embedding"] else None,
         "question_embedding_model": row["question_embedding_model"],
         "hidden_at": row["hidden_at"],
+        # s3_key/abstract/version/visibility/owner_id predate a report saved
+        # before ADR-021's persistence split (or, for s3_key/abstract/
+        # version, before this row's own generated_reports_s3_columns
+        # migration ran) -- "not in columns" only for a genuinely stale
+        # schema snapshot (shouldn't happen once init_db() has run), NULL
+        # for every real pre-migration row.
+        "s3_key": row["s3_key"] if "s3_key" in columns else None,
+        "abstract": row["abstract"] if "abstract" in columns else None,
+        "version": row["version"] if "version" in columns else None,
+        "visibility": row["visibility"] if "visibility" in columns else "private",
+        "owner_id": row["owner_id"] if "owner_id" in columns else None,
     }
 
 
@@ -2114,6 +2126,24 @@ def list_report_followups(conn: sqlite3.Connection, thread_id: str) -> list[str]
         "SELECT followup_text FROM research_thread_followups WHERE thread_id = ? ORDER BY sort_order", (thread_id,)
     ).fetchall()
     return [row["followup_text"] for row in rows]
+
+
+def update_generated_report_s3_metadata(
+    conn: sqlite3.Connection, thread_id: str, *, s3_key: str, abstract: str | None,
+    version: int, owner_id: int | None = None,
+) -> None:
+    """generated_reports counterpart of update_investigation_s3_metadata --
+    see that function's docstring for the full reasoning. report_markdown/
+    research_thread_evidence/research_thread_followups keep being written
+    exactly as before by whichever web/app.py route calls save_generated_
+    report()/save_report_evidence()/save_report_followups() -- this only
+    records the equivalent full-content S3 artifact's location + a short
+    abstract + who (if anyone was logged in) triggered the generation."""
+    conn.execute(
+        "UPDATE generated_reports SET s3_key = ?, abstract = ?, version = ?, owner_id = ? WHERE thread_id = ?",
+        (s3_key, abstract, version, owner_id, thread_id),
+    )
+    conn.commit()
 
 
 def insert_llm_call_log(
