@@ -459,10 +459,26 @@ skip-if-already-covers-the-requested-window check. Safe to re-run any time
 place, never duplicated, and (for `--years` runs) a company already covered
 back to the requested start date is skipped outright rather than re-fetched.
 The same six tier/country combinations are also available as one-click jobs
-in Settings > Data Operations > Schedule ("History price" category — "Manual"
-cadence, 3-year window). Expect ~10-15 minutes for the full 499-company run
-(deliberately rate-limited to stay polite to Yahoo's endpoint); the Nifty
-Micro-Cap tier (~2,000 companies) takes considerably longer.
+in Settings > Data Operations > Schedule ("History price" category). Expect
+~10-15 minutes for the full 499-company run (deliberately rate-limited to
+stay polite to Yahoo's endpoint); the Nifty Micro-Cap tier (~2,000 companies)
+takes considerably longer.
+
+**Scheduled runs target 20 years (or since listing, if shorter), pulled
+incrementally:** the six EventBridge-triggered "History price" jobs (see the
+Automated schedule table below) each pass `years=20` plus a per-tier
+`time_budget_seconds` sized to that tier's own Saturday-morning slot
+(`scheduling/jobs.py`'s `HISTORY_TIER_TIME_BUDGET_MINUTES`) — a single run
+works backwards from whatever's already on file, stops once its time budget
+is spent, and simply leaves the still-missing older days alone. Because
+coverage is a real, persisted fact (existing `daily_prices` rows — no
+separate checkpoint table), next week's run picks up exactly where this
+week's left off and pushes the covered window further back, until the tier
+reaches the full 20 years (or the company's listing date, whichever is
+sooner), at which point each run goes back to being a fast no-op. A manual
+"Run now" click, or `--years N` from the CLI directly, is unaffected — it
+uses the exact window you pass and has no time budget unless you add
+`--time-budget-minutes` yourself.
 
 **Daily job (keeps it current):**
 
@@ -692,12 +708,12 @@ every rule's hour shifts one hour early in ET terms and needs a manual
 | Daily price | India — close price & volume (Nifty 500) | Daily | Weekdays 10:00pm | `signals-app-price-history-india-daily` |
 | Daily price | India — close price & volume (Nifty Micro-Cap) | Monthly | 1st Sat, 9:00am | `signals-app-daily-price-india-microcap` |
 | Daily price | USA — close price & volume | Weekly | Weekdays 10:00pm | `signals-app-price-history-usa-daily` |
-| History price | Nifty 50, 3y | Manual→Weekly | Sat 7:00am | `signals-app-history-price-nifty50` |
-| History price | Nifty Next 50, 3y | Manual→Weekly | Sat 7:15am | `signals-app-history-price-next50` |
-| History price | Nifty Midcap 150, 3y | Manual→Weekly | Sat 7:30am | `signals-app-history-price-midcap150` |
-| History price | Nifty Smallcap 250, 3y | Manual→Weekly | Sat 8:00am | `signals-app-history-price-smallcap250` |
-| History price | Nifty Micro-Cap, 3y | Manual→Monthly | 1st Sat, 8:30am | `signals-app-history-price-microcap` |
-| History price | USA, 3y | Manual→Weekly | Sat 7:00am | `signals-app-history-price-usa` |
+| History price | Nifty 50, 20y incremental | Manual→Weekly | Sat 7:00am | `signals-app-history-price-nifty50` |
+| History price | Nifty Next 50, 20y incremental | Manual→Weekly | Sat 7:15am | `signals-app-history-price-next50` |
+| History price | Nifty Midcap 150, 20y incremental | Manual→Weekly | Sat 7:30am | `signals-app-history-price-midcap150` |
+| History price | Nifty Smallcap 250, 20y incremental | Manual→Weekly | Sat 8:00am | `signals-app-history-price-smallcap250` |
+| History price | Nifty Micro-Cap, 20y incremental | Manual→Monthly | 1st Sat, 8:30am | `signals-app-history-price-microcap` |
+| History price | USA, 20y incremental | Manual→Weekly | Sat 7:00am | `signals-app-history-price-usa` |
 | Financials | Nifty 50 | Quarterly→Weekly | Sat 12:00pm | `signals-app-financials-nifty50` |
 | Financials | Nifty Next 50 | Quarterly→Weekly | Sat 12:15pm | `signals-app-financials-next50` |
 | Financials | Nifty Midcap 150 | Quarterly→Weekly | Sat 12:30pm | `signals-app-financials-midcap150` |

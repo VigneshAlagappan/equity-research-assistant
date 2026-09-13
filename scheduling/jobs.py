@@ -197,20 +197,55 @@ def _run_price_history_nifty_microcap(conn) -> int:
     return run_price_history_update(index_name="Nifty Micro-Cap", job_name="price_history_india_nifty_microcap")
 
 
+HISTORY_BACKFILL_YEARS = 20
+
+# Per-tier ceiling on how long one scheduled run is allowed to spend before
+# it must stop and defer whatever's left to next week/month -- sized against
+# each tier's actual EventBridge gap to the *next* scheduled job (see the
+# "Automated schedule" table in docs/USER_GUIDE.md), minus a buffer so a
+# slow run never bleeds into the next job's start time. Nifty 50/Next 50/
+# Midcap 150 sit in a tight 15-30 min chain of Saturday-morning slots;
+# Smallcap 250, Micro-Cap (monthly) and USA all have hours of clear runway
+# before the next thing on the calendar (Financials, at noon+), so they get
+# a more generous budget. A company already covered back to the 20-year
+# target is skipped in O(1) regardless of budget (run_price_history_backfill's
+# own coverage check), so once a tier catches up these runs go back to being
+# fast no-ops.
+HISTORY_TIER_TIME_BUDGET_MINUTES = {
+    "Nifty 50": 12,  # 7:00am slot, Next 50 starts 7:15am
+    "Nifty Next 50": 12,  # 7:15am slot, Midcap 150 starts 7:30am
+    "Nifty Midcap 150": 25,  # 7:30am slot, Smallcap 250 starts 8:00am
+    "Nifty Smallcap 250": 45,  # 8:00am slot, next job (Financials) is noon
+    "Nifty Micro-Cap": 60,  # monthly 1st-Sat 8:30am slot, next job is noon
+}
+US_HISTORY_TIME_BUDGET_MINUTES = 30  # 7:00am slot, USA Financials at 1:40pm
+
+
 def _make_price_history_backfill_runner(index_name: str):
-    """One factory for the five --years 3 tier backfills, same reasoning as
+    """One factory for the five NSE-tier backfills, same reasoning as
     _make_nse_tier_runner above -- run_price_history_backfill() opens its
     own main-db/price-db connections internally (same "conn ignored, own
     connections opened internally" shape _run_price_history_india uses),
-    so `conn` is unused here too. years=3 is a deliberate default matching
-    what these jobs were built for (see the ADR-021 price-history-gap
-    writeup) -- a manual "Run now" click re-pulls a fixed 3-year window,
-    not an ever-growing one; run scripts.backfill_price_history directly
-    with --years N for a different window."""
+    so `conn` is unused here too.
+
+    years=20 (or as far back as the company was listed, whichever is
+    shorter) is the target depth, but a single run never tries to pull the
+    whole 20 years at once -- time_budget_seconds caps how long this run
+    works before deferring the rest, and because "already covered back to
+    the target" is a real, persisted fact (existing daily_prices rows, not
+    a separate checkpoint), whatever's left just gets picked up and pushed
+    further back by next week's run. See run_price_history_backfill's own
+    docstring for the gap-fetch/time-budget mechanics."""
     job_name = TIER_JOB_NAMES[index_name]
+    time_budget_seconds = HISTORY_TIER_TIME_BUDGET_MINUTES[index_name] * 60
 
     def _runner(conn) -> int:
-        return run_price_history_backfill(index_name=index_name, years=3, job_name=job_name)
+        return run_price_history_backfill(
+            index_name=index_name,
+            years=HISTORY_BACKFILL_YEARS,
+            job_name=job_name,
+            time_budget_seconds=time_budget_seconds,
+        )
 
     return _runner
 
@@ -223,11 +258,17 @@ _run_price_history_backfill_microcap = _make_price_history_backfill_runner("Nift
 
 
 def _run_price_history_backfill_usa(conn) -> int:
-    """USA counterpart of the five NSE-tier backfills above -- same years=3
-    fixed window, same conn-ignored/own-connections-opened-internally
-    shape, same skip-if-already-covers-the-requested-start-date resume
-    behavior (run_price_history_backfill's own docstring)."""
-    return run_price_history_backfill(country="US", years=3, job_name=US_JOB_NAME)
+    """USA counterpart of the five NSE-tier backfills above -- same
+    years=20-with-a-per-run-time-budget shape, same conn-ignored/own-
+    connections-opened-internally shape, same skip-if-already-covers-the-
+    requested-start-date resume behavior (run_price_history_backfill's own
+    docstring)."""
+    return run_price_history_backfill(
+        country="US",
+        years=HISTORY_BACKFILL_YEARS,
+        job_name=US_JOB_NAME,
+        time_budget_seconds=US_HISTORY_TIME_BUDGET_MINUTES * 60,
+    )
 
 
 def _run_db_shard(conn) -> int:
@@ -291,17 +332,17 @@ SCHEDULED_JOBS: list[ScheduledJob] = [
                  "price_history_india_nifty_microcap", None, _run_price_history_nifty_microcap),
     ScheduledJob("price_history_usa", "USA — close price & volume", "Weekly", "Daily price",
                  "price_history_usa", None, _run_price_history_usa),
-    ScheduledJob("price_history_backfill_nifty50", "Nifty 50 — close price & volume, 3y", "Manual", "History price",
+    ScheduledJob("price_history_backfill_nifty50", "Nifty 50 — close price & volume, 20y incremental", "Manual", "History price",
                  TIER_JOB_NAMES["Nifty 50"], None, _run_price_history_backfill_nifty50),
-    ScheduledJob("price_history_backfill_next50", "Nifty Next 50 — close price & volume, 3y", "Manual", "History price",
+    ScheduledJob("price_history_backfill_next50", "Nifty Next 50 — close price & volume, 20y incremental", "Manual", "History price",
                  TIER_JOB_NAMES["Nifty Next 50"], None, _run_price_history_backfill_next50),
-    ScheduledJob("price_history_backfill_midcap150", "Nifty Midcap 150 — close price & volume, 3y", "Manual", "History price",
+    ScheduledJob("price_history_backfill_midcap150", "Nifty Midcap 150 — close price & volume, 20y incremental", "Manual", "History price",
                  TIER_JOB_NAMES["Nifty Midcap 150"], None, _run_price_history_backfill_midcap150),
-    ScheduledJob("price_history_backfill_smallcap250", "Nifty Smallcap 250 — close price & volume, 3y", "Manual", "History price",
+    ScheduledJob("price_history_backfill_smallcap250", "Nifty Smallcap 250 — close price & volume, 20y incremental", "Manual", "History price",
                  TIER_JOB_NAMES["Nifty Smallcap 250"], None, _run_price_history_backfill_smallcap250),
-    ScheduledJob("price_history_backfill_microcap", "Nifty Micro-Cap — close price & volume, 3y", "Manual", "History price",
+    ScheduledJob("price_history_backfill_microcap", "Nifty Micro-Cap — close price & volume, 20y incremental", "Manual", "History price",
                  TIER_JOB_NAMES["Nifty Micro-Cap"], None, _run_price_history_backfill_microcap),
-    ScheduledJob("price_history_backfill_usa", "USA — close price & volume, 3y", "Manual", "History price",
+    ScheduledJob("price_history_backfill_usa", "USA — close price & volume, 20y incremental", "Manual", "History price",
                  US_JOB_NAME, None, _run_price_history_backfill_usa),
     ScheduledJob("financials_india", "Nifty 50", "Quarterly", "Financials",
                  "nse_xbrl_fetch", None, _run_financials_india),
