@@ -24,6 +24,38 @@ def db_conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     conn.close()
 
 
+@pytest.fixture
+def pg_conn() -> Iterator:
+    """Postgres counterpart of db_conn above -- SQLite-removal stage 1
+    (see tests/postgres_test_db.py's own docstring for the full reasoning).
+    A freshly created, empty database against the local Docker Postgres
+    (docker-compose.test.yml), with the real schema applied via the exact
+    same storage.database.init_postgres_db() the production path uses, then
+    dropped again at teardown. Skips (not fails) the test if that container
+    isn't running, so this is safe to leave in a test file on a machine
+    that hasn't started it -- `docker compose -f docker-compose.test.yml up
+    -d` first.
+
+    Not seeded with the metric vocabulary the way db_conn is -- callers
+    that need it call normalization.financials.ensure_metric_vocabulary(conn)
+    themselves, same as most SQLite tests already do explicitly rather than
+    relying on db_conn's seeding."""
+    from storage.database import init_postgres_db
+    from tests.postgres_test_db import LocalTestPostgresUnavailable, create_test_database, drop_test_database
+
+    try:
+        db_name, connection_string = create_test_database()
+    except LocalTestPostgresUnavailable as exc:
+        pytest.skip(str(exc))
+
+    conn = init_postgres_db(connection_string=connection_string)
+    try:
+        yield conn
+    finally:
+        conn.close()
+        drop_test_database(db_name)
+
+
 @pytest.fixture(autouse=True)
 def _reset_document_text_cache() -> Iterator[None]:
     """research.documents._DOCUMENT_TEXT_CACHE is a module-level, per-process

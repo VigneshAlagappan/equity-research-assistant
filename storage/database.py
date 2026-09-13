@@ -100,7 +100,16 @@ def init_postgres_db(connection_string: str | None = None, schema_path: Path | N
     import psycopg2
     import psycopg2.extras
 
-    connection_string = connection_string or os.environ["NEON"]
+    # LOCAL_DEV_DATABASE_URL, when set, takes priority over NEON -- lets a
+    # developer point DATABASE_BACKEND=postgres at the local Docker Postgres
+    # (docker-compose.test.yml's "signals_dev" database, see scripts/
+    # seed_local_dev_db.py) without touching what NEON means anywhere else
+    # in this app, or risking a local run silently hitting production
+    # because DATABASE_BACKEND=postgres was on but no local override was
+    # configured. Unset by default -- a checkout with only NEON set (e.g.
+    # this repo's own deploy/smoke-test workflow, which deliberately targets
+    # real production) behaves exactly as it always has.
+    connection_string = connection_string or os.environ.get("LOCAL_DEV_DATABASE_URL") or os.environ["NEON"]
     schema_path = (
         schema_path if schema_path is not None else settings.BASE_DIR / "schemas" / "postgres_schema.sql"
     )
