@@ -102,7 +102,7 @@ from research.investigation import InvestigationError, run_investigation
 from retrieval.tag_resolver import resolve_tags_in_text
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
-from scheduling.jobs import ScheduledJob, SCHEDULED_JOBS, get_job, open_db as scheduling_open_db
+from scheduling.jobs import CATEGORY_ORDER, ScheduledJob, SCHEDULED_JOBS, get_job, open_db as scheduling_open_db
 from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
 from storage.company_repository import select_company_ids_by_index
@@ -112,7 +112,6 @@ from storage.investigation_repository import (
     count_investigation_hypotheses,
     select_investigations_for_company,
 )
-from storage.price_database import init_price_db
 from storage.price_repository import (
     get_price_history,
     list_52_week_range,
@@ -533,7 +532,7 @@ def create_app() -> Flask:
 
     def get_price_db() -> DBConnection:
         if "price_db_conn" not in g:
-            g.price_db_conn = init_price_db()
+            g.price_db_conn = storage.backend_bootstrap.open_price_db()
         return g.price_db_conn
 
     @app.before_request
@@ -916,13 +915,24 @@ def create_app() -> Flask:
         gets `live_progress` attached (get_batch_job_run_live_progress()) --
         otherwise a run in progress shows nothing but a start timestamp
         until it finishes, since batch_job_runs' own items_total/succeeded/
-        failed columns are only written once, at the very end."""
-        scheduled_jobs = []
+        failed columns are only written once, at the very end.
+
+        Grouped into `schedule_categories` (one entry per CATEGORY_ORDER
+        value, in that order, each holding its own `jobs` list) rather than
+        one flat list -- the template renders one collapsible <details> per
+        category instead of one long table, same real-estate-efficient
+        disclosure pattern the Charts tab already established. `has_running`
+        on a category lets the template auto-open only the section a run is
+        actually in progress in, closed by default otherwise -- with 6
+        price-history-backfill rows alone (soon more per category), leaving
+        everything expanded would be the same wall-of-rows problem the
+        category grouping exists to fix."""
+        jobs_by_category: dict[str, list[dict]] = {name: [] for name in CATEGORY_ORDER}
         for job in SCHEDULED_JOBS:
             last_run = get_latest_batch_job_run(db, job.job_name) if job.job_name else None
             if last_run is not None and last_run["status"] == "running":
                 last_run = {**last_run, "live_progress": get_batch_job_run_live_progress(db, last_run["run_id"])}
-            scheduled_jobs.append({
+            jobs_by_category.setdefault(job.category, []).append({
                 "job_id": job.job_id,
                 "label": job.label,
                 "cadence": job.cadence,
@@ -930,7 +940,15 @@ def create_app() -> Flask:
                 "runner_available": job.runner is not None,
                 "last_run": last_run,
             })
-        return {"scheduled_jobs": scheduled_jobs}
+        schedule_categories = [
+            {
+                "name": name,
+                "jobs": jobs,
+                "has_running": any(j["last_run"] and j["last_run"]["status"] == "running" for j in jobs),
+            }
+            for name, jobs in jobs_by_category.items() if jobs
+        ]
+        return {"schedule_categories": schedule_categories}
 
     def _ingest_panel_context(db, logs_db) -> dict:
         """Only computed when the Ingest panel is actually being viewed —

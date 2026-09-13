@@ -937,3 +937,30 @@ CREATE TABLE IF NOT EXISTS indicator_evaluations (
 );
 CREATE INDEX IF NOT EXISTS idx_indicator_evaluations_company
   ON indicator_evaluations(company_id, evaluated_at);
+
+-- ============================================================
+-- Daily OHLCV price history (storage/price_repository_pg.py).
+--
+-- SQLite kept this in its own file (schemas/price_schema.sql, config/
+-- settings.py's PRICE_DB_PATH) because SQLite can't enforce a cross-database
+-- FK to companies(company_id) -- so daily_prices lived on the same
+-- filesystem as, but separate from, equity_research.db, with referential
+-- integrity enforced procedurally instead. Postgres has no such
+-- restriction: daily_prices lives in this same database, with a real FK,
+-- same as every other company-scoped table here. This was an unported gap
+-- (found while investigating why price history wasn't visible after a
+-- DATABASE_BACKEND=postgres deploy -- data/price_history.db never ships in
+-- the Docker image and Lightsail's container has no persistent volume, so
+-- every redeploy silently wiped it) -- see ADR-021.
+CREATE TABLE IF NOT EXISTS daily_prices (
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  trade_date TEXT NOT NULL,          -- ISO date, e.g. "2026-08-27"
+  open       DOUBLE PRECISION,
+  high       DOUBLE PRECISION,
+  low        DOUBLE PRECISION,
+  close      DOUBLE PRECISION NOT NULL,
+  volume     BIGINT,
+  source     TEXT NOT NULL DEFAULT 'yfinance',
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (company_id, trade_date)
+);

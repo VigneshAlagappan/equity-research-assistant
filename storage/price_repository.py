@@ -185,6 +185,33 @@ def list_all_time_range(conn: sqlite3.Connection) -> dict[str, tuple[float, floa
     return {row["company_id"]: (row["lo"], row["hi"]) for row in rows}
 
 
+def list_earliest_trade_dates(conn: sqlite3.Connection, company_ids: list[str]) -> dict[str, str]:
+    """company_id -> earliest trade_date already on file, for exactly the
+    given companies -- one batched query, not one per company. Lets a
+    backfill for a given start date (scripts/backfill_price_history.py's
+    --years) check real stored coverage before fetching: a company whose
+    earliest bar is already <= the requested start date has nothing left
+    to backfill for that window and can be skipped outright, same
+    "check what's actually stored, not just an audit-log timestamp"
+    principle scripts/batch_fetch_fred.py's ingest_fred_series() already
+    applies via get_existing_macro_periods(). Omits any company_id with no
+    rows at all (never on file), same as get_latest_close()'s None-if-
+    missing convention but batched."""
+    if not company_ids:
+        return {}
+    placeholders = ",".join("?" for _ in company_ids)
+    rows = conn.execute(
+        f"""
+        SELECT company_id, MIN(trade_date) AS earliest
+        FROM daily_prices
+        WHERE company_id IN ({placeholders})
+        GROUP BY company_id
+        """,
+        company_ids,
+    ).fetchall()
+    return {row["company_id"]: row["earliest"] for row in rows}
+
+
 def get_latest_close(conn: sqlite3.Connection, company_id: str) -> sqlite3.Row | None:
     """Most recent bar on file for one company, or None if it has none yet."""
     return conn.execute(

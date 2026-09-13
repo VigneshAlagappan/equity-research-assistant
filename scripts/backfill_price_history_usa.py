@@ -30,7 +30,7 @@ import time
 from sources.yfinance_prices import fetch_daily_bars
 from storage.company_repository import select_active_companies_by_country
 from storage.database import init_db
-from storage.price_database import init_price_db
+from storage.backend_bootstrap import open_price_db
 from storage.price_repository import upsert_daily_bars
 
 REQUEST_DELAY_SECONDS = 0.6
@@ -52,7 +52,7 @@ def main() -> None:
     total = len(company_ids)
     print(f"{total} US companies to backfill at period={args.period!r}", flush=True)
 
-    price_conn = init_price_db()
+    price_conn = open_price_db()
     updated = no_data = errors = 0
 
     for i, company_id in enumerate(company_ids, 1):

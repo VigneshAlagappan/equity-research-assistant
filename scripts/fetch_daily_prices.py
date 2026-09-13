@@ -28,9 +28,8 @@ import time
 
 from ingestion.batch_log import BatchRun
 from sources.yfinance_prices import fetch_daily_bars
-from storage.backend_bootstrap import open_db
+from storage.backend_bootstrap import open_db, open_price_db
 from storage.company_repository import select_index_members_with_nse_symbol
-from storage.price_database import init_price_db
 from storage.price_repository import upsert_daily_bars
 
 REQUEST_DELAY_SECONDS = 0.4
@@ -82,7 +81,7 @@ def run_price_history_update(
         main_conn = open_db()
     owns_price_conn = price_conn is None
     if price_conn is None:
-        price_conn = init_price_db()
+        price_conn = open_price_db()
 
     try:
         rows = select_index_members_with_nse_symbol(main_conn, index_name)

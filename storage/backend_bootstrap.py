@@ -76,6 +76,7 @@ _WHOLESALE_SWAP_MODULES = (
     ("storage.fact_store", "storage.fact_store_pg"),
     ("storage.indicator_repository", "storage.indicator_repository_pg"),
     ("storage.investigation_repository", "storage.investigation_repository_pg"),
+    ("storage.price_repository", "storage.price_repository_pg"),
 )
 
 _installed = False
@@ -148,3 +149,31 @@ def open_db():
     from storage.database import init_db
 
     return init_db()
+
+
+def open_price_db():
+    """The price-history counterpart of open_db(). Under DATABASE_BACKEND=
+    postgres, daily_prices lives in the same Postgres database as
+    everything else (see schemas/postgres_schema.sql's comment on that
+    table) -- no separate price database exists there, so this opens
+    another connection to the same Postgres instance open_db() does,
+    rather than storage.price_database's SQLite-only price_history.db.
+    Callers that previously called storage.price_database.init_price_db()
+    directly (web/app.py's get_price_db(), scripts/fetch_daily_prices*.py,
+    scripts/backfill_price_history*.py, ingestion/onboarding.py) must route
+    through this instead, same reasoning open_db()'s own docstring gives
+    for storage.repositories/company_repository callers -- storage.
+    price_repository resolves to price_repository_pg's Postgres-flavored
+    functions once DATABASE_BACKEND=postgres, and a plain sqlite3
+    connection breaks those the same way it breaks company_repository_pg.
+    """
+    install()
+    from config.settings import DATABASE_BACKEND
+
+    if DATABASE_BACKEND == "postgres":
+        from storage.database import init_postgres_db
+
+        return init_postgres_db()
+    from storage.price_database import init_price_db
+
+    return init_price_db()
