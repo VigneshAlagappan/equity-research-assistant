@@ -55,6 +55,15 @@ def _build_app(db_path: Path, tmp_path: Path, monkeypatch):
     # Nifty 500 companies), silently pre-empting whatever a test expected
     # from its peek_cached_quote fallback.
     monkeypatch.setattr("config.settings.PRICE_DB_PATH", tmp_path / "price_history.db")
+    # Same bug class as DOCUMENTS_DIR/RAW_DIR/PRICE_DB_PATH above, one hop
+    # removed: _persist_generated_report_s3 (web/app.py) writes each saved
+    # research report to default_document_store(), which under the default
+    # "local" backend (LocalDocumentStore) resolves its "threads/<id>/v1.json"
+    # key via config.settings.from_repo_relative -> BASE_DIR, not any of the
+    # settings already isolated above -- without this, every test that saves
+    # a report (research/ask routes) wrote a real file into this repo's own
+    # threads/ directory instead of tmp_path.
+    monkeypatch.setattr("config.settings.BASE_DIR", tmp_path)
     from web.app import create_app
 
     app = create_app()
