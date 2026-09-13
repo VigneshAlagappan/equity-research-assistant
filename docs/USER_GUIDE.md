@@ -665,6 +665,83 @@ curl https://signals-app.wmmbnsx82cwgc.us-east-2.cs.amazonlightsail.com/health
 
 ---
 
+## Automated schedule (EventBridge, production)
+
+As of 2026-09-13, every scheduled job below is wired to a real automated
+trigger — an AWS EventBridge Connection (`signals-app-cron-trigger`, holds
+the shared `X-Cron-Secret` header auth), one API Destination per job
+(`https://signals-app.../admin/schedule/run-async/<job_id>`), and one
+classic EventBridge Rule per job (`signals-app-<name>`, cron schedule,
+targets the API destination via a scoped IAM role,
+`signals-app-events-invoke-role`). Nothing here runs inside this app's own
+process — it's all external AWS infrastructure calling the async trigger
+route, same as `web/app.py`'s `admin_schedule_run_async()` docstring
+describes. `SCHEDULED_JOBS.md`/`scheduling/jobs.py` remain the source of
+truth for what each job actually does; this table is just when it fires.
+
+**Known limitation — Daylight Saving Time**: every rule below uses a fixed
+UTC cron expression (classic EventBridge Rules don't support timezones —
+EventBridge *Scheduler* does, but doesn't support API Destination targets,
+which is why Rules were used instead). All times are correct as written
+for **EDT** (UTC-4, roughly mid-March to early November). Once DST ends,
+every rule's hour shifts one hour early in ET terms and needs a manual
+`+1 hour` UTC adjustment (e.g. `aws events put-rule --name <rule> --schedule-expression "cron(<min> <hour+1> ...)"` for each). Re-adjust back by `-1 hour` the following March.
+
+| Category | Job | Cadence | Trigger (ET) | EventBridge rule |
+|---|---|---|---|---|
+| Daily price | India — close price & volume (Nifty 500) | Daily | Weekdays 10:00pm | `signals-app-price-history-india-daily` |
+| Daily price | India — close price & volume (Nifty Micro-Cap) | Monthly | 1st Sat, 9:00am | `signals-app-daily-price-india-microcap` |
+| Daily price | USA — close price & volume | Weekly | Weekdays 10:00pm | `signals-app-price-history-usa-daily` |
+| History price | Nifty 50, 3y | Manual→Weekly | Sat 7:00am | `signals-app-history-price-nifty50` |
+| History price | Nifty Next 50, 3y | Manual→Weekly | Sat 7:15am | `signals-app-history-price-next50` |
+| History price | Nifty Midcap 150, 3y | Manual→Weekly | Sat 7:30am | `signals-app-history-price-midcap150` |
+| History price | Nifty Smallcap 250, 3y | Manual→Weekly | Sat 8:00am | `signals-app-history-price-smallcap250` |
+| History price | Nifty Micro-Cap, 3y | Manual→Monthly | 1st Sat, 8:30am | `signals-app-history-price-microcap` |
+| History price | USA, 3y | Manual→Weekly | Sat 7:00am | `signals-app-history-price-usa` |
+| Financials | Nifty 50 | Quarterly→Weekly | Sat 12:00pm | `signals-app-financials-nifty50` |
+| Financials | Nifty Next 50 | Quarterly→Weekly | Sat 12:15pm | `signals-app-financials-next50` |
+| Financials | Nifty Midcap 150 | Quarterly→Weekly | Sat 12:30pm | `signals-app-financials-midcap150` |
+| Financials | Nifty Smallcap 250 | Quarterly→Weekly | Sat 12:50pm | `signals-app-financials-smallcap250` |
+| Financials | Nifty Micro-Cap | Monthly | 1st Sat, 1:10pm | `signals-app-financials-microcap` |
+| Financials | USA (SEC EDGAR) | Quarterly→Weekly | Sat 1:40pm | `signals-app-financials-usa` |
+| Shareholding | Nifty 50 | Quarterly→Weekly | Sat 2:00pm | `signals-app-shareholding-nifty50` |
+| Shareholding | Nifty Next 50 | Quarterly→Weekly | Sat 2:15pm | `signals-app-shareholding-next50` |
+| Shareholding | Nifty Midcap 150 | Quarterly→Weekly | Sat 2:30pm | `signals-app-shareholding-midcap150` |
+| Shareholding | Nifty Smallcap 250 | Quarterly→Weekly | Sat 2:50pm | `signals-app-shareholding-smallcap250` |
+| Shareholding | Nifty Micro-Cap | Monthly | 1st Sat, 3:10pm | `signals-app-shareholding-microcap` |
+| Corporate actions | Fetch — Nifty 50 | Quarterly→Weekly | Sat 3:30pm | `signals-app-corp-actions-fetch-nifty50` |
+| Corporate actions | Ingest — Nifty 50 | Quarterly→Weekly | Sat 3:40pm | `signals-app-corp-actions-ingest-nifty50` |
+| Corporate actions | Fetch — Nifty Next 50 | Quarterly→Weekly | Sat 3:50pm | `signals-app-corp-actions-fetch-next50` |
+| Corporate actions | Ingest — Nifty Next 50 | Quarterly→Weekly | Sat 4:00pm | `signals-app-corp-actions-ingest-next50` |
+| Corporate actions | Fetch — Nifty Midcap 150 | Quarterly→Weekly | Sat 4:10pm | `signals-app-corp-actions-fetch-midcap150` |
+| Corporate actions | Ingest — Nifty Midcap 150 | Quarterly→Weekly | Sat 4:20pm | `signals-app-corp-actions-ingest-midcap150` |
+| Corporate actions | Fetch — Nifty Smallcap 250 | Quarterly→Weekly | Sat 4:30pm | `signals-app-corp-actions-fetch-smallcap250` |
+| Corporate actions | Ingest — Nifty Smallcap 250 | Quarterly→Weekly | Sat 4:40pm | `signals-app-corp-actions-ingest-smallcap250` |
+| Corporate actions | Fetch — Nifty Micro-Cap | Monthly | 1st Sat, 4:50pm | `signals-app-corp-actions-fetch-microcap` |
+| Corporate actions | Ingest — Nifty Micro-Cap | Monthly | 1st Sat, 5:00pm | `signals-app-corp-actions-ingest-microcap` |
+| Macro | FRED macro data | Quarterly→Monthly | Last Sat of month, 6:00pm | `signals-app-fred-macro-monthly` |
+| Macro | RBI / IITM macro data | Weekly | — (disabled, no runner) | — |
+| Macro | Macro insights | Monthly | — (disabled, no runner) | — |
+| Insights | Company insights | Monthly | — (on hold) | — |
+| Documents | Document analysis | Quarterly | — (on hold) | — |
+| Documents | Investor relations documents | Quarterly | — (on hold) | — |
+| Maintenance | DB sharding | Daily | — (on hold) | — |
+| Maintenance | Raw object catalog reconciliation | Weekly | Sun 5:00am | `signals-app-raw-object-reconciliation-weekly` |
+
+30 of 38 registry jobs are automated (5 of those monthly instead of their
+declared weekly/quarterly cadence, per an explicit operator decision to
+keep NSE/SEC EDGAR load down for the largest tier). 4 are deliberately on
+hold (Insights, Documents×2, DB sharding — not yet wanted on autopilot). 2
+remain disabled at the code level (no runner implemented — see
+`scheduling/jobs.py`'s own `reason` field for each). Every Saturday
+job is staggered by 10-40 minutes from its neighbors specifically to avoid
+firing 20+ concurrent NSE/SEC-EDGAR-hitting jobs at once — see each rule's
+own trigger time above before adding a new one to this block, and don't
+schedule a new heavy job into the same slot as an existing one without
+checking for overlap.
+
+---
+
 ## Related documentation
 
 - **[README.md](README.md)** — the original design proposal and scoping

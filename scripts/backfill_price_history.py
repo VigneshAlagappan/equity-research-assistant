@@ -187,8 +187,9 @@ def run_price_history_backfill(
     main_conn=None, price_conn=None, *, index_name: str = "Nifty 500", years: int | None = None,
     period: str | None = None, country: str = "IN", company_id: str | None = None,
     job_name: str = "price_history_backfill", scope_label: str | None = None, force: bool = False,
+    time_budget_seconds: float | None = None,
 ) -> int:
-    """One full backfill pass over one ticker universe, BatchRun-audited --
+    """One backfill pass over one ticker universe, BatchRun-audited --
     same connection-ownership and BatchRun shape as scripts/fetch_daily_
     prices.py's run_price_history_update() (see that function's own
     docstring for why main_conn/price_conn are separate, each opened here
@@ -214,6 +215,27 @@ def run_price_history_backfill(
     concrete date to compare stored coverage against) -- a bare `period`
     call always fetches, same as before this function had a skip check.
 
+    A company with SOME data already on file (earlier `--years N` run, or
+    the daily job's own trailing window) but not yet covering back to
+    `start` fetches only the missing OLDER gap -- `[start, earliest_on_
+    file)`, via fetch_daily_bars's new `end` param -- never re-pulling
+    days already on file between `earliest_on_file` and today. A company
+    with nothing on file yet still gets the full `start`..today pull (no
+    `end`), same as before.
+
+    `time_budget_seconds`, when given, makes this resumable across
+    scheduled runs rather than one long blocking pull: once elapsed time
+    since the loop started exceeds the budget, the loop stops immediately
+    -- companies not yet reached this run are simply left as-is (their
+    on-file coverage hasn't changed, so they still read as "needs more"
+    next time this same job fires) and pick up automatically on the next
+    scheduled invocation, no separate checkpoint/offset to persist. Built
+    for exactly this: EventBridge-scheduled weekly runs, each tier given a
+    fixed slot (e.g. 15-30 minutes) before the next tier's rule fires, so
+    a 20-year Nifty Micro-Cap backfill across ~2,000 companies completes
+    gradually over several weeks instead of blowing through its slot (or
+    gunicorn's 120s worker timeout on a manual "Run now") in one run.
+
     Returns the BatchRun's run_id."""
     if years is not None and period is not None:
         raise ValueError("run_price_history_backfill: pass only one of years or period, not both")
@@ -234,15 +256,30 @@ def run_price_history_backfill(
     try:
         rows = _resolve_ticker_pairs(main_conn, country, company_id, index_name)
         total = len(rows)
-        print(f"\n=== {label}: {total} companies (period={period!r} start={start!r}) ===", flush=True)
+        print(
+            f"\n=== {label}: {total} companies (period={period!r} start={start!r} "
+            f"time_budget_seconds={time_budget_seconds!r}) ===",
+            flush=True,
+        )
 
         earliest_on_file = {}
         if start is not None and not force:
             earliest_on_file = list_earliest_trade_dates(price_conn, [c for c, _ in rows])
 
-        updated = no_data = errors = skipped = 0
+        loop_started = time.monotonic()
+        updated = no_data = errors = skipped = deferred = 0
         with BatchRun(main_conn, job_name, scope_label=f"{label} ({total})") as run:
             for i, (company_id_, ticker) in enumerate(rows, 1):
+                if time_budget_seconds is not None and time.monotonic() - loop_started >= time_budget_seconds:
+                    deferred = total - i + 1
+                    print(
+                        f"[{i}/{total}] time budget ({time_budget_seconds:.0f}s) reached -- "
+                        f"stopping early, {deferred} compan{'y' if deferred == 1 else 'ies'} "
+                        f"deferred to the next scheduled run",
+                        flush=True,
+                    )
+                    break
+
                 earliest = earliest_on_file.get(company_id_)
                 if earliest is not None and earliest <= start:
                     with run.item(company_id_) as item:
@@ -251,9 +288,17 @@ def run_price_history_backfill(
                     print(f"[{i}/{total}] {company_id_:24s} SKIPPED (covered back to {earliest})", flush=True)
                     continue
 
+                # A company with SOME coverage already gets only the missing
+                # older gap fetched (start..earliest), not a full re-pull of
+                # days it already has -- earliest itself is exclusive of the
+                # gap (already on file), so `end` is earliest, not earliest-1;
+                # yfinance's own `end` is exclusive of that date too.
+                fetch_start = start
+                fetch_end = earliest if (earliest is not None and start is not None) else None
+
                 with run.item(company_id_) as item:
                     try:
-                        bars = fetch_daily_bars(ticker, period=period, start=start, country=country)
+                        bars = fetch_daily_bars(ticker, period=period, start=fetch_start, end=fetch_end, country=country)
                     except Exception as exc:
                         errors += 1
                         print(f"[{i}/{total}] {company_id_:24s} ERROR {exc}", flush=True)
@@ -294,7 +339,7 @@ def run_price_history_backfill(
 
         print(
             f"--- {label} done. updated={updated} no_data={no_data} errors={errors} "
-            f"skipped={skipped} total={total} ---",
+            f"skipped={skipped} deferred={deferred} total={total} ---",
             flush=True,
         )
         return run.run_id
