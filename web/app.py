@@ -99,6 +99,7 @@ from research.assistant import answer_question
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
+from research.investigation_jobs import get_status as get_investigation_job_status, mark_done as mark_investigation_done, mark_error as mark_investigation_error, mark_running as mark_investigation_running
 from retrieval.tag_resolver import resolve_tags_in_text
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
@@ -3158,6 +3159,95 @@ def create_app() -> Flask:
             investigation_id=investigation.investigation_id,
             url=url_for("investigate_view", investigation_id=investigation.investigation_id),
         )
+
+    @app.route("/investigate/generate-async", methods=["POST"])
+    def investigate_generate_async():
+        """Async counterpart of investigate_generate above, for the same
+        reason admin_schedule_run_async exists alongside admin_schedule_run:
+        a broad, multi-hypothesis investigation (several evidence-gathering
+        + evaluation passes, each its own LLM round trip) can easily run
+        past gunicorn's --timeout 120 (Dockerfile) or the platform's own
+        fronting load balancer timeout — when that happens mid-request, the
+        browser gets back an infrastructure error page instead of JSON,
+        which research.html's generateInvestigation() surfaced as
+        "Network error: Unexpected token '<' ... is not valid JSON" (the
+        request never actually failed on this app's own terms — it was cut
+        off from outside).
+
+        Does the same synchronous validation investigate_generate does
+        (bad input should fail fast, not after a background thread has
+        already started), then hands the actual run_investigation() call to
+        a background thread — same "own db connection, since a connection
+        can't cross threads" shape admin_schedule_run_async uses — and
+        returns the investigation_id immediately so the page can poll
+        investigate_status below instead of blocking one HTTP request on
+        however long the whole thing takes."""
+        payload = request.get_json(silent=True) or {}
+        question = (payload.get("question") or "").strip()
+        company_ids = payload.get("company_ids") or []
+        if not company_ids and question:
+            company_ids = resolve_tags_in_text(get_db(), question)
+        statement_type = payload.get("statement_type", "consolidated")
+        as_of = (payload.get("as_of") or "").strip() or None
+
+        if not ANTHROPIC_API_KEY_SET:
+            return jsonify(error="ANTHROPIC_API_KEY is not set on the server — the assistant can't run."), 503
+        if not question:
+            return jsonify(error="Ask a question first."), 400
+        if statement_type not in ("consolidated", "standalone"):
+            return jsonify(error="statement_type must be 'consolidated' or 'standalone'"), 400
+
+        db = get_db()
+        for company_id in company_ids:
+            if get_company(db, company_id) is None:
+                return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
+
+        investigation_id = uuid.uuid4().hex[:12]
+        mark_investigation_running(investigation_id)
+        # Built here, inside this real request's context, not inside the
+        # background thread below -- url_for needs an active request (or
+        # app) context to resolve SERVER_NAME/APPLICATION_ROOT, which a bare
+        # background thread doesn't have. investigation_id is already fixed
+        # at this point, so the URL it produces is valid regardless of how
+        # the run underneath it turns out.
+        result_url = url_for("investigate_view", investigation_id=investigation_id)
+
+        def _run_in_background() -> None:
+            conn = scheduling_open_db()
+            try:
+                run_investigation(
+                    conn, question, company_ids, statement_type=statement_type, as_of=as_of,
+                    investigation_id=investigation_id,
+                )
+                mark_investigation_done(investigation_id, result_url)
+            except InvestigationError as exc:
+                mark_investigation_error(investigation_id, f"The investigation couldn't complete: {exc}")
+            except anthropic.APIError as exc:
+                mark_investigation_error(investigation_id, f"The assistant request failed: {exc}")
+            except Exception as exc:  # noqa: BLE001 -- surface any failure to the poller, not a silently stuck "running"
+                logger.exception("Async investigation %s failed", investigation_id)
+                mark_investigation_error(investigation_id, f"Unexpected error: {exc}")
+            finally:
+                conn.close()
+
+        threading.Thread(target=_run_in_background, daemon=True).start()
+        return jsonify(investigation_id=investigation_id), 202
+
+    @app.route("/investigate/status/<investigation_id>")
+    def investigate_status(investigation_id: str):
+        """Polled by research.html's generateInvestigation() every few
+        seconds after investigate_generate_async returns. {status:
+        "running"} keeps the page waiting; {status: "done", url: ...}
+        triggers the same redirect investigate_generate's synchronous
+        response used to drive directly; {status: "error", error: ...}
+        surfaces the same message the synchronous route would have
+        returned inline. A 404 (unknown investigation_id — never tracked,
+        e.g. a stale/mistyped link) is deliberately distinct from a real
+        "error" status."""
+        status = get_investigation_job_status(investigation_id)
+        if status is None:
+            abort(404)
+        return jsonify(status)
 
     @app.route("/investigate/<investigation_id>")
     def investigate_view(investigation_id: str):

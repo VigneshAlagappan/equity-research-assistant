@@ -22,6 +22,16 @@ RAW_DIR = DATA_DIR / "raw"
 NORMALIZED_DIR = DATA_DIR / "normalized"
 DOCUMENTS_DIR = DATA_DIR / "documents"
 CHARTS_DIR = DATA_DIR / "charts"
+
+# Tiny per-investigation status files (research/investigation_jobs.py) so
+# /investigate/generate-async's background thread and /investigate/status's
+# poll can agree on progress across gunicorn's forked workers, which don't
+# share memory -- local disk is shared across those forked workers (same
+# container filesystem) at today's scale=1 Lightsail deployment, so this is
+# NOT safe if the service is ever scaled to more than one container
+# instance (each instance gets its own disk) -- would need to move to a
+# shared store (e.g. the investigations table itself, or Postgres/S3) first.
+INVESTIGATION_JOBS_DIR = DATA_DIR / "investigation_jobs"
 LOG_DIR = BASE_DIR / "logs"
 
 SCHEMA_PATH = BASE_DIR / "schemas" / "sqlite_schema.sql"

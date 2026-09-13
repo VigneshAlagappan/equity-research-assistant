@@ -189,7 +189,7 @@ def _investigate_hypothesis(
 def run_investigation(
     conn: DBConnection, question: str, company_ids: list[str], *, statement_type: str = "consolidated",
     model: str | None = None, capabilities: PlannerCapabilities | None = None, fact_store: FactStore | None = None,
-    as_of: str | None = None,
+    as_of: str | None = None, investigation_id: str | None = None,
 ) -> Investigation:
     """`as_of` (ISO date) runs the whole investigation point-in-time: every
     evidence capability is bound to that cutoff (research/temporal.py via
@@ -198,8 +198,14 @@ def run_investigation(
     enforced in retrieval, not asked for in a prompt — an "as of 2013"
     question whose evidence block contains 2024 figures has already leaked
     the answer. Explicitly-passed `capabilities` are used as given, on the
-    assumption the caller has already bound whatever scope it wants."""
-    investigation_id = uuid.uuid4().hex[:12]
+    assumption the caller has already bound whatever scope it wants.
+
+    `investigation_id`, when given, is used as-is instead of generating a
+    fresh one -- lets a caller (web/app.py's /investigate/generate-async)
+    hand out the id up front, before this (potentially several-minute) call
+    even starts, so it has something to poll progress against from the
+    first response."""
+    investigation_id = investigation_id or uuid.uuid4().hex[:12]
     fs = fact_store or default_fact_store()
     cutoff = normalize_as_of(as_of)
     caps = capabilities or default_capabilities(fact_store=fs, as_of=cutoff, investigation_id=investigation_id)

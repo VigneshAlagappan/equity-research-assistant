@@ -261,3 +261,9 @@ data/.flask_secret_key
 # BASE_DIR, so a clean test run shouldn't recreate this locally at all;
 # if you see it repopulate, something regressed that isolation.
 threads/
+
+# Per-investigation async-job status files (research/investigation_jobs.py)
+# -- disposable polling state, not the investigation's real record (that's
+# the investigations/investigation_hypotheses tables). tests/test_web.py
+# isolates this to tmp_path via config.settings.INVESTIGATION_JOBS_DIR.
+data/investigation_jobs/

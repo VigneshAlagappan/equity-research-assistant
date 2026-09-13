@@ -64,6 +64,11 @@ def _build_app(db_path: Path, tmp_path: Path, monkeypatch):
     # a report (research/ask routes) wrote a real file into this repo's own
     # threads/ directory instead of tmp_path.
     monkeypatch.setattr("config.settings.BASE_DIR", tmp_path)
+    # research/investigation_jobs.py's per-investigation status files
+    # (/investigate/generate-async, /investigate/status/<id>) — same
+    # "don't let a test write into this repo's real runtime dirs" reasoning
+    # as DOCUMENTS_DIR/RAW_DIR/PRICE_DB_PATH/BASE_DIR above.
+    monkeypatch.setattr("config.settings.INVESTIGATION_JOBS_DIR", tmp_path / "investigation_jobs")
     from web.app import create_app
 
     app = create_app()
@@ -1701,3 +1706,96 @@ def test_a_point_in_time_investigation_is_labelled_as_of_on_both_surfaces(
 
     assert "as of 2013-03-31" in company_page
     assert "evidence as of 2013-03-31" in investigation_page
+
+
+# ------------------------------------------------------------------
+# /investigate/generate-async + /investigate/status — background-thread
+# investigation run, polled instead of blocking one HTTP request (fixes a
+# real production timeout: a broad, multi-hypothesis question can run past
+# gunicorn's --timeout 120 or the platform's own load balancer timeout,
+# which killed the request mid-flight and surfaced as "Network error:
+# Unexpected token '<' ... is not valid JSON" in the browser).
+# ------------------------------------------------------------------
+
+
+def test_investigate_generate_async_requires_question(client, monkeypatch) -> None:
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    response = client.post("/investigate/generate-async", json={"question": "", "company_ids": []})
+    assert response.status_code == 400
+
+
+def test_investigate_generate_async_requires_api_key(client, monkeypatch) -> None:
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", False)
+    response = client.post(
+        "/investigate/generate-async", json={"question": "Why did margins fall?", "company_ids": ["HDFCBANK"]}
+    )
+    assert response.status_code == 503
+
+
+def test_investigate_status_unknown_id_is_404(client, monkeypatch) -> None:
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    response = client.get("/investigate/status/not-a-real-id")
+    assert response.status_code == 404
+
+
+def test_investigate_generate_async_runs_in_background_and_status_reaches_done(client, monkeypatch) -> None:
+    """The route must return 202 immediately (not block on run_investigation)
+    and the investigation_id it hands back must be pollable via
+    /investigate/status until it reports "done" with the real
+    investigate_view URL — the same destination the old synchronous route
+    used to hand straight back."""
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+
+    def _fake_run_investigation(conn, question, company_ids, *, statement_type="consolidated", as_of=None, investigation_id=None):
+        from research.investigation import Investigation
+
+        assert investigation_id is not None, "the route must hand the pre-generated id through, not let a new one be minted"
+        return Investigation(investigation_id=investigation_id, question=question, company_ids=company_ids)
+
+    monkeypatch.setattr("web.app.run_investigation", _fake_run_investigation)
+
+    start = client.post(
+        "/investigate/generate-async", json={"question": "Why did margins fall?", "company_ids": ["HDFCBANK"]}
+    )
+    assert start.status_code == 202
+    investigation_id = start.get_json()["investigation_id"]
+
+    import time
+
+    status = None
+    for _ in range(50):  # background thread should finish almost instantly (fake run_investigation does no real work)
+        status = client.get(f"/investigate/status/{investigation_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "done"
+    assert status["url"] == f"/investigate/{investigation_id}"
+
+
+def test_investigate_generate_async_reports_error_status_on_failure(client, monkeypatch) -> None:
+    from research.investigation import InvestigationError
+
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+
+    def _failing_run_investigation(*args, **kwargs):
+        raise InvestigationError("every hypothesis's evaluation failed")
+
+    monkeypatch.setattr("web.app.run_investigation", _failing_run_investigation)
+
+    start = client.post(
+        "/investigate/generate-async", json={"question": "Why did margins fall?", "company_ids": ["HDFCBANK"]}
+    )
+    investigation_id = start.get_json()["investigation_id"]
+
+    import time
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/investigate/status/{investigation_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "error"
+    assert "every hypothesis's evaluation failed" in status["error"]
