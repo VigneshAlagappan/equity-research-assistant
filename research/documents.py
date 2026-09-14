@@ -66,7 +66,17 @@ MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 # exception (PyPdfError/DependencyError/OSError, already handled below), a
 # hang can't be caught with try/except -- it needs an actual wall-clock
 # bound.
-PDF_EXTRACTION_TIMEOUT_SECONDS = 20
+#
+# Deliberately small (not, say, 20s): get_document_evidence() processes
+# every one of a company's documents in one request, each independently
+# bounded by this same constant -- a company with several bad PDFs pays
+# this cost once per bad document, and the aggregate across all of them
+# still needs to fit well inside gunicorn's own --timeout (120s) alongside
+# retrieval and the real LLM call. A real, parseable PDF's text extraction
+# normally finishes in a small fraction of this regardless of size -- this
+# bound only ever costs anything on a pathological file that was going to
+# yield nothing useful anyway.
+PDF_EXTRACTION_TIMEOUT_SECONDS = 5
 
 
 class _PdfExtractionTimedOut(Exception):
