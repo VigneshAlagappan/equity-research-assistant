@@ -273,6 +273,15 @@ DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
 ANTHROPIC_API_KEY_SET = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 # ------------------------------------------------------------------
+# Sentry (error/log monitoring -- web/app.py calls sentry_sdk.init() once,
+# at import time, gated on this being set). Unset (the default, e.g. every
+# local dev/test run that doesn't export it) means sentry_sdk.init() is
+# never called at all -- no network calls, no dependency on reaching
+# Sentry's ingest endpoint, same "absent is a no-op" contract every other
+# optional integration in this file follows (NEO4J_URI, QDRANT_URL, ...).
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+
+# ------------------------------------------------------------------
 # Local model (llm/providers/local_provider.py, llm/capability_registry.py)
 #
 # Moved above the tiering policy below so LOCAL_MODEL_ID can be referenced

@@ -10,3 +10,6 @@ OPENROUTER_API_KEY="sk-or-..."
 OPENROUTER_MODEL_ID=google/gemma-2-27b-it
 ANTHROPIC_API_KEY="sk-ant-..."
 NEON=
+# Error/log monitoring (web/app.py) -- unset means sentry_sdk.init() is
+# never called at all, no-op, same as every other optional key above.
+SENTRY_DSN=

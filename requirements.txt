@@ -14,3 +14,4 @@ qdrant-client>=1.9
 sentence-transformers>=3.0
 crawl4ai>=0.4
 boto3>=1.34
+sentry-sdk[flask]>=2.19

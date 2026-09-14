@@ -21,6 +21,27 @@ import storage.backend_bootstrap
 
 storage.backend_bootstrap.install()
 
+# Sentry -- initialized here, at import time, before Flask itself is
+# imported below, so its Flask integration auto-instruments every route
+# registered by create_app() (uncaught exceptions, request context) with
+# no per-route wiring. Gated on config.settings.SENTRY_DSN being set --
+# unset (every local dev/test run that doesn't export it) means this is a
+# no-op, same contract every other optional integration in this app
+# follows.
+from config.settings import SENTRY_DSN
+
+if SENTRY_DSN:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        # Request headers/IP on error events -- acceptable here since this
+        # is a small, internally-used app, not a consumer product with a
+        # broad user base to consider privacy policy implications for.
+        send_default_pii=True,
+        enable_logs=True,
+    )
+
 import hashlib
 import json
 import logging
