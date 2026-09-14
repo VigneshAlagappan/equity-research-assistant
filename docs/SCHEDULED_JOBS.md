@@ -293,11 +293,25 @@ scheduling policy and gap analysis only.
 | Financials | Quarterly | Ready | Gap (fiscal-quarter mapping) |
 | Shareholding pattern | Quarterly | Ready | N/A (SEBI LODR Reg 31 — India-only regulation) |
 | Price history | Weekly | Ready (already daily) | Ready (`fetch_daily_prices_usa.py`) |
-| Doc analysis (transcripts/concalls) | Quarterly | Ready to schedule (trigger only — still no fetch source, manually-uploaded files only) | Same |
+| Doc analysis (all uploaded PDFs/audio — annual reports, presentations, transcripts, concall recordings) | Daily (was Quarterly until 2026-09-14) — EventBridge-scheduled, `signals-app-doc-analysis-daily`, 09:30 UTC / 3:00 PM IST | Live (still manually-uploaded files only — no automated fetch source) | Same |
 | Analytics/insights — companies | Monthly | Ready to schedule (Nifty 50 + USA) | Same |
 | Analytics/insights — macro | Monthly | Gap (generation fn doesn't exist yet) | Same |
 | Macro data | Weekly | FRED ready; RBI/IITM/DBIE gap | N/A (US macro not in scope here) |
 | DB sharding | Daily | Ready (shard step only) | Commit+push needs a separate explicit decision |
+
+**Doc analysis, 2026-09-14 change**: two things changed together. (1)
+web/app.py's `company_add_document()` (the Docs tab upload route) now
+kicks off ingestion for that one document immediately, in a background
+thread, right after the upload succeeds — most documents never reach the
+`pending` state this scheduled job scans for at all. (2) This job itself
+moved from Quarterly to Daily specifically to be the catch-up sweep for
+whatever (1) missed (a failed immediate attempt, or the pre-existing
+backlog of documents uploaded before either change existed) — capped at
+`scripts/process_pending_documents_batch.py`'s `DAILY_LIMIT = 25` per run
+(oldest-first) so a large backlog gets worked off steadily across several
+days' runs rather than firing dozens of Knowledge Builder LLM calls in one
+burst. The Admin -> Ingest queue's manual "Process All Pending" button is
+unaffected — still uncapped, since that's a deliberate human action.
 
 Price history (India and USA), financials (India and USA), shareholding
 pattern (India), corporate actions (India), DB sharding, FRED macro data,

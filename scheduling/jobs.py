@@ -397,7 +397,7 @@ SCHEDULED_JOBS: list[ScheduledJob] = [
                  "decision on what a macro insight is first", None),
     ScheduledJob("insights_companies", "Company insights", "Monthly", "Insights",
                  "key_insights_batch", None, _run_insights_companies),
-    ScheduledJob("doc_analysis", "Document analysis (transcripts/concalls)", "Quarterly", "Documents",
+    ScheduledJob("doc_analysis", "Document analysis (all uploaded PDFs/audio)", "Daily", "Documents",
                  "document_processing", None, _run_doc_analysis),
     ScheduledJob("investor_relations", "Investor relations documents (Q4/Berkshire)", "Quarterly", "Documents",
                  "investor_relations_fetch", None, _run_investor_relations),

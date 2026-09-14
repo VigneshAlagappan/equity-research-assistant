@@ -61,6 +61,14 @@ class FakeQdrantClient:
         self._collections.setdefault(collection_name, {})
         return True
 
+    def create_payload_index(self, collection_name, field_name, field_schema):
+        # _ensure_collection() calls this right after create_collection()
+        # (company_id/document_id, so filtered search/delete work on Qdrant
+        # Cloud tiers that reject an unindexed filter field outright) --
+        # nothing for this in-memory fake to actually index, just needs to
+        # accept the call the same way the real client does.
+        return True
+
     def upsert(self, collection_name, points):
         if self.unreachable:
             raise ConnectionError("fake: qdrant unreachable")

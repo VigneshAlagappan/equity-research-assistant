@@ -411,8 +411,29 @@ def process_documents(conn, document_ids: list[int]) -> ProcessSummary:
     return summary
 
 
-def process_all_pending_documents(conn) -> ProcessSummary:
+def process_all_pending_documents(conn, *, limit: int | None = None) -> ProcessSummary:
+    """`limit` caps how many pending documents one call processes -- used
+    by the daily doc_analysis scheduled job (scheduling/jobs.py) to work
+    through a large backlog a bounded batch at a time ("ingest slowly,
+    steadily") instead of one call firing dozens of Knowledge Builder LLM
+    calls back to back, rather than risking Anthropic rate limits/cost
+    spikes on a big backlog. None (the default) processes everything in
+    one call, unchanged -- Admin -> Ingest queue's "Process All Pending"
+    button is a deliberate, human-triggered action and should still mean
+    all of it, not a partial sweep."""
     pending = list_documents_by_status(conn, "pending")
+    if limit is not None:
+        # list_documents_by_status orders newest-first (the right order for
+        # the Admin -> Ingest queue view) -- reversed here so a capped run
+        # works the OLDEST stragglers off first. Otherwise a steady trickle
+        # of new uploads would keep outranking a older backlog document
+        # forever, silently breaking the "every pdf ingested within 24h"
+        # guarantee this cap exists to serve (most new uploads never reach
+        # this path at all -- web/app.py's company_add_document() ingests
+        # them immediately in its own background thread; this is the daily
+        # catch-up sweep for whatever that missed: pre-existing backlog, or
+        # an upload whose immediate attempt failed).
+        pending = sorted(pending, key=lambda row: row["retrieved_at"] or "")[:limit]
     return process_documents(conn, [row["document_id"] for row in pending])
 
 

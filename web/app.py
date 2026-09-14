@@ -2499,6 +2499,36 @@ def create_app() -> Flask:
             storage_object_key=storage_object_key,
             content_hash=content_hash,
         )
+
+        # Ingest immediately in the background, rather than leaving this
+        # document at processing_status='pending' until someone clicks
+        # Admin -> Ingest queue's "Process All Pending" or the quarterly
+        # doc_analysis scheduled job (scheduling/jobs.py) happens to run --
+        # a real gap: Federal Bank's 4 manually-uploaded documents sat
+        # un-ingested (no chunks, no Qdrant vectors) for as long as neither
+        # of those had run, so Ask AI had nothing but the one
+        # officially-sourced document to answer from. Reuses
+        # process_documents() unchanged (same knowledge_builder +
+        # chunk_indexer workers, same batch_job_runs/batch_job_items audit
+        # trail) -- just triggered per-upload instead of only from those
+        # two existing entry points. Backgrounded (own DB connection, same
+        # "a connection can't cross threads" shape as admin_schedule_run_
+        # async and the -async ask/investigate routes) so a slow LLM
+        # extraction call never makes the upload response itself wait or
+        # risk the platform's own gateway timeout.
+        document_id = row["document_id"]
+
+        def _ingest_in_background(document_id: int = document_id) -> None:
+            conn = scheduling_open_db()
+            try:
+                process_documents(conn, [document_id])
+            except Exception:
+                logger.exception("Background ingestion failed for document %s", document_id)
+            finally:
+                conn.close()
+
+        threading.Thread(target=_ingest_in_background, daemon=True).start()
+
         return jsonify(
             document_id=row["document_id"],
             fiscal_year=row["fiscal_year"],
