@@ -32,6 +32,12 @@ CHARTS_DIR = DATA_DIR / "charts"
 # instance (each instance gets its own disk) -- would need to move to a
 # shared store (e.g. the investigations table itself, or Postgres/S3) first.
 INVESTIGATION_JOBS_DIR = DATA_DIR / "investigation_jobs"
+# Same shape/same single-container-instance caveat as INVESTIGATION_JOBS_DIR
+# above, for /chat, /research/ask, and /companies/<id>/ask's own async+poll
+# flow (research/ask_jobs.py) -- a separate directory, not the same one,
+# since these track full answer payloads rather than investigation-page
+# redirect URLs.
+ASK_JOBS_DIR = DATA_DIR / "ask_jobs"
 LOG_DIR = BASE_DIR / "logs"
 
 SCHEMA_PATH = BASE_DIR / "schemas" / "sqlite_schema.sql"

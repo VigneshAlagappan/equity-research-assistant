@@ -100,6 +100,7 @@ from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
 from research.investigation_jobs import get_status as get_investigation_job_status, mark_done as mark_investigation_done, mark_error as mark_investigation_error, mark_running as mark_investigation_running
+from research.ask_jobs import get_status as get_ask_job_status, mark_done as mark_ask_job_done, mark_error as mark_ask_job_error, mark_running as mark_ask_job_running
 from retrieval.tag_resolver import resolve_tags_in_text
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
@@ -393,6 +394,7 @@ def _embed_question_for_reuse(question: str) -> tuple[list[float] | None, str | 
 def _persist_generated_report_s3(
     db, thread_id: str, question: str, company_ids: list[str], statement_type: str,
     report_markdown: str, evidence: list[dict] | None = None, followups: list[str] | None = None,
+    *, owner_id: str | None = None,
 ) -> None:
     """ADR-021: alongside save_generated_report()/save_report_evidence()/
     save_report_followups() (unchanged, still called exactly as before by
@@ -403,7 +405,12 @@ def _persist_generated_report_s3(
     its key + an LLM-generated abstract + the current user (if any) on the
     generated_reports row. Called from all four /research/... routes that
     save a report, so every one gets identical treatment — no route-
-    specific variation to keep in sync."""
+    specific variation to keep in sync.
+
+    `owner_id` is resolved from g.user by the caller rather than read here
+    -- this can run inside a background thread (the -async ask routes'
+    _compute_answer_question path), and g is bound to the request context,
+    which a background thread doesn't have."""
     artifact = {
         "thread_id": thread_id, "question": question, "company_ids": company_ids,
         "statement_type": statement_type, "report_markdown": report_markdown,
@@ -412,7 +419,6 @@ def _persist_generated_report_s3(
     s3_key = f"threads/{thread_id}/v1.json"
     default_document_store().store(s3_key, json.dumps(artifact, indent=2).encode("utf-8"))
     abstract = generate_abstract(db, report_markdown)
-    owner_id = g.user["user_id"] if g.user else None
     update_generated_report_s3_metadata(db, thread_id, s3_key=s3_key, abstract=abstract, version=1, owner_id=owner_id)
 
 
@@ -2765,57 +2771,56 @@ def create_app() -> Flask:
             "research.html", examples=EXAMPLES, companies=active_companies, api_key_set=ANTHROPIC_API_KEY_SET
         )
 
-    def _answer_question_response(company_ids: list[str] | None = None):
-        """Shared by /chat, /research/ask and /companies/<id>/ask — all three are
-        "ask the LLM research assistant about these companies", just reached from
-        different places (the standalone company-lookup flow, the Research tab's
-        own composer, and the per-company Ask AI drawer). Same validation, same
-        evidence-grounded answer, same response shape.
+    class _AskRequestError(Exception):
+        """Carries the same (message, http_status) the old synchronous
+        _answer_question_response() used to return directly via
+        jsonify(error=...), status -- raised by _compute_answer_question()
+        instead now that it has two callers (a synchronous route, and a
+        background thread with no response object to return early from)."""
 
-        `company_ids` is passed in only by the per-company route, where the scope
-        comes from the URL path — the body's own company_ids is ignored there, so
-        a request can't widen its scope past the company it was opened on.
+        def __init__(self, message: str, status: int) -> None:
+            super().__init__(message)
+            self.status = status
 
-        Every call here persists into generated_reports (same table
-        /research/thread/generate writes to) — so it shows up, timestamped, on
-        the Investigations list and (when scoped to one company) that
-        company's Threads tab, instead of vanishing once answered. This is
-        also what feeds research.assistant.answer_question()'s own
-        reuse-before-recompute check: the second time the same/near-same
-        question comes in, it's served from this saved row instead of a
-        fresh LLM call."""
-        payload = request.get_json(silent=True) or {}
-        question = (payload.get("question") or "").strip()
-        if company_ids is None:
-            company_ids = payload.get("company_ids") or []
-            # Tag resolution ("Nifty 50", "Technology companies") -- same
-            # mechanism /investigate/generate uses (retrieval/tag_resolver.py),
-            # applied here too so "Ask"/"/chat" don't behave differently
-            # from "Run structured investigation" for the identical
-            # question text. Only reached via this branch, never when a
-            # company_id was passed in explicitly by the caller (the
-            # per-company Ask AI drawer's URL-scoped call) -- see this
-            # function's own docstring on why that path must never widen
-            # past the company it was opened on.
-            if not company_ids and question:
-                company_ids = resolve_tags_in_text(get_db(), question)
-        statement_type = payload.get("statement_type", "consolidated")
+    def _compute_answer_question(
+        db, question: str, company_ids: list[str], *, statement_type: str, thread_id: str, thread_url: str,
+        owner_id: str | None,
+    ) -> dict:
+        """The actual "ask the LLM research assistant" work, extracted out
+        of the old _answer_question_response() so it can run either
+        synchronously (the original /chat, /research/ask, /companies/<id>/
+        ask routes, kept for compatibility) or in a background thread
+        (the -async routes below, added after a real production incident:
+        a broad/slow question -- or, as happened live, a company with a
+        slow-to-parse uploaded PDF -- can take long enough to exceed
+        gunicorn's own worker timeout *or* the platform's fronting load
+        balancer's timeout, either of which kills the request out from
+        under a synchronous caller and hands the browser an infrastructure
+        error page instead of JSON ("Unexpected token '<' ... is not valid
+        JSON") -- same root cause /investigate/generate-async was built to
+        fix earlier, just a different route hitting it).
 
+        `thread_id`/`thread_url` are generated by the caller, not here --
+        url_for() needs an active request context, which a background
+        thread doesn't have, so it must be resolved before the thread
+        starts (see /investigate/generate-async's own comment for the
+        established reasoning). `owner_id` gets the same treatment -- it's
+        g.user["user_id"], and g is likewise unavailable inside a
+        background thread."""
         if not ANTHROPIC_API_KEY_SET:
-            return jsonify(error="ANTHROPIC_API_KEY is not set on the server — the assistant can't run."), 503
+            raise _AskRequestError("ANTHROPIC_API_KEY is not set on the server — the assistant can't run.", 503)
         if not question:
-            return jsonify(error="Ask a question first."), 400
+            raise _AskRequestError("Ask a question first.", 400)
         # company_ids may be empty: a question can be grounded in Macro
         # evidence alone (research/macro_evidence.py) rather than any one
         # company's Financials/Docs — answer_question() handles that case,
         # including the "found nothing at all" message.
         if statement_type not in ("consolidated", "standalone"):
-            return jsonify(error="statement_type must be 'consolidated' or 'standalone'"), 400
+            raise _AskRequestError("statement_type must be 'consolidated' or 'standalone'", 400)
 
-        db = get_db()
         for company_id in company_ids:
             if get_company(db, company_id) is None:
-                return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
+                raise _AskRequestError(f"No company registered with company_id={company_id!r}", 404)
 
         # A group question ("Nifty 50 net profit CAGR") is a sum-then-CAGR
         # arithmetic problem, not something an LLM should reason about
@@ -2833,14 +2838,13 @@ def create_app() -> Flask:
             if aggregate_intent.is_aggregate:
                 aggregate_result = compute_group_aggregate(db, company_ids, aggregate_intent)
                 answer = format_aggregate_answer(aggregate_result, len(company_ids))
-                thread_id = uuid.uuid4().hex[:12]
                 question_embedding, question_embedding_model = _embed_question_for_reuse(question)
                 save_generated_report(
                     db, thread_id, question, company_ids, statement_type, answer,
                     question_embedding=question_embedding, question_embedding_model=question_embedding_model,
                 )
-                _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer)
-                return jsonify(
+                _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer, owner_id=owner_id)
+                return dict(
                     question=question,
                     company_ids=company_ids,
                     answer_html=str(_render_markdown_with_tags(answer)),
@@ -2849,13 +2853,13 @@ def create_app() -> Flask:
                     comparison_chart_company_count=0,
                     total_company_count=len(company_ids),
                     thread_id=thread_id,
-                    thread_url=url_for("research_thread", thread_id=thread_id),
+                    thread_url=thread_url,
                 )
 
         try:
             answer = answer_question(db, question, company_ids, statement_type=statement_type)
         except anthropic.APIError as exc:
-            return jsonify(error=f"The assistant request failed: {exc}"), 502
+            raise _AskRequestError(f"The assistant request failed: {exc}", 502) from exc
 
         # A peer-comparison question (>1 company) gets combined, indexed-to-100
         # comparison charts instead of separate same-company charts on each
@@ -2892,16 +2896,14 @@ def create_app() -> Flask:
                 for company_id in company_ids
             }
 
-        thread_id = uuid.uuid4().hex[:12]
         question_embedding, question_embedding_model = _embed_question_for_reuse(question)
         save_generated_report(
             db, thread_id, question, company_ids, statement_type, answer,
             question_embedding=question_embedding, question_embedding_model=question_embedding_model,
         )
-        _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer)
-        thread_url = url_for("research_thread", thread_id=thread_id)
+        _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer, owner_id=owner_id)
 
-        return jsonify(
+        return dict(
             question=question,
             company_ids=company_ids,
             answer_html=str(_render_markdown_with_tags(answer)),
@@ -2916,9 +2918,134 @@ def create_app() -> Flask:
             thread_url=thread_url,
         )
 
+    def _parse_ask_request(company_ids: list[str] | None):
+        """Common request-parsing for both the synchronous and -async ask
+        routes -- returns (question, company_ids, statement_type)."""
+        payload = request.get_json(silent=True) or {}
+        question = (payload.get("question") or "").strip()
+        if company_ids is None:
+            company_ids = payload.get("company_ids") or []
+            # Tag resolution ("Nifty 50", "Technology companies") -- same
+            # mechanism /investigate/generate uses (retrieval/tag_resolver.py),
+            # applied here too so "Ask"/"/chat" don't behave differently
+            # from "Run structured investigation" for the identical
+            # question text. Only reached via this branch, never when a
+            # company_id was passed in explicitly by the caller (the
+            # per-company Ask AI drawer's URL-scoped call) -- see
+            # _compute_answer_question's docstring on why that path must
+            # never widen past the company it was opened on.
+            if not company_ids and question:
+                company_ids = resolve_tags_in_text(get_db(), question)
+        statement_type = payload.get("statement_type", "consolidated")
+        return question, company_ids, statement_type
+
+    def _answer_question_response(company_ids: list[str] | None = None):
+        """Shared by /chat, /research/ask and /companies/<id>/ask — all three are
+        "ask the LLM research assistant about these companies", just reached from
+        different places (the standalone company-lookup flow, the Research tab's
+        own composer, and the per-company Ask AI drawer). Same validation, same
+        evidence-grounded answer, same response shape.
+
+        Kept as the synchronous path for compatibility -- the -async routes
+        below are what the actual UI calls now (see _compute_answer_question's
+        docstring for why). Every call here persists into generated_reports
+        (same table /research/thread/generate writes to) — so it shows up,
+        timestamped, on the Investigations list and (when scoped to one
+        company) that company's Threads tab, instead of vanishing once
+        answered. This is also what feeds research.assistant.answer_
+        question()'s own reuse-before-recompute check: the second time the
+        same/near-same question comes in, it's served from this saved row
+        instead of a fresh LLM call."""
+        question, company_ids, statement_type = _parse_ask_request(company_ids)
+        thread_id = uuid.uuid4().hex[:12]
+        thread_url = url_for("research_thread", thread_id=thread_id)
+        owner_id = g.user["user_id"] if g.user else None
+        try:
+            result = _compute_answer_question(
+                get_db(), question, company_ids,
+                statement_type=statement_type, thread_id=thread_id, thread_url=thread_url,
+                owner_id=owner_id,
+            )
+        except _AskRequestError as exc:
+            return jsonify(error=str(exc)), exc.status
+        return jsonify(result)
+
+    def _answer_question_async_response(company_ids: list[str] | None = None):
+        """Async counterpart of _answer_question_response() -- validates
+        input synchronously (fails fast on bad input, same checks as the
+        sync path), then hands the actual _compute_answer_question() call
+        to a background thread and returns immediately with a job_id, same
+        pattern /investigate/generate-async already established. See
+        _compute_answer_question's own docstring for why this exists."""
+        question, company_ids, statement_type = _parse_ask_request(company_ids)
+
+        # Same validation _compute_answer_question() would raise on, done
+        # here first so a bad request fails immediately rather than after
+        # a background thread has already started (mirrors /investigate/
+        # generate-async's identical reasoning).
+        if not ANTHROPIC_API_KEY_SET:
+            return jsonify(error="ANTHROPIC_API_KEY is not set on the server — the assistant can't run."), 503
+        if not question:
+            return jsonify(error="Ask a question first."), 400
+        if statement_type not in ("consolidated", "standalone"):
+            return jsonify(error="statement_type must be 'consolidated' or 'standalone'"), 400
+
+        db = get_db()
+        for company_id in company_ids:
+            if get_company(db, company_id) is None:
+                return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
+
+        job_id = uuid.uuid4().hex[:12]
+        thread_id = uuid.uuid4().hex[:12]
+        thread_url = url_for("research_thread", thread_id=thread_id)
+        # Resolved here, before the thread starts -- g is bound to this
+        # request context and isn't available inside the background
+        # thread below (same reasoning as thread_id/thread_url above).
+        owner_id = g.user["user_id"] if g.user else None
+        mark_ask_job_running(job_id)
+
+        def _run_in_background() -> None:
+            conn = scheduling_open_db()
+            try:
+                result = _compute_answer_question(
+                    conn, question, company_ids,
+                    statement_type=statement_type, thread_id=thread_id, thread_url=thread_url,
+                    owner_id=owner_id,
+                )
+                mark_ask_job_done(job_id, result)
+            except _AskRequestError as exc:
+                mark_ask_job_error(job_id, str(exc))
+            except Exception as exc:  # noqa: BLE001 -- surface any failure to the poller, not a silently stuck "running"
+                logger.exception("Async ask job %s failed", job_id)
+                mark_ask_job_error(job_id, f"Unexpected error: {exc}")
+            finally:
+                conn.close()
+
+        threading.Thread(target=_run_in_background, daemon=True).start()
+        return jsonify(job_id=job_id), 202
+
+    @app.route("/ask/status/<job_id>")
+    def ask_status(job_id: str):
+        """Polled by _ask_ai.html/chat.html/research.html after their own
+        -async route returns a job_id. {status: "running"} keeps the page
+        waiting; {status: "done", result: {...}} is the exact JSON payload
+        the old synchronous routes used to return directly; {status:
+        "error", error: ...} surfaces the same message the synchronous
+        path would have returned inline. A 404 (unknown job_id) is
+        deliberately distinct from a real "error" status -- same
+        conventions as /investigate/status."""
+        status = get_ask_job_status(job_id)
+        if status is None:
+            abort(404)
+        return jsonify(status)
+
     @app.route("/research/ask", methods=["POST"])
     def research_ask():
         return _answer_question_response()
+
+    @app.route("/research/ask-async", methods=["POST"])
+    def research_ask_async():
+        return _answer_question_async_response()
 
     @app.route("/companies/<company_id>/ask", methods=["POST"])
     def company_ask(company_id: str):
@@ -2928,8 +3055,13 @@ def create_app() -> Flask:
         all — it already knows which company it was opened on. Every answer
         here is auto-saved as a thread (save_thread=True) so it lands on the
         company's Threads tab, timestamped and deletable — unlike /research/ask
-        and /chat, which stay ephemeral."""
+        and /chat, which stay ephemeral. Kept as the synchronous path for
+        compatibility -- the drawer's own JS calls company_ask_async below now."""
         return _answer_question_response(company_ids=[company_id])
+
+    @app.route("/companies/<company_id>/ask-async", methods=["POST"])
+    def company_ask_async(company_id: str):
+        return _answer_question_async_response(company_ids=[company_id])
 
     @app.route("/research/thread/generate", methods=["POST"])
     def research_thread_generate():
@@ -2977,7 +3109,10 @@ def create_app() -> Flask:
                     db, thread_id, question, company_ids, statement_type, answer,
                     question_embedding=question_embedding, question_embedding_model=question_embedding_model,
                 )
-                _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer)
+                _persist_generated_report_s3(
+                    db, thread_id, question, company_ids, statement_type, answer,
+                    owner_id=g.user["user_id"] if g.user else None,
+                )
                 return jsonify(thread_id=thread_id, url=url_for("research_thread", thread_id=thread_id))
 
         try:
@@ -3002,6 +3137,7 @@ def create_app() -> Flask:
         _persist_generated_report_s3(
             db, thread_id, question, company_ids, statement_type, result.report_markdown,
             evidence=evidence_dicts, followups=result.followups,
+            owner_id=g.user["user_id"] if g.user else None,
         )
         return jsonify(thread_id=thread_id, url=url_for("research_thread", thread_id=thread_id))
 
@@ -3715,6 +3851,10 @@ def create_app() -> Flask:
     @app.route("/chat", methods=["POST"])
     def chat_ask():
         return _answer_question_response()
+
+    @app.route("/chat-async", methods=["POST"])
+    def chat_ask_async():
+        return _answer_question_async_response()
 
     # Guarded so this runs exactly once in the process that actually serves
     # requests -- with the debug reloader on, create_app() executes once in

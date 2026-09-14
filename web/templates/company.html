@@ -796,7 +796,7 @@
               "companyId": company_id,
               "companyName": company["display_name"],
               "statementType": statement_type,
-              "askUrl": url_for("company_ask", company_id=company_id),
+              "askAsyncUrl": url_for("company_ask_async", company_id=company_id),
               "notesUrl": url_for("company_add_note", company_id=company_id),
             }|tojson }}'>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"></path><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"></path></svg>

@@ -762,6 +762,113 @@ def test_company_ask_saves_answer_as_a_thread(tmp_path: Path, monkeypatch) -> No
     assert "How did net profit change?" in threads_tab
 
 
+# ------------------------------------------------------------------
+# /companies/<id>/ask-async, /research/ask-async, /chat-async + /ask/status
+# -- async+poll counterparts of the synchronous ask routes above, added
+# after a real production incident: a slow question (or, as happened
+# live, a company with a slow-to-parse uploaded PDF) can take long enough
+# to exceed gunicorn's own worker timeout or the platform's fronting load
+# balancer timeout, either of which kills a synchronous request out from
+# under the browser ("Network error: Unexpected token '<' ... is not
+# valid JSON") even though the answer would have finished fine left
+# running. Same pattern as /investigate/generate-async.
+# ------------------------------------------------------------------
+
+
+def test_company_ask_async_runs_in_background_and_status_reaches_done(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "company_ask_async.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    file_path = tmp_path / "HDFCBANK.xlsx"
+    _make_screener_workbook(file_path)
+    ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
+
+    with app.test_client() as test_client:
+        start = test_client.post("/companies/HDFCBANK/ask-async", json={"question": "How did net profit change?"})
+        assert start.status_code == 202
+        job_id = start.get_json()["job_id"]
+
+        import time
+
+        status = None
+        for _ in range(200):  # LLM is faked, but real embedding-model loading can be slow on a cold run
+            status = test_client.get(f"/ask/status/{job_id}").get_json()
+            if status["status"] != "running":
+                break
+            time.sleep(0.1)
+
+        assert status["status"] == "done"
+        result = status["result"]
+        assert result["thread_id"]
+        assert result["thread_url"] == f"/research/thread/{result['thread_id']}"
+
+        thread_page = test_client.get(result["thread_url"])
+        assert thread_page.status_code == 200
+        assert b"How did net profit change?" in thread_page.data
+
+
+def test_ask_async_requires_a_question(client, monkeypatch) -> None:
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    response = client.post("/research/ask-async", json={"question": "", "company_ids": []})
+    assert response.status_code == 400
+
+
+def test_ask_async_requires_api_key(client, monkeypatch) -> None:
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", False)
+    response = client.post("/research/ask-async", json={"question": "test", "company_ids": []})
+    assert response.status_code == 503
+
+
+def test_ask_status_unknown_job_id_is_404(client) -> None:
+    response = client.get("/ask/status/not-a-real-job-id")
+    assert response.status_code == 404
+
+
+def test_ask_async_reports_error_status_on_llm_failure(client, monkeypatch) -> None:
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+
+    import anthropic
+
+    def _failing_answer_question(*args, **kwargs):
+        raise anthropic.APIConnectionError(request=SimpleNamespace())
+
+    monkeypatch.setattr("web.app.answer_question", _failing_answer_question)
+
+    start = client.post("/research/ask-async", json={"question": "test", "company_ids": ["HDFCBANK"]})
+    assert start.status_code == 202
+    job_id = start.get_json()["job_id"]
+
+    import time
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/ask/status/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "error"
+    assert "assistant request failed" in status["error"]
+
+
+def test_research_ask_async_and_chat_async_are_wired(client, monkeypatch) -> None:
+    """Not full end-to-end runs (test_company_ask_async_... above already
+    covers that) -- just confirms both other -async routes exist and
+    accept a request, since they share _answer_question_async_response()
+    with company_ask_async but are reached via different URLs."""
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    for url in ("/research/ask-async", "/chat-async"):
+        response = client.post(url, json={"question": "test", "company_ids": []})
+        assert response.status_code == 202
+        assert response.get_json()["job_id"]
+
+
 def test_research_ask_saves_a_thread(tmp_path: Path, monkeypatch) -> None:
     """Like the per-company Ask AI drawer, the Research tab's own composer
     (/research/ask, possibly multi-company) now also persists every answer
