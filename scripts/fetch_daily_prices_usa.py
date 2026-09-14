@@ -30,9 +30,8 @@ import time
 
 from ingestion.batch_log import BatchRun
 from sources.yfinance_prices import fetch_daily_bars
+from storage.backend_bootstrap import open_db, open_price_db
 from storage.company_repository import select_active_companies_by_country
-from storage.database import init_db
-from storage.price_database import init_price_db
 from storage.price_repository import upsert_daily_bars
 
 REQUEST_DELAY_SECONDS = 0.4
@@ -59,13 +58,25 @@ def run_price_history_update_usa(main_conn=None, price_conn=None) -> int:
     the actual price upserts go through the separate price db --
     batch_job_runs/batch_job_items live in the main db.
 
+    main_conn is opened via storage.backend_bootstrap.open_db() (not
+    storage.database.init_db() directly) -- select_active_companies_by_
+    country below resolves to company_repository_pg's Postgres-flavored
+    version once DATABASE_BACKEND=postgres (a process-wide sys.modules
+    swap, not something this function controls), so main_conn must be on
+    that same backend or every call against it breaks (found this the
+    hard way: a hardcoded init_db() here crashed with `'sqlite3.Cursor'
+    object does not support the context manager protocol` the moment
+    "Run now" was clicked against a Postgres-backed deployment). BatchRun
+    below still gets its own dedicated SQLite connection either way (see
+    ingestion/batch_log.py's docstring) -- unaffected by this.
+
     Returns the BatchRun's run_id."""
     owns_main_conn = main_conn is None
     if main_conn is None:
-        main_conn = init_db()
+        main_conn = open_db()
     owns_price_conn = price_conn is None
     if price_conn is None:
-        price_conn = init_price_db()
+        price_conn = open_price_db()
 
     try:
         rows = select_active_companies_by_country(main_conn, "US")

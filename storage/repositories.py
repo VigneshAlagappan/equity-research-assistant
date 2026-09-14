@@ -18,6 +18,7 @@ from pathlib import Path
 from config.settings import to_repo_relative
 from ingestion.events import DatasetIngestedEvent
 from sources.base import NormalizedObservation
+from storage.db_types import DBConnection
 from sources.macro import MacroNormalizedObservation
 from sources.rbi_bank_infrastructure import BankInfrastructureObservation
 from storage.database import utcnow_iso
@@ -614,7 +615,7 @@ def list_reconciliation_log_by_company(
     return by_company
 
 
-def list_xbrl_migration_status(conn: sqlite3.Connection) -> list[dict]:
+def list_xbrl_migration_status(main_conn: DBConnection, financial_obs_conn: sqlite3.Connection) -> list[dict]:
     """Per NSE-listed active company: the latest quarterly period on file
     from ANY source vs the latest one specifically validated on NSE XBRL —
     the Admin Audit Log panel's "what's pending" view (source policy: NSE
@@ -633,8 +634,23 @@ def list_xbrl_migration_status(conn: sqlite3.Connection) -> list[dict]:
     since fiscal_year is always "FY" + 4 digits and quarter is always a
     single "Q1".."Q4" — MAX()/< on that concatenation is a valid
     chronological comparison without parsing it apart.
+
+    Two connections, not one: `financial_observations` was excluded from
+    the Postgres migration entirely (Neon's free-tier storage cap; see
+    schemas/postgres_schema.sql's own note), so it stays SQLite-only
+    forever and must be read from a dedicated SQLite connection (web/
+    app.py's get_logs_db()) regardless of DATABASE_BACKEND — while
+    `companies` is a live, actively-written table that must be read from
+    whichever backend is actually current (get_db()), or this would show
+    a stale/empty company list in production. Found this the hard way:
+    a single-connection version of this function (this one, before the
+    fix) crashed with `UndefinedTable: relation "financial_observations"
+    does not exist` the instant the Admin Audit Log panel was opened
+    against Postgres. `main_conn.cursor()`/`.execute()`/`.fetchall()`
+    works identically on both backends here since neither query below
+    takes a bind parameter (no ?/%s placeholder mismatch to worry about).
     """
-    coverage_rows = conn.execute(
+    fo_cur = financial_obs_conn.execute(
         """
         SELECT company_id,
                MAX(CASE WHEN source = 'nse' THEN fiscal_year || quarter END) AS latest_xbrl_period,
@@ -643,15 +659,18 @@ def list_xbrl_migration_status(conn: sqlite3.Connection) -> list[dict]:
         WHERE period_type = 'quarterly'
         GROUP BY company_id
         """
-    ).fetchall()
+    )
+    coverage_rows = fo_cur.fetchall()
     coverage_by_company = {row["company_id"]: row for row in coverage_rows}
 
-    companies = conn.execute(
+    main_cur = main_conn.cursor()
+    main_cur.execute(
         """
         SELECT company_id, display_name, nse_symbol FROM companies
         WHERE nse_symbol IS NOT NULL AND nse_symbol != '' AND status = 'active'
         """
-    ).fetchall()
+    )
+    companies = main_cur.fetchall()
 
     _STATUS_ORDER = {"pending": 0, "not_started": 1, "no_data": 2, "up_to_date": 3}
     results: list[dict] = []
@@ -681,7 +700,7 @@ def list_xbrl_migration_status(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-def list_sec_edgar_migration_status(conn: sqlite3.Connection) -> list[dict]:
+def list_sec_edgar_migration_status(main_conn: DBConnection, financial_obs_conn: sqlite3.Connection) -> list[dict]:
     """Per active US company: the same "is the target source of truth
     caught up with everything else on file" question
     list_xbrl_migration_status() answers for NSE, just source='sec_edgar'
@@ -704,7 +723,7 @@ def list_sec_edgar_migration_status(conn: sqlite3.Connection) -> list[dict]:
     (India vs USA) shouldn't be tempted to reuse an NSE-only field name
     that has no US equivalent (company_id itself is the closest thing to
     a "ticker" for a US company, already returned)."""
-    coverage_rows = conn.execute(
+    fo_cur = financial_obs_conn.execute(
         """
         SELECT company_id,
                MAX(CASE WHEN source = 'sec_edgar' THEN fiscal_year || quarter END) AS latest_edgar_period,
@@ -713,12 +732,15 @@ def list_sec_edgar_migration_status(conn: sqlite3.Connection) -> list[dict]:
         WHERE period_type = 'quarterly'
         GROUP BY company_id
         """
-    ).fetchall()
+    )
+    coverage_rows = fo_cur.fetchall()
     coverage_by_company = {row["company_id"]: row for row in coverage_rows}
 
-    companies = conn.execute(
+    main_cur = main_conn.cursor()
+    main_cur.execute(
         "SELECT company_id, display_name FROM companies WHERE country = 'US' AND status = 'active'"
-    ).fetchall()
+    )
+    companies = main_cur.fetchall()
 
     _STATUS_ORDER = {"pending": 0, "not_started": 1, "no_data": 2, "up_to_date": 3}
     results: list[dict] = []
@@ -1098,18 +1120,29 @@ def save_company_document(
     added_by_user: str,
     raw_file_path: str | None = None,
     source_url: str | None = None,
+    storage_object_key: str | None = None,
+    content_hash: str | None = None,
 ) -> sqlite3.Row:
     """Manually-added documents only, via the Docs tab's Add form —
     officially-sourced rows (added_by_user NULL) would come from a future
-    data-provider ingestion path, which doesn't exist yet."""
+    data-provider ingestion path, which doesn't exist yet.
+
+    storage_object_key/content_hash (storage/document_store.py) default to
+    None for a link-only row (no uploaded file); a caller that stores an
+    upload through the active DocumentStore should pass both — same
+    optional-and-additive shape raw_file_path/source_url already have."""
     now = utcnow_iso()
     cursor = conn.execute(
         """
         INSERT INTO documents (company_id, document_type, fiscal_year, quarter,
-                                raw_file_path, source_url, added_by_user, retrieved_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                raw_file_path, source_url, added_by_user, retrieved_at,
+                                storage_object_key, content_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (company_id, document_type, fiscal_year, quarter, raw_file_path, source_url, added_by_user, now),
+        (
+            company_id, document_type, fiscal_year, quarter, raw_file_path, source_url, added_by_user, now,
+            storage_object_key, content_hash,
+        ),
     )
     conn.commit()
     return conn.execute("SELECT * FROM documents WHERE document_id = ?", (cursor.lastrowid,)).fetchone()
@@ -1437,6 +1470,29 @@ def list_investigation_hypothesis_evidence(conn: sqlite3.Connection, hypothesis_
     return conn.execute(
         "SELECT * FROM investigation_hypothesis_evidence WHERE hypothesis_id = ? ORDER BY id", (hypothesis_id,)
     ).fetchall()
+
+
+def update_investigation_s3_metadata(
+    conn: sqlite3.Connection, investigation_id: str, *, s3_key: str, abstract: str | None,
+    version: int, strongest_verdict: str | None,
+) -> None:
+    """research/investigation.py::_persist() calls this right after writing
+    the same investigation via save_investigation()/save_investigation_
+    hypothesis()/save_investigation_hypothesis_evidence() (unchanged,
+    still the source of truth for anything that queries those tables
+    directly) -- this just records where the equivalent full-content JSON
+    artifact landed in S3, plus two summary fields (abstract,
+    strongest_verdict) so web/app.py's investigate_view()/investigations()
+    list route can serve from this row alone without a live JOIN. See
+    storage/database.py::_migrate_investigation_s3_columns for the
+    backward-compatibility contract (NULL here means "pre-migration,
+    fall back to the normalized tables")."""
+    conn.execute(
+        "UPDATE investigations SET s3_key = ?, abstract = ?, version = ?, strongest_verdict = ? "
+        "WHERE investigation_id = ?",
+        (s3_key, abstract, version, strongest_verdict, investigation_id),
+    )
+    conn.commit()
 
 
 def get_or_create_knowledge_entity(
@@ -1915,6 +1971,7 @@ def find_knowledge_claims_for_entity_ids(conn: sqlite3.Connection, entity_ids: l
 
 
 def _row_to_generated_report(row: sqlite3.Row) -> dict:
+    columns = row.keys()
     return {
         "thread_id": row["thread_id"],
         "question": row["question"],
@@ -1925,6 +1982,17 @@ def _row_to_generated_report(row: sqlite3.Row) -> dict:
         "question_embedding": json.loads(row["question_embedding"]) if row["question_embedding"] else None,
         "question_embedding_model": row["question_embedding_model"],
         "hidden_at": row["hidden_at"],
+        # s3_key/abstract/version/visibility/owner_id predate a report saved
+        # before ADR-021's persistence split (or, for s3_key/abstract/
+        # version, before this row's own generated_reports_s3_columns
+        # migration ran) -- "not in columns" only for a genuinely stale
+        # schema snapshot (shouldn't happen once init_db() has run), NULL
+        # for every real pre-migration row.
+        "s3_key": row["s3_key"] if "s3_key" in columns else None,
+        "abstract": row["abstract"] if "abstract" in columns else None,
+        "version": row["version"] if "version" in columns else None,
+        "visibility": row["visibility"] if "visibility" in columns else "private",
+        "owner_id": row["owner_id"] if "owner_id" in columns else None,
     }
 
 
@@ -2058,6 +2126,24 @@ def list_report_followups(conn: sqlite3.Connection, thread_id: str) -> list[str]
         "SELECT followup_text FROM research_thread_followups WHERE thread_id = ? ORDER BY sort_order", (thread_id,)
     ).fetchall()
     return [row["followup_text"] for row in rows]
+
+
+def update_generated_report_s3_metadata(
+    conn: sqlite3.Connection, thread_id: str, *, s3_key: str, abstract: str | None,
+    version: int, owner_id: int | None = None,
+) -> None:
+    """generated_reports counterpart of update_investigation_s3_metadata --
+    see that function's docstring for the full reasoning. report_markdown/
+    research_thread_evidence/research_thread_followups keep being written
+    exactly as before by whichever web/app.py route calls save_generated_
+    report()/save_report_evidence()/save_report_followups() -- this only
+    records the equivalent full-content S3 artifact's location + a short
+    abstract + who (if anyone was logged in) triggered the generation."""
+    conn.execute(
+        "UPDATE generated_reports SET s3_key = ?, abstract = ?, version = ?, owner_id = ? WHERE thread_id = ?",
+        (s3_key, abstract, version, owner_id, thread_id),
+    )
+    conn.commit()
 
 
 def insert_llm_call_log(

@@ -221,7 +221,7 @@
   const scopeMenu = document.getElementById('askai-scope-menu');
   const scopeOptions = document.getElementById('askai-scope-options');
 
-  let ctx = null; // { companyId, companyName, statementType, askUrl, notesUrl }
+  let ctx = null; // { companyId, companyName, statementType, askAsyncUrl, notesUrl }
   let model = 'standard';
   let scope = 'archive';
   let phase = 'idle'; // idle | thinking | answered
@@ -351,6 +351,33 @@
     document.getElementById('askai-ask-another').addEventListener('click', openIdle);
   }
 
+  const ASK_POLL_INTERVAL_MS = 3000;
+  const ASK_POLL_MAX_ATTEMPTS = 100; // ~5 minutes
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function pollAskStatus(jobId) {
+    for (let attempt = 0; attempt < ASK_POLL_MAX_ATTEMPTS; attempt++) {
+      await sleep(ASK_POLL_INTERVAL_MS);
+      let res;
+      try {
+        res = await fetch(`/ask/status/${jobId}`);
+      } catch (err) {
+        continue; // a transient network blip while polling isn't fatal on its own
+      }
+      if (!res.ok) {
+        throw new Error(`lost track of this question (HTTP ${res.status})`);
+      }
+      const data = await res.json();
+      if (data.status === 'done') return data.result;
+      if (data.status === 'error') throw new Error(data.error || 'Something went wrong.');
+      // status === 'running' -- keep polling.
+    }
+    throw new Error('This is taking longer than expected — try again in a moment, or ask something narrower.');
+  }
+
   async function runAsk(question) {
     question = (question || '').trim();
     if (!question || !ctx) return;
@@ -361,7 +388,15 @@
     try {
       // model/scope aren't sent — the backend has one model and no
       // per-document-type filter yet, see the header comment above.
-      const res = await fetch(ctx.askUrl, {
+      //
+      // Async + poll, not one long request: a broad question (or, as
+      // happened live, a company with a slow-to-parse uploaded PDF) can
+      // take long enough to exceed gunicorn's own worker timeout or the
+      // platform's fronting load balancer timeout, either of which kills
+      // a synchronous request out from under the browser and surfaces as
+      // "Network error: Unexpected token '<' ... is not valid JSON" even
+      // though the answer would have finished fine left running.
+      const res = await fetch(ctx.askAsyncUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, statement_type: ctx.statementType }),
@@ -371,10 +406,12 @@
       if (!res.ok) {
         phase = 'answered';
         renderError(question, data.error || 'Something went wrong.');
-      } else {
-        phase = 'answered';
-        renderAnswered(question, data);
+        return;
       }
+      const result = await pollAskStatus(data.job_id);
+      if (phase !== 'thinking') return;
+      phase = 'answered';
+      renderAnswered(question, result);
     } catch (err) {
       if (phase !== 'thinking') return;
       phase = 'answered';

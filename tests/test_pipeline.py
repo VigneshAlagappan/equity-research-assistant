@@ -298,11 +298,18 @@ def test_ingest_macro_file_end_to_end(tmp_path: Path, db_conn: sqlite3.Connectio
     assert all(row["region"] is None for row in series)
 
 
-def test_ingest_fred_series_end_to_end(monkeypatch, db_conn: sqlite3.Connection) -> None:
+def test_ingest_fred_series_end_to_end(tmp_path: Path, monkeypatch, db_conn: sqlite3.Connection) -> None:
     """No companies fixture needed, same as macro ingestion above — FRED
     series aren't scoped to a company either. HTTP is mocked, same as
     tests/test_fred_adapter.py."""
     from contextlib import contextmanager
+
+    # ADR-022: ingest_fred_series() also lands a raw/macro/ artifact via
+    # storage.raw_object_store (LocalDocumentStore by default) -- isolate
+    # BASE_DIR so this test never writes into the real repo (same
+    # reasoning tests/test_web.py's own DOCUMENTS_DIR/RAW_DIR isolation
+    # comment gives for its own equivalent bug).
+    monkeypatch.setattr("config.settings.BASE_DIR", tmp_path)
 
     class _FakeResponse:
         def __init__(self, body: bytes) -> None:
@@ -328,6 +335,93 @@ def test_ingest_fred_series_end_to_end(monkeypatch, db_conn: sqlite3.Connection)
     series = get_macro_series(db_conn, "fedfunds")
     assert [row["value"] for row in series] == [1.55, 1.58]
     assert all(row["source"] == "fred" for row in series)
+
+
+def _mock_fred_response(monkeypatch, body: bytes) -> None:
+    from contextlib import contextmanager
+
+    class _FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self._content = content
+
+        def read(self) -> bytes:
+            return self._content
+
+    @contextmanager
+    def fake_urlopen(req, timeout=None):
+        yield _FakeResponse(body)
+
+    monkeypatch.setattr("sources.fred.urllib.request.urlopen", fake_urlopen)
+
+
+def test_ingest_fred_series_lands_raw_object_before_macro_observations(
+    tmp_path: Path, monkeypatch, db_conn: sqlite3.Connection
+) -> None:
+    """ADR-022: the raw CSV lands in raw/macro/ (cataloged, linked back
+    to the macro_observations it produced) before/alongside the existing
+    macro_observations insert -- existing behavior (asserted above) stays
+    unchanged."""
+    monkeypatch.setattr("config.settings.BASE_DIR", tmp_path)
+    monkeypatch.setattr("config.settings.DOCUMENT_STORE_BACKEND", "local")
+    _mock_fred_response(monkeypatch, b"observation_date,FEDFUNDS\n2020-01-01,1.55\n2020-02-01,1.58\n")
+
+    from storage import raw_object_repository as ror
+
+    ingest_fred_series(db_conn, "FEDFUNDS", unit="PERCENT")
+
+    raw_rows = ror.list_raw_objects(db_conn, source="fred", entity="fedfunds")
+    assert len(raw_rows) == 1
+    assert raw_rows[0]["state"] == "ingested"
+    assert raw_rows[0]["object_type"] == "fred_series_csv"
+    assert raw_rows[0]["raw_prefix"] == "macro"
+
+    lineage = ror.get_lineage_for_object(db_conn, raw_rows[0]["object_id"])
+    assert len(lineage) == 1
+    assert lineage[0]["derived_table"] == "macro_observations"
+
+
+def test_ingest_fred_series_rerun_with_identical_csv_dedups_raw_object(
+    tmp_path: Path, monkeypatch, db_conn: sqlite3.Connection
+) -> None:
+    monkeypatch.setattr("config.settings.BASE_DIR", tmp_path)
+    monkeypatch.setattr("config.settings.DOCUMENT_STORE_BACKEND", "local")
+    _mock_fred_response(monkeypatch, b"observation_date,FEDFUNDS\n2020-01-01,1.55\n2020-02-01,1.58\n")
+
+    from storage import raw_object_repository as ror
+
+    ingest_fred_series(db_conn, "FEDFUNDS", unit="PERCENT")
+    ingest_fred_series(db_conn, "FEDFUNDS", unit="PERCENT")
+
+    raw_rows = ror.list_raw_objects(db_conn, source="fred", entity="fedfunds")
+    assert len(raw_rows) == 1, "an unchanged FRED series re-fetch must not create a second raw object"
+
+    # And existing dedup-by-period behavior (already-have periods skipped) is unaffected.
+    series = get_macro_series(db_conn, "fedfunds")
+    assert len(series) == 2
+
+
+def test_ingest_fred_series_updated_csv_creates_new_raw_object(
+    tmp_path: Path, monkeypatch, db_conn: sqlite3.Connection
+) -> None:
+    monkeypatch.setattr("config.settings.BASE_DIR", tmp_path)
+    monkeypatch.setattr("config.settings.DOCUMENT_STORE_BACKEND", "local")
+
+    from storage import raw_object_repository as ror
+
+    _mock_fred_response(monkeypatch, b"observation_date,FEDFUNDS\n2020-01-01,1.55\n2020-02-01,1.58\n")
+    ingest_fred_series(db_conn, "FEDFUNDS", unit="PERCENT")
+
+    # FRED published a new month -- genuinely different content.
+    _mock_fred_response(
+        monkeypatch, b"observation_date,FEDFUNDS\n2020-01-01,1.55\n2020-02-01,1.58\n2020-03-01,1.60\n",
+    )
+    ingest_fred_series(db_conn, "FEDFUNDS", unit="PERCENT")
+
+    raw_rows = ror.list_raw_objects(db_conn, source="fred", entity="fedfunds")
+    assert len(raw_rows) == 2, "a genuinely updated series must create a second, distinct raw object"
+
+    series = get_macro_series(db_conn, "fedfunds")
+    assert len(series) == 3
 
 
 def test_ingest_macro_file_skips_invalid_rows_with_reasons(tmp_path: Path, db_conn: sqlite3.Connection) -> None:

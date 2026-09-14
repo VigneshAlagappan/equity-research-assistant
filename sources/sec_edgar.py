@@ -55,6 +55,7 @@ in _derive_q4_observations() only when all four inputs are present.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date
 
@@ -132,11 +133,20 @@ def get_cik_for_ticker(ticker: str) -> int | None:
     return _load_ticker_cik_map().get(ticker)
 
 
-def fetch_company_facts(cik: int) -> dict:
-    """The raw companyfacts JSON for one CIK -- every XBRL-tagged fact this
-    company has ever reported, across every filing. Can be several MB for a
-    large, long-listed filer (Apple's is ~3.8MB)."""
-    url = _COMPANY_FACTS_URL.format(cik=cik)
+def company_facts_url(cik: int) -> str:
+    """Public wrapper of the companyfacts URL template -- ingestion/
+    pipeline.py's ingest_sec_edgar_company() records this as the raw
+    object's source_url (ADR-022)."""
+    return _COMPANY_FACTS_URL.format(cik=cik)
+
+
+def fetch_company_facts_raw(cik: int) -> bytes:
+    """Just the network fetch, extracted out of fetch_company_facts()
+    below so a caller that needs the raw bytes themselves (ADR-022's
+    raw/companies/ persistence) doesn't have to issue a second HTTP
+    request. fetch_company_facts() calls this internally -- one network
+    call either way, same as before this split."""
+    url = company_facts_url(cik)
     try:
         resp = requests.get(url, headers=_headers(), timeout=30)
     except requests.RequestException as exc:
@@ -144,7 +154,16 @@ def fetch_company_facts(cik: int) -> dict:
     if resp.status_code == 404:
         raise SECFetchError(f"No SEC XBRL company facts for CIK {cik} (never filed, or CIK wrong)")
     resp.raise_for_status()
-    return resp.json()
+    return resp.content
+
+
+def fetch_company_facts(cik: int) -> dict:
+    """The raw companyfacts JSON for one CIK -- every XBRL-tagged fact this
+    company has ever reported, across every filing. Can be several MB for a
+    large, long-listed filer (Apple's is ~3.8MB). Unchanged public
+    behavior/signature, now composed of fetch_company_facts_raw() + a plain
+    json.loads()."""
+    return json.loads(fetch_company_facts_raw(cik))
 
 
 # ============================================================
@@ -340,12 +359,22 @@ class SECEdgarAdapter:
     def __init__(self, conn: DBConnection):
         self._conn = conn
 
-    def fetch(self, company_id: str, cik: int, *, currency: str = "USD") -> list[NormalizedObservation]:
+    def fetch(
+        self, company_id: str, cik: int, *, currency: str = "USD", facts: dict | None = None,
+    ) -> list[NormalizedObservation]:
         """Fetch and normalize this company's quarterly + annual financials
         from SEC's own XBRL data. Returns [] (not an error) if this CIK has
         no us-gaap facts at all -- same "absence isn't an error" rule
-        sources/yfinance_financials.py's fetch() follows."""
-        facts = fetch_company_facts(cik)
+        sources/yfinance_financials.py's fetch() follows.
+
+        `facts` lets a caller that already fetched (and, per ADR-022,
+        cataloged the raw bytes for) this CIK's companyfacts pass them in
+        directly rather than triggering a second network call -- ingestion/
+        pipeline.py::ingest_sec_edgar_company() is the one caller that does
+        this. Default (None) preserves this method's original
+        fetch-it-yourself behavior for any other caller."""
+        if facts is None:
+            facts = fetch_company_facts(cik)
         usgaap = facts.get("facts", {}).get("us-gaap", {})
         if not usgaap:
             logger.warning("SEC EDGAR: no us-gaap facts for CIK %s (company_id=%s)", cik, company_id)

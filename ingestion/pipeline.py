@@ -7,6 +7,7 @@ normalization/financials.py; this module owns validate -> store -> reconcile.)
 
 from __future__ import annotations
 
+import json
 import logging
 from storage.db_types import DBConnection
 import uuid
@@ -28,10 +29,12 @@ from sources.rbi_dbie_tables import (
     parse_rbi_daily_rate_table,
     parse_rbi_dbie_table,
 )
-from sources.fred import fetch_fred_series
+from sources.fred import fetch_fred_series_raw, fred_csv_url, parse_fred_csv
+from storage import raw_object_repository as ror
+from storage.raw_object_store import store_raw_object
 from sources.iitm_rainfall import parse_iitm_file
 from sources.rbi_indicators import looks_like_rbi_indicator_workbook, parse_rbi_indicator_workbook
-from sources.sec_edgar import SECEdgarAdapter
+from sources.sec_edgar import SECEdgarAdapter, company_facts_url, fetch_company_facts_raw
 from sources.yfinance_financials import YFinanceAdapter
 from storage.repositories import (
     compute_reconciliation_keys,
@@ -203,6 +206,18 @@ def ingest_yfinance_company(
     assert_active(conn, company_id)  # same ingestion gate as ingest_file()
 
     adapter = YFinanceAdapter(conn)
+
+    # ADR-022: land the raw statement JSON in raw/companies/ -- see
+    # YFinanceAdapter.fetch_raw_statements_json()'s own docstring for why
+    # this is a second yfinance call rather than sharing one fetch with
+    # adapter.fetch() below (a deliberate, disclosed tradeoff for this
+    # pilot/non-scheduled path).
+    raw_bytes = adapter.fetch_raw_statements_json(ticker)
+    raw_result = store_raw_object(
+        conn, source="yfinance_financials", entity=company_id, object_type="annual_statements",
+        period=None, source_url=None, raw_prefix="companies", content=raw_bytes, extension="json",
+    )
+
     parsed = adapter.fetch(company_id, ticker, currency=currency, statement_type=statement_type)
 
     result = IngestionResult(company_id=company_id, source_id=adapter.source_id, file_path=f"yfinance:{ticker}")
@@ -224,6 +239,12 @@ def ingest_yfinance_company(
     result.inserted_count = len(valid)
     result.reconciled_count = _publish_financial_ingestion(
         conn, company_id=company_id, source_id=adapter.source_id, statement_type=statement_type, valid=valid,
+    )
+
+    ror.update_raw_object_state(conn, raw_result.object_id, state="ingested", mark_processed=True)
+    ror.insert_lineage(
+        conn, object_id=raw_result.object_id, derived_store="financial_observations",
+        derived_table="financial_observations", derived_record_id=company_id,
     )
 
     logger.info(
@@ -251,8 +272,24 @@ def ingest_sec_edgar_company(
     company_id = normalize_company_id(company_id)
     assert_active(conn, company_id)  # same ingestion gate as ingest_file()
 
+    # ADR-022: land the raw companyfacts JSON in raw/companies/ BEFORE
+    # parsing -- dedup-by-hash means a re-fetch that returns byte-identical
+    # companyfacts (this job's steady-state case once scripts/batch_fetch_
+    # sec_edgar.py's own 24h TTL skip has already filtered out the obvious
+    # repeats) creates zero new S3 writes/catalog rows. If insert_financial_
+    # observations() below raises (e.g. the known financial_observations/
+    # Postgres gap, ADR-021's "Known bug, NOT fixed"), the raw object stays
+    # at state='stored', not 'ingested' -- preserved and replayable once
+    # that's fixed, never lost just because downstream parsing/insert failed.
+    raw_bytes = fetch_company_facts_raw(cik)
+    raw_result = store_raw_object(
+        conn, source="sec_edgar", entity=company_id, object_type="companyfacts", period=None,
+        source_url=company_facts_url(cik), raw_prefix="companies", content=raw_bytes, extension="json",
+    )
+    facts = json.loads(raw_bytes)
+
     adapter = SECEdgarAdapter(conn)
-    parsed = adapter.fetch(company_id, cik, currency=currency)
+    parsed = adapter.fetch(company_id, cik, currency=currency, facts=facts)
 
     result = IngestionResult(company_id=company_id, source_id=adapter.source_id, file_path=f"sec_edgar:CIK{cik:010d}")
     result.parsed_count = len(parsed)
@@ -273,6 +310,12 @@ def ingest_sec_edgar_company(
     result.inserted_count = len(valid)
     result.reconciled_count = _publish_financial_ingestion(
         conn, company_id=company_id, source_id=adapter.source_id, statement_type="consolidated", valid=valid,
+    )
+
+    ror.update_raw_object_state(conn, raw_result.object_id, state="ingested", mark_processed=True)
+    ror.insert_lineage(
+        conn, object_id=raw_result.object_id, derived_store="financial_observations",
+        derived_table="financial_observations", derived_record_id=company_id,
     )
 
     logger.info(
@@ -390,8 +433,22 @@ def ingest_fred_series(
     much rarer, usually-deliberate action rather than a job's normal
     steady-state behavior.
     """
-    parsed = fetch_fred_series(series_id, unit=unit, series_key=series_key, region=region)
     resolved_series_key = series_key or series_id.lower()
+
+    # ADR-022: land the raw CSV in raw/macro/ BEFORE parsing -- dedup-by-
+    # hash means a re-fetch of an unchanged series (this job's normal
+    # steady-state case, since FRED's export is always the whole history)
+    # creates zero new S3 writes/catalog rows; only a genuinely updated
+    # series creates a new immutable object. entity is the series key
+    # (not a company -- FRED has no company concept), so replay-from-S3
+    # can be filtered per series the same way a company-scoped source
+    # filters by company_id.
+    raw_bytes = fetch_fred_series_raw(series_id)
+    raw_result = store_raw_object(
+        conn, source="fred", entity=resolved_series_key, object_type="fred_series_csv", period=None,
+        source_url=fred_csv_url(series_id), raw_prefix="macro", content=raw_bytes, extension="csv",
+    )
+    parsed = parse_fred_csv(raw_bytes, series_id, unit=unit, series_key=series_key, region=region)
 
     result = MacroIngestionResult(series_key=resolved_series_key, source_id="fred", file_path=f"fred:{series_id}")
     result.parsed_count = len(parsed)
@@ -432,6 +489,12 @@ def ingest_fred_series(
             },
             metadata={"observation_count": len(valid)},
         )
+
+    ror.update_raw_object_state(conn, raw_result.object_id, state="ingested", mark_processed=True)
+    ror.insert_lineage(
+        conn, object_id=raw_result.object_id, derived_store="macro_observations",
+        derived_table="macro_observations", derived_record_id=resolved_series_key,
+    )
 
     logger.info(
         "Ingested %s (macro/fred): parsed=%d inserted=%d skipped=%d",

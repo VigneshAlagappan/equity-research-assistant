@@ -24,7 +24,7 @@ import argparse
 import asyncio
 
 from companies.registry import get_company
-from config.settings import to_repo_relative
+from ingestion.batch_log import BatchRun
 from sources.investor_relations import (
     BERKSHIRE_COMPANY_IDS,
     DEFAULT_IR_DOCUMENTS_DIR,
@@ -76,7 +76,7 @@ async def fetch_one_company(conn, company_id: str) -> str:
             continue
 
         try:
-            local_path = download_document(ref, dest_dir)
+            storage_key = download_document(ref, dest_dir)
         except IRFetchError as exc:
             errors += 1
             print(f"  ERROR downloading {ref.url}: {exc}", flush=True)
@@ -87,8 +87,9 @@ async def fetch_one_company(conn, company_id: str) -> str:
             fiscal_year=ref.fiscal_year or "FY0000",
             quarter=ref.quarter,
             added_by_user=None,  # officially sourced -- see documents.added_by_user's own docstring
-            raw_file_path=to_repo_relative(local_path),
+            raw_file_path=storage_key,
             source_url=ref.url,
+            storage_object_key=storage_key,
         )
         downloaded += 1
         print(f"  {ref.document_type:22s} {ref.fiscal_year or '?':8s} {ref.quarter or '':3s} {ref.title[:50]}", flush=True)
@@ -97,6 +98,32 @@ async def fetch_one_company(conn, company_id: str) -> str:
     if errors:
         detail += f" errors={errors}"
     return detail
+
+
+def run_investor_relations_batch(conn, company_ids: list[str] | None = None, scope_label: str | None = None) -> int:
+    """The same per-company fetch_one_company() loop as main_async() below,
+    but audited via BatchRun (batch_job_runs/batch_job_items) instead of
+    plain stdout -- the counterpart to scripts/batch_fetch_nse.py's
+    run_nse_batch()/scripts/batch_fetch_sec_edgar.py's run_sec_edgar_batch(),
+    so this can be wired into scheduling/jobs.py's registry (CLI + Schedule
+    panel "Run now" + cron trigger, all three call paths) the same way
+    those already are. `company_ids` defaults to every supported company
+    (Q4 + Berkshire) -- the scheduled-job case; the CLI below still accepts
+    an explicit subset for ad-hoc single-company runs.
+
+    fetch_one_company() is async (fetch_company_documents() does concurrent
+    HTTP requests per source) -- run via asyncio.run() once per company
+    inside the loop, same as main_async() already does, just wrapped in
+    run.item() for the audit trail instead of a bare try/except."""
+    company_ids = company_ids or SUPPORTED_COMPANY_IDS
+    job_name = "investor_relations_fetch"
+    scope_label = scope_label or f"investor relations ({len(company_ids)} companies)"
+
+    with BatchRun(conn, job_name, scope_label) as run:
+        for company_id in company_ids:
+            with run.item(company_id) as item:
+                item.detail = asyncio.run(fetch_one_company(conn, company_id))
+    return run.run_id
 
 
 async def main_async(company_ids: list[str]) -> None:

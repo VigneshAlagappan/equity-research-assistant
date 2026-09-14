@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import json
 import logging
-from storage.db_types import DBConnection
 
 from retrieval.hybrid_search import HybridRetrievalDiagnostics
 from storage.database import utcnow_iso
+from storage.db_types import DBConnection
 from storage.repositories import insert_retrieval_diagnostic
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,16 @@ _QUERY_EXCERPT_MAX_CHARS = 200
 
 
 def record(conn: DBConnection, diagnostics: HybridRetrievalDiagnostics) -> None:
+    """retrieval_diagnostics lives in storage/repositories.py (SQLite) /
+    storage/repositories_pg.py (Postgres) same as every other table now --
+    storage.backend_bootstrap's wholesale swap means this plain import
+    always resolves to the backend `conn` actually is. Wasn't always true:
+    this table used to be excluded from Postgres (Neon free-tier storage
+    cap), and every single production retrieval call silently failed to
+    record its diagnostics as a result (`AttributeError: 'psycopg2.
+    extensions.connection' object has no attribute 'execute'`, caught by
+    hybrid_search.py's own try/except so it never broke an actual answer)
+    until the table was added 2026-09-13 -- see docs/ADR/021."""
     query_excerpt = diagnostics.query[:_QUERY_EXCERPT_MAX_CHARS]
 
     logger.info(

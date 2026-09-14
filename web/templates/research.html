@@ -414,11 +414,54 @@
     // (research/investigation.py) instead of one narrative report — several
     // competing hypotheses, each independently evaluated against its own
     // evidence, ranked and synthesized, with its own /investigate/<id> page.
+    //
+    // Kicks the run off via /investigate/generate-async (returns immediately
+    // with an investigation_id) and polls /investigate/status/<id> instead
+    // of waiting on one long-lived fetch — a broad, multi-hypothesis
+    // question can easily run several minutes, well past gunicorn's own
+    // worker timeout and the platform's fronting load balancer timeout;
+    // blocking a single request on it meant that request got killed
+    // mid-flight and the browser saw an infrastructure error page instead
+    // of JSON ("Unexpected token '<' ... is not valid JSON") even though
+    // the investigation itself would have finished fine left running.
+    const INVESTIGATION_POLL_INTERVAL_MS = 4000;
+    const INVESTIGATION_POLL_MAX_ATTEMPTS = 150; // ~10 minutes
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function pollInvestigationStatus(investigationId) {
+      for (let attempt = 0; attempt < INVESTIGATION_POLL_MAX_ATTEMPTS; attempt++) {
+        await sleep(INVESTIGATION_POLL_INTERVAL_MS);
+        let response;
+        try {
+          response = await fetch(`/investigate/status/${investigationId}`);
+        } catch (err) {
+          // A transient network blip while polling isn't fatal on its own —
+          // keep polling rather than giving up on the first hiccup.
+          continue;
+        }
+        if (!response.ok) {
+          throw new Error(`lost track of this investigation (HTTP ${response.status})`);
+        }
+        const data = await response.json();
+        if (data.status === 'done') {
+          return data;
+        }
+        if (data.status === 'error') {
+          throw new Error(data.error || 'Something went wrong.');
+        }
+        // status === 'running' -- keep polling.
+      }
+      throw new Error('This is taking longer than expected — check back on this page shortly, or try a narrower question.');
+    }
+
     async function generateInvestigation(question, companyIds, triggerButton) {
       triggerButton.disabled = true;
       status.textContent = 'Running investigation — generating hypotheses, gathering evidence, evaluating each one…';
       try {
-        const response = await fetch('/investigate/generate', {
+        const response = await fetch('/investigate/generate-async', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -433,7 +476,8 @@
           triggerButton.disabled = false;
           return;
         }
-        window.location.href = data.url;
+        const finished = await pollInvestigationStatus(data.investigation_id);
+        window.location.href = finished.url;
       } catch (err) {
         status.textContent = 'Network error: ' + err.message;
         triggerButton.disabled = false;

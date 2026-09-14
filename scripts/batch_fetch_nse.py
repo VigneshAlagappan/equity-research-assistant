@@ -31,9 +31,18 @@ from ingestion.event_bus import publish
 from ingestion.events import DatasetIngestedEvent
 from ingestion.pipeline import ingest_file
 from ingestion.corporate_actions import process_company_corporate_actions
-from sources.nse_corporate_actions import fetch_corporate_actions
+from sources.nse_corporate_actions import corporate_actions_url, fetch_corporate_actions_raw, parse_corporate_actions_json
+from storage import raw_object_repository as ror
+from storage.raw_object_store import store_raw_object
 from sources.nse_fetch import NSEFetchError, refresh_company_filings
-from sources.nse_shareholding import fetch_shareholding_detail, fetch_shareholding_master
+from sources.nse_shareholding import (
+    fetch_shareholding_detail_raw,
+    fetch_shareholding_master_raw,
+    parse_shareholding_master_json,
+    parse_shp_category_breakdown,
+    parse_shp_xbrl,
+    shareholding_master_url,
+)
 from storage.company_repository import insert_corporate_actions_raw, select_company_ids_by_index
 from storage.database import init_db, utcnow_iso
 from storage.repositories import (
@@ -89,8 +98,24 @@ def _run_corporate_actions(conn, company_id: str) -> str:
     if not symbol:
         raise ValueError(f"{company_id} has no nse_symbol on file")
 
-    actions = fetch_corporate_actions(symbol)
+    # ADR-022: land the raw NSE response in raw/regulatory/ BEFORE parsing
+    # -- dedup-by-hash means a re-fetch of an unchanged action history
+    # (this job's steady-state case between real corporate actions)
+    # creates zero new S3 writes/catalog rows; only a genuinely new/changed
+    # filing creates a new immutable object.
+    raw_bytes = fetch_corporate_actions_raw(symbol)
+    raw_result = store_raw_object(
+        conn, source="nse_corporate_actions", entity=company_id, object_type="corporate_actions_feed",
+        period=None, source_url=corporate_actions_url(symbol), raw_prefix="regulatory",
+        content=raw_bytes, extension="json",
+    )
+    actions = parse_corporate_actions_json(raw_bytes, symbol)
     inserted = insert_corporate_actions_raw(conn, company_id, actions, now=utcnow_iso())
+    ror.update_raw_object_state(conn, raw_result.object_id, state="ingested", mark_processed=True)
+    ror.insert_lineage(
+        conn, object_id=raw_result.object_id, derived_store="corporate_actions_raw",
+        derived_table="corporate_actions_raw", derived_record_id=company_id,
+    )
     return f"fetched={len(actions)} new={inserted}"
 
 
@@ -112,14 +137,30 @@ def _run_shareholding(conn, company_id: str) -> str:
     if not symbol:
         raise ValueError(f"{company_id} has no nse_symbol on file")
 
-    summaries = fetch_shareholding_master(symbol)
+    # ADR-022: land the raw master listing in raw/regulatory/ BEFORE
+    # parsing -- dedup-by-hash means a re-fetch of an unchanged listing
+    # (this job's steady-state case between real quarterly submissions)
+    # creates zero new S3 writes/catalog rows.
+    master_raw_bytes = fetch_shareholding_master_raw(symbol)
+    master_raw_result = store_raw_object(
+        conn, source="nse_shareholding", entity=company_id, object_type="shareholding_master",
+        period=None, source_url=shareholding_master_url(symbol), raw_prefix="regulatory",
+        content=master_raw_bytes, extension="json",
+    )
+    summaries = parse_shareholding_master_json(master_raw_bytes, symbol)
     if not summaries:
+        ror.update_raw_object_state(conn, master_raw_result.object_id, state="ingested", mark_processed=True)
         return "no shareholding submissions on NSE for this symbol"
     summaries.sort(key=lambda s: s.period_end)
     # Cheap, local, always upserted regardless of the skip logic below --
     # just the master listing NSE already returned in this same call, no
     # extra HTTP request per quarter (that's the detail step next).
     insert_shareholding_observations(conn, company_id, summaries)
+    ror.update_raw_object_state(conn, master_raw_result.object_id, state="ingested", mark_processed=True)
+    ror.insert_lineage(
+        conn, object_id=master_raw_result.object_id, derived_store="shareholding_observations",
+        derived_table="shareholding_observations", derived_record_id=company_id,
+    )
 
     # The master listing above is one HTTP call total; fetch_shareholding_
     # detail() below is one *more* HTTP call per quarter it runs for --
@@ -137,10 +178,18 @@ def _run_shareholding(conn, company_id: str) -> str:
             skipped += 1
             continue
         try:
-            holdings, breakdown = fetch_shareholding_detail(s.source_url)
+            detail_raw_bytes = fetch_shareholding_detail_raw(s.source_url)
         except NSEFetchError:
             quarter_errors += 1
             continue
+        period = f"{s.fiscal_year}{s.quarter}"
+        detail_raw_result = store_raw_object(
+            conn, source="nse_shareholding", entity=company_id, object_type="shareholding_detail",
+            period=period, source_url=s.source_url, raw_prefix="regulatory",
+            content=detail_raw_bytes, extension="xml",
+        )
+        holdings = parse_shp_xbrl(detail_raw_bytes)
+        breakdown = parse_shp_category_breakdown(detail_raw_bytes)
         holder_total += insert_shareholding_holders(
             conn, company_id, s.fiscal_year, s.quarter, holdings,
             source_url=s.source_url, submission_date=s.submission_date,
@@ -152,6 +201,11 @@ def _run_shareholding(conn, company_id: str) -> str:
         # to parse (SCHEDULED_JOBS.md section 2), and that's a real,
         # stable answer worth remembering, not a failure to retry forever.
         mark_shareholding_detail_fetched(conn, company_id, s.fiscal_year, s.quarter)
+        ror.update_raw_object_state(conn, detail_raw_result.object_id, state="ingested", mark_processed=True)
+        ror.insert_lineage(
+            conn, object_id=detail_raw_result.object_id, derived_store="shareholding_holders",
+            derived_table="shareholding_holders", derived_record_id=f"{company_id}:{period}",
+        )
 
     publish(
         conn,

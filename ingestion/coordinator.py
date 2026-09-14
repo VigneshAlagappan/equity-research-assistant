@@ -57,6 +57,7 @@ from ingestion.event_bus import publish
 from ingestion.events import DatasetIngestedEvent
 from ingestion.pipeline import ingest_bank_infrastructure_file, ingest_file, ingest_macro_file
 from storage.database import utcnow_iso
+from storage.document_store import DocumentStoreError, default_document_store
 from storage.repositories import (
     get_document,
     get_ingestion_queue_item,
@@ -101,10 +102,32 @@ def _content_hash(file_path: Path) -> str | None:
     """sha256 of the file's bytes — the stable identifier
     schemas/sqlite_schema.sql's ingestion_queue_items comment calls for.
     None (not raised) if the file's vanished/unreadable between discovery
-    and hashing — treated as SKIPPED by the caller, not a hard failure."""
+    and hashing — treated as SKIPPED by the caller, not a hard failure.
+
+    RAW_DIR (financial files) only — out of scope for the DocumentStore
+    abstraction (config.settings.RAW_DIR is never routed through
+    storage/document_store.py, see that module's docstring). Documents
+    (DOCUMENTS_DIR) hash through _document_content_hash() below instead,
+    which works whether the active backend is local disk or S3."""
     try:
         return hashlib.sha256(file_path.read_bytes()).hexdigest()
     except OSError:
+        return None
+
+
+def _document_content_hash(key: str) -> str | None:
+    """sha256 of a document's bytes, read through the active DocumentStore
+    (storage/document_store.py) rather than file_path.read_bytes() directly
+    — the same content-hash contract as _content_hash() above, but working
+    whether `key` resolves to a local file or an S3 object. None (not
+    raised) if the key doesn't exist or can't be read, same "treated as
+    SKIPPED, not a hard failure" convention as _content_hash()."""
+    store = default_document_store()
+    if not store.exists(key):
+        return None
+    try:
+        return hashlib.sha256(store.retrieve(key)).hexdigest()
+    except DocumentStoreError:
         return None
 
 
@@ -336,10 +359,9 @@ def process_documents(conn, document_ids: list[int]) -> ProcessSummary:
             summary.attempted += 1
             with run.item(row["company_id"]) as item:
                 file_hash = None
-                if row["raw_file_path"]:
-                    path = settings.from_repo_relative(row["raw_file_path"])
-                    if path.exists():
-                        file_hash = _content_hash(path)
+                storage_key = row["storage_object_key"] or row["raw_file_path"]
+                if storage_key:
+                    file_hash = _document_content_hash(storage_key)
 
                 event = DatasetIngestedEvent(
                     dataset_id=f"document:{document_id}",
@@ -389,8 +411,29 @@ def process_documents(conn, document_ids: list[int]) -> ProcessSummary:
     return summary
 
 
-def process_all_pending_documents(conn) -> ProcessSummary:
+def process_all_pending_documents(conn, *, limit: int | None = None) -> ProcessSummary:
+    """`limit` caps how many pending documents one call processes -- used
+    by the daily doc_analysis scheduled job (scheduling/jobs.py) to work
+    through a large backlog a bounded batch at a time ("ingest slowly,
+    steadily") instead of one call firing dozens of Knowledge Builder LLM
+    calls back to back, rather than risking Anthropic rate limits/cost
+    spikes on a big backlog. None (the default) processes everything in
+    one call, unchanged -- Admin -> Ingest queue's "Process All Pending"
+    button is a deliberate, human-triggered action and should still mean
+    all of it, not a partial sweep."""
     pending = list_documents_by_status(conn, "pending")
+    if limit is not None:
+        # list_documents_by_status orders newest-first (the right order for
+        # the Admin -> Ingest queue view) -- reversed here so a capped run
+        # works the OLDEST stragglers off first. Otherwise a steady trickle
+        # of new uploads would keep outranking a older backlog document
+        # forever, silently breaking the "every pdf ingested within 24h"
+        # guarantee this cap exists to serve (most new uploads never reach
+        # this path at all -- web/app.py's company_add_document() ingests
+        # them immediately in its own background thread; this is the daily
+        # catch-up sweep for whatever that missed: pre-existing backlog, or
+        # an upload whose immediate attempt failed).
+        pending = sorted(pending, key=lambda row: row["retrieved_at"] or "")[:limit]
     return process_documents(conn, [row["document_id"] for row in pending])
 
 

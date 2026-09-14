@@ -24,6 +24,56 @@ def db_conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     conn.close()
 
 
+@pytest.fixture
+def pg_conn() -> Iterator:
+    """Postgres counterpart of db_conn above -- SQLite-removal stage 1
+    (see tests/postgres_test_db.py's own docstring for the full reasoning).
+    A freshly created, empty database against the local Docker Postgres
+    (docker-compose.test.yml), with the real schema applied via the exact
+    same storage.database.init_postgres_db() the production path uses, then
+    dropped again at teardown. Skips (not fails) the test if that container
+    isn't running, so this is safe to leave in a test file on a machine
+    that hasn't started it -- `docker compose -f docker-compose.test.yml up
+    -d` first.
+
+    Not seeded with the metric vocabulary the way db_conn is -- callers
+    that need it call normalization.financials.ensure_metric_vocabulary(conn)
+    themselves, same as most SQLite tests already do explicitly rather than
+    relying on db_conn's seeding."""
+    from storage.database import init_postgres_db
+    from tests.postgres_test_db import LocalTestPostgresUnavailable, create_test_database, drop_test_database
+
+    try:
+        db_name, connection_string = create_test_database()
+    except LocalTestPostgresUnavailable as exc:
+        pytest.skip(str(exc))
+
+    conn = init_postgres_db(connection_string=connection_string)
+    try:
+        yield conn
+    finally:
+        conn.close()
+        drop_test_database(db_name)
+
+
+@pytest.fixture(autouse=True)
+def _reset_document_text_cache() -> Iterator[None]:
+    """research.documents._DOCUMENT_TEXT_CACHE is a module-level, per-process
+    cache keyed by (document_id, file_hash, pointer) — see that module's
+    docstring for why (fixing a P0 uncached-refetch-per-question bug). Every
+    test gets a fresh db_conn (document_id resets to 1 each time) with
+    file_hash usually NULL and often the same tmp_path-derived raw_file_path
+    shape too, so without resetting this cache between tests, a document
+    written in one test can serve another test's document_id=1 its stale
+    cached text. Real deployments never see this — document_id is unique
+    for the life of one database, never reused."""
+    from research.documents import _DOCUMENT_TEXT_CACHE
+
+    _DOCUMENT_TEXT_CACHE.clear()
+    yield
+    _DOCUMENT_TEXT_CACHE.clear()
+
+
 # ------------------------------------------------------------------
 # Hybrid retrieval test doubles (section 14: "VectorStore is accessed only
 # through its abstraction" / "EmbeddingProvider is independent of

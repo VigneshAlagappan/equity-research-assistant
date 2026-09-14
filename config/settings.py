@@ -22,6 +22,22 @@ RAW_DIR = DATA_DIR / "raw"
 NORMALIZED_DIR = DATA_DIR / "normalized"
 DOCUMENTS_DIR = DATA_DIR / "documents"
 CHARTS_DIR = DATA_DIR / "charts"
+
+# Tiny per-investigation status files (research/investigation_jobs.py) so
+# /investigate/generate-async's background thread and /investigate/status's
+# poll can agree on progress across gunicorn's forked workers, which don't
+# share memory -- local disk is shared across those forked workers (same
+# container filesystem) at today's scale=1 Lightsail deployment, so this is
+# NOT safe if the service is ever scaled to more than one container
+# instance (each instance gets its own disk) -- would need to move to a
+# shared store (e.g. the investigations table itself, or Postgres/S3) first.
+INVESTIGATION_JOBS_DIR = DATA_DIR / "investigation_jobs"
+# Same shape/same single-container-instance caveat as INVESTIGATION_JOBS_DIR
+# above, for /chat, /research/ask, and /companies/<id>/ask's own async+poll
+# flow (research/ask_jobs.py) -- a separate directory, not the same one,
+# since these track full answer payloads rather than investigation-page
+# redirect URLs.
+ASK_JOBS_DIR = DATA_DIR / "ask_jobs"
 LOG_DIR = BASE_DIR / "logs"
 
 SCHEMA_PATH = BASE_DIR / "schemas" / "sqlite_schema.sql"
@@ -289,6 +305,17 @@ LOCAL_MODEL_ENABLED = os.environ.get("LOCAL_MODEL_ENABLED", "true").lower() != "
 LOCAL_MODEL_ID = os.environ.get("LOCAL_MODEL_ID", "llama3.1:8b")
 
 # ------------------------------------------------------------------
+# OpenRouter (llm/providers/openrouter_provider.py) — the "quick" tier's
+# second-choice model as of 2026-09 (operator request: Anthropic Haiku
+# first, then OpenRouter's hosted Gemma, then the local Ollama model last —
+# see TIER_FALLBACK_CHAIN_OVERRIDE below for the router-side chain this
+# builds).
+# ------------------------------------------------------------------
+
+OPENROUTER_API_KEY_SET = bool(os.environ.get("OPENROUTER_API_KEY"))
+OPENROUTER_MODEL_ID = os.environ.get("OPENROUTER_MODEL_ID", "google/gemma-2-27b-it")
+
+# ------------------------------------------------------------------
 # Model tiering policy — llm/hardness.py's classify() sorts each question
 # into a Tier (quick/standard/deep); llm/router.py and
 # llm/capability_registry.py read the three settings below to decide which
@@ -309,18 +336,34 @@ DISABLED_MODELS: set[str] = {"claude-opus-5"}
 # llm/router.py's fallback chain starts here, then falls through other
 # enabled models (strongest reasoning_strength first) if this one fails.
 #
-# "quick" prefers the local Ollama model (Gemma 4, per this environment's
-# .env LOCAL_MODEL_ID=gemma4:latest) instead of a paid Anthropic call —
-# free and fast enough for short factual lookups with little evidence, the
-# exact case this tier exists for; standard/deep still go straight to
-# Haiku since a local model failing over silently on a harder question is
-# a worse trade than the API cost. If Ollama isn't running, this tier
-# simply falls through to claude-haiku-4-5 next (LOCAL_MODEL_ENABLED
-# governs whether the local model is offered at all, see above).
+# "quick" prefers the same Haiku call standard/deep do (TIER_PREFERRED_MODEL
+# below still names it, for observability/consistency), but its full chain
+# is hand-specified in TIER_FALLBACK_CHAIN_OVERRIDE just below: Haiku, then
+# OpenRouter's hosted Gemma, then the local Ollama model — never Sonnet in
+# between, which the normal "preferred, then every other enabled cloud model
+# strongest-first, then local" algorithm (llm/router.py's default
+# _fallback_chain) would otherwise insert.
 TIER_PREFERRED_MODEL: dict[str, str] = {
-    "quick": LOCAL_MODEL_ID,
+    "quick": "claude-haiku-4-5",
     "standard": "claude-haiku-4-5",
     "deep": "claude-haiku-4-5",
+}
+
+# Tier -> an explicit, hand-ordered model_id chain, used INSTEAD OF the
+# derived "preferred, then other enabled cloud strongest-first, then local"
+# chain llm/router.py's _fallback_chain() builds by default. Only "quick"
+# has one today: Anthropic Haiku first, OpenRouter's hosted Gemma second,
+# the local Ollama model last (operator request, 2026-09) — a model missing
+# from this list (Sonnet, here) is simply never offered to this tier, and a
+# listed model that's disabled/unconfigured (e.g. no OPENROUTER_API_KEY) is
+# silently skipped in the chain rather than raising, so a fresh checkout
+# with only ANTHROPIC_API_KEY set still works, it just never reaches the
+# later steps. This bypasses TIER_MIN_REASONING_STRENGTH's weak-model gate
+# entirely — an explicit hand-picked chain is already an operator decision
+# that every listed model is acceptable for this tier, unlike the derived
+# chain's auto-discovered fallback candidates.
+TIER_FALLBACK_CHAIN_OVERRIDE: dict[str, list[str]] = {
+    "quick": ["claude-haiku-4-5", OPENROUTER_MODEL_ID, LOCAL_MODEL_ID],
 }
 
 # Tier -> minimum ModelSpec.reasoning_strength (llm/capability_registry.py,
@@ -367,6 +410,19 @@ KNOWLEDGE_EXTRACTION_MAX_CHARS = int(os.environ.get("KNOWLEDGE_EXTRACTION_MAX_CH
 # falls back to the sqlite traversal rather than failing the request.
 # ------------------------------------------------------------------
 
+# ------------------------------------------------------------------
+# Database backend — "sqlite" (default, unchanged behavior) or "postgres"
+# (Neon, via storage.database.init_postgres_db()). Same config-flag-selects-
+# backend shape as GRAPH_BACKEND/VECTOR_STORE_BACKEND below. The actual
+# swap happens in storage/backend_bootstrap.py, which MUST run before any
+# module imports storage.repositories/company_repository/fact_store/
+# indicator_repository/investigation_repository for the first time --
+# web/app.py (gunicorn's entry point) does this as its very first
+# statement, before its own storage imports (see that file's top).
+# ------------------------------------------------------------------
+
+DATABASE_BACKEND = os.environ.get("DATABASE_BACKEND", "sqlite")
+
 GRAPH_BACKEND = os.environ.get("GRAPH_BACKEND", "sqlite")
 NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
@@ -394,6 +450,29 @@ VECTOR_STORE_BACKEND = os.environ.get("VECTOR_STORE_BACKEND", "qdrant")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "signal_document_chunks")
 QDRANT_TIMEOUT_SECONDS = float(os.environ.get("QDRANT_TIMEOUT_SECONDS", "3"))
+# None (unset) for a local, unauthenticated Qdrant instance — Qdrant Cloud
+# requires this (its "api-key" header) alongside a QDRANT_URL pointed at the
+# cluster's own https://...qdrant.io URL rather than localhost.
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY")
+
+# ------------------------------------------------------------------
+# Document storage backend (storage/document_store.py)
+#
+# Same optional-infra shape as GRAPH_BACKEND/VECTOR_STORE_BACKEND above:
+# DOCUMENT_STORE_BACKEND selects which concrete DocumentStore backs
+# DOCUMENTS_DIR-rooted content (narrative PDFs/audio — the Docs tab, note
+# attachments, investor-relations downloads). "local" (default) is a pure
+# refactor of the pre-existing on-disk behaviour under DOCUMENTS_DIR, so an
+# existing deployment sees zero change until this is explicitly switched.
+# "s3" routes the same content to the real S3 bucket below instead (a
+# dedicated, access-key-scoped bucket — see storage/document_store.py's
+# S3DocumentStore docstring). RAW_DIR (financial XBRL source files) is
+# deliberately NOT covered by this setting — out of scope per the
+# architecture review, unchanged (ingestion/pipeline.py, sources/nse_xbrl.py
+# still read/write it directly).
+DOCUMENT_STORE_BACKEND = os.environ.get("DOCUMENT_STORE_BACKEND", "local")
+S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "signals-app-documents-862938824222")
+S3_REGION_NAME = os.environ.get("AWS_REGION", "us-east-2")
 
 # EMBEDDING_PROVIDER selects which concrete EmbeddingProvider
 # (retrieval/embedding_provider.py) computes chunk/query vectors. "local"
@@ -444,6 +523,14 @@ def _load_or_create_secret_key() -> str:
 
 
 SECRET_KEY = _load_or_create_secret_key()
+
+# Shared secret for web/app.py's admin_schedule_run_async cron-trigger
+# route -- unset by default (None), which makes that route refuse every
+# request rather than silently accepting unauthenticated triggers. An
+# operator sets this (e.g. as a Lightsail env var) only once they've
+# actually configured an external scheduler (EventBridge Scheduler etc.)
+# to send it back in the X-Cron-Secret header.
+CRON_TRIGGER_SECRET = os.environ.get("CRON_TRIGGER_SECRET")
 
 # ------------------------------------------------------------------
 # Logging

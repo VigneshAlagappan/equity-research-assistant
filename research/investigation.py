@@ -51,6 +51,7 @@ or every single hypothesis's evaluation fails (nothing to synthesize).
 
 from __future__ import annotations
 
+import json
 import logging
 from storage.db_types import DBConnection
 import time
@@ -62,7 +63,9 @@ from research.hypothesis_evaluator import HypothesisEvaluation, HypothesisEvalua
 from research.hypothesis_generator import Hypothesis, HypothesisGenerationError, generate_hypotheses
 from research.investigation_planner import InvestigationPlan, plan_and_gather
 from research.research_synthesis import ResearchSynthesis, ResearchSynthesisError, synthesize
+from research.abstracts import generate_abstract
 from research.temporal import normalize_as_of
+from storage.document_store import default_document_store
 from storage.fact_store import FactStore, default_fact_store
 
 logger = logging.getLogger(__name__)
@@ -186,7 +189,7 @@ def _investigate_hypothesis(
 def run_investigation(
     conn: DBConnection, question: str, company_ids: list[str], *, statement_type: str = "consolidated",
     model: str | None = None, capabilities: PlannerCapabilities | None = None, fact_store: FactStore | None = None,
-    as_of: str | None = None,
+    as_of: str | None = None, investigation_id: str | None = None,
 ) -> Investigation:
     """`as_of` (ISO date) runs the whole investigation point-in-time: every
     evidence capability is bound to that cutoff (research/temporal.py via
@@ -195,8 +198,14 @@ def run_investigation(
     enforced in retrieval, not asked for in a prompt — an "as of 2013"
     question whose evidence block contains 2024 figures has already leaked
     the answer. Explicitly-passed `capabilities` are used as given, on the
-    assumption the caller has already bound whatever scope it wants."""
-    investigation_id = uuid.uuid4().hex[:12]
+    assumption the caller has already bound whatever scope it wants.
+
+    `investigation_id`, when given, is used as-is instead of generating a
+    fresh one -- lets a caller (web/app.py's /investigate/generate-async)
+    hand out the id up front, before this (potentially several-minute) call
+    even starts, so it has something to poll progress against from the
+    first response."""
+    investigation_id = investigation_id or uuid.uuid4().hex[:12]
     fs = fact_store or default_fact_store()
     cutoff = normalize_as_of(as_of)
     caps = capabilities or default_capabilities(fact_store=fs, as_of=cutoff, investigation_id=investigation_id)
@@ -238,6 +247,18 @@ def run_investigation(
 
 
 def _persist(conn: DBConnection, investigation: Investigation, statement_type: str, fact_store: FactStore) -> None:
+    """Writes investigations/investigation_hypotheses/investigation_
+    hypothesis_evidence exactly as before (unchanged -- nothing here
+    should ever regress that pipeline), then ALSO assembles the same
+    data into one JSON artifact and uploads it to S3, recording the S3
+    key + a short abstract + the strongest verdict on the investigations
+    row (storage/database.py::_migrate_investigation_s3_columns).
+    web/app.py's investigate_view() prefers this artifact once s3_key is
+    set -- see persistence architecture ADR (docs/adr/) for the full
+    reasoning. Built from the same in-memory `investigation`/`synthesis`
+    objects the table writes below already use, not a re-read, so this
+    can never see a different version of the data than what was just
+    written relationally."""
     synthesis = investigation.synthesis
     fact_store.save_investigation(
         conn, investigation_id=investigation.investigation_id, question=investigation.question,
@@ -251,27 +272,65 @@ def _persist(conn: DBConnection, investigation: Investigation, statement_type: s
     rank_by_id = (
         {hid: i + 1 for i, hid in enumerate(synthesis.ranked_hypothesis_ids)} if synthesis else {}
     )
+    hypotheses_json: list[dict] = []
     for hypothesis in investigation.hypotheses:
         evaluation = investigation.evaluations.get(hypothesis.hypothesis_id)
+        verdict = evaluation.verdict if evaluation else None
+        confidence_basis = evaluation.confidence_basis if evaluation else None
+        confidence_score = evaluation.confidence_score if evaluation else None
+        synthesis_rank = rank_by_id.get(hypothesis.hypothesis_id)
         fact_store.save_investigation_hypothesis(
             conn, hypothesis_id=hypothesis.hypothesis_id, investigation_id=investigation.investigation_id,
             statement=hypothesis.statement, mechanism=hypothesis.mechanism, category=hypothesis.category,
             rationale=hypothesis.rationale, unknowns=hypothesis.unknowns, generation_order=hypothesis.generation_order,
             chain_steps=hypothesis.chain_steps,
-            verdict=evaluation.verdict if evaluation else None,
-            confidence_basis=evaluation.confidence_basis if evaluation else None,
-            confidence_score=evaluation.confidence_score if evaluation else None,
-            synthesis_rank=rank_by_id.get(hypothesis.hypothesis_id),
+            verdict=verdict, confidence_basis=confidence_basis, confidence_score=confidence_score,
+            synthesis_rank=synthesis_rank,
         )
-        if evaluation is None:
-            continue
-        evidence_rows = (
-            [_persist_evidence_item(hypothesis.hypothesis_id, "supporting", item) for item in evaluation.supporting_evidence]
-            + [_persist_evidence_item(hypothesis.hypothesis_id, "contradicting", item) for item in evaluation.contradicting_evidence]
-            + [
+        supporting_evidence = contradicting_evidence = []
+        missing_evidence: list[dict] = []
+        if evaluation is not None:
+            supporting_evidence = [_persist_evidence_item(hypothesis.hypothesis_id, "supporting", item) for item in evaluation.supporting_evidence]
+            contradicting_evidence = [_persist_evidence_item(hypothesis.hypothesis_id, "contradicting", item) for item in evaluation.contradicting_evidence]
+            missing_evidence = [
                 {"stance": "missing", "kind": "INFERENCE", "label": item, "value": None, "citation": None}
                 for item in evaluation.missing_evidence
             ]
-        )
-        if evidence_rows:
-            fact_store.save_investigation_hypothesis_evidence(conn, hypothesis.hypothesis_id, evidence_rows)
+            evidence_rows = supporting_evidence + contradicting_evidence + missing_evidence
+            if evidence_rows:
+                fact_store.save_investigation_hypothesis_evidence(conn, hypothesis.hypothesis_id, evidence_rows)
+
+        hypotheses_json.append({
+            "hypothesis_id": hypothesis.hypothesis_id, "statement": hypothesis.statement,
+            "mechanism": hypothesis.mechanism, "chain_steps": hypothesis.chain_steps or [],
+            "category": hypothesis.category, "rationale": hypothesis.rationale,
+            "unknowns": hypothesis.unknowns, "generation_order": hypothesis.generation_order,
+            "verdict": verdict, "confidence_basis": confidence_basis, "confidence_score": confidence_score,
+            "synthesis_rank": synthesis_rank,
+            "supporting_evidence": supporting_evidence,
+            "contradicting_evidence": contradicting_evidence,
+            "missing_evidence": missing_evidence,
+        })
+
+    strongest_verdict = None
+    if rank_by_id:
+        top_hypothesis_id = min(rank_by_id, key=rank_by_id.get)
+        top_evaluation = investigation.evaluations.get(top_hypothesis_id)
+        strongest_verdict = top_evaluation.verdict if top_evaluation else None
+
+    artifact = {
+        "investigation_id": investigation.investigation_id, "question": investigation.question,
+        "company_ids": investigation.company_ids, "statement_type": statement_type,
+        "strongest_explanation": synthesis.strongest_explanation if synthesis else None,
+        "unanswered_questions": synthesis.unanswered_questions if synthesis else [],
+        "additional_evidence_needed": synthesis.additional_evidence_needed if synthesis else [],
+        "as_of": investigation.as_of,
+        "hypotheses": hypotheses_json,
+    }
+    s3_key = f"investigations/{investigation.investigation_id}/v1.json"
+    default_document_store().store(s3_key, json.dumps(artifact, indent=2).encode("utf-8"))
+    abstract = generate_abstract(conn, synthesis.strongest_explanation if synthesis else None)
+    fact_store.update_investigation_s3_metadata(
+        conn, investigation.investigation_id, s3_key=s3_key, abstract=abstract,
+        version=1, strongest_verdict=strongest_verdict,
+    )

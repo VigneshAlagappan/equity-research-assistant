@@ -6,6 +6,7 @@ later phase. This module only owns connecting and creating the schema.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,11 +44,15 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_company_insights_history(conn)
     _migrate_users_theme_column(conn)
     _migrate_case_visibility_columns(conn)
+    _migrate_investigation_s3_columns(conn)
+    _migrate_generated_reports_s3_columns(conn)
+    _migrate_case_ownership_visibility_columns(conn)
     _migrate_documents_table(conn)
     _migrate_documents_old_fk_references(conn)
     _migrate_document_chunks_fk_reference(conn)
     _migrate_documents_processing_status_columns(conn)
     _migrate_raw_file_paths_to_repo_relative(conn)
+    _migrate_documents_storage_columns(conn)
     _migrate_company_notes_updated_at(conn)
     _migrate_llm_call_log_columns(conn)
     _migrate_shareholding_observations_columns(conn)
@@ -62,6 +67,60 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _seed_sectors_and_industries(conn)
     _seed_index_definitions(conn)
     _seed_admin_user(conn)
+    conn.commit()
+    return conn
+
+
+def init_postgres_db(connection_string: str | None = None, schema_path: Path | None = None):
+    """Open a Neon/Postgres connection and create the ported tables (if missing).
+
+    Checkpoint-1 of the SQLite -> Postgres migration (schemas/postgres_schema.sql
+    is the companion of schemas/sqlite_schema.sql, see that file's header for the
+    exact table list/exclusions). This is purely additive: it does not touch
+    init_db()/get_connection() above, isn't called by any existing repository
+    module, and isn't wired into any caller yet -- that's a later checkpoint.
+
+    connection_string defaults to the `NEON` env var (a working connection
+    string is expected to already be present, e.g. loaded via python-dotenv
+    from .env). The connection uses psycopg2.extras.RealDictCursor so fetched
+    rows behave like dicts (row["column_name"]), matching storage/db_types.py's
+    Row contract the same way sqlite3.Row already does for the SQLite path.
+
+    Safe to call repeatedly: the schema file's CREATE TABLE IF NOT EXISTS /
+    CREATE INDEX IF NOT EXISTS statements no-op on tables/indexes that already
+    exist.
+
+    `psycopg2` is imported here, not at module level: this keeps it an
+    optional dependency of the SQLite-only live app (not in requirements.txt
+    by design, still, as of the Lightsail deployment work -- a module-level
+    import broke the entire app, including the unrelated SQLite path, in any
+    environment without psycopg2 installed, e.g. a fresh Docker image; found
+    via that deployment's local container test, fixed here since it's a
+    real bug independent of Docker)."""
+    import psycopg2
+    import psycopg2.extras
+
+    # LOCAL_DEV_DATABASE_URL, when set, takes priority over NEON -- lets a
+    # developer point DATABASE_BACKEND=postgres at the local Docker Postgres
+    # (docker-compose.test.yml's "signals_dev" database, see scripts/
+    # seed_local_dev_db.py) without touching what NEON means anywhere else
+    # in this app, or risking a local run silently hitting production
+    # because DATABASE_BACKEND=postgres was on but no local override was
+    # configured. Unset by default -- a checkout with only NEON set (e.g.
+    # this repo's own deploy/smoke-test workflow, which deliberately targets
+    # real production) behaves exactly as it always has.
+    connection_string = connection_string or os.environ.get("LOCAL_DEV_DATABASE_URL") or os.environ["NEON"]
+    schema_path = (
+        schema_path if schema_path is not None else settings.BASE_DIR / "schemas" / "postgres_schema.sql"
+    )
+    schema_sql = schema_path.read_text()
+
+    conn = psycopg2.connect(connection_string, cursor_factory=psycopg2.extras.RealDictCursor)
+    with conn.cursor() as cur:
+        # psycopg2's cursor.execute() happily runs a full script of
+        # semicolon-separated statements in one call (verified against real
+        # Neon) -- no executescript()-equivalent split-and-loop needed.
+        cur.execute(schema_sql)
     conn.commit()
     return conn
 
@@ -335,6 +394,78 @@ def _migrate_case_visibility_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT")
 
 
+def _migrate_investigation_s3_columns(conn: sqlite3.Connection) -> None:
+    """Persistence architecture update: an investigation's full content
+    (hypotheses + evidence) now also gets written as one JSON artifact to
+    S3 (research/investigation.py::_persist(), storage/document_store.py)
+    -- investigation_hypotheses/investigation_hypothesis_evidence keep
+    being written exactly as before (nothing here changes that pipeline),
+    but web/app.py's investigate_view() now prefers reading the S3
+    artifact over the normalized tables when s3_key is set. abstract is a
+    short preview (Cases list / future search) derived from the synthesis
+    narrative; strongest_verdict is get_strongest_verdict_by_investigation's
+    result computed once at persist time and stored directly, so the Cases
+    list Status filter reads one column instead of a live JOIN across
+    every investigation's hypotheses. version is the S3 artifact's
+    generation, bumped on any future re-persist. All four are NULL for
+    every investigation that predates this column -- investigate_view()
+    falls back to the original table-based read for those, so no backfill
+    is required for old data to keep rendering."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(investigations)")}
+    if not columns:
+        return
+    for column, ddl in (
+        ("s3_key", "TEXT"), ("abstract", "TEXT"), ("version", "INTEGER"), ("strongest_verdict", "TEXT"),
+    ):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE investigations ADD COLUMN {column} {ddl}")
+
+
+def _migrate_case_ownership_visibility_columns(conn: sqlite3.Connection) -> None:
+    """visibility/owner_id for both Cases-list tables (investigations,
+    generated_reports) -- ADR-021's "ownership and visibility" metadata
+    fields. visibility defaults to 'private' (ADR-021: "Private by
+    default"); no publish workflow exists yet (net-new feature, out of
+    scope for this persistence migration), so every row is 'private'
+    until that's built. owner_id is nullable -- every pre-existing row
+    predates any concept of ownership, and most write paths today run
+    without a logged-in user (g.user is None for an anonymous visitor),
+    so NULL legitimately means "no owner on file", not a data-quality
+    problem to backfill."""
+    for table in ("investigations", "generated_reports"):
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not columns:
+            continue
+        if "visibility" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'")
+        if "owner_id" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN owner_id INTEGER")
+
+
+def _migrate_generated_reports_s3_columns(conn: sqlite3.Connection) -> None:
+    """generated_reports counterpart of _migrate_investigation_s3_columns
+    above -- see that function's docstring for the full reasoning.
+    report_markdown/research_thread_evidence/research_thread_followups
+    keep being written exactly as before (research/signals_report.py's
+    callers in web/app.py are unchanged) -- report_markdown stays NOT
+    NULL and populated on every new row too, deliberately: S3 is the
+    authoritative copy going forward (ADR-021), but relaxing this
+    column's NOT NULL constraint would require a full SQLite table
+    rebuild (ALTER TABLE can't do it directly), and context/graph.py's
+    sector-peer bridging plus context/graph_neo4j.py's sync_graph() both
+    read report_markdown for EVERY historical report in a loop -- one on
+    a live, synchronous planning path, not a background job. Keeping the
+    column populated avoids both the risky rebuild and rewriting those
+    two hot-path consumers to do one S3 fetch per row. See ADR-021 for
+    this tradeoff stated explicitly, not silently."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(generated_reports)")}
+    if not columns:
+        return
+    for column, ddl in (("s3_key", "TEXT"), ("abstract", "TEXT"), ("version", "INTEGER")):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE generated_reports ADD COLUMN {column} {ddl}")
+
+
 def _migrate_documents_table(conn: sqlite3.Connection) -> None:
     """documents originally had raw_file_path as NOT NULL and no
     added_by_user column — a link-only Docs-tab entry (no uploaded file)
@@ -525,6 +656,31 @@ def _migrate_documents_processing_status_columns(conn: sqlite3.Connection) -> No
         conn.execute("ALTER TABLE documents ADD COLUMN processed_at TEXT")
     if "error_message" not in columns:
         conn.execute("ALTER TABLE documents ADD COLUMN error_message TEXT")
+
+
+def _migrate_documents_storage_columns(conn: sqlite3.Connection) -> None:
+    """storage/document_store.py's DocumentStore abstraction (architecture
+    review: swap DOCUMENTS_DIR's on-disk storage for S3 without touching
+    every call site). storage_object_key is the key the active DocumentStore
+    resolves — deliberately backfilled from raw_file_path for every existing
+    row on the local backend (same repo-relative string, per
+    storage/document_store.py's module docstring), so a database that
+    predates this column doesn't need a separate one-time backfill script.
+    content_hash starts NULL and is only ever computed going forward (by
+    whichever call site now routes through DocumentStore), same reasoning
+    _migrate_documents_processing_status_columns already follows for adding
+    a column with no retroactive computation."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(documents)")}
+    if not columns:
+        return
+    if "storage_object_key" not in columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN storage_object_key TEXT")
+        conn.execute(
+            "UPDATE documents SET storage_object_key = raw_file_path WHERE raw_file_path IS NOT NULL"
+        )
+    if "content_hash" not in columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN content_hash TEXT")
+    conn.commit()
 
 
 def _migrate_raw_file_paths_to_repo_relative(conn: sqlite3.Connection) -> None:

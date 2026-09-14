@@ -15,7 +15,14 @@
       "Bash(git branch *)",
       "Bash(git reflog *)",
       "Bash(git -c pack.window=1 -c pack.depth=1 gc --prune=now)",
-      "Bash(echo \"EXIT:$?\")"
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(.venv/bin/python -c \"import sys; print\\(sys.executable\\); print\\(sys.path\\)\")",
+      "Bash(.venv/bin/pip --version)",
+      "Bash(cd /Users/radhamurugesan/work/vicky/repo/equity-research-assistant *)",
+      "Read(//Users/radhamurugesan/work/vicky/repo/indian-equity-research-assistant/.venv/lib/**)",
+      "Read(//Users/radhamurugesan/work/vicky/repo/**)",
+      "Bash(.venv/bin/python -m pip install psycopg2-binary)",
+      "Bash(.venv/bin/python /private/tmp/claude-501/-Users-radhamurugesan-work-vicky-repo-equity-research-assistant/c503db2b-be41-4ae6-ae3c-a2391e0caf2c/scratchpad/verify_pg.py)"
     ]
   }
 }

@@ -71,6 +71,7 @@ def fetch_daily_bars(
     *,
     period: str | None = None,
     start: str | None = None,
+    end: str | None = None,
     country: str = "IN",
 ) -> list[PriceBar]:
     """Daily bars for one ticker. Pass exactly one of period (a rolling
@@ -78,6 +79,14 @@ def fetch_daily_bars(
     (an explicit ISO date, for a reconciliation run from a known point) --
     mirrors yfinance's own history() signature, which treats period and
     start as mutually exclusive. Defaults to period="1y" if neither is given.
+
+    `end` (an explicit ISO date, exclusive per yfinance's own convention)
+    is only meaningful alongside `start` -- a bounded [start, end) window,
+    for backfilling exactly a missing older gap (e.g.
+    scripts/backfill_price_history.py's 20-year incremental deepening)
+    without re-fetching days already on file between `end` and today.
+    Combining `end` with `period` raises, same as combining `start` with
+    `period` already does.
 
     country decides the yfinance exchange suffix, same convention as
     web/live_quote.py: NSE-listed tickers need ".NS" appended, a US ticker
@@ -91,12 +100,14 @@ def fetch_daily_bars(
     ~50% price crash on a chart spanning the split date."""
     if period and start:
         raise ValueError("fetch_daily_bars: pass only one of period or start, not both")
+    if period and end:
+        raise ValueError("fetch_daily_bars: end is only valid alongside start, not period")
     if not period and not start:
         period = "1y"
 
     yf_ticker = resolve_yfinance_ticker(nse_symbol, country)
     try:
-        frame = yf.Ticker(yf_ticker).history(period=period, start=start, interval="1d", auto_adjust=True)
+        frame = yf.Ticker(yf_ticker).history(period=period, start=start, end=end, interval="1d", auto_adjust=True)
     except Exception:
         logger.warning("yfinance history() failed for ticker=%s", yf_ticker, exc_info=True)
         return []

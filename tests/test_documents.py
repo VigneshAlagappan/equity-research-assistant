@@ -16,6 +16,7 @@ from companies.registry import seed_companies
 from research.documents import (
     _extract_period_hint,
     _extract_pdf_text,
+    _extract_pdf_text_from_bytes,
     get_document_evidence,
 )
 from storage.repositories import save_company_document
@@ -85,6 +86,36 @@ def test_extract_pdf_text_returns_none_for_a_corrupt_file(tmp_path: Path) -> Non
     bad_path.write_bytes(b"not a real pdf")
 
     assert _extract_pdf_text(str(bad_path)) is None
+
+
+def test_extract_pdf_text_from_bytes_returns_none_instead_of_hanging_forever(monkeypatch) -> None:
+    """Found live in production: a real, user-uploaded PDF made pypdf's own
+    content-stream parser loop long enough to hit gunicorn's 120s worker
+    timeout, SIGKILLing the whole worker (not just this request) --
+    unlike a clean pypdf exception (already covered by the corrupt-file
+    test above), a hang can't be caught with try/except, so it needs its
+    own wall-clock bound (research.documents.PDF_EXTRACTION_TIMEOUT_
+    SECONDS). Uses a tiny timeout + a fake page.extract_text() that
+    deliberately hangs, rather than waiting out the real 20s default, so
+    this test itself stays fast."""
+    import research.documents as documents_module
+
+    monkeypatch.setattr(documents_module, "PDF_EXTRACTION_TIMEOUT_SECONDS", 1)
+
+    class _HangingPage:
+        def extract_text(self):
+            import time as _time
+
+            _time.sleep(30)  # far longer than the 1s timeout above
+            return "should never get here"
+
+    class _FakeReader:
+        def __init__(self, _data):
+            self.pages = [_HangingPage()]
+
+    monkeypatch.setattr(documents_module, "PdfReader", _FakeReader)
+
+    assert _extract_pdf_text_from_bytes(b"irrelevant -- PdfReader itself is faked above") is None
 
 
 def test_extract_pdf_text_returns_none_for_an_encrypted_pdf_missing_crypto_dependency(

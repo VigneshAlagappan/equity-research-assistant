@@ -50,27 +50,35 @@ def _csv_url(series_id: str) -> str:
     return f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
 
 
-def fetch_fred_series(
-    series_id: str, *, unit: str, series_key: str | None = None, region: str | None = None
-) -> list[MacroNormalizedObservation]:
-    """Fetch one FRED series and normalize it into MacroNormalizedObservations.
+def fred_csv_url(series_id: str) -> str:
+    """Public wrapper of _csv_url() -- ingestion/pipeline.py's
+    ingest_fred_series() records this as the raw object's source_url
+    (ADR-022) without reaching into a private helper."""
+    return _csv_url(series_id)
 
-    unit must be passed explicitly — FRED's CSV export has no unit column
-    (e.g. "PERCENT" for FEDFUNDS/DGS10, "INDEX" for CPIAUCSL), same
-    "the CSV convention requires a unit column" contract
-    sources/macro.py's MacroDataAdapter already enforces for RBI/IMD/etc.
-    series_key defaults to the FRED series_id itself (lowercased, to match
-    this app's snake_case series_key convention elsewhere) unless overridden.
 
-    Returns [] (not an error) if FRED has nothing for this series_id — same
-    "absence isn't an error" rule sources/yfinance_financials.py follows.
-    """
-    series_key = series_key or series_id.lower()
-    source_file = f"fred:{series_id}"
-
+def fetch_fred_series_raw(series_id: str) -> bytes:
+    """Just the network fetch, extracted out of fetch_fred_series() below so
+    a caller that needs the raw bytes themselves (ADR-022's raw/macro/
+    persistence — ingestion/pipeline.py::ingest_fred_series() stores this
+    exact payload before any parsing happens) doesn't have to issue a
+    second HTTP request to get them. fetch_fred_series() calls this
+    internally — one network call either way, same as before this split."""
     req = urllib.request.Request(_csv_url(series_id), headers={"User-Agent": _USER_AGENT})
     with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT_SECONDS) as response:
-        raw = response.read().decode("utf-8-sig")
+        return response.read()
+
+
+def parse_fred_csv(
+    raw_bytes: bytes, series_id: str, *, unit: str, series_key: str | None = None, region: str | None = None,
+) -> list[MacroNormalizedObservation]:
+    """The parsing half of fetch_fred_series() below, extracted so a
+    caller that already has the raw bytes (e.g. replaying a cataloged
+    raw/macro/ object, per ADR-022) can parse them without a network call.
+    Same unit/series_key/region contract as fetch_fred_series() itself."""
+    series_key = series_key or series_id.lower()
+    source_file = f"fred:{series_id}"
+    raw = raw_bytes.decode("utf-8-sig")
 
     reader = csv.DictReader(io.StringIO(raw))
     if reader.fieldnames is None or "observation_date" not in reader.fieldnames:
@@ -120,3 +128,25 @@ def fetch_fred_series(
     if not observations:
         logger.warning("FRED returned no usable observations for series_id=%s", series_id)
     return observations
+
+
+def fetch_fred_series(
+    series_id: str, *, unit: str, series_key: str | None = None, region: str | None = None
+) -> list[MacroNormalizedObservation]:
+    """Fetch one FRED series and normalize it into MacroNormalizedObservations
+    -- unchanged public behavior/signature, now composed of
+    fetch_fred_series_raw() + parse_fred_csv() (see their own docstrings)
+    rather than doing the HTTP GET and CSV parse inline.
+
+    unit must be passed explicitly — FRED's CSV export has no unit column
+    (e.g. "PERCENT" for FEDFUNDS/DGS10, "INDEX" for CPIAUCSL), same
+    "the CSV convention requires a unit column" contract
+    sources/macro.py's MacroDataAdapter already enforces for RBI/IMD/etc.
+    series_key defaults to the FRED series_id itself (lowercased, to match
+    this app's snake_case series_key convention elsewhere) unless overridden.
+
+    Returns [] (not an error) if FRED has nothing for this series_id — same
+    "absence isn't an error" rule sources/yfinance_financials.py follows.
+    """
+    raw_bytes = fetch_fred_series_raw(series_id)
+    return parse_fred_csv(raw_bytes, series_id, unit=unit, series_key=series_key, region=region)

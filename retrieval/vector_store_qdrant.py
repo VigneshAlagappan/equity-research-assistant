@@ -11,6 +11,11 @@ Ollama, README §20):
 Then set QDRANT_URL (defaults to http://localhost:6333) if it's running
 somewhere other than localhost.
 
+Qdrant Cloud (a managed cluster instead of a local container): set
+QDRANT_URL to the cluster's own https://....qdrant.io URL and QDRANT_API_KEY
+to the cluster's API key (both in .env) — QDRANT_API_KEY is None for the
+local, unauthenticated setup above and only sent as a header when set.
+
 The collection is created lazily, on first upsert, sized to whatever
 embedding dimension that first batch of vectors carries — there is no
 migration step to run by hand. Every method translates qdrant_client's own
@@ -28,19 +33,26 @@ class QdrantVectorStore:
     """VectorStore backed by a Qdrant collection — satisfies
     retrieval.vector_store.VectorStore structurally."""
 
-    def __init__(self, *, url: str | None = None, collection: str | None = None, timeout: float | None = None) -> None:
+    def __init__(
+        self, *, url: str | None = None, collection: str | None = None, timeout: float | None = None,
+        api_key: str | None = None,
+    ) -> None:
         from config import settings
 
         self._url = url or settings.QDRANT_URL
         self._collection = collection or settings.QDRANT_COLLECTION
         self._timeout = timeout if timeout is not None else settings.QDRANT_TIMEOUT_SECONDS
+        # api_key stays None for a local, unauthenticated instance — Qdrant
+        # Cloud rejects a connection without one, so this is only required
+        # once QDRANT_URL points at a *.qdrant.io cluster.
+        self._api_key = api_key if api_key is not None else settings.QDRANT_API_KEY
         self._client = None  # lazy — constructing a QdrantClient doesn't itself prove connectivity
 
     def _get_client(self):
         if self._client is None:
             from qdrant_client import QdrantClient
 
-            self._client = QdrantClient(url=self._url, timeout=self._timeout)
+            self._client = QdrantClient(url=self._url, api_key=self._api_key, timeout=self._timeout)
         return self._client
 
     def health_check(self) -> bool:
@@ -54,13 +66,56 @@ class QdrantVectorStore:
         return any(c.name == self._collection for c in client.get_collections().collections)
 
     def _ensure_collection(self, client, dimension: int) -> None:
-        from qdrant_client.models import Distance, VectorParams
+        from qdrant_client.models import Distance, PayloadSchemaType, VectorParams
 
         if not self._collection_exists(client):
             client.create_collection(
                 collection_name=self._collection,
                 vectors_config=VectorParams(size=dimension, distance=Distance.COSINE),
             )
+            # This Qdrant Cloud tier rejects an unindexed filter field
+            # outright (400 "Index required but not found for <field>")
+            # rather than falling back to an unindexed scan the way plain
+            # self-hosted Qdrant does -- both search()'s company_id filter
+            # and delete_document()'s document_id filter are unusable
+            # without their own index. Created once, right after the
+            # collection itself, so every future upsert/search/delete just
+            # works; a collection created before this existed needs the
+            # same calls made once by hand (see
+            # scripts/ensure_qdrant_company_index.py).
+            client.create_payload_index(
+                collection_name=self._collection,
+                field_name="company_id",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+            client.create_payload_index(
+                collection_name=self._collection,
+                field_name="document_id",
+                field_schema=PayloadSchemaType.INTEGER,
+            )
+
+    def ensure_payload_indexes(self) -> dict:
+        """Public, idempotent repair hook for a collection that already
+        existed before _ensure_collection() started creating these indexes
+        at collection-creation time -- scripts/ensure_qdrant_company_index.py
+        is the only caller, kept as a real method here (not a standalone
+        script importing qdrant_client itself) since this module is the
+        ONLY one allowed to import qdrant_client (module docstring, STRICT
+        RULE, enforced by tests/test_vector_store_architecture.py).
+        Returns the collection's payload_schema afterward, for the script
+        to print. No-op (returns {}) if the collection doesn't exist yet."""
+        from qdrant_client.models import PayloadSchemaType
+
+        client = self._get_client()
+        if not self._collection_exists(client):
+            return {}
+        client.create_payload_index(
+            collection_name=self._collection, field_name="company_id", field_schema=PayloadSchemaType.KEYWORD,
+        )
+        client.create_payload_index(
+            collection_name=self._collection, field_name="document_id", field_schema=PayloadSchemaType.INTEGER,
+        )
+        return client.get_collection(self._collection).payload_schema
 
     def upsert(self, records: list[VectorRecord]) -> None:
         if not records:

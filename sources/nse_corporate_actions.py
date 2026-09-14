@@ -20,6 +20,7 @@ mechanics of its own.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date
 
@@ -56,15 +57,24 @@ def _dash_to_none(value: str | None) -> str | None:
     return value
 
 
-def fetch_corporate_actions(
-    symbol: str,
-    *,
-    session: requests.Session | None = None,
-) -> list[CorporateActionRef]:
-    """List every corporate action NSE has on file for `symbol` -- full
-    history in one response, same "no server-side date-range filtering,
-    caller filters client-side if it wants a window" convention as
-    sources/nse_fetch.py's fetch_filing_index()."""
+def corporate_actions_url(symbol: str) -> str:
+    """Public wrapper of the corporate-actions endpoint -- scripts/
+    batch_fetch_nse.py's _run_corporate_actions() records this as the raw
+    object's source_url (ADR-022). Query params aren't included (only the
+    base path) since `symbol` alone identifies the fetch and the fixed
+    `index=equities` param never varies."""
+    return f"{_BASE}{_CORPORATE_ACTIONS_API_PATH}?symbol={symbol}"
+
+
+def fetch_corporate_actions_raw(
+    symbol: str, *, session: requests.Session | None = None,
+) -> bytes:
+    """Just the network fetch, extracted out of fetch_corporate_actions()
+    below so a caller that needs the raw bytes themselves (ADR-022's
+    raw/regulatory/ persistence -- ingestion/corporate_actions.py stores
+    this exact payload before any parsing happens) doesn't have to issue a
+    second HTTP request. fetch_corporate_actions() calls this internally
+    -- one network call either way, same as before this split."""
     owns_session = session is None
     session = session or _new_session()
     try:
@@ -75,8 +85,15 @@ def fetch_corporate_actions(
     finally:
         if owns_session:
             session.close()
+    return response.content
 
-    rows = response.json()
+
+def parse_corporate_actions_json(raw_bytes: bytes, symbol: str) -> list[CorporateActionRef]:
+    """The parsing half of fetch_corporate_actions() below, extracted so a
+    caller that already has the raw bytes (e.g. replaying a cataloged
+    raw/regulatory/ object, per ADR-022) can parse them without a network
+    call."""
+    rows = json.loads(raw_bytes)
     refs: list[CorporateActionRef] = []
     for row in rows:
         ex_date_str = _dash_to_none(row.get("exDate"))
@@ -103,3 +120,19 @@ def fetch_corporate_actions(
             )
         )
     return refs
+
+
+def fetch_corporate_actions(
+    symbol: str,
+    *,
+    session: requests.Session | None = None,
+) -> list[CorporateActionRef]:
+    """List every corporate action NSE has on file for `symbol` -- full
+    history in one response, same "no server-side date-range filtering,
+    caller filters client-side if it wants a window" convention as
+    sources/nse_fetch.py's fetch_filing_index(). Unchanged public
+    behavior/signature, now composed of fetch_corporate_actions_raw() +
+    parse_corporate_actions_json() rather than doing the HTTP GET and JSON
+    parse inline."""
+    raw_bytes = fetch_corporate_actions_raw(symbol, session=session)
+    return parse_corporate_actions_json(raw_bytes, symbol)

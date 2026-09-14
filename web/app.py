@@ -11,6 +11,17 @@ ingested financial data from the web UI.
 
 from __future__ import annotations
 
+# Must run before any other import in this file (or any module this file
+# transitively imports) touches storage.repositories/company_repository/
+# fact_store/indicator_repository/investigation_repository -- see
+# storage/backend_bootstrap.py's own docstring for why. web/app.py is
+# gunicorn's entry point (web.app:create_app()), so this is the earliest
+# possible point in the whole process for it to run.
+import storage.backend_bootstrap
+
+storage.backend_bootstrap.install()
+
+import hashlib
 import json
 import logging
 import os
@@ -51,7 +62,7 @@ from companies.stock_actions import (
     list_stock_actions,
 )
 from config import settings as app_settings
-from config.settings import ANTHROPIC_API_KEY_SET, SECRET_KEY, from_repo_relative, to_repo_relative
+from config.settings import ANTHROPIC_API_KEY_SET, DATABASE_BACKEND, SECRET_KEY, from_repo_relative, to_repo_relative
 from ingestion.coordinator import (
     archive_documents,
     archive_financial_items,
@@ -83,28 +94,26 @@ from indicators.settings import (
 )
 from ingestion.detector import ADAPTER_CLASSES
 from ingestion.pipeline import ingest_file
+from research.abstracts import generate_abstract
 from research.assistant import answer_question
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
+from research.investigation_jobs import get_status as get_investigation_job_status, mark_done as mark_investigation_done, mark_error as mark_investigation_error, mark_running as mark_investigation_running
+from research.ask_jobs import get_status as get_ask_job_status, mark_done as mark_ask_job_done, mark_error as mark_ask_job_error, mark_running as mark_ask_job_running
 from retrieval.tag_resolver import resolve_tags_in_text
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
-from scripts.batch_fetch_fred import run_fred_batch, TRACKED_SERIES
+from scheduling.jobs import CATEGORY_ORDER, ScheduledJob, SCHEDULED_JOBS, get_job, open_db as scheduling_open_db
 from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
-from scripts.batch_generate_insights import run_key_insights_batch
-from scripts.db_shard import run_db_shard_job
-from scripts.fetch_daily_prices import run_price_history_update
-from scripts.fetch_daily_prices_usa import run_price_history_update_usa
-from scripts.process_pending_documents_batch import run_document_processing_batch
-from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
-from storage.database import init_db
+from storage.company_repository import select_company_ids_by_index
+from storage.database import init_db, init_postgres_db
+from storage.document_store import default_document_store
 from storage.investigation_repository import (
     count_investigation_hypotheses,
     select_investigations_for_company,
 )
-from storage.price_database import init_price_db
 from storage.price_repository import (
     get_price_history,
     list_52_week_range,
@@ -141,6 +150,7 @@ from storage.repositories import (
     finish_batch_job_run,
     get_company_document,
     get_note_attachment,
+    get_all_company_index_tags,
     get_company_index_tags,
     get_company_insights,
     get_company_list_column_settings,
@@ -200,6 +210,7 @@ from storage.repositories import (
     save_generated_report,
     save_report_evidence,
     save_report_followups,
+    update_generated_report_s3_metadata,
     set_company_index_tags,
     set_company_list_column_settings,
     set_overview_ratio_settings,
@@ -207,6 +218,7 @@ from storage.repositories import (
     update_user_theme,
 )
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
+from web.corporate_actions_feed import build_corporate_actions_feed
 from web.shareholding_feed import build_shareholding_feed
 from web.fixtures import EXAMPLES, THREADS
 from web.fx_rate import get_usd_inr_rate
@@ -244,6 +256,12 @@ def _redirect_to_return_or(default_endpoint: str, **default_kwargs):
 # Revisit if/when the whole app should go back to being login-only.
 _LOGIN_REQUIRED_ENDPOINTS: set[str] = set()
 _LOGIN_REQUIRED_PREFIXES = ("admin",)
+# admin_schedule_run_async is the one "admin"-prefixed route deliberately
+# exempt from the session-login gate below -- a cron trigger (EventBridge
+# Scheduler etc.) has no browser session to log in with. It authenticates
+# via its own X-Cron-Secret header check instead (see its docstring) —
+# excluding it here doesn't skip auth, it just moves auth into the route.
+_LOGIN_EXEMPT_ENDPOINTS = {"admin_schedule_run_async"}
 
 _TAG_RE = re.compile(r"\[(FACT|CALCULATION|INFERENCE)\]")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
@@ -373,6 +391,37 @@ def _embed_question_for_reuse(question: str) -> tuple[list[float] | None, str | 
         return None, None
 
 
+def _persist_generated_report_s3(
+    db, thread_id: str, question: str, company_ids: list[str], statement_type: str,
+    report_markdown: str, evidence: list[dict] | None = None, followups: list[str] | None = None,
+    *, owner_id: str | None = None,
+) -> None:
+    """ADR-021: alongside save_generated_report()/save_report_evidence()/
+    save_report_followups() (unchanged, still called exactly as before by
+    every caller below — report_markdown stays the live NOT-NULL column,
+    see storage/database.py::_migrate_generated_reports_s3_columns for why
+    it's kept populated rather than moved out), also write the full
+    report (+ evidence + followups) as one JSON artifact to S3 and record
+    its key + an LLM-generated abstract + the current user (if any) on the
+    generated_reports row. Called from all four /research/... routes that
+    save a report, so every one gets identical treatment — no route-
+    specific variation to keep in sync.
+
+    `owner_id` is resolved from g.user by the caller rather than read here
+    -- this can run inside a background thread (the -async ask routes'
+    _compute_answer_question path), and g is bound to the request context,
+    which a background thread doesn't have."""
+    artifact = {
+        "thread_id": thread_id, "question": question, "company_ids": company_ids,
+        "statement_type": statement_type, "report_markdown": report_markdown,
+        "evidence": evidence or [], "followups": followups or [],
+    }
+    s3_key = f"threads/{thread_id}/v1.json"
+    default_document_store().store(s3_key, json.dumps(artifact, indent=2).encode("utf-8"))
+    abstract = generate_abstract(db, report_markdown)
+    update_generated_report_s3_metadata(db, thread_id, s3_key=s3_key, abstract=abstract, version=1, owner_id=owner_id)
+
+
 def _split_index_tags(tags: list[str]) -> tuple[list[str], list[str], list[str]]:
     """Split a company's INDEX_NAMES tags (storage/repositories.py) into the
     NSE ones (Nifty-prefixed), the BSE ones (BSE-prefixed, plus Sensex), and
@@ -407,6 +456,15 @@ def _parse_docs_period_id(period_id: str, type_key: str) -> tuple[str, str | Non
 def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
+
+    @app.route("/health")
+    def health():
+        # Deliberately no DB/Qdrant/Neo4j dependency -- a container
+        # orchestrator's liveness check should reflect "is this process up
+        # and serving," not cascade-fail every instance because one
+        # external managed service had a blip. Deeper dependency checks
+        # belong in a separate readiness probe if one is ever needed.
+        return {"status": "ok"}, 200
 
     @app.template_global("static_url")
     def static_url(filename: str) -> str:
@@ -447,15 +505,38 @@ def create_app() -> Flask:
         price_conn: DBConnection | None = g.pop("price_db_conn", None)
         if price_conn is not None:
             price_conn.close()
+        logs_conn: DBConnection | None = g.pop("logs_db_conn", None)
+        if logs_conn is not None:
+            logs_conn.close()
 
     def get_db() -> DBConnection:
+        """DATABASE_BACKEND=postgres routes this at Neon instead of SQLite
+        -- every route already calls get_db() uniformly, so this one
+        function is the entire "main data" half of the backend switch (the
+        storage.backend_bootstrap swap above is the other half, making
+        `from storage.repositories import X` resolve correctly against
+        whichever backend this connection actually is)."""
         if "db_conn" not in g:
-            g.db_conn = init_db()
+            g.db_conn = init_postgres_db() if DATABASE_BACKEND == "postgres" else init_db()
         return g.db_conn
+
+    def get_logs_db() -> DBConnection:
+        """Same connection as get_db() now -- batch_job_runs/items,
+        dataset_events, worker_processing_log, retrieval_diagnostics,
+        llm_call_log, and ingestion_queue_items were added to schemas/
+        postgres_schema.sql on 2026-09-13 (previously excluded citing a
+        Neon free-tier storage cap production had already grown past --
+        see storage/backend_bootstrap.py's docstring and docs/ADR/021),
+        so they live in the same database as everything else under either
+        backend now. Kept as a distinct name (not simply replaced by
+        get_db() at every call site) purely so those call sites keep
+        reading as "this touches an audit/log table" -- not because the
+        connection is actually different anymore."""
+        return get_db()
 
     def get_price_db() -> DBConnection:
         if "price_db_conn" not in g:
-            g.price_db_conn = init_price_db()
+            g.price_db_conn = storage.backend_bootstrap.open_price_db()
         return g.price_db_conn
 
     @app.before_request
@@ -474,6 +555,8 @@ def create_app() -> Flask:
         # either way until something's actually been chosen.
         g.theme = g.user["theme"] if g.user is not None else session.get("theme", DEFAULT_THEME)
         if request.endpoint is None:
+            return None
+        if request.endpoint in _LOGIN_EXEMPT_ENDPOINTS:
             return None
         needs_login = (
             request.endpoint in _LOGIN_REQUIRED_ENDPOINTS
@@ -566,6 +649,12 @@ def create_app() -> Flask:
         daily_change_by_company = list_latest_daily_change(price_db)
         week52_by_company = list_52_week_range(price_db)
         all_time_by_company = list_all_time_range(price_db)
+        # Same one-query-total reasoning as the price/shares lookups above —
+        # a get_company_index_tags() call per row was fine on local SQLite
+        # (no network round trip) but turned a ~2,600-row page load into
+        # minutes once DATABASE_BACKEND=postgres put each of those queries
+        # over the network to Neon.
+        index_tags_by_company = get_all_company_index_tags(db)
 
         def _range_pct(price, low, high):
             """Where `price` sits between `low` and `high`, as 0-100 — for
@@ -657,7 +746,7 @@ def create_app() -> Flask:
             all_time = all_time_by_company.get(row["company_id"])
             row["all_time_low"], row["all_time_high"] = all_time if all_time else (None, None)
             row["all_time_pct"] = _range_pct(row["latest_price"], row["all_time_low"], row["all_time_high"])
-            row["index_tags"] = get_company_index_tags(db, row["company_id"])
+            row["index_tags"] = index_tags_by_company.get(row["company_id"], [])
             rows.append(row)
         sectors = sorted({row["sector"] for row in rows if row["sector"]})
         industries = sorted({row["industry"] for row in rows if row["industry"]})
@@ -736,226 +825,8 @@ def create_app() -> Flask:
     def _distinct_values(rows: list, column: str) -> list[str]:
         return sorted({r[column] for r in rows if r[column]})
 
-    @dataclass
-    class ScheduledJob:
-        """One row of the Settings > Data Operations > Schedule panel's
-        registry -- see SCHEDULED_JOBS.md for the underlying gap analysis
-        this table is a UI over. `runner` is None for the seven jobs that
-        aren't wired to anything real yet (a design gap, a missing fetch
-        source, or a batch-loop script nobody's written) -- those render as
-        a disabled row with `reason` as subtext, pulled verbatim from
-        SCHEDULED_JOBS.md's own verdict so the UI can't drift from the
-        actual gap analysis by inventing softer wording. `job_name` is the
-        batch_job_runs.job_name to look up "last run" by (None for the
-        disabled rows, which have never run anything)."""
-
-        job_id: str
-        label: str
-        cadence: str
-        job_name: str | None
-        reason: str | None
-        runner: Callable[[DBConnection], int] | None
-
-    def _run_financials_india(conn) -> int:
-        """Nifty 50 constituents only (not the full Nifty 500 the doc-level
-        gap analysis mentions for "planned") -- matches the registry table
-        in this task's own spec, and keeps a manual "Run now" click from
-        accidentally kicking off a several-hundred-company NSE crawl."""
-        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
-        return run_nse_batch(conn, "financials", companies, scope_label=f"Nifty 50 ({len(companies)})")
-
-    def _run_shareholding_india(conn) -> int:
-        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
-        return run_nse_batch(conn, "shareholding", companies, scope_label=f"Nifty 50 ({len(companies)})")
-
-    def _run_corporate_actions_india(conn) -> int:
-        """Nifty 50 only, hardcoded rather than via _make_nse_tier_runner
-        like its sibling tiers below -- same scoping reasoning as
-        _run_financials_india above -- raw fetch only (see
-        scripts/batch_fetch_nse.py's _run_corporate_actions)."""
-        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
-        return run_nse_batch(conn, "corporate_actions", companies, scope_label=f"Nifty 50 ({len(companies)})")
-
-    def _run_corporate_actions_ingest_india(conn) -> int:
-        """Classifies whatever _run_corporate_actions_india above has
-        fetched into corporate_actions -- a separate scheduled job (not a
-        step of the fetch job itself) so re-classifying later never
-        requires re-fetching, same as canonical_financials' own
-        reconciliation being a distinct action from ingestion."""
-        companies = [r["company_id"] for r in select_company_ids_by_index(conn, "Nifty 50")]
-        return run_nse_batch(conn, "corporate_actions_ingest", companies, scope_label=f"Nifty 50 ({len(companies)})")
-
-    # The other ~449 Nifty 500 constituents (everything not already covered
-    # by the Nifty 50 job above) used to be one "Nifty 500 remaining" job --
-    # replaced with three smaller ones along NSE's own standard tiering
-    # instead, so a single "Run now" click is a few dozen-to-150 companies,
-    # not 449 in one blocking synchronous request. Nifty Next 50 (50) +
-    # Nifty Midcap 150 (150) + Nifty Smallcap 250 (249) is a clean,
-    # verified, non-overlapping partition of exactly that same 449-company
-    # pool (Nifty 100 = Nifty 50 + Nifty Next 50, and Nifty 500 = Nifty 100
-    # + Midcap 150 + Smallcap 250 -- NSE's own tier composition, not
-    # something picked arbitrarily) -- deliberately Next 50, not the full
-    # Nifty 100 tier, so this doesn't re-fetch the 50 companies the
-    # standalone Nifty 50 job above already covers.
-    #
-    # One factory instead of six near-identical closures (financials x
-    # shareholding, each x 3 tiers) that would otherwise drift out of sync
-    # with each other if one got edited and the other five didn't.
-    def _make_nse_tier_runner(kind: str, index_name: str, job_name: str):
-        def _runner(conn) -> int:
-            companies = [r["company_id"] for r in select_company_ids_by_index(conn, index_name)]
-            return run_nse_batch(
-                conn, kind, companies,
-                scope_label=f"{index_name} ({len(companies)})", job_name=job_name,
-            )
-        return _runner
-
-    _run_financials_nifty_next50 = _make_nse_tier_runner(
-        "financials", "Nifty Next 50", "nse_xbrl_fetch_nifty_next50")
-    _run_financials_nifty_midcap150 = _make_nse_tier_runner(
-        "financials", "Nifty Midcap 150", "nse_xbrl_fetch_nifty_midcap150")
-    _run_financials_nifty_smallcap250 = _make_nse_tier_runner(
-        "financials", "Nifty Smallcap 250", "nse_xbrl_fetch_nifty_smallcap250")
-    _run_shareholding_nifty_next50 = _make_nse_tier_runner(
-        "shareholding", "Nifty Next 50", "nse_shareholding_fetch_nifty_next50")
-    _run_shareholding_nifty_midcap150 = _make_nse_tier_runner(
-        "shareholding", "Nifty Midcap 150", "nse_shareholding_fetch_nifty_midcap150")
-    _run_shareholding_nifty_smallcap250 = _make_nse_tier_runner(
-        "shareholding", "Nifty Smallcap 250", "nse_shareholding_fetch_nifty_smallcap250")
-
-    _run_corporate_actions_nifty_next50 = _make_nse_tier_runner(
-        "corporate_actions", "Nifty Next 50", "nse_corporate_actions_fetch_nifty_next50")
-    _run_corporate_actions_nifty_midcap150 = _make_nse_tier_runner(
-        "corporate_actions", "Nifty Midcap 150", "nse_corporate_actions_fetch_nifty_midcap150")
-    _run_corporate_actions_nifty_smallcap250 = _make_nse_tier_runner(
-        "corporate_actions", "Nifty Smallcap 250", "nse_corporate_actions_fetch_nifty_smallcap250")
-    _run_corporate_actions_ingest_nifty_next50 = _make_nse_tier_runner(
-        "corporate_actions_ingest", "Nifty Next 50", "nse_corporate_actions_ingest_nifty_next50")
-    _run_corporate_actions_ingest_nifty_midcap150 = _make_nse_tier_runner(
-        "corporate_actions_ingest", "Nifty Midcap 150", "nse_corporate_actions_ingest_nifty_midcap150")
-    _run_corporate_actions_ingest_nifty_smallcap250 = _make_nse_tier_runner(
-        "corporate_actions_ingest", "Nifty Smallcap 250", "nse_corporate_actions_ingest_nifty_smallcap250")
-
-    _run_financials_nifty_microcap = _make_nse_tier_runner(
-        "financials", "Nifty Micro-Cap", "nse_xbrl_fetch_nifty_microcap")
-    _run_shareholding_nifty_microcap = _make_nse_tier_runner(
-        "shareholding", "Nifty Micro-Cap", "nse_shareholding_fetch_nifty_microcap")
-    _run_corporate_actions_nifty_microcap = _make_nse_tier_runner(
-        "corporate_actions", "Nifty Micro-Cap", "nse_corporate_actions_fetch_nifty_microcap")
-    _run_corporate_actions_ingest_nifty_microcap = _make_nse_tier_runner(
-        "corporate_actions_ingest", "Nifty Micro-Cap", "nse_corporate_actions_ingest_nifty_microcap")
-
-    def _run_price_history_india(conn) -> int:
-        # run_price_history_update() opens its own main-db/price-db
-        # connections internally (see scripts/fetch_daily_prices.py's own
-        # refactor notes on why its BatchRun must live on the main db, not
-        # the price db) -- the `conn` this route hands every runner is
-        # ignored here, not reused, which is fine: it's the same main db
-        # underneath, just a second connection to it.
-        return run_price_history_update()
-
-    def _run_price_history_nifty_microcap(conn) -> int:
-        # Same "conn ignored, own connections opened internally" shape as
-        # _run_price_history_india above.
-        return run_price_history_update(index_name="Nifty Micro-Cap", job_name="price_history_india_nifty_microcap")
-
-    def _run_db_shard(conn) -> int:
-        return run_db_shard_job(conn)
-
-    def _run_fred_macro(conn) -> int:
-        return run_fred_batch(conn, TRACKED_SERIES, scope_label=f"FRED ({len(TRACKED_SERIES)} series)")
-
-    def _run_doc_analysis(conn) -> int:
-        return run_document_processing_batch(conn)
-
-    def _run_insights_companies(conn) -> int:
-        return run_key_insights_batch(conn)
-
-    def _run_financials_usa(conn) -> int:
-        """Every active US company on file (a dozen today, same "no
-        index-membership filter" reasoning select_active_companies_by_country's
-        own docstring gives -- a couple of them aren't tagged into any of
-        the US indices in company_index_membership, so filtering by one of
-        those would silently drop them)."""
-        companies = [r["company_id"] for r in select_active_companies_by_country(conn, "US")]
-        return run_sec_edgar_batch(conn, companies, scope_label=f"US companies ({len(companies)})")
-
-    def _run_price_history_usa(conn) -> int:
-        # Same shape as _run_price_history_india above: run_price_history_
-        # update_usa() opens its own main-db/price-db connections
-        # internally, so the `conn` this route hands every runner is
-        # ignored here rather than reused -- it's the same main db
-        # underneath either way.
-        return run_price_history_update_usa()
-
-    # Twenty-eight jobs get a real "Run now" button; the other two render as a
-    # disabled row with `reason` as subtext (see ScheduledJob's docstring
-    # above). Order here is the display order in the Schedule panel table.
-    _SCHEDULED_JOBS: list[ScheduledJob] = [
-        ScheduledJob("price_history_india", "Price history — India", "Daily",
-                     "price_history_india", None, _run_price_history_india),
-        ScheduledJob("price_history_india_nifty_microcap", "Price history — India (Nifty Micro-Cap)", "Monthly",
-                     "price_history_india_nifty_microcap", None, _run_price_history_nifty_microcap),
-        ScheduledJob("price_history_usa", "Price history — USA", "Weekly",
-                     "price_history_usa", None, _run_price_history_usa),
-        ScheduledJob("db_shard", "DB sharding", "Daily",
-                     "db_shard", None, _run_db_shard),
-        ScheduledJob("financials_india", "Financials — India (Nifty 50)", "Quarterly",
-                     "nse_xbrl_fetch", None, _run_financials_india),
-        ScheduledJob("financials_india_next50", "Financials — India (Nifty Next 50)", "Quarterly",
-                     "nse_xbrl_fetch_nifty_next50", None, _run_financials_nifty_next50),
-        ScheduledJob("financials_india_midcap150", "Financials — India (Nifty Midcap 150)", "Quarterly",
-                     "nse_xbrl_fetch_nifty_midcap150", None, _run_financials_nifty_midcap150),
-        ScheduledJob("financials_india_smallcap250", "Financials — India (Nifty Smallcap 250)", "Quarterly",
-                     "nse_xbrl_fetch_nifty_smallcap250", None, _run_financials_nifty_smallcap250),
-        ScheduledJob("financials_india_microcap", "Financials — India (Nifty Micro-Cap)", "Monthly",
-                     "nse_xbrl_fetch_nifty_microcap", None, _run_financials_nifty_microcap),
-        ScheduledJob("shareholding_india", "Shareholding pattern — India (Nifty 50)", "Quarterly",
-                     "nse_shareholding_fetch", None, _run_shareholding_india),
-        ScheduledJob("shareholding_india_next50", "Shareholding pattern — India (Nifty Next 50)", "Quarterly",
-                     "nse_shareholding_fetch_nifty_next50", None, _run_shareholding_nifty_next50),
-        ScheduledJob("shareholding_india_midcap150", "Shareholding pattern — India (Nifty Midcap 150)", "Quarterly",
-                     "nse_shareholding_fetch_nifty_midcap150", None, _run_shareholding_nifty_midcap150),
-        ScheduledJob("shareholding_india_smallcap250", "Shareholding pattern — India (Nifty Smallcap 250)", "Quarterly",
-                     "nse_shareholding_fetch_nifty_smallcap250", None, _run_shareholding_nifty_smallcap250),
-        ScheduledJob("shareholding_india_microcap", "Shareholding pattern — India (Nifty Micro-Cap)", "Monthly",
-                     "nse_shareholding_fetch_nifty_microcap", None, _run_shareholding_nifty_microcap),
-        ScheduledJob("corporate_actions_india", "Corporate actions — India (Nifty 50)", "Quarterly",
-                     "nse_corporate_actions_fetch", None, _run_corporate_actions_india),
-        ScheduledJob("corporate_actions_ingest_india", "Corporate actions ingest — India (Nifty 50)", "Quarterly",
-                     "nse_corporate_actions_ingest", None, _run_corporate_actions_ingest_india),
-        ScheduledJob("corporate_actions_india_next50", "Corporate actions — India (Nifty Next 50)", "Quarterly",
-                     "nse_corporate_actions_fetch_nifty_next50", None, _run_corporate_actions_nifty_next50),
-        ScheduledJob("corporate_actions_ingest_india_next50", "Corporate actions ingest — India (Nifty Next 50)", "Quarterly",
-                     "nse_corporate_actions_ingest_nifty_next50", None, _run_corporate_actions_ingest_nifty_next50),
-        ScheduledJob("corporate_actions_india_midcap150", "Corporate actions — India (Nifty Midcap 150)", "Quarterly",
-                     "nse_corporate_actions_fetch_nifty_midcap150", None, _run_corporate_actions_nifty_midcap150),
-        ScheduledJob("corporate_actions_ingest_india_midcap150", "Corporate actions ingest — India (Nifty Midcap 150)", "Quarterly",
-                     "nse_corporate_actions_ingest_nifty_midcap150", None, _run_corporate_actions_ingest_nifty_midcap150),
-        ScheduledJob("corporate_actions_india_smallcap250", "Corporate actions — India (Nifty Smallcap 250)", "Quarterly",
-                     "nse_corporate_actions_fetch_nifty_smallcap250", None, _run_corporate_actions_nifty_smallcap250),
-        ScheduledJob("corporate_actions_ingest_india_smallcap250", "Corporate actions ingest — India (Nifty Smallcap 250)", "Quarterly",
-                     "nse_corporate_actions_ingest_nifty_smallcap250", None, _run_corporate_actions_ingest_nifty_smallcap250),
-        ScheduledJob("corporate_actions_india_microcap", "Corporate actions — India (Nifty Micro-Cap)", "Monthly",
-                     "nse_corporate_actions_fetch_nifty_microcap", None, _run_corporate_actions_nifty_microcap),
-        ScheduledJob("corporate_actions_ingest_india_microcap", "Corporate actions ingest — India (Nifty Micro-Cap)", "Monthly",
-                     "nse_corporate_actions_ingest_nifty_microcap", None, _run_corporate_actions_ingest_nifty_microcap),
-        ScheduledJob("financials_usa", "Financials — USA", "Quarterly",
-                     "sec_edgar_financials_fetch", None, _run_financials_usa),
-        ScheduledJob("doc_analysis", "Document analysis (transcripts/concalls)", "Quarterly",
-                     "document_processing", None, _run_doc_analysis),
-        ScheduledJob("insights_companies", "Company insights", "Monthly",
-                     "key_insights_batch", None, _run_insights_companies),
-        ScheduledJob("insights_macro", "Macro insights", "Monthly", None,
-                     "The generation function itself doesn't exist yet — needs a design "
-                     "decision on what a macro insight is first", None),
-        ScheduledJob("fred_macro", "FRED macro data", "Quarterly",
-                     "fred_macro_fetch", None, _run_fred_macro),
-        ScheduledJob("rbi_macro", "RBI / IITM macro data", "Weekly", None,
-                     "These sources are file-based parsers over manually-downloaded files, "
-                     "not live fetchers — \"weekly\" here still means a human stages the file "
-                     "first", None),
-    ]
+    # Job registry moved to scheduling/jobs.py (ScheduledJob, SCHEDULED_JOBS,
+    # get_job) -- see that module's docstring for why.
 
     def _resume_interrupted_batch_jobs() -> None:
         """Called once, at process startup (see the WERKZEUG_RUN_MAIN-guarded
@@ -983,7 +854,7 @@ def create_app() -> Flask:
         a sqlite3 connection can't cross threads) -- startup itself must
         not block on what could be a several-minute crawl.
         """
-        conn = init_db()
+        conn = storage.backend_bootstrap.open_db()
         try:
             stale_runs = list_running_batch_job_runs(conn)
             for run in stale_runs:
@@ -997,7 +868,7 @@ def create_app() -> Flask:
         if not stale_runs:
             return
 
-        jobs_by_name = {job.job_name: job for job in _SCHEDULED_JOBS if job.job_name}
+        jobs_by_name = {job.job_name: job for job in SCHEDULED_JOBS if job.job_name}
         to_resume = []
         for run in stale_runs:
             job = jobs_by_name.get(run["job_name"])
@@ -1026,7 +897,7 @@ def create_app() -> Flask:
                 "Auto-resuming interrupted batch job %r (was run_id=%s, scope=%r)",
                 job.job_id, run["run_id"], run["scope_label"],
             )
-            conn = init_db()
+            conn = storage.backend_bootstrap.open_db()
             try:
                 job.runner(conn)
             except Exception:  # noqa: BLE001 -- one job's resume failing shouldn't block the rest of the queue
@@ -1048,13 +919,24 @@ def create_app() -> Flask:
         gets `live_progress` attached (get_batch_job_run_live_progress()) --
         otherwise a run in progress shows nothing but a start timestamp
         until it finishes, since batch_job_runs' own items_total/succeeded/
-        failed columns are only written once, at the very end."""
-        scheduled_jobs = []
-        for job in _SCHEDULED_JOBS:
+        failed columns are only written once, at the very end.
+
+        Grouped into `schedule_categories` (one entry per CATEGORY_ORDER
+        value, in that order, each holding its own `jobs` list) rather than
+        one flat list -- the template renders one collapsible <details> per
+        category instead of one long table, same real-estate-efficient
+        disclosure pattern the Charts tab already established. `has_running`
+        on a category lets the template auto-open only the section a run is
+        actually in progress in, closed by default otherwise -- with 6
+        price-history-backfill rows alone (soon more per category), leaving
+        everything expanded would be the same wall-of-rows problem the
+        category grouping exists to fix."""
+        jobs_by_category: dict[str, list[dict]] = {name: [] for name in CATEGORY_ORDER}
+        for job in SCHEDULED_JOBS:
             last_run = get_latest_batch_job_run(db, job.job_name) if job.job_name else None
             if last_run is not None and last_run["status"] == "running":
                 last_run = {**last_run, "live_progress": get_batch_job_run_live_progress(db, last_run["run_id"])}
-            scheduled_jobs.append({
+            jobs_by_category.setdefault(job.category, []).append({
                 "job_id": job.job_id,
                 "label": job.label,
                 "cadence": job.cadence,
@@ -1062,9 +944,17 @@ def create_app() -> Flask:
                 "runner_available": job.runner is not None,
                 "last_run": last_run,
             })
-        return {"scheduled_jobs": scheduled_jobs}
+        schedule_categories = [
+            {
+                "name": name,
+                "jobs": jobs,
+                "has_running": any(j["last_run"] and j["last_run"]["status"] == "running" for j in jobs),
+            }
+            for name, jobs in jobs_by_category.items() if jobs
+        ]
+        return {"schedule_categories": schedule_categories}
 
-    def _ingest_panel_context(db) -> dict:
+    def _ingest_panel_context(db, logs_db) -> dict:
         """Only computed when the Ingest panel is actually being viewed —
         discover_pending_financial_items() walks the whole data/raw/ tree,
         which is wasted work on every /admin load otherwise (same reasoning
@@ -1079,16 +969,16 @@ def create_app() -> Flask:
         (Type) dropdown options come from *every* row regardless of the
         current Status filter, so switching Status doesn't make options
         disappear out from under the user."""
-        discover_pending_financial_items(db)
+        discover_pending_financial_items(logs_db)
 
         active_ingest_tab = "documents" if request.args.get("ingest_tab") == "documents" else "financial"
 
-        fq_all = list_ingestion_queue_items(db)
+        fq_all = list_ingestion_queue_items(logs_db)
         fq_status_filter = request.args.get("fq_status") or ""
         fq_company_filter = request.args.get("fq_company") or ""
         fq_kind_filter = request.args.get("fq_kind") or ""
         fq = _filter_and_paginate(
-            list_ingestion_queue_items(db, status=fq_status_filter or None),
+            list_ingestion_queue_items(logs_db, status=fq_status_filter or None),
             filters={"company_id": fq_company_filter, "item_kind": fq_kind_filter},
             page_arg="fq_page", page_size=ADMIN_INGEST_PAGE_SIZE,
         )
@@ -1127,7 +1017,7 @@ def create_app() -> Flask:
             "ingest_dq_types": _distinct_values(dq_all, "document_type"),
         }
 
-    def _audit_panel_context(db) -> dict:
+    def _audit_panel_context(db, logs_db) -> dict:
         """Only computed when the Audit Log panel is actually being viewed,
         same reasoning _ingest_panel_context() gives for the Ingest panel.
 
@@ -1188,15 +1078,15 @@ def create_app() -> Flask:
         if period_filter in _PERIOD_DELTAS:
             since_iso = (datetime.now(timezone.utc) - _PERIOD_DELTAS[period_filter]).isoformat()
 
-        job_labels = {job.job_name: job.label for job in _SCHEDULED_JOBS if job.job_name}
+        job_labels = {job.job_name: job.label for job in SCHEDULED_JOBS if job.job_name}
         job_filter_options = [
             {"job_name": name, "label": job_labels.get(name, name)}
-            for name in list_distinct_batch_job_names(db)
+            for name in list_distinct_batch_job_names(logs_db)
         ]
 
-        job_runs = list_batch_job_runs(db, job_name=job_filter or None, since_iso=since_iso, limit=200)
+        job_runs = list_batch_job_runs(logs_db, job_name=job_filter or None, since_iso=since_iso, limit=200)
         for run in job_runs:
-            run["items"] = list_batch_job_items(db, run["run_id"])
+            run["items"] = list_batch_job_items(logs_db, run["run_id"])
             # Derived from the already-eager-loaded items above, not
             # run['items_total']/etc -- those columns are only written once,
             # at the very end, by finish_batch_job_run(), so they're still
@@ -1214,7 +1104,7 @@ def create_app() -> Flask:
         status_filter = request.args.get("al_status") or ""
         query = (request.args.get("al_q") or "").strip().lower()
         index_filter = request.args.get("al_index") or ""
-        migration_rows = list_xbrl_migration_status(db)
+        migration_rows = list_xbrl_migration_status(db, logs_db)
 
         filtered_rows = migration_rows
         if query:
@@ -1235,7 +1125,7 @@ def create_app() -> Flask:
         )
 
         recent_log_by_company = list_reconciliation_log_by_company(
-            db, [r["company_id"] for r in page["rows"]], limit_per_company=20,
+            logs_db, [r["company_id"] for r in page["rows"]], limit_per_company=20,
         )
         for row in page["rows"]:
             row["recent_log"] = recent_log_by_company.get(row["company_id"], [])
@@ -1248,7 +1138,7 @@ def create_app() -> Flask:
         # complexity earning its keep yet -- revisit if that ever changes.
         usa_status_filter = request.args.get("al_usa_status") or ""
         usa_query = (request.args.get("al_usa_q") or "").strip().lower()
-        usa_migration_rows_all = list_sec_edgar_migration_status(db)
+        usa_migration_rows_all = list_sec_edgar_migration_status(db, logs_db)
         usa_migration_rows = usa_migration_rows_all
         if usa_status_filter:
             usa_migration_rows = [r for r in usa_migration_rows if r["migration_status"] == usa_status_filter]
@@ -1258,7 +1148,7 @@ def create_app() -> Flask:
                 if usa_query in (r["company_id"] or "").lower() or usa_query in (r["display_name"] or "").lower()
             ]
         usa_recent_log_by_company = list_reconciliation_log_by_company(
-            db, [r["company_id"] for r in usa_migration_rows], limit_per_company=20,
+            logs_db, [r["company_id"] for r in usa_migration_rows], limit_per_company=20,
         )
         for row in usa_migration_rows:
             row["recent_log"] = usa_recent_log_by_company.get(row["company_id"], [])
@@ -1435,9 +1325,13 @@ def create_app() -> Flask:
                 list_stock_actions(db, request.args["sa_company_id"])
                 if request.args.get("sa_company_id") else []
             ),
-            **(_ingest_panel_context(db) if admin_sub == "ingest" else {}),
-            **(_audit_panel_context(db) if admin_sub == "audit" else {}),
-            **(_schedule_panel_context(db) if admin_sub == "schedule" else {}),
+            # logs_db (always SQLite, regardless of DATABASE_BACKEND) is
+            # passed alongside db (backend-dependent) since batch_job_runs/
+            # items, ingestion_queue_items, and reconciliation_log stay
+            # SQLite-only forever -- see get_logs_db()'s own docstring.
+            **(_ingest_panel_context(db, get_logs_db()) if admin_sub == "ingest" else {}),
+            **(_audit_panel_context(db, get_logs_db()) if admin_sub == "audit" else {}),
+            **(_schedule_panel_context(get_logs_db()) if admin_sub == "schedule" else {}),
         }
 
     @app.route("/admin/usage")
@@ -1449,7 +1343,7 @@ def create_app() -> Flask:
         Admin-only (endpoint name starts with "admin" — see _require_login
         above) since spend data is an operator concern, not a general
         end-user one."""
-        db = get_db()
+        db = get_logs_db()
         return render_template(
             "usage.html",
             summary=get_llm_usage_summary(db),
@@ -1607,7 +1501,7 @@ def create_app() -> Flask:
         run gets a "never run" placeholder rather than being left off the
         list entirely, so the badge for a brand-new company doesn't just
         silently not appear."""
-        db = get_db()
+        db = get_logs_db()
         statuses = []
         for label, job_name in _run_now_jobs_for(company):
             item = get_latest_batch_item_for_company(db, job_name, company["company_id"])
@@ -1662,24 +1556,20 @@ def create_app() -> Flask:
 
     @app.route("/admin/schedule/run/<job_id>", methods=["POST"])
     def admin_schedule_run(job_id: str):
-        """Settings > Data Operations > Schedule's "Run now" button — the
-        manual-trigger stand-in for real cron scheduling, which doesn't
-        exist in this app yet (see SCHEDULED_JOBS.md). Every registered
-        job's runner already writes its own BatchRun audit trail (this
-        route doesn't do that bookkeeping itself), so all this does is look
-        the job up, call its runner with the current request-scoped db
-        connection, and turn the result into a flash message pointing at
-        where the details actually live.
+        """Settings > Data Operations > Schedule's "Run now" button —
+        deliberately kept synchronous and blocking (see admin_refresh_
+        company's own docstring above for the same tradeoff at
+        single-company scale): an admin clicking "Run now" is expected to
+        wait for the response. Real unattended scheduling goes through
+        admin_schedule_run_async below instead, not this route — see its
+        docstring for why a cron trigger can't just POST here directly.
 
-        Synchronous and blocking, same as every other admin action in this
-        file (see admin_refresh_company's own docstring above) — no
-        background-job infrastructure exists here to defer it to. That's
-        exactly why financials/shareholding/price-history (each a
-        several-minute, several-company live NSE/yfinance crawl) are real
-        buttons here at all, not queued: an admin clicking "Run now" is
-        expected to wait for the response, same tradeoff
-        admin_refresh_company already makes for one company at a time."""
-        job = next((j for j in _SCHEDULED_JOBS if j.job_id == job_id), None)
+        Every registered job's runner already writes its own BatchRun
+        audit trail (this route doesn't do that bookkeeping itself), so
+        all this does is look the job up, call its runner with the
+        current request-scoped db connection, and turn the result into a
+        flash message pointing at where the details actually live."""
+        job = get_job(job_id)
         if job is None or job.runner is None:
             abort(404)
         db = get_db()
@@ -1690,13 +1580,58 @@ def create_app() -> Flask:
             flash(f"{job.label} failed: {exc}", "error")
         return redirect(url_for("settings", panel="admin-schedule"))
 
+    @app.route("/admin/schedule/run-async/<job_id>", methods=["POST"])
+    def admin_schedule_run_async(job_id: str):
+        """The cron-trigger counterpart to admin_schedule_run above — for
+        an external scheduler (e.g. AWS EventBridge Scheduler hitting this
+        over HTTPS) rather than a human waiting on a button. Can't just
+        point a scheduler at admin_schedule_run directly: that route is
+        synchronous and blocks for however long the job takes (several
+        minutes for a several-hundred-company NSE crawl), which would
+        exceed gunicorn's worker timeout and get the worker killed
+        mid-batch, leaving a batch_job_runs row stuck at status='running'
+        until _resume_interrupted_batch_jobs cleans it up on next restart.
+
+        Starts the same job.runner(conn) — no different logic, no
+        duplicate audit trail — in a background thread and returns
+        immediately, same "fire off a background thread, own db
+        connection since a connection can't cross threads" shape
+        _resume_interrupted_batch_jobs already uses at startup. The
+        caller never sees success/failure; that's what Audit Log -> Job
+        Runs is for, same as every other trigger of these jobs.
+
+        Authenticated by a shared secret header (not session/cookie auth —
+        a scheduler has no browser session), read from the
+        CRON_TRIGGER_SECRET env var. Refuses every request if that env var
+        isn't set, rather than silently accepting unauthenticated triggers
+        — this endpoint doesn't exist in practice until an operator
+        deliberately configures a secret."""
+        secret = app_settings.CRON_TRIGGER_SECRET
+        if not secret or request.headers.get("X-Cron-Secret") != secret:
+            abort(403)
+        job = get_job(job_id)
+        if job is None or job.runner is None:
+            abort(404)
+
+        def _run_in_background(runner, label: str) -> None:
+            conn = scheduling_open_db()
+            try:
+                runner(conn)
+            except Exception:
+                logger.exception("Cron-triggered job %r failed", label)
+            finally:
+                conn.close()
+
+        threading.Thread(target=_run_in_background, args=(job.runner, job.label), daemon=True).start()
+        return {"status": "started", "job_id": job_id}, 202
+
     @app.route("/admin/ingest/refresh", methods=["POST"])
     def admin_ingest_refresh():
         """Refresh Pending Files — re-scan data/raw/ now, rather than
         waiting for the next /admin?panel=ingest load (which already
         refreshes on its own, but an explicit action makes "did my newly
         dropped file show up" not depend on remembering that)."""
-        db = get_db()
+        db = get_logs_db()
         touched = discover_pending_financial_items(db)
         flash(f"Rescanned data/raw/ — {touched} item(s) added or updated.", "success")
         return redirect(url_for("settings", panel="admin-ingest"))
@@ -2180,6 +2115,7 @@ def create_app() -> Flask:
             financials_data_url=financials_data_url,
             docs_data_url=url_for("company_docs_feed", company_id=company_id),
             shareholding_data_url=url_for("company_shareholding_feed", company_id=company_id),
+            corporate_actions_data_url=url_for("company_corporate_actions_feed", company_id=company_id),
             insights=insights,
             insights_preview=insights_preview,
             insights_history=insights_history,
@@ -2281,15 +2217,19 @@ def create_app() -> Flask:
             return jsonify(error="That filename isn't valid."), 400
 
         # data/documents/<COMPANY>/note_attachments/<timestamp>__<file> —
-        # same never-overwrite convention as company_add_document.
-        dest_dir = app_settings.DOCUMENTS_DIR / company_id / _NOTE_ATTACHMENTS_DIR_NAME
-        dest_dir.mkdir(parents=True, exist_ok=True)
+        # same never-overwrite convention as company_add_document. Routed
+        # through the active DocumentStore (storage/document_store.py)
+        # rather than upload.save() directly, so this works unchanged
+        # whether DOCUMENT_STORE_BACKEND is "local" (default, identical
+        # on-disk behaviour) or "s3".
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        dest_path = dest_dir / f"{stamp}__{filename}"
-        upload.save(dest_path)
-        size_bytes = dest_path.stat().st_size
+        dest_dir = app_settings.DOCUMENTS_DIR / company_id / _NOTE_ATTACHMENTS_DIR_NAME
+        key = to_repo_relative(dest_dir / f"{stamp}__{filename}")
+        content = upload.read()
+        storage_key = default_document_store().store(key, content)
+        size_bytes = len(content)
 
-        row = save_note_attachment(db, note_id, filename, to_repo_relative(dest_path), size_bytes)
+        row = save_note_attachment(db, note_id, filename, storage_key, size_bytes)
         return jsonify(
             attachment_id=row["attachment_id"],
             filename=row["filename"],
@@ -2306,6 +2246,15 @@ def create_app() -> Flask:
         row = get_note_attachment(db, note_id, attachment_id)
         if row is None:
             abort(404)
+        # Mixed-mode during migration: a presigned URL when the active
+        # backend can produce one (S3), falling back to today's send_file
+        # for a document still only on local disk (LocalDocumentStore's
+        # presigned_url() always returns None, same as before this routed
+        # through DocumentStore).
+        store = default_document_store()
+        url = store.presigned_url(row["raw_file_path"])
+        if url:
+            return redirect(url)
         return send_file(from_repo_relative(row["raw_file_path"]), download_name=row["filename"])
 
     @app.route("/companies/<company_id>/notes/<int:note_id>/attachments/<int:attachment_id>/delete", methods=["POST"])
@@ -2314,7 +2263,7 @@ def create_app() -> Flask:
         row = delete_note_attachment(db, note_id, attachment_id)
         if row is None:
             abort(404)
-        from_repo_relative(row["raw_file_path"]).unlink(missing_ok=True)
+        default_document_store().delete(row["raw_file_path"])
         return jsonify(ok=True)
 
     @app.route("/companies/<company_id>/valuation-feed.json")
@@ -2383,6 +2332,13 @@ def create_app() -> Flask:
         if get_company(db, company_id) is None:
             abort(404, f"No company registered with company_id={company_id!r}")
         return jsonify(build_shareholding_feed(db, company_id))
+
+    @app.route("/companies/<company_id>/corporate-actions-feed.json")
+    def company_corporate_actions_feed(company_id: str):
+        db = get_db()
+        if get_company(db, company_id) is None:
+            abort(404, f"No company registered with company_id={company_id!r}")
+        return jsonify(build_corporate_actions_feed(db, company_id))
 
     @app.route("/companies/<company_id>/compare-meta.json")
     def company_compare_meta(company_id: str):
@@ -2498,6 +2454,8 @@ def create_app() -> Flask:
             return jsonify(error=str(exc)), 400
 
         raw_file_path = None
+        storage_object_key = None
+        content_hash = None
         source_url = None
         if source == "upload":
             upload = request.files.get("file")
@@ -2510,12 +2468,17 @@ def create_app() -> Flask:
             # never-overwrite, company-scoped convention admin_import_raw_file
             # uses for data/raw/, just under DOCUMENTS_DIR since these are
             # narrative documents, not financial-statement source files.
-            dest_dir = app_settings.DOCUMENTS_DIR / company_id
-            dest_dir.mkdir(parents=True, exist_ok=True)
+            # Routed through the active DocumentStore (storage/document_store.py)
+            # rather than upload.save() directly, so this works unchanged
+            # whether DOCUMENT_STORE_BACKEND is "local" (default, identical
+            # on-disk behaviour) or "s3".
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            dest_path = dest_dir / f"{stamp}__{filename}"
-            upload.save(dest_path)
-            raw_file_path = to_repo_relative(dest_path)
+            dest_dir = app_settings.DOCUMENTS_DIR / company_id
+            key = to_repo_relative(dest_dir / f"{stamp}__{filename}")
+            content = upload.read()
+            storage_object_key = default_document_store().store(key, content)
+            content_hash = hashlib.sha256(content).hexdigest()
+            raw_file_path = storage_object_key
         elif source == "link":
             source_url = (data.get("ref") or "").strip()
             if not source_url:
@@ -2533,7 +2496,39 @@ def create_app() -> Flask:
             added_by_user=added_by_user,
             raw_file_path=raw_file_path,
             source_url=source_url,
+            storage_object_key=storage_object_key,
+            content_hash=content_hash,
         )
+
+        # Ingest immediately in the background, rather than leaving this
+        # document at processing_status='pending' until someone clicks
+        # Admin -> Ingest queue's "Process All Pending" or the quarterly
+        # doc_analysis scheduled job (scheduling/jobs.py) happens to run --
+        # a real gap: Federal Bank's 4 manually-uploaded documents sat
+        # un-ingested (no chunks, no Qdrant vectors) for as long as neither
+        # of those had run, so Ask AI had nothing but the one
+        # officially-sourced document to answer from. Reuses
+        # process_documents() unchanged (same knowledge_builder +
+        # chunk_indexer workers, same batch_job_runs/batch_job_items audit
+        # trail) -- just triggered per-upload instead of only from those
+        # two existing entry points. Backgrounded (own DB connection, same
+        # "a connection can't cross threads" shape as admin_schedule_run_
+        # async and the -async ask/investigate routes) so a slow LLM
+        # extraction call never makes the upload response itself wait or
+        # risk the platform's own gateway timeout.
+        document_id = row["document_id"]
+
+        def _ingest_in_background(document_id: int = document_id) -> None:
+            conn = scheduling_open_db()
+            try:
+                process_documents(conn, [document_id])
+            except Exception:
+                logger.exception("Background ingestion failed for document %s", document_id)
+            finally:
+                conn.close()
+
+        threading.Thread(target=_ingest_in_background, daemon=True).start()
+
         return jsonify(
             document_id=row["document_id"],
             fiscal_year=row["fiscal_year"],
@@ -2551,6 +2546,16 @@ def create_app() -> Flask:
         row = get_company_document(db, company_id, document_id)
         if row is None or not row["raw_file_path"]:
             abort(404)
+        # Mixed-mode during migration: a presigned URL when the active
+        # backend can produce one (S3), falling back to today's send_file
+        # for a document still only on local disk (LocalDocumentStore's
+        # presigned_url() always returns None, same as before this routed
+        # through DocumentStore).
+        key = row["storage_object_key"] or row["raw_file_path"]
+        store = default_document_store()
+        url = store.presigned_url(key)
+        if url:
+            return redirect(url)
         return send_file(from_repo_relative(row["raw_file_path"]))
 
     def _safe_login_next() -> str:
@@ -2763,11 +2768,22 @@ def create_app() -> Flask:
         # Split by country now that non-Indian companies are tracked too —
         # a bare count(*) would silently blend the two into a number neither
         # "NSE companies" nor "US companies" honestly describes.
-        stat_companies = db.execute("SELECT count(*) FROM companies WHERE country = 'IN'").fetchone()[0]
-        stat_us_companies = db.execute("SELECT count(*) FROM companies WHERE country = 'US'").fetchone()[0]
-        stat_sectors = db.execute("SELECT count(DISTINCT sector) FROM companies WHERE sector IS NOT NULL").fetchone()[0]
-        stat_documents = db.execute("SELECT count(*) FROM documents WHERE processing_status = 'processed'").fetchone()[0]
-        stat_claims = db.execute("SELECT count(*) FROM knowledge_claims").fetchone()[0]
+        # Uses a cursor + aliased column (not db.execute(...)[0]) so this
+        # works against both sqlite3.Row (index or key access) and Postgres's
+        # RealDictCursor rows (key access only, no integer indexing).
+        # execute()/fetchone() are split (not chained) because psycopg2's
+        # cursor.execute() returns None, unlike sqlite3's which returns self.
+        cur = db.cursor()
+
+        def _count(sql: str) -> int:
+            cur.execute(sql)
+            return cur.fetchone()["n"]
+
+        stat_companies = _count("SELECT count(*) AS n FROM companies WHERE country = 'IN'")
+        stat_us_companies = _count("SELECT count(*) AS n FROM companies WHERE country = 'US'")
+        stat_sectors = _count("SELECT count(DISTINCT sector) AS n FROM companies WHERE sector IS NOT NULL")
+        stat_documents = _count("SELECT count(*) AS n FROM documents WHERE processing_status = 'processed'")
+        stat_claims = _count("SELECT count(*) AS n FROM knowledge_claims")
         return render_template(
             "landing.html",
             stat_companies=stat_companies, stat_us_companies=stat_us_companies, stat_sectors=stat_sectors,
@@ -2785,57 +2801,56 @@ def create_app() -> Flask:
             "research.html", examples=EXAMPLES, companies=active_companies, api_key_set=ANTHROPIC_API_KEY_SET
         )
 
-    def _answer_question_response(company_ids: list[str] | None = None):
-        """Shared by /chat, /research/ask and /companies/<id>/ask — all three are
-        "ask the LLM research assistant about these companies", just reached from
-        different places (the standalone company-lookup flow, the Research tab's
-        own composer, and the per-company Ask AI drawer). Same validation, same
-        evidence-grounded answer, same response shape.
+    class _AskRequestError(Exception):
+        """Carries the same (message, http_status) the old synchronous
+        _answer_question_response() used to return directly via
+        jsonify(error=...), status -- raised by _compute_answer_question()
+        instead now that it has two callers (a synchronous route, and a
+        background thread with no response object to return early from)."""
 
-        `company_ids` is passed in only by the per-company route, where the scope
-        comes from the URL path — the body's own company_ids is ignored there, so
-        a request can't widen its scope past the company it was opened on.
+        def __init__(self, message: str, status: int) -> None:
+            super().__init__(message)
+            self.status = status
 
-        Every call here persists into generated_reports (same table
-        /research/thread/generate writes to) — so it shows up, timestamped, on
-        the Investigations list and (when scoped to one company) that
-        company's Threads tab, instead of vanishing once answered. This is
-        also what feeds research.assistant.answer_question()'s own
-        reuse-before-recompute check: the second time the same/near-same
-        question comes in, it's served from this saved row instead of a
-        fresh LLM call."""
-        payload = request.get_json(silent=True) or {}
-        question = (payload.get("question") or "").strip()
-        if company_ids is None:
-            company_ids = payload.get("company_ids") or []
-            # Tag resolution ("Nifty 50", "Technology companies") -- same
-            # mechanism /investigate/generate uses (retrieval/tag_resolver.py),
-            # applied here too so "Ask"/"/chat" don't behave differently
-            # from "Run structured investigation" for the identical
-            # question text. Only reached via this branch, never when a
-            # company_id was passed in explicitly by the caller (the
-            # per-company Ask AI drawer's URL-scoped call) -- see this
-            # function's own docstring on why that path must never widen
-            # past the company it was opened on.
-            if not company_ids and question:
-                company_ids = resolve_tags_in_text(get_db(), question)
-        statement_type = payload.get("statement_type", "consolidated")
+    def _compute_answer_question(
+        db, question: str, company_ids: list[str], *, statement_type: str, thread_id: str, thread_url: str,
+        owner_id: str | None,
+    ) -> dict:
+        """The actual "ask the LLM research assistant" work, extracted out
+        of the old _answer_question_response() so it can run either
+        synchronously (the original /chat, /research/ask, /companies/<id>/
+        ask routes, kept for compatibility) or in a background thread
+        (the -async routes below, added after a real production incident:
+        a broad/slow question -- or, as happened live, a company with a
+        slow-to-parse uploaded PDF -- can take long enough to exceed
+        gunicorn's own worker timeout *or* the platform's fronting load
+        balancer's timeout, either of which kills the request out from
+        under a synchronous caller and hands the browser an infrastructure
+        error page instead of JSON ("Unexpected token '<' ... is not valid
+        JSON") -- same root cause /investigate/generate-async was built to
+        fix earlier, just a different route hitting it).
 
+        `thread_id`/`thread_url` are generated by the caller, not here --
+        url_for() needs an active request context, which a background
+        thread doesn't have, so it must be resolved before the thread
+        starts (see /investigate/generate-async's own comment for the
+        established reasoning). `owner_id` gets the same treatment -- it's
+        g.user["user_id"], and g is likewise unavailable inside a
+        background thread."""
         if not ANTHROPIC_API_KEY_SET:
-            return jsonify(error="ANTHROPIC_API_KEY is not set on the server — the assistant can't run."), 503
+            raise _AskRequestError("ANTHROPIC_API_KEY is not set on the server — the assistant can't run.", 503)
         if not question:
-            return jsonify(error="Ask a question first."), 400
+            raise _AskRequestError("Ask a question first.", 400)
         # company_ids may be empty: a question can be grounded in Macro
         # evidence alone (research/macro_evidence.py) rather than any one
         # company's Financials/Docs — answer_question() handles that case,
         # including the "found nothing at all" message.
         if statement_type not in ("consolidated", "standalone"):
-            return jsonify(error="statement_type must be 'consolidated' or 'standalone'"), 400
+            raise _AskRequestError("statement_type must be 'consolidated' or 'standalone'", 400)
 
-        db = get_db()
         for company_id in company_ids:
             if get_company(db, company_id) is None:
-                return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
+                raise _AskRequestError(f"No company registered with company_id={company_id!r}", 404)
 
         # A group question ("Nifty 50 net profit CAGR") is a sum-then-CAGR
         # arithmetic problem, not something an LLM should reason about
@@ -2853,13 +2868,13 @@ def create_app() -> Flask:
             if aggregate_intent.is_aggregate:
                 aggregate_result = compute_group_aggregate(db, company_ids, aggregate_intent)
                 answer = format_aggregate_answer(aggregate_result, len(company_ids))
-                thread_id = uuid.uuid4().hex[:12]
                 question_embedding, question_embedding_model = _embed_question_for_reuse(question)
                 save_generated_report(
                     db, thread_id, question, company_ids, statement_type, answer,
                     question_embedding=question_embedding, question_embedding_model=question_embedding_model,
                 )
-                return jsonify(
+                _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer, owner_id=owner_id)
+                return dict(
                     question=question,
                     company_ids=company_ids,
                     answer_html=str(_render_markdown_with_tags(answer)),
@@ -2868,13 +2883,13 @@ def create_app() -> Flask:
                     comparison_chart_company_count=0,
                     total_company_count=len(company_ids),
                     thread_id=thread_id,
-                    thread_url=url_for("research_thread", thread_id=thread_id),
+                    thread_url=thread_url,
                 )
 
         try:
             answer = answer_question(db, question, company_ids, statement_type=statement_type)
         except anthropic.APIError as exc:
-            return jsonify(error=f"The assistant request failed: {exc}"), 502
+            raise _AskRequestError(f"The assistant request failed: {exc}", 502) from exc
 
         # A peer-comparison question (>1 company) gets combined, indexed-to-100
         # comparison charts instead of separate same-company charts on each
@@ -2911,15 +2926,14 @@ def create_app() -> Flask:
                 for company_id in company_ids
             }
 
-        thread_id = uuid.uuid4().hex[:12]
         question_embedding, question_embedding_model = _embed_question_for_reuse(question)
         save_generated_report(
             db, thread_id, question, company_ids, statement_type, answer,
             question_embedding=question_embedding, question_embedding_model=question_embedding_model,
         )
-        thread_url = url_for("research_thread", thread_id=thread_id)
+        _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer, owner_id=owner_id)
 
-        return jsonify(
+        return dict(
             question=question,
             company_ids=company_ids,
             answer_html=str(_render_markdown_with_tags(answer)),
@@ -2934,9 +2948,134 @@ def create_app() -> Flask:
             thread_url=thread_url,
         )
 
+    def _parse_ask_request(company_ids: list[str] | None):
+        """Common request-parsing for both the synchronous and -async ask
+        routes -- returns (question, company_ids, statement_type)."""
+        payload = request.get_json(silent=True) or {}
+        question = (payload.get("question") or "").strip()
+        if company_ids is None:
+            company_ids = payload.get("company_ids") or []
+            # Tag resolution ("Nifty 50", "Technology companies") -- same
+            # mechanism /investigate/generate uses (retrieval/tag_resolver.py),
+            # applied here too so "Ask"/"/chat" don't behave differently
+            # from "Run structured investigation" for the identical
+            # question text. Only reached via this branch, never when a
+            # company_id was passed in explicitly by the caller (the
+            # per-company Ask AI drawer's URL-scoped call) -- see
+            # _compute_answer_question's docstring on why that path must
+            # never widen past the company it was opened on.
+            if not company_ids and question:
+                company_ids = resolve_tags_in_text(get_db(), question)
+        statement_type = payload.get("statement_type", "consolidated")
+        return question, company_ids, statement_type
+
+    def _answer_question_response(company_ids: list[str] | None = None):
+        """Shared by /chat, /research/ask and /companies/<id>/ask — all three are
+        "ask the LLM research assistant about these companies", just reached from
+        different places (the standalone company-lookup flow, the Research tab's
+        own composer, and the per-company Ask AI drawer). Same validation, same
+        evidence-grounded answer, same response shape.
+
+        Kept as the synchronous path for compatibility -- the -async routes
+        below are what the actual UI calls now (see _compute_answer_question's
+        docstring for why). Every call here persists into generated_reports
+        (same table /research/thread/generate writes to) — so it shows up,
+        timestamped, on the Investigations list and (when scoped to one
+        company) that company's Threads tab, instead of vanishing once
+        answered. This is also what feeds research.assistant.answer_
+        question()'s own reuse-before-recompute check: the second time the
+        same/near-same question comes in, it's served from this saved row
+        instead of a fresh LLM call."""
+        question, company_ids, statement_type = _parse_ask_request(company_ids)
+        thread_id = uuid.uuid4().hex[:12]
+        thread_url = url_for("research_thread", thread_id=thread_id)
+        owner_id = g.user["user_id"] if g.user else None
+        try:
+            result = _compute_answer_question(
+                get_db(), question, company_ids,
+                statement_type=statement_type, thread_id=thread_id, thread_url=thread_url,
+                owner_id=owner_id,
+            )
+        except _AskRequestError as exc:
+            return jsonify(error=str(exc)), exc.status
+        return jsonify(result)
+
+    def _answer_question_async_response(company_ids: list[str] | None = None):
+        """Async counterpart of _answer_question_response() -- validates
+        input synchronously (fails fast on bad input, same checks as the
+        sync path), then hands the actual _compute_answer_question() call
+        to a background thread and returns immediately with a job_id, same
+        pattern /investigate/generate-async already established. See
+        _compute_answer_question's own docstring for why this exists."""
+        question, company_ids, statement_type = _parse_ask_request(company_ids)
+
+        # Same validation _compute_answer_question() would raise on, done
+        # here first so a bad request fails immediately rather than after
+        # a background thread has already started (mirrors /investigate/
+        # generate-async's identical reasoning).
+        if not ANTHROPIC_API_KEY_SET:
+            return jsonify(error="ANTHROPIC_API_KEY is not set on the server — the assistant can't run."), 503
+        if not question:
+            return jsonify(error="Ask a question first."), 400
+        if statement_type not in ("consolidated", "standalone"):
+            return jsonify(error="statement_type must be 'consolidated' or 'standalone'"), 400
+
+        db = get_db()
+        for company_id in company_ids:
+            if get_company(db, company_id) is None:
+                return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
+
+        job_id = uuid.uuid4().hex[:12]
+        thread_id = uuid.uuid4().hex[:12]
+        thread_url = url_for("research_thread", thread_id=thread_id)
+        # Resolved here, before the thread starts -- g is bound to this
+        # request context and isn't available inside the background
+        # thread below (same reasoning as thread_id/thread_url above).
+        owner_id = g.user["user_id"] if g.user else None
+        mark_ask_job_running(job_id)
+
+        def _run_in_background() -> None:
+            conn = scheduling_open_db()
+            try:
+                result = _compute_answer_question(
+                    conn, question, company_ids,
+                    statement_type=statement_type, thread_id=thread_id, thread_url=thread_url,
+                    owner_id=owner_id,
+                )
+                mark_ask_job_done(job_id, result)
+            except _AskRequestError as exc:
+                mark_ask_job_error(job_id, str(exc))
+            except Exception as exc:  # noqa: BLE001 -- surface any failure to the poller, not a silently stuck "running"
+                logger.exception("Async ask job %s failed", job_id)
+                mark_ask_job_error(job_id, f"Unexpected error: {exc}")
+            finally:
+                conn.close()
+
+        threading.Thread(target=_run_in_background, daemon=True).start()
+        return jsonify(job_id=job_id), 202
+
+    @app.route("/ask/status/<job_id>")
+    def ask_status(job_id: str):
+        """Polled by _ask_ai.html/chat.html/research.html after their own
+        -async route returns a job_id. {status: "running"} keeps the page
+        waiting; {status: "done", result: {...}} is the exact JSON payload
+        the old synchronous routes used to return directly; {status:
+        "error", error: ...} surfaces the same message the synchronous
+        path would have returned inline. A 404 (unknown job_id) is
+        deliberately distinct from a real "error" status -- same
+        conventions as /investigate/status."""
+        status = get_ask_job_status(job_id)
+        if status is None:
+            abort(404)
+        return jsonify(status)
+
     @app.route("/research/ask", methods=["POST"])
     def research_ask():
         return _answer_question_response()
+
+    @app.route("/research/ask-async", methods=["POST"])
+    def research_ask_async():
+        return _answer_question_async_response()
 
     @app.route("/companies/<company_id>/ask", methods=["POST"])
     def company_ask(company_id: str):
@@ -2946,8 +3085,13 @@ def create_app() -> Flask:
         all — it already knows which company it was opened on. Every answer
         here is auto-saved as a thread (save_thread=True) so it lands on the
         company's Threads tab, timestamped and deletable — unlike /research/ask
-        and /chat, which stay ephemeral."""
+        and /chat, which stay ephemeral. Kept as the synchronous path for
+        compatibility -- the drawer's own JS calls company_ask_async below now."""
         return _answer_question_response(company_ids=[company_id])
+
+    @app.route("/companies/<company_id>/ask-async", methods=["POST"])
+    def company_ask_async(company_id: str):
+        return _answer_question_async_response(company_ids=[company_id])
 
     @app.route("/research/thread/generate", methods=["POST"])
     def research_thread_generate():
@@ -2995,6 +3139,10 @@ def create_app() -> Flask:
                     db, thread_id, question, company_ids, statement_type, answer,
                     question_embedding=question_embedding, question_embedding_model=question_embedding_model,
                 )
+                _persist_generated_report_s3(
+                    db, thread_id, question, company_ids, statement_type, answer,
+                    owner_id=g.user["user_id"] if g.user else None,
+                )
                 return jsonify(thread_id=thread_id, url=url_for("research_thread", thread_id=thread_id))
 
         try:
@@ -3008,17 +3156,19 @@ def create_app() -> Flask:
             db, thread_id, question, company_ids, statement_type, result.report_markdown,
             question_embedding=question_embedding, question_embedding_model=question_embedding_model,
         )
+        evidence_dicts = [
+            {"kind": e.kind, "company_id": e.company_id, "label": e.label, "value": e.value, "citation": e.citation}
+            for e in result.evidence
+        ]
         if result.evidence:
-            save_report_evidence(
-                db,
-                thread_id,
-                [
-                    {"kind": e.kind, "company_id": e.company_id, "label": e.label, "value": e.value, "citation": e.citation}
-                    for e in result.evidence
-                ],
-            )
+            save_report_evidence(db, thread_id, evidence_dicts)
         if result.followups:
             save_report_followups(db, thread_id, result.followups)
+        _persist_generated_report_s3(
+            db, thread_id, question, company_ids, statement_type, result.report_markdown,
+            evidence=evidence_dicts, followups=result.followups,
+            owner_id=g.user["user_id"] if g.user else None,
+        )
         return jsonify(thread_id=thread_id, url=url_for("research_thread", thread_id=thread_id))
 
     @app.route("/research/thread/<thread_id>")
@@ -3026,13 +3176,32 @@ def create_app() -> Flask:
         db = get_db()
         generated = get_generated_report(db, thread_id)
         if generated is not None:
+            # ADR-021: prefer the S3 artifact when present (every report
+            # saved since the persistence split) -- report_markdown/
+            # research_thread_evidence/research_thread_followups stay
+            # populated too (see storage/database.py's
+            # _migrate_generated_reports_s3_columns for why), so this is a
+            # belt-and-suspenders read, not a required fallback the way
+            # investigate_view()'s is -- but reading from S3 here keeps
+            # the two entities' render logic consistent, and proves the
+            # artifact is genuinely the thing served, not just written and
+            # never read.
+            if generated["s3_key"]:
+                artifact = json.loads(default_document_store().retrieve(generated["s3_key"]))
+                report_markdown = artifact["report_markdown"]
+                report_evidence = artifact["evidence"]
+                report_followups = artifact["followups"]
+            else:
+                report_markdown = generated["report_markdown"]
+                report_evidence = list_report_evidence(db, thread_id)
+                report_followups = list_report_followups(db, thread_id)
             return render_template(
                 "research_thread.html",
                 thread_id=thread_id,
                 generated=generated,
-                report_html=_render_markdown_with_tags(generated["report_markdown"]),
-                report_evidence=list_report_evidence(db, thread_id),
-                report_followups=list_report_followups(db, thread_id),
+                report_html=_render_markdown_with_tags(report_markdown),
+                report_evidence=report_evidence,
+                report_followups=report_followups,
                 is_watchlisted=is_watchlisted(db, "thread", thread_id),
             )
 
@@ -3154,41 +3323,154 @@ def create_app() -> Flask:
             url=url_for("investigate_view", investigation_id=investigation.investigation_id),
         )
 
+    @app.route("/investigate/generate-async", methods=["POST"])
+    def investigate_generate_async():
+        """Async counterpart of investigate_generate above, for the same
+        reason admin_schedule_run_async exists alongside admin_schedule_run:
+        a broad, multi-hypothesis investigation (several evidence-gathering
+        + evaluation passes, each its own LLM round trip) can easily run
+        past gunicorn's --timeout 120 (Dockerfile) or the platform's own
+        fronting load balancer timeout — when that happens mid-request, the
+        browser gets back an infrastructure error page instead of JSON,
+        which research.html's generateInvestigation() surfaced as
+        "Network error: Unexpected token '<' ... is not valid JSON" (the
+        request never actually failed on this app's own terms — it was cut
+        off from outside).
+
+        Does the same synchronous validation investigate_generate does
+        (bad input should fail fast, not after a background thread has
+        already started), then hands the actual run_investigation() call to
+        a background thread — same "own db connection, since a connection
+        can't cross threads" shape admin_schedule_run_async uses — and
+        returns the investigation_id immediately so the page can poll
+        investigate_status below instead of blocking one HTTP request on
+        however long the whole thing takes."""
+        payload = request.get_json(silent=True) or {}
+        question = (payload.get("question") or "").strip()
+        company_ids = payload.get("company_ids") or []
+        if not company_ids and question:
+            company_ids = resolve_tags_in_text(get_db(), question)
+        statement_type = payload.get("statement_type", "consolidated")
+        as_of = (payload.get("as_of") or "").strip() or None
+
+        if not ANTHROPIC_API_KEY_SET:
+            return jsonify(error="ANTHROPIC_API_KEY is not set on the server — the assistant can't run."), 503
+        if not question:
+            return jsonify(error="Ask a question first."), 400
+        if statement_type not in ("consolidated", "standalone"):
+            return jsonify(error="statement_type must be 'consolidated' or 'standalone'"), 400
+
+        db = get_db()
+        for company_id in company_ids:
+            if get_company(db, company_id) is None:
+                return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
+
+        investigation_id = uuid.uuid4().hex[:12]
+        mark_investigation_running(investigation_id)
+        # Built here, inside this real request's context, not inside the
+        # background thread below -- url_for needs an active request (or
+        # app) context to resolve SERVER_NAME/APPLICATION_ROOT, which a bare
+        # background thread doesn't have. investigation_id is already fixed
+        # at this point, so the URL it produces is valid regardless of how
+        # the run underneath it turns out.
+        result_url = url_for("investigate_view", investigation_id=investigation_id)
+
+        def _run_in_background() -> None:
+            conn = scheduling_open_db()
+            try:
+                run_investigation(
+                    conn, question, company_ids, statement_type=statement_type, as_of=as_of,
+                    investigation_id=investigation_id,
+                )
+                mark_investigation_done(investigation_id, result_url)
+            except InvestigationError as exc:
+                mark_investigation_error(investigation_id, f"The investigation couldn't complete: {exc}")
+            except anthropic.APIError as exc:
+                mark_investigation_error(investigation_id, f"The assistant request failed: {exc}")
+            except Exception as exc:  # noqa: BLE001 -- surface any failure to the poller, not a silently stuck "running"
+                logger.exception("Async investigation %s failed", investigation_id)
+                mark_investigation_error(investigation_id, f"Unexpected error: {exc}")
+            finally:
+                conn.close()
+
+        threading.Thread(target=_run_in_background, daemon=True).start()
+        return jsonify(investigation_id=investigation_id), 202
+
+    @app.route("/investigate/status/<investigation_id>")
+    def investigate_status(investigation_id: str):
+        """Polled by research.html's generateInvestigation() every few
+        seconds after investigate_generate_async returns. {status:
+        "running"} keeps the page waiting; {status: "done", url: ...}
+        triggers the same redirect investigate_generate's synchronous
+        response used to drive directly; {status: "error", error: ...}
+        surfaces the same message the synchronous route would have
+        returned inline. A 404 (unknown investigation_id — never tracked,
+        e.g. a stale/mistyped link) is deliberately distinct from a real
+        "error" status."""
+        status = get_investigation_job_status(investigation_id)
+        if status is None:
+            abort(404)
+        return jsonify(status)
+
     @app.route("/investigate/<investigation_id>")
     def investigate_view(investigation_id: str):
         db = get_db()
-        investigation = get_investigation(db, investigation_id)
-        if investigation is None:
+        investigation_row = get_investigation(db, investigation_id)
+        if investigation_row is None:
             abort(404, f"No investigation with id={investigation_id!r}")
 
-        hypotheses = []
-        for h in list_investigation_hypotheses(db, investigation_id):
-            evidence = [dict(e) for e in list_investigation_hypothesis_evidence(db, h["hypothesis_id"])]
-            hypotheses.append(
-                {
-                    **dict(h),
-                    "unknowns": json.loads(h["unknowns"] or "[]"),
-                    # chain_steps/confidence_score predate a hypothesis generated/
-                    # evaluated before those columns existed — "[]" and NULL are
-                    # the correct fallback (see storage/database.py's migration),
-                    # not an error.
-                    "chain_steps": json.loads(h["chain_steps"] or "[]") if "chain_steps" in h.keys() else [],
-                    "supporting_evidence": [e for e in evidence if e["stance"] == "supporting"],
-                    "contradicting_evidence": [e for e in evidence if e["stance"] == "contradicting"],
-                    "missing_evidence": [e for e in evidence if e["stance"] == "missing"],
-                }
-            )
+        # Persistence architecture: full content (hypotheses + evidence)
+        # now lives in S3 (research/investigation.py::_persist()); the
+        # investigations row only carries s3_key/abstract/metadata. NULL
+        # s3_key means this investigation predates the migration -- fall
+        # back to the original table-based read so old data keeps
+        # rendering without needing a backfill (see storage/database.py's
+        # _migrate_investigation_s3_columns docstring).
+        if investigation_row["s3_key"]:
+            artifact = json.loads(default_document_store().retrieve(investigation_row["s3_key"]))
+            investigation = {
+                "investigation_id": artifact["investigation_id"], "question": artifact["question"],
+                "company_ids": artifact["company_ids"], "statement_type": artifact["statement_type"],
+                "strongest_explanation": artifact["strongest_explanation"],
+                "unanswered_questions": artifact["unanswered_questions"],
+                "additional_evidence_needed": artifact["additional_evidence_needed"],
+                "generated_at": investigation_row["generated_at"], "as_of": artifact["as_of"],
+                "hidden_at": investigation_row["hidden_at"], "deleted_at": investigation_row["deleted_at"],
+            }
+            hypotheses = artifact["hypotheses"]
+        else:
+            hypotheses = []
+            for h in list_investigation_hypotheses(db, investigation_id):
+                evidence = [dict(e) for e in list_investigation_hypothesis_evidence(db, h["hypothesis_id"])]
+                hypotheses.append(
+                    {
+                        **dict(h),
+                        "unknowns": json.loads(h["unknowns"] or "[]"),
+                        # chain_steps/confidence_score predate a hypothesis generated/
+                        # evaluated before those columns existed — "[]" and NULL are
+                        # the correct fallback (see storage/database.py's migration),
+                        # not an error.
+                        "chain_steps": json.loads(h["chain_steps"] or "[]") if "chain_steps" in h.keys() else [],
+                        "supporting_evidence": [e for e in evidence if e["stance"] == "supporting"],
+                        "contradicting_evidence": [e for e in evidence if e["stance"] == "contradicting"],
+                        "missing_evidence": [e for e in evidence if e["stance"] == "missing"],
+                    }
+                )
+            investigation = {
+                **dict(investigation_row),
+                "company_ids": json.loads(investigation_row["company_ids"] or "[]"),
+                "unanswered_questions": json.loads(investigation_row["unanswered_questions"] or "[]"),
+                "additional_evidence_needed": json.loads(investigation_row["additional_evidence_needed"] or "[]"),
+            }
 
         return render_template(
             "investigation.html",
-            investigation={
-                **dict(investigation),
-                "company_ids": json.loads(investigation["company_ids"] or "[]"),
-                "unanswered_questions": json.loads(investigation["unanswered_questions"] or "[]"),
-                "additional_evidence_needed": json.loads(investigation["additional_evidence_needed"] or "[]"),
-            },
+            investigation=investigation,
             hypotheses=hypotheses,
-            cost=get_investigation_cost_summary(db, investigation_id),
+            # llm_call_log stays SQLite-only regardless of DATABASE_BACKEND
+            # -- get_logs_db(), not db (which may be a Postgres connection
+            # here, used for the investigation/hypotheses queries above).
+            cost=get_investigation_cost_summary(get_logs_db(), investigation_id),
         )
 
     INVESTIGATIONS_PAGE_SIZE = 20
@@ -3261,12 +3543,16 @@ def create_app() -> Flask:
         # Step 2G's evidence-based verdict on a specific competing
         # explanation), kept as distinct labels rather than forced into one
         # shared vocabulary, per instruction.
-        verdict_by_investigation = get_strongest_verdict_by_investigation(
-            get_db(), [inv["investigation_id"] for inv in all_investigations]
-        )
+        # strongest_verdict is now computed once at persist time and
+        # stored directly on the row (storage/database.py's
+        # _migrate_investigation_s3_columns) -- the batched live-JOIN
+        # fallback below only ever runs for investigations that predate
+        # that column, never for new ones.
+        legacy_ids = [inv["investigation_id"] for inv in all_investigations if inv["strongest_verdict"] is None]
+        verdict_by_investigation = get_strongest_verdict_by_investigation(get_db(), legacy_ids) if legacy_ids else {}
         for inv in all_investigations:
             company_ids = json.loads(inv["company_ids"] or "[]")
-            verdict = verdict_by_investigation.get(inv["investigation_id"])
+            verdict = inv["strongest_verdict"] or verdict_by_investigation.get(inv["investigation_id"])
             status_key, status_label = _VERDICT_STATUS.get(verdict, ("no_verdict", "No verdict yet"))
             entries.append(
                 {
@@ -3595,6 +3881,10 @@ def create_app() -> Flask:
     @app.route("/chat", methods=["POST"])
     def chat_ask():
         return _answer_question_response()
+
+    @app.route("/chat-async", methods=["POST"])
+    def chat_ask_async():
+        return _answer_question_async_response()
 
     # Guarded so this runs exactly once in the process that actually serves
     # requests -- with the debug reloader on, create_app() executes once in

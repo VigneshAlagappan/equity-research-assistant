@@ -434,6 +434,13 @@ fetched from Yahoo Finance — separate from `analyze`'s fundamentals, this is f
 price charting. Not yet a `main.py` subcommand — run the scripts directly (as
 modules, so their `storage`/`sources` imports resolve):
 
+In production (see §Deployment below), `daily_prices` lives in the same
+Postgres database as everything else, via `storage/price_repository_pg.py`
+and `storage/backend_bootstrap.py`'s `open_price_db()` (ADR-021). Local
+development (`DATABASE_BACKEND=sqlite`, the default) keeps it in its own
+file, `data/price_history.db` — the same commands below work unchanged
+against either backend.
+
 **One-time (or occasional) backfill:**
 
 ```bash
@@ -442,12 +449,36 @@ python -m scripts.backfill_price_history --period 1y
 
 Loops over every company tagged `Nifty 500` (already populated by `add-company`/
 `seed-companies` or a full NSE import — see `companies/nse_import.py`) and upserts
-its history into a dedicated database, `data/price_history.db`. `--period` accepts
-`1y` (default), `5y`, `10y`, or `max`; add `--company-id HDFCBANK` to backfill just
-one company. Safe to re-run any time (e.g. after switching from `1y` to `10y`) —
-existing days are overwritten in place, never duplicated. Expect ~10-15 minutes for
-the full 499-company run (deliberately rate-limited to stay polite to Yahoo's
-endpoint).
+its history into `daily_prices`. `--period` accepts `1y` (default), `5y`, `10y`, or
+`max`; `--years N` backfills an exact N-year window (e.g. `--years 3`, for a
+window `--period` has no name for); `--index-name "Nifty 50"` scopes to one NSE
+tier (`--all-tiers` runs all five standard tiers back to back); add
+`--company-id HDFCBANK` to backfill just one company; `--force` bypasses the
+skip-if-already-covers-the-requested-window check. Safe to re-run any time
+(e.g. after switching from `1y` to `10y`) — existing days are overwritten in
+place, never duplicated, and (for `--years` runs) a company already covered
+back to the requested start date is skipped outright rather than re-fetched.
+The same six tier/country combinations are also available as one-click jobs
+in Settings > Data Operations > Schedule ("History price" category). Expect
+~10-15 minutes for the full 499-company run (deliberately rate-limited to
+stay polite to Yahoo's endpoint); the Nifty Micro-Cap tier (~2,000 companies)
+takes considerably longer.
+
+**Scheduled runs target 20 years (or since listing, if shorter), pulled
+incrementally:** the six EventBridge-triggered "History price" jobs (see the
+Automated schedule table below) each pass `years=20` plus a per-tier
+`time_budget_seconds` sized to that tier's own Saturday-morning slot
+(`scheduling/jobs.py`'s `HISTORY_TIER_TIME_BUDGET_MINUTES`) — a single run
+works backwards from whatever's already on file, stops once its time budget
+is spent, and simply leaves the still-missing older days alone. Because
+coverage is a real, persisted fact (existing `daily_prices` rows — no
+separate checkpoint table), next week's run picks up exactly where this
+week's left off and pushes the covered window further back, until the tier
+reaches the full 20 years (or the company's listing date, whichever is
+sooner), at which point each run goes back to being a fast no-op. A manual
+"Run now" click, or `--years N` from the CLI directly, is unaffected — it
+uses the exact window you pass and has no time budget unless you add
+`--time-budget-minutes` yourself.
 
 **Daily job (keeps it current):**
 
@@ -580,6 +611,150 @@ python main.py ask "What stands out about HDFC Bank's last 10 years?" --company 
   a given company, or the report/assistant will report "no data" for the other view.
 - **Nothing shows in `analyze` or `ask` after ingesting** — double check the
   `--statement-type` you ingested with matches the one you're viewing/asking with.
+
+---
+
+## Deployment (AWS Lightsail)
+
+The app runs as a single container on AWS Lightsail Container Service
+(`signals-app`, `us-east-2`), backed by Neon (Postgres), S3 (documents),
+and Qdrant Cloud. Local SQLite/`data/` never ships in the image — see
+`.dockerignore`.
+
+### 1. Build the Docker image
+
+```bash
+# --platform linux/amd64 is required even on Apple Silicon -- Lightsail
+# runs amd64, and Docker defaults to your host's architecture (arm64)
+# otherwise, producing an image that won't start there.
+docker build --platform linux/amd64 -t signals-app:pg-s3 .
+
+# Test locally against the real backends before pushing anything --
+# DATABASE_BACKEND/DOCUMENT_STORE_BACKEND aren't set in the Dockerfile
+# itself, only passed at run time (here and in the Lightsail deployment
+# below), so local `docker run` without them defaults to local
+# SQLite/disk -- add them to actually exercise Postgres/S3 locally first.
+docker run -d --name signals-test -p 8081:8080 \
+  --env-file <(grep -v '^#' .env | grep -v '^$') \
+  -e DATABASE_BACKEND=postgres \
+  -e DOCUMENT_STORE_BACKEND=s3 \
+  -e S3_BUCKET_NAME=signals-app-documents-862938824222 \
+  -e AWS_REGION=us-east-2 \
+  signals-app:pg-s3
+
+curl http://localhost:8081/health   # expect {"status": "ok"}
+docker rm -f signals-test           # once you're satisfied
+```
+
+### 2. Push the image and deploy to Lightsail
+
+```bash
+# Needs the lightsailctl plugin (aws lightsail push-container-image errors
+# with a download link the first time if it's missing).
+aws lightsail push-container-image \
+  --service-name signals-app \
+  --label signals-app \
+  --image signals-app:pg-s3
+# → prints the registered image reference, e.g. ":signals-app.signals-app.N"
+# -- use that exact string (N increments every push) in containers.json below.
+
+# containers.json's "image" field must be the ":signals-app.signals-app.N"
+# reference from the push output above, and its "environment" object should
+# carry forward every existing env var (see `aws lightsail get-container-
+# services --service-name signals-app` to read the current ones back) plus:
+#   DATABASE_BACKEND=postgres
+#   DOCUMENT_STORE_BACKEND=s3
+#   S3_BUCKET_NAME=signals-app-documents-862938824222
+#   AWS_REGION=us-east-2
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY  (the signals-app-s3 IAM user's key)
+# public-endpoint.json is the health-check config — reuse the same shape
+# `get-container-services` already shows under currentDeployment.publicEndpoint.
+aws lightsail create-container-service-deployment \
+  --service-name signals-app \
+  --containers file://containers.json \
+  --public-endpoint file://public-endpoint.json
+
+# Poll until state flips from DEPLOYING to RUNNING, then verify:
+aws lightsail get-container-services --service-name signals-app --query 'containerServices[0].state'
+curl https://signals-app.wmmbnsx82cwgc.us-east-2.cs.amazonlightsail.com/health
+```
+
+---
+
+## Automated schedule (EventBridge, production)
+
+As of 2026-09-13, every scheduled job below is wired to a real automated
+trigger — an AWS EventBridge Connection (`signals-app-cron-trigger`, holds
+the shared `X-Cron-Secret` header auth), one API Destination per job
+(`https://signals-app.../admin/schedule/run-async/<job_id>`), and one
+classic EventBridge Rule per job (`signals-app-<name>`, cron schedule,
+targets the API destination via a scoped IAM role,
+`signals-app-events-invoke-role`). Nothing here runs inside this app's own
+process — it's all external AWS infrastructure calling the async trigger
+route, same as `web/app.py`'s `admin_schedule_run_async()` docstring
+describes. `SCHEDULED_JOBS.md`/`scheduling/jobs.py` remain the source of
+truth for what each job actually does; this table is just when it fires.
+
+**Known limitation — Daylight Saving Time**: every rule below uses a fixed
+UTC cron expression (classic EventBridge Rules don't support timezones —
+EventBridge *Scheduler* does, but doesn't support API Destination targets,
+which is why Rules were used instead). All times are correct as written
+for **EDT** (UTC-4, roughly mid-March to early November). Once DST ends,
+every rule's hour shifts one hour early in ET terms and needs a manual
+`+1 hour` UTC adjustment (e.g. `aws events put-rule --name <rule> --schedule-expression "cron(<min> <hour+1> ...)"` for each). Re-adjust back by `-1 hour` the following March.
+
+| Category | Job | Cadence | Trigger (ET) | EventBridge rule |
+|---|---|---|---|---|
+| Daily price | India — close price & volume (Nifty 500) | Daily | Weekdays 10:00pm | `signals-app-price-history-india-daily` |
+| Daily price | India — close price & volume (Nifty Micro-Cap) | Monthly | 1st Sat, 9:00am | `signals-app-daily-price-india-microcap` |
+| Daily price | USA — close price & volume | Weekly | Weekdays 10:00pm | `signals-app-price-history-usa-daily` |
+| History price | Nifty 50, 20y incremental | Manual→Weekly | Sat 7:00am | `signals-app-history-price-nifty50` |
+| History price | Nifty Next 50, 20y incremental | Manual→Weekly | Sat 7:15am | `signals-app-history-price-next50` |
+| History price | Nifty Midcap 150, 20y incremental | Manual→Weekly | Sat 7:30am | `signals-app-history-price-midcap150` |
+| History price | Nifty Smallcap 250, 20y incremental | Manual→Weekly | Sat 8:00am | `signals-app-history-price-smallcap250` |
+| History price | Nifty Micro-Cap, 20y incremental | Manual→Monthly | 1st Sat, 8:30am | `signals-app-history-price-microcap` |
+| History price | USA, 20y incremental | Manual→Weekly | Sat 7:00am | `signals-app-history-price-usa` |
+| Financials | Nifty 50 | Quarterly→Weekly | Sat 12:00pm | `signals-app-financials-nifty50` |
+| Financials | Nifty Next 50 | Quarterly→Weekly | Sat 12:15pm | `signals-app-financials-next50` |
+| Financials | Nifty Midcap 150 | Quarterly→Weekly | Sat 12:30pm | `signals-app-financials-midcap150` |
+| Financials | Nifty Smallcap 250 | Quarterly→Weekly | Sat 12:50pm | `signals-app-financials-smallcap250` |
+| Financials | Nifty Micro-Cap | Monthly | 1st Sat, 1:10pm | `signals-app-financials-microcap` |
+| Financials | USA (SEC EDGAR) | Quarterly→Weekly | Sat 1:40pm | `signals-app-financials-usa` |
+| Shareholding | Nifty 50 | Quarterly→Weekly | Sat 2:00pm | `signals-app-shareholding-nifty50` |
+| Shareholding | Nifty Next 50 | Quarterly→Weekly | Sat 2:15pm | `signals-app-shareholding-next50` |
+| Shareholding | Nifty Midcap 150 | Quarterly→Weekly | Sat 2:30pm | `signals-app-shareholding-midcap150` |
+| Shareholding | Nifty Smallcap 250 | Quarterly→Weekly | Sat 2:50pm | `signals-app-shareholding-smallcap250` |
+| Shareholding | Nifty Micro-Cap | Monthly | 1st Sat, 3:10pm | `signals-app-shareholding-microcap` |
+| Corporate actions | Fetch — Nifty 50 | Quarterly→Weekly | Sat 3:30pm | `signals-app-corp-actions-fetch-nifty50` |
+| Corporate actions | Ingest — Nifty 50 | Quarterly→Weekly | Sat 3:40pm | `signals-app-corp-actions-ingest-nifty50` |
+| Corporate actions | Fetch — Nifty Next 50 | Quarterly→Weekly | Sat 3:50pm | `signals-app-corp-actions-fetch-next50` |
+| Corporate actions | Ingest — Nifty Next 50 | Quarterly→Weekly | Sat 4:00pm | `signals-app-corp-actions-ingest-next50` |
+| Corporate actions | Fetch — Nifty Midcap 150 | Quarterly→Weekly | Sat 4:10pm | `signals-app-corp-actions-fetch-midcap150` |
+| Corporate actions | Ingest — Nifty Midcap 150 | Quarterly→Weekly | Sat 4:20pm | `signals-app-corp-actions-ingest-midcap150` |
+| Corporate actions | Fetch — Nifty Smallcap 250 | Quarterly→Weekly | Sat 4:30pm | `signals-app-corp-actions-fetch-smallcap250` |
+| Corporate actions | Ingest — Nifty Smallcap 250 | Quarterly→Weekly | Sat 4:40pm | `signals-app-corp-actions-ingest-smallcap250` |
+| Corporate actions | Fetch — Nifty Micro-Cap | Monthly | 1st Sat, 4:50pm | `signals-app-corp-actions-fetch-microcap` |
+| Corporate actions | Ingest — Nifty Micro-Cap | Monthly | 1st Sat, 5:00pm | `signals-app-corp-actions-ingest-microcap` |
+| Macro | FRED macro data | Quarterly→Monthly | Last Sat of month, 6:00pm | `signals-app-fred-macro-monthly` |
+| Macro | RBI / IITM macro data | Weekly | — (disabled, no runner) | — |
+| Macro | Macro insights | Monthly | — (disabled, no runner) | — |
+| Insights | Company insights | Monthly | — (on hold) | — |
+| Documents | Document analysis | Quarterly | — (on hold) | — |
+| Documents | Investor relations documents | Quarterly | — (on hold) | — |
+| Maintenance | DB sharding | Daily | — (on hold) | — |
+| Maintenance | Raw object catalog reconciliation | Weekly | Sun 5:00am | `signals-app-raw-object-reconciliation-weekly` |
+
+30 of 38 registry jobs are automated (5 of those monthly instead of their
+declared weekly/quarterly cadence, per an explicit operator decision to
+keep NSE/SEC EDGAR load down for the largest tier). 4 are deliberately on
+hold (Insights, Documents×2, DB sharding — not yet wanted on autopilot). 2
+remain disabled at the code level (no runner implemented — see
+`scheduling/jobs.py`'s own `reason` field for each). Every Saturday
+job is staggered by 10-40 minutes from its neighbors specifically to avoid
+firing 20+ concurrent NSE/SEC-EDGAR-hitting jobs at once — see each rule's
+own trigger time above before adding a new one to this block, and don't
+schedule a new heavy job into the same slot as an existing one without
+checking for overlap.
 
 ---
 

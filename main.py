@@ -24,6 +24,34 @@ from dotenv import load_dotenv
 # ANTHROPIC_API_KEY still wins over .env.
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
+# Optional, local-only, gitignored (see .env.dev.example) -- DATABASE_
+# BACKEND=postgres + LOCAL_DEV_DATABASE_URL for running against the local
+# Docker Postgres instead of SQLite. override=True so it can flip
+# DATABASE_BACKEND even though .env above already set (or left unset) a
+# value -- deliberately NOT merged into .env itself, since .env also holds
+# real production Neon credentials used for the deploy/smoke-test workflow,
+# which must keep defaulting to SQLite unless a run explicitly opts in.
+# A no-op, safely, when .env.dev doesn't exist (most checkouts/environments).
+load_dotenv(Path(__file__).resolve().parent / ".env.dev", override=True)
+
+# Must run before ANY `from storage.X import Y` / `from companies.registry
+# import Y` (etc.) below -- companies/registry.py (imported two lines down)
+# does `from storage import company_repository as repo` at ITS OWN top
+# level, which permanently binds `repo` to whichever module object sits in
+# sys.modules["storage.company_repository"] at that exact moment. web/app.py
+# already calls install() first for this same reason (see its own comment),
+# but that alone doesn't help main.py: `from companies.registry import
+# list_companies` below runs (and binds `repo` to the pre-swap SQLite
+# module) before cmd_serve ever gets around to importing web.app, so by the
+# time web.app's own install() call runs, it's too late -- companies.
+# registry's `repo` name is already permanently stuck on SQLite. Confirmed
+# via a real `python main.py serve` run under DATABASE_BACKEND=postgres:
+# every route crashed with `AttributeError: 'psycopg2.extensions.connection'
+# object has no attribute 'execute'` until this line was added.
+import storage.backend_bootstrap
+
+storage.backend_bootstrap.install()
+
 from charts.financial_charts import build_company_charts, save_charts
 from companies.lifecycle import archive_company, restore_company
 from companies.nse_import import import_nse_companies
@@ -841,7 +869,14 @@ def cmd_serve(args: argparse.Namespace) -> None:
         )
 
     ensure_data_dirs()
-    conn = init_db()
+    # storage.backend_bootstrap.open_db(), not init_db() -- same "wrong
+    # connection type for a Postgres-swapped repository function" bug class
+    # that module's own docstring already documents in scripts/fetch_daily_
+    # prices*.py; ensure_metric_vocabulary() ends up calling storage.
+    # repositories_pg.py's seed_metric_vocabulary() once install() has run
+    # (this file's own top-level install() call above), which needs a real
+    # Postgres connection, not a hardcoded sqlite3 one.
+    conn = storage.backend_bootstrap.open_db()
     ensure_metric_vocabulary(conn)
     conn.close()
 

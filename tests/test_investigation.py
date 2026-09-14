@@ -15,6 +15,7 @@ import pytest
 from companies.registry import seed_companies
 from research.hypothesis_evaluator import HYPOTHESIS_EVALUATOR_SYSTEM_PROMPT
 from research.hypothesis_generator import HYPOTHESIS_GENERATOR_SYSTEM_PROMPT
+from research.abstracts import _SYSTEM_PROMPT as ABSTRACT_SYSTEM_PROMPT
 from research.investigation import InvestigationError, run_investigation
 from research.research_synthesis import RESEARCH_SYNTHESIS_SYSTEM_PROMPT
 from storage.repositories import (
@@ -26,6 +27,8 @@ from storage.repositories import (
 _GENERATOR_PREFIX = HYPOTHESIS_GENERATOR_SYSTEM_PROMPT[:40]
 _EVALUATOR_PREFIX = HYPOTHESIS_EVALUATOR_SYSTEM_PROMPT[:40]
 _SYNTHESIS_PREFIX = RESEARCH_SYNTHESIS_SYSTEM_PROMPT[:40]
+_ABSTRACT_PREFIX = ABSTRACT_SYSTEM_PROMPT[:40]
+_ABSTRACT_RESPONSE = "A concise professional abstract for testing."
 
 _FIXED_INVESTIGATION_ID = "abcdef012345"
 _H1 = f"{_FIXED_INVESTIGATION_ID}-h1"
@@ -88,6 +91,8 @@ class _DispatchMessages:
             text = self._evaluation_text
         elif system.startswith(_SYNTHESIS_PREFIX):
             text = _SYNTHESIS_RESPONSE
+        elif system.startswith(_ABSTRACT_PREFIX):
+            text = _ABSTRACT_RESPONSE
         else:
             raise AssertionError(f"unrecognized system prompt: {system[:60]!r}")
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)], stop_reason="end_turn")

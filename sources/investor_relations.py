@@ -48,6 +48,8 @@ from pathlib import Path
 import requests
 
 from config import settings
+from config.settings import to_repo_relative
+from storage.document_store import default_document_store
 
 logger = logging.getLogger(__name__)
 
@@ -282,14 +284,22 @@ async def fetch_company_documents(company_id: str) -> list[IRDocumentRef]:
     raise IRFetchError(f"no investor_relations fetch config for company_id={company_id!r}")
 
 
-def download_document(ref: IRDocumentRef, dest_dir: Path) -> Path:
-    """Download one document's file to dest_dir, named from its own URL --
-    skips the request if already on disk (same "a file already there is
-    never re-downloaded" rule as sources/nse_fetch.py's download_filing())."""
+def download_document(ref: IRDocumentRef, dest_dir: Path) -> str:
+    """Download one document's file into dest_dir, named from its own URL --
+    skips the request if already stored (same "a file already there is
+    never re-downloaded" rule as sources/nse_fetch.py's download_filing()).
+
+    Routed through the active DocumentStore (storage/document_store.py)
+    rather than Path.write_bytes() directly, so this works unchanged
+    whether DOCUMENT_STORE_BACKEND is "local" (default, identical on-disk
+    behaviour under dest_dir) or "s3". Returns the storage_object_key the
+    document is stored under (the caller persists this as
+    documents.raw_file_path/storage_object_key), not a filesystem Path."""
     filename = ref.url.rstrip("/").rsplit("/", 1)[-1]
-    dest_path = dest_dir / filename
-    if dest_path.exists() and dest_path.stat().st_size > 0:
-        return dest_path
+    key = to_repo_relative(dest_dir / filename)
+    store = default_document_store()
+    if store.exists(key):
+        return key
 
     try:
         response = requests.get(ref.url, headers={"User-Agent": _USER_AGENT}, timeout=60)
@@ -297,9 +307,7 @@ def download_document(ref: IRDocumentRef, dest_dir: Path) -> Path:
     except requests.RequestException as exc:
         raise IRFetchError(f"failed downloading {ref.url}: {exc}") from exc
 
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path.write_bytes(response.content)
-    return dest_path
+    return store.store(key, response.content)
 
 
 DEFAULT_IR_DOCUMENTS_DIR = settings.DOCUMENTS_DIR / "investor_relations"

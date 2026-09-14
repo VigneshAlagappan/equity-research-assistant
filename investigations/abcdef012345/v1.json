@@ -1,0 +1,68 @@
+{
+  "investigation_id": "abcdef012345",
+  "question": "Why did margins decline?",
+  "company_ids": [
+    "HDFCBANK"
+  ],
+  "statement_type": "consolidated",
+  "strongest_explanation": "Input cost inflation is the most likely driver.",
+  "unanswered_questions": [
+    "What specific inputs rose in price?"
+  ],
+  "additional_evidence_needed": [
+    "Supplier contract terms"
+  ],
+  "as_of": null,
+  "hypotheses": [
+    {
+      "hypothesis_id": "abcdef012345-h1",
+      "statement": "Input costs increased, compressing margins.",
+      "mechanism": "Higher raw material prices raised COGS faster than revenue grew.",
+      "chain_steps": [],
+      "category": "financial",
+      "rationale": "A common driver of margin decline.",
+      "unknowns": [],
+      "generation_order": 0,
+      "verdict": "INSUFFICIENT_EVIDENCE",
+      "confidence_basis": "Not enough evidence yet.",
+      "confidence_score": null,
+      "synthesis_rank": 1,
+      "supporting_evidence": [],
+      "contradicting_evidence": [],
+      "missing_evidence": [
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "quarterly cost breakdown",
+          "value": null,
+          "citation": null
+        }
+      ]
+    },
+    {
+      "hypothesis_id": "abcdef012345-h2",
+      "statement": "Competitive pricing pressure reduced margins.",
+      "mechanism": "A competitor's price cuts forced matching price reductions.",
+      "chain_steps": [],
+      "category": "competitive",
+      "rationale": "Plausible given the sector.",
+      "unknowns": [],
+      "generation_order": 1,
+      "verdict": "INSUFFICIENT_EVIDENCE",
+      "confidence_basis": "Not enough evidence yet.",
+      "confidence_score": null,
+      "synthesis_rank": 2,
+      "supporting_evidence": [],
+      "contradicting_evidence": [],
+      "missing_evidence": [
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "quarterly cost breakdown",
+          "value": null,
+          "citation": null
+        }
+      ]
+    }
+  ]
+}

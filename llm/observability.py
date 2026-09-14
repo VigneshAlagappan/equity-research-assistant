@@ -80,7 +80,18 @@ def record(
     which skips the call entirely. `investigation_id` tags a call made as
     part of one research/investigation.py run (hypothesis generation/
     evaluation, research synthesis, or a macro-retrieval-plan call along the
-    way) so its cost can be totalled per investigation."""
+    way) so its cost can be totalled per investigation.
+
+    insert_llm_call_log lives in storage/repositories.py (SQLite) /
+    storage/repositories_pg.py (Postgres) same as every other table now --
+    storage.backend_bootstrap's wholesale swap means this plain import
+    always resolves to whatever backend `conn` actually is. Wasn't always
+    true: llm_call_log used to be excluded from Postgres (Neon free-tier
+    storage cap), and this crashed with `AttributeError: 'psycopg2.
+    extensions.connection' object has no attribute 'execute'` on every
+    single LLM-calling feature (Ask AI, Deep Dive investigations, abstract
+    generation) run against a Postgres-backed deployment until the table
+    was added 2026-09-13 -- see docs/ADR/021."""
     response = result.response
     cost = _estimate_cost_usd(
         response.model, response.input_tokens, response.output_tokens,

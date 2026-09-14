@@ -1,6 +1,10 @@
-"""Quarterly job: run every document sitting at documents.processing_status
-='pending' (transcripts, concall presentations, annual report docs, etc.)
-through Step 1 registration + the Knowledge Builder extraction pipeline.
+"""Daily job (was quarterly until 2026-09-14): run documents sitting at
+documents.processing_status='pending' -- every document_type (annual
+reports, investor presentations, concall transcripts, concall audio
+recordings, financial results, ...), nothing scoped out by type --
+through Step 1 registration + the Knowledge Builder extraction pipeline,
+DAILY_LIMIT at a time below so a large backlog gets worked off steadily
+rather than in one large burst of LLM calls.
 
 Closes the scheduling gap SCHEDULED_JOBS.md section 4 and web/app.py's
 `doc_analysis` ScheduledJob row flagged: the extraction logic itself
@@ -37,7 +41,18 @@ from storage.repositories import get_latest_batch_job_run
 JOB_NAME = "document_processing"
 
 
-def run_document_processing_batch(conn=None) -> int:
+#: Daily doc_analysis job's per-run cap (scheduling/jobs.py) -- 317
+#: documents sat pending in production as of 2026-09-14 (a legacy backlog
+#: predating both this job's daily cadence and company_add_document()'s
+#: new immediate-ingest-on-upload trigger), each a Knowledge Builder LLM
+#: call; running all of them in one scheduled invocation risks Anthropic
+#: rate limits/cost spikes. At 25/day the backlog clears in ~13 days;
+#: steady-state (once the backlog is gone) most days see zero pending
+#: anyway since new uploads are ingested immediately, not by this job.
+DAILY_LIMIT = 25
+
+
+def run_document_processing_batch(conn=None, *, limit: int | None = DAILY_LIMIT) -> int:
     """The actual pending-documents sweep, factored out of main() so the
     Settings > Data Operations > Schedule panel's "Run now" button
     (web/app.py) can trigger the identical job on demand -- same
@@ -61,7 +76,7 @@ def run_document_processing_batch(conn=None) -> int:
         conn = init_db()
 
     try:
-        summary = process_all_pending_documents(conn)
+        summary = process_all_pending_documents(conn, limit=limit)
         print(
             f"Done. attempted={summary.attempted} succeeded={summary.succeeded} "
             f"failed={summary.failed}",

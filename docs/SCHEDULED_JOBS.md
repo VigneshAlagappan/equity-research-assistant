@@ -293,22 +293,48 @@ scheduling policy and gap analysis only.
 | Financials | Quarterly | Ready | Gap (fiscal-quarter mapping) |
 | Shareholding pattern | Quarterly | Ready | N/A (SEBI LODR Reg 31 — India-only regulation) |
 | Price history | Weekly | Ready (already daily) | Ready (`fetch_daily_prices_usa.py`) |
-| Doc analysis (transcripts/concalls) | Quarterly | Ready to schedule (trigger only — still no fetch source, manually-uploaded files only) | Same |
+| Doc analysis (all uploaded PDFs/audio — annual reports, presentations, transcripts, concall recordings) | Daily (was Quarterly until 2026-09-14) — EventBridge-scheduled, `signals-app-doc-analysis-daily`, 09:30 UTC / 3:00 PM IST | Live (still manually-uploaded files only — no automated fetch source) | Same |
 | Analytics/insights — companies | Monthly | Ready to schedule (Nifty 50 + USA) | Same |
 | Analytics/insights — macro | Monthly | Gap (generation fn doesn't exist yet) | Same |
 | Macro data | Weekly | FRED ready; RBI/IITM/DBIE gap | N/A (US macro not in scope here) |
 | DB sharding | Daily | Ready (shard step only) | Commit+push needs a separate explicit decision |
 
+**Doc analysis, 2026-09-14 change**: two things changed together. (1)
+web/app.py's `company_add_document()` (the Docs tab upload route) now
+kicks off ingestion for that one document immediately, in a background
+thread, right after the upload succeeds — most documents never reach the
+`pending` state this scheduled job scans for at all. (2) This job itself
+moved from Quarterly to Daily specifically to be the catch-up sweep for
+whatever (1) missed (a failed immediate attempt, or the pre-existing
+backlog of documents uploaded before either change existed) — capped at
+`scripts/process_pending_documents_batch.py`'s `DAILY_LIMIT = 25` per run
+(oldest-first) so a large backlog gets worked off steadily across several
+days' runs rather than firing dozens of Knowledge Builder LLM calls in one
+burst. The Admin -> Ingest queue's manual "Process All Pending" button is
+unaffected — still uncapped, since that's a deliberate human action.
+
 Price history (India and USA), financials (India and USA), shareholding
-pattern (India), DB sharding, FRED macro data, document analysis, and
-company insights are ready to actually put on a schedule today — all of
-them are also wired into Settings > Data Operations > Schedule's manual
-"Run now" trigger (15 rows total: 2 price-history + 1 sharding + 4 each
-for financials/shareholding India tiers — Nifty 50, Next 50, Midcap 150,
-Smallcap 250 — + 1 financials USA + 1 FRED macro + 1 doc analysis + 1
-company insights), with every run's status visible in Audit Log > Job
-Runs. Everything else (macro insights, RBI/IITM/DBIE macro data) needs
-real implementation work first — not just a cron entry. And even for
+pattern (India), corporate actions (India), DB sharding, FRED macro data,
+document analysis, company insights, and investor relations documents are
+ready to actually put on a schedule today — all of them are wired into
+Settings > Data Operations > Schedule's manual "Run now" trigger, which as
+of 2026-09-13 has grown well past this doc's original row count: the panel
+now groups **38 jobs across 9 collapsible categories** (`scheduling/
+jobs.py`'s `SCHEDULED_JOBS`, `category` field) — Daily price, History
+price, Financials, Shareholding, Corporate actions, Macro, Insights,
+Documents, Maintenance — instead of one flat table. Beyond the jobs this
+section already covers, that registry also now includes: 6 automated, EventBridge-scheduled
+"History price" backfill jobs (targeting 20 years of close price & volume
+per company, or since listing if shorter, reached incrementally across
+scheduled runs via a per-tier time budget rather than one long pull — one
+per NSE tier — Nifty 50/Next 50/Midcap 150/Smallcap 250/Micro-Cap — plus
+USA; see USER_GUIDE.md's Automated schedule table), 10 corporate-actions
+fetch/ingest jobs (India, per tier), and a new Weekly Maintenance job,
+`raw_object_reconciliation` (docs/ADR/022 — S3↔ Postgres catalog
+reconciliation, report-only). Every run's status is visible in Audit Log
+> Job Runs, same as before. Everything the sections
+above call a genuine gap (macro insights, RBI/IITM/DBIE macro data) still
+needs real implementation work first — not just a cron entry. And even for
 sharding, "ready" is the local file-writing part
 only — turning that into an actual git backup still needs the commit+push
 decision above made explicitly.

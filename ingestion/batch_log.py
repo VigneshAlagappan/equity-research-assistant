@@ -26,10 +26,10 @@ itself."""
 
 from __future__ import annotations
 
-from storage.db_types import DBConnection
 from contextlib import contextmanager
 from typing import Iterator
 
+from storage.db_types import DBConnection
 from storage.repositories import (
     finish_batch_job_item,
     finish_batch_job_run,

@@ -1,0 +1,49 @@
+# Local Postgres for the test suite / local dev, replacing per-test SQLite
+# files (docs/ADR/ -- SQLite removal, stage 1). Postgres 18 to match Neon
+# production (`SELECT version()` against Neon returned "PostgreSQL 18.6" at
+# the time this was written).
+#
+# Start:  docker compose -f docker-compose.test.yml up -d
+# Stop:   docker compose -f docker-compose.test.yml down
+# Reset:  docker compose -f docker-compose.test.yml down -v   (wipes all data)
+#
+# Deliberately on port 5433, not Postgres's default 5432 -- doesn't fight a
+# developer's own already-running local Postgres, if any.
+services:
+  postgres-test:
+    # Debian-based, not -alpine -- Neon's own `SELECT version()` reports a
+    # glibc/Ubuntu-compiled build, and musl (Alpine's libc) registers
+    # "C.UTF-8" differently than glibc does (verified: -alpine normalizes
+    # datcollate to plain "C", not "C.UTF-8" like real Neon, even with
+    # --lc-collate=C.UTF-8 passed explicitly below).
+    image: postgres:18
+    environment:
+      POSTGRES_USER: signals_test
+      POSTGRES_PASSWORD: signals_test
+      POSTGRES_DB: postgres
+      # Matches Neon production's actual collation (verified via
+      # `SELECT datcollate FROM pg_database` against real Neon: "C.UTF-8")
+      # -- the postgres:18-alpine image defaults to en_US.utf8 otherwise,
+      # which can sort/compare text differently than production for some
+      # inputs. Only takes effect on a brand-new data directory (first
+      # `up`, or after `down -v`) -- initdb sets this once, permanently.
+      POSTGRES_INITDB_ARGS: "--lc-collate=C.UTF-8 --lc-ctype=C.UTF-8"
+    ports:
+      - "5433:5432"
+    volumes:
+      # Postgres 18's official image expects the mount at /var/lib/postgresql
+      # (not .../data as in earlier major versions) -- it places versioned
+      # data under a subdirectory itself now (pg_ctlcluster-style layout).
+      - signals_test_pgdata:/var/lib/postgresql
+      # Creates the persistent "signals_dev" database on first-ever start
+      # (docker-entrypoint-initdb.d convention) -- see that file's own
+      # comment for how it differs from the ephemeral per-test databases.
+      - ./docker/local-postgres-initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signals_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  signals_test_pgdata:

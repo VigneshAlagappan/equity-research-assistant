@@ -149,6 +149,7 @@ activemq-data/
 
 # Environments
 .env
+.env.dev
 .envrc
 .venv
 env/
@@ -254,3 +255,18 @@ logs/*
 *.db-journal
 *.db.bak-*
 data/.flask_secret_key
+
+# Saved research-report artifacts (web/app.py's _persist_generated_report_s3,
+# DOCUMENT_STORE_BACKEND=local) -- runtime content, same reasoning as data/
+# above. tests/test_web.py isolates this to tmp_path via config.settings.
+# BASE_DIR, so a clean test run shouldn't recreate this locally at all;
+# if you see it repopulate, something regressed that isolation.
+threads/
+
+# Per-investigation async-job status files (research/investigation_jobs.py)
+# -- disposable polling state, not the investigation's real record (that's
+# the investigations/investigation_hypotheses tables). tests/test_web.py
+# isolates this to tmp_path via config.settings.INVESTIGATION_JOBS_DIR.
+data/investigation_jobs/
+# Same, for /chat and /research/ask's own async+poll flow (research/ask_jobs.py).
+data/ask_jobs/
