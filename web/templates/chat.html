@@ -374,6 +374,41 @@
       }
     }
 
+    // Async + poll, not one long request: /chat used to be a single
+    // synchronous call, vulnerable to the same gunicorn-worker/platform-
+    // gateway timeout a broad question or a slow-to-parse uploaded PDF
+    // could hit (see web/app.py's _compute_answer_question docstring --
+    // this is the same fix already applied to the per-company Ask AI
+    // drawer and the Research tab's composer). /ask/status/<job_id>
+    // returns {status:'done', result: {...}} where `result` is exactly
+    // the object appendAssistantTurn() already expects.
+    const ASK_POLL_INTERVAL_MS = 3000;
+    const ASK_POLL_MAX_ATTEMPTS = 100; // ~5 minutes
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function pollAskStatus(jobId) {
+      for (let attempt = 0; attempt < ASK_POLL_MAX_ATTEMPTS; attempt++) {
+        await sleep(ASK_POLL_INTERVAL_MS);
+        let response;
+        try {
+          response = await fetch(`/ask/status/${jobId}`);
+        } catch (err) {
+          continue; // a transient network blip while polling isn't fatal on its own
+        }
+        if (!response.ok) {
+          throw new Error(`lost track of this question (HTTP ${response.status})`);
+        }
+        const data = await response.json();
+        if (data.status === 'done') return data.result;
+        if (data.status === 'error') throw new Error(data.error || 'Something went wrong.');
+        // status === 'running' -- keep polling.
+      }
+      throw new Error('This is taking longer than expected — try again in a moment, or ask something narrower.');
+    }
+
     async function askQuestion() {
       if (!selectedCompany) return;
       const question = questionEl.value.trim();
@@ -385,7 +420,7 @@
       const loadingCard = appendLoading();
 
       try {
-        const response = await fetch('/chat', {
+        const response = await fetch('/chat-async', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -395,12 +430,14 @@
           }),
         });
         const data = await response.json();
-        loadingCard.remove();
         if (!response.ok) {
+          loadingCard.remove();
           appendError(data.error || 'Something went wrong.');
-        } else {
-          appendAssistantTurn(data);
+          return;
         }
+        const result = await pollAskStatus(data.job_id);
+        loadingCard.remove();
+        appendAssistantTurn(result);
       } catch (err) {
         loadingCard.remove();
         appendError('Network error: ' + err.message);

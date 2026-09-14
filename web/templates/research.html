@@ -484,6 +484,39 @@
       }
     }
 
+    // Same async + poll shape as generateInvestigation()/pollInvestigationStatus()
+    // above, just for the short tagged-answer path instead of a full
+    // investigation -- /research/ask was still one long synchronous
+    // request, vulnerable to the exact same gunicorn-worker/platform-
+    // gateway timeout a broad question or a slow-to-parse uploaded PDF
+    // could hit (the same root cause that motivated the -async routes in
+    // the first place, see web/app.py's _compute_answer_question
+    // docstring). /ask/status/<job_id> returns {status:'done', result:
+    // {...}} where `result` is exactly the object renderResult() below
+    // already expects (question/company_ids/answer_html/charts/...).
+    const ASK_POLL_INTERVAL_MS = 3000;
+    const ASK_POLL_MAX_ATTEMPTS = 100; // ~5 minutes
+
+    async function pollAskStatus(jobId) {
+      for (let attempt = 0; attempt < ASK_POLL_MAX_ATTEMPTS; attempt++) {
+        await sleep(ASK_POLL_INTERVAL_MS);
+        let response;
+        try {
+          response = await fetch(`/ask/status/${jobId}`);
+        } catch (err) {
+          continue; // a transient network blip while polling isn't fatal on its own
+        }
+        if (!response.ok) {
+          throw new Error(`lost track of this question (HTTP ${response.status})`);
+        }
+        const data = await response.json();
+        if (data.status === 'done') return data.result;
+        if (data.status === 'error') throw new Error(data.error || 'Something went wrong.');
+        // status === 'running' -- keep polling.
+      }
+      throw new Error('This is taking longer than expected — try again in a moment, or ask something narrower.');
+    }
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const question = query.value.trim();
@@ -518,7 +551,7 @@
       status.textContent = detectionNote + 'Thinking…';
 
       try {
-        const response = await fetch('/research/ask', {
+        const response = await fetch('/research/ask-async', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -530,10 +563,11 @@
         const data = await response.json();
         if (!response.ok) {
           status.textContent = data.error || 'Something went wrong.';
-        } else {
-          status.textContent = '';
-          renderResult(data);
+          return;
         }
+        const result = await pollAskStatus(data.job_id);
+        status.textContent = '';
+        renderResult(result);
       } catch (err) {
         status.textContent = 'Network error: ' + err.message;
       } finally {
