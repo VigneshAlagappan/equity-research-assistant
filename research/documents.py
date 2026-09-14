@@ -34,7 +34,7 @@ large enough for that to matter.
 from __future__ import annotations
 
 import re
-import signal
+import threading
 from storage.db_types import DBConnection, Row
 import time
 from io import BytesIO
@@ -65,9 +65,7 @@ MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 # get killed out from under it" bug this app has hit. Unlike a clean
 # exception (PyPdfError/DependencyError/OSError, already handled below), a
 # hang can't be caught with try/except -- it needs an actual wall-clock
-# bound. signal.alarm() only works in the main thread of the main
-# interpreter, which is exactly what one of gunicorn's sync workers is
-# (one request at a time, no threading) -- see _with_timeout() below.
+# bound.
 PDF_EXTRACTION_TIMEOUT_SECONDS = 20
 
 
@@ -76,23 +74,39 @@ class _PdfExtractionTimedOut(Exception):
 
 
 def _with_timeout(fn, *, seconds: int):
-    """Runs `fn()` under a hard wall-clock bound, raising
-    _PdfExtractionTimedOut if it doesn't finish in time. SIGALRM-based, so
-    Unix-only (fine -- production and every dev machine this runs on are)
-    and only safe called from a process's main thread (gunicorn's sync
-    workers, this function's only real caller via document_text()/
-    document_pages(), qualify)."""
+    """Runs `fn()` (in a background thread) under a hard wall-clock bound,
+    raising _PdfExtractionTimedOut if it doesn't finish in time.
 
-    def _on_alarm(signum, frame):
+    Deliberately NOT signal.alarm()-based, despite that being the more
+    obvious tool for a single-threaded sync worker -- found the hard way
+    that gunicorn's own sync worker ALREADY uses SIGALRM internally to
+    enforce its own --timeout, and installing a second SIGALRM handler
+    here conflicts with it: the exact same production crash this was
+    meant to fix (`WORKER TIMEOUT` -> SIGKILL) reproduced again with the
+    signal-based version in place, gunicorn's own abort handler firing
+    instead of this one. A background thread has no such conflict --
+    Python can't forcibly kill a thread, so a genuinely hung extraction
+    leaks one stray thread (harmless: it never touches `data` or any
+    shared, mutable app state again once abandoned, and document_text()'s
+    own cache means the SAME document is never retried in this worker
+    process, so this can happen at most once per bad document per
+    worker), but the request itself returns on schedule either way."""
+    result: dict = {}
+
+    def _run() -> None:
+        try:
+            result["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 -- re-raised on the caller's thread below, not swallowed
+            result["error"] = exc
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    thread.join(timeout=seconds)
+    if thread.is_alive():
         raise _PdfExtractionTimedOut()
-
-    previous_handler = signal.signal(signal.SIGALRM, _on_alarm)
-    signal.alarm(seconds)
-    try:
-        return fn()
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, previous_handler)
+    if "error" in result:
+        raise result["error"]
+    return result["value"]
 
 # BSE (a common Docs-tab source per the module docstring above) 403s a
 # fetch with no User-Agent/requests' default one — confirmed by hand
