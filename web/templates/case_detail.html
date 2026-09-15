@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Case — Signals{% endblock %}
+
+{% block extra_style %}
+  .case-detail { max-width: 760px; margin: 0 auto; padding: 2rem 0; }
+  .case-detail-question { font-size: 1.4rem; font-weight: 600; margin: 0 0 0.5rem; }
+  .case-detail-meta { color: var(--text-muted, #666); font-size: 0.9rem; margin-bottom: 1.5rem; }
+  .case-detail-activity {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 1.25rem; border-radius: 8px;
+    background: var(--surface-muted, #f5f5f7); margin-bottom: 1.5rem;
+  }
+  .case-detail-spinner {
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 2px solid var(--border, #ccc); border-top-color: var(--accent, #2563eb);
+    animation: case-spin 0.8s linear infinite; flex-shrink: 0;
+  }
+  @keyframes case-spin { to { transform: rotate(360deg); } }
+  .case-detail-actions { display: flex; gap: 0.75rem; margin-top: 1rem; }
+  .case-detail-answer { line-height: 1.6; }
+  .case-detail-error { color: var(--error, #b91c1c); }
+{% endblock %}
+
+{% block content %}
+<div class="case-detail">
+  <h1 class="case-detail-question">{{ question }}</h1>
+  <p class="case-detail-meta">
+    {% if company_ids %}{{ company_ids | join(', ') }}{% else %}Macro/regulatory{% endif %}
+    &middot; Case <code>{{ case_id }}</code>
+  </p>
+
+  <div id="case-body">
+    <!-- populated by JS below -- initial_status is embedded so the first
+         render doesn't need to wait on a round trip, then pollAskStatus()
+         (same mechanism _ask_ai.html/research.html/chat.html already use)
+         takes over if the case is still running. -->
+  </div>
+</div>
+
+<script id="case-initial-status" type="application/json">{{ initial_status | tojson }}</script>
+<script>
+(function () {
+  const caseId = {{ case_id | tojson }};
+  const question = {{ question | tojson }};
+  const body = document.getElementById('case-body');
+  const initial = JSON.parse(document.getElementById('case-initial-status').textContent);
+
+  const POLL_INTERVAL_MS = 3000;
+  const POLL_MAX_ATTEMPTS = 200; // ~10 minutes -- "Continue in Background" means this page timing out
+                                  // must never be mistaken for the case itself stopping; the case keeps
+                                  // running server-side regardless of whether anyone is still polling it.
+
+  function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+  function renderRunning(status) {
+    body.innerHTML = `
+      <div class="case-detail-activity">
+        <div class="case-detail-spinner"></div>
+        <div>
+          <div>${escapeHtml(status.current_activity || 'Working')}&hellip;</div>
+          <div class="case-detail-meta" style="margin:0.25rem 0 0">Elapsed ${formatElapsed(status.elapsed_seconds)} &mdash; safe to close this tab, it keeps running.</div>
+        </div>
+      </div>
+      <div class="case-detail-actions">
+        <button type="button" class="btn btn-secondary" id="case-cancel-btn">Cancel</button>
+      </div>`;
+    const cancelBtn = document.getElementById('case-cancel-btn');
+    cancelBtn.addEventListener('click', async () => {
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = 'Cancelling…';
+      try {
+        await fetch(`/cases/${caseId}/cancel`, { method: 'POST' });
+      } catch (err) {
+        // polling will still pick up the eventual state either way
+      }
+    });
+  }
+
+  function renderDone(status) {
+    if (status.outcome === 'answered' && status.result && status.result.thread_url) {
+      window.location.href = status.result.thread_url;
+      return;
+    }
+    const answerHtml = status.result ? status.result.answer_html : 'No result.';
+    body.innerHTML = `
+      <div class="case-detail-answer">${answerHtml}</div>`;
+  }
+
+  function renderError(status) {
+    body.innerHTML = `<p class="case-detail-error">${escapeHtml(status.error || 'Something went wrong.')}</p>`;
+  }
+
+  function formatElapsed(seconds) {
+    seconds = Math.round(seconds || 0);
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  async function poll() {
+    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+      let response;
+      try {
+        response = await fetch(`/ask/status/${caseId}`);
+      } catch (err) {
+        await sleep(POLL_INTERVAL_MS);
+        continue;
+      }
+      if (!response.ok) {
+        renderError({ error: `Lost track of this case (HTTP ${response.status}).` });
+        return;
+      }
+      const status = await response.json();
+      if (status.status === 'running') {
+        renderRunning(status);
+      } else if (status.status === 'done') {
+        renderDone(status);
+        return;
+      } else if (status.status === 'error') {
+        renderError(status);
+        return;
+      }
+      await sleep(POLL_INTERVAL_MS);
+    }
+    renderError({ error: 'Still running after a long wait -- check back on this page later, it has not stopped.' });
+  }
+
+  if (initial.status === 'running') {
+    renderRunning(initial);
+    poll();
+  } else if (initial.status === 'done') {
+    renderDone(initial);
+  } else {
+    renderError(initial);
+  }
+})();
+</script>
+{% endblock %}

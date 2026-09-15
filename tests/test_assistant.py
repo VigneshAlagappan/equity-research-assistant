@@ -12,7 +12,7 @@ import pytest
 
 from companies.registry import seed_companies
 from ingestion.pipeline import ingest_file
-from research.assistant import _select_model, answer_question
+from research.assistant import InsufficientEvidenceError, _select_model, answer_question
 from tests.test_screener_adapter import _make_screener_workbook
 
 
@@ -109,6 +109,28 @@ def test_answer_question_without_any_data_skips_the_api_call(db_conn: sqlite3.Co
 
     assert "No data ingested yet" in result
     assert captured == []  # never called the API — no evidence to ground an answer in
+
+
+def test_answer_question_with_case_id_raises_insufficient_evidence_instead_of_returning_a_string(
+    db_conn: sqlite3.Connection, monkeypatch
+) -> None:
+    from storage.repositories import create_research_case, get_research_case
+
+    seed_companies(db_conn)
+    create_research_case(
+        db_conn, "case-insufficient", kind="ask", question="How is HDFC doing?",
+        company_ids=["HDFCBANK"], statement_type="consolidated", owner_id=None,
+    )
+    captured = _install_fake_client(monkeypatch, text="should never be returned")
+
+    with pytest.raises(InsufficientEvidenceError, match="No data ingested yet"):
+        answer_question(db_conn, "How is HDFC doing?", ["HDFCBANK"], case_id="case-insufficient")
+
+    assert captured == []  # never called the API
+    # current_activity was updated along the way even though it ended in an
+    # exception -- proves the case-aware checkpoints actually ran.
+    row = get_research_case(db_conn, "case-insufficient")
+    assert row["current_activity"] == "Retrieving evidence"
 
 
 def test_answer_question_handles_refusal(ingested_conn: sqlite3.Connection, monkeypatch) -> None:

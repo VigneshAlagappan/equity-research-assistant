@@ -268,5 +268,3 @@ threads/
 # the investigations/investigation_hypotheses tables). tests/test_web.py
 # isolates this to tmp_path via config.settings.INVESTIGATION_JOBS_DIR.
 data/investigation_jobs/
-# Same, for /chat and /research/ask's own async+poll flow (research/ask_jobs.py).
-data/ask_jobs/

@@ -76,6 +76,72 @@ def _select_model(question: str, company_ids: list[str], evidence_count: int) ->
     return TIER_PREFERRED_MODEL[classify(question, company_ids, evidence_count).tier.value]
 
 
+class InsufficientEvidenceError(Exception):
+    """Raised by answer_question() ONLY when called with case_id set (the
+    case-aware async path, research/case_runner.py) and the early
+    sufficiency check finds no evidence at all to ground an answer in.
+    Carries the same explanatory message answer_question() would otherwise
+    just return as a plain string -- callers that don't pass case_id (every
+    pre-existing synchronous caller: /research/ask, /companies/<id>/ask,
+    /chat) never see this exception; their behavior is byte-for-byte
+    unchanged. case_runner.py catches this specifically to mark the case
+    completed/outcome='insufficient_data' rather than 'answered', per the
+    "reserve Failed for genuine technical failures" rule -- finding nothing
+    to ground an answer in is not a failure, it's a real, useful outcome."""
+
+
+class CaseCancelledError(Exception):
+    """Raised by answer_question() ONLY when called with case_id set, and
+    that case's cancel_requested flag was set (POST /cases/<case_id>/cancel)
+    since the case started -- research/case_runner.py catches this and
+    transitions the case straight to status='cancelled' rather than
+    'failed'. Checked once, right before the LLM call (see answer_question's
+    own docstring for why that's the one checkpoint that matters)."""
+
+
+def sentry_span(op: str, description: str):
+    """A no-op context manager when Sentry isn't configured (config.settings.
+    SENTRY_DSN unset -- see web/app.py's own gate) or sentry_sdk isn't
+    importable, so every call site below works identically either way
+    without its own try/except. Real spans nest under whatever transaction
+    is already active (case_runner.py starts one per case, tagged
+    case_id) -- see https://docs.sentry.io/platforms/python/tracing/."""
+    try:
+        import sentry_sdk
+    except ImportError:
+        from contextlib import nullcontext
+
+        return nullcontext()
+    return sentry_sdk.start_span(op=op, name=description)
+
+
+def gather_evidence(
+    conn: DBConnection, question: str, company_ids: list[str], statement_type: str | None = "consolidated",
+):
+    """The four evidence-source calls answer_question() below grounds every
+    answer in (Financials/Postgres, Docs/Qdrant+FTS, Macro, Knowledge Graph/
+    Neo4j via research/knowledge_evidence.py) -- extracted out so research/
+    case_runner.py's early sufficiency check can call this ALONE (cheap: DB
+    queries and a vector search, no LLM call) before deciding whether a
+    case is even worth a full LLM pass, without duplicating the retrieval
+    logic or paying for it twice. Returns (financial_evidence, variable_evidence)
+    kept separate, not concatenated -- answer_question() needs that split
+    for its own prompt-caching cacheable_prefix (see its own docstring)."""
+    with sentry_span("db.postgres", "Financials evidence (canonical_financials)"):
+        financial_evidence = get_comparison_evidence(conn, company_ids, statement_type)
+    variable_evidence: list = []
+    if len(company_ids) == 1:
+        with sentry_span("db.postgres", "Document evidence (documents)"):
+            variable_evidence += get_document_evidence(conn, company_ids[0], question)
+        with sentry_span("vector.qdrant", "Document passage evidence (hybrid retrieval)"):
+            variable_evidence += get_document_passage_evidence(conn, company_ids[0], question)
+        with sentry_span("graph.neo4j", "Knowledge Graph evidence"):
+            variable_evidence += get_knowledge_graph_evidence(conn, company_ids[0], question)
+    with sentry_span("db.postgres", "Macro evidence (macro_observations)"):
+        variable_evidence += get_macro_evidence(conn, question)
+    return financial_evidence, variable_evidence
+
+
 def answer_question(
     conn: DBConnection,
     question: str,
@@ -84,6 +150,7 @@ def answer_question(
     model: str | None = None,
     *,
     investigation_memory: InvestigationMemoryCapabilities | None = None,
+    case_id: str | None = None,
 ) -> str:
     """Answer a research question about one or more companies, and/or about
     macro/regulatory data (India or US), grounded in retrieved evidence.
@@ -146,9 +213,29 @@ def answer_question(
     `user_message`. A second (or third, ...) question about the same
     company within Anthropic's cache TTL reads that Financials block back at
     a fraction of the input-token cost instead of paying full price again.
+
+    `case_id` (only ever passed by research/case_runner.py's async/Cases
+    path) turns on two things a plain synchronous call doesn't need: (1)
+    current_activity updates on the research_cases row between stages, so
+    the Cases-list polling UI shows what's actually happening instead of a
+    fake percentage, and (2) InsufficientEvidenceError instead of the plain
+    "no evidence" string below, so the case can be marked completed/
+    outcome='insufficient_data' rather than "answered" with an unhelpful
+    message. Every pre-existing synchronous caller leaves this unset and
+    sees identical behavior to before this parameter existed. Also checked
+    for cooperative cancellation (CaseCancelledError) right before the LLM
+    call -- the one checkpoint that matters most, since evidence retrieval
+    is cheap and the LLM call is both the slow part and the only real cost
+    worth aborting before it starts.
     """
+    if case_id is not None:
+        from storage.repositories import update_case_activity
+
+        update_case_activity(conn, case_id, "Checking for a similar prior answer")
+
     mem = investigation_memory or default_investigation_memory()
-    reused = mem.reusable_report(conn, question, company_ids, statement_type)
+    with sentry_span("db.postgres", "Reuse-before-recompute check"):
+        reused = mem.reusable_report(conn, question, company_ids, statement_type)
     if reused is not None:
         observability.record_reuse(
             conn, task_name="assistant_qa", company_ids=company_ids, question=question,
@@ -156,36 +243,33 @@ def answer_question(
         )
         return reused.report_markdown
 
-    financial_evidence = get_comparison_evidence(conn, company_ids, statement_type)  # Financials — cacheable
-    variable_evidence: list = []
-    if len(company_ids) == 1:
-        # Uploaded-document evidence (Docs tab) only has single-company
-        # attribution today — see research/documents.py.
-        variable_evidence += get_document_evidence(conn, company_ids[0], question)  # Docs (whole document)
-        # Additive (section 9): the specific passage(s) hybrid retrieval
-        # judges most relevant to THIS question, not just each document's
-        # opening ~12,000 characters — finds a paraphrased answer buried
-        # deep in a long filing that get_document_evidence() above would
-        # never reach. Never removes the whole-document evidence above.
-        variable_evidence += get_document_passage_evidence(conn, company_ids[0], question)  # Docs (targeted passages)
-        # Cross-company Knowledge Graph claims (Step 2B) connected to this
-        # company's own Company node or to any known entity the question
-        # names — see research/knowledge_evidence.py. Single-company only,
-        # same constraint the Docs evidence above already has.
-        variable_evidence += get_knowledge_graph_evidence(conn, company_ids[0], question)  # Knowledge Graph
-    variable_evidence += get_macro_evidence(conn, question)  # Macro (RBI, IITM, FRED, ...)
+    if case_id is not None:
+        from storage.repositories import update_case_activity
+
+        update_case_activity(conn, case_id, "Retrieving evidence")
+
+    financial_evidence, variable_evidence = gather_evidence(conn, question, company_ids, statement_type)
     evidence = financial_evidence + variable_evidence
     if not evidence:
         if company_ids:
-            return (
+            message = (
                 f"No data ingested yet for {', '.join(company_ids)}. "
                 "Run `python main.py ingest ...` first, then try again."
             )
-        return (
-            "No matching evidence found for this question. Name a company to ground it in that "
-            "company's Financials/Docs, or ask about a macro topic that's been ingested "
-            "(e.g. rainfall, repo rate, credit growth)."
-        )
+        else:
+            message = (
+                "No matching evidence found for this question. Name a company to ground it in that "
+                "company's Financials/Docs, or ask about a macro topic that's been ingested "
+                "(e.g. rainfall, repo rate, credit growth)."
+            )
+        if case_id is not None:
+            raise InsufficientEvidenceError(message)
+        return message
+
+    if case_id is not None:
+        from storage.repositories import update_case_activity
+
+        update_case_activity(conn, case_id, "Analyzing evidence")
 
     hardness = classify(question, company_ids, len(evidence))
     optimized_financial = optimize("", financial_evidence, hardness.tier)
@@ -208,11 +292,19 @@ def answer_question(
         else f"Question: {question}"
     )
 
+    if case_id is not None:
+        from storage.repositories import is_case_cancel_requested, update_case_activity
+
+        if is_case_cancel_requested(conn, case_id):
+            raise CaseCancelledError()
+        update_case_activity(conn, case_id, "Generating answer")
+
     try:
-        result = route(
-            system=SYSTEM_PROMPT, user_message=user_message, hardness=hardness,
-            max_tokens=MAX_TOKENS, pinned_model=pinned_model, cacheable_prefix=cacheable_prefix,
-        )
+        with sentry_span("llm.anthropic", f"answer_question ({hardness.tier.value})"):
+            result = route(
+                system=SYSTEM_PROMPT, user_message=user_message, hardness=hardness,
+                max_tokens=MAX_TOKENS, pinned_model=pinned_model, cacheable_prefix=cacheable_prefix,
+            )
     except AllProvidersUnavailableError:
         return "The assistant is temporarily unavailable (all configured models failed). Try again shortly."
 
