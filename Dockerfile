@@ -53,6 +53,25 @@ RUN mkdir -p /app/data/raw /app/data/normalized /app/data/documents /app/data/ch
 ENV PORT=8080
 EXPOSE 8080
 
+# Cap every CPU-threading library this app pulls in (torch, numpy/MKL/
+# OpenBLAS via sentence-transformers, HuggingFace tokenizers) at 1 thread
+# each -- all of them default to spawning one thread PER VISIBLE CORE,
+# which on this container's real allocation (Lightsail "micro" -- 0.25
+# vCPU) is pure thread-scheduling overhead and contention, never a real
+# speedup: there's less than one core to parallelize across in the first
+# place. Set here (env vars, before any Python process starts) rather
+# than in application code, since torch/MKL read these at their OWN
+# import/init time -- setting them in web/app.py would already be too
+# late for whichever of these libraries initializes first. Real, observed
+# motivation: repeated gunicorn WORKER TIMEOUT/SIGKILL crashes under
+# completely ordinary single-request load (one Ask AI question, no
+# concurrent batch jobs) on this exact instance size -- this is the free,
+# zero-risk mitigation to try before paying for a bigger instance.
+ENV OMP_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+ENV OPENBLAS_NUM_THREADS=1
+ENV TOKENIZERS_PARALLELISM=false
+
 # gunicorn, not the Flask dev server -- create_app() is a factory
 # (web/app.py), so gunicorn needs the factory call, not a bare module
 # attribute: "web.app:create_app()".
