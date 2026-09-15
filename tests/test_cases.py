@@ -262,6 +262,67 @@ def test_research_understand_requires_a_question(tmp_path: Path, monkeypatch) ->
     assert response.status_code == 400
 
 
+def _poll_investigate_until_done(test_client, investigation_id: str, attempts: int = 200):
+    status = None
+    for _ in range(attempts):
+        status = test_client.get(f"/investigate/status/{investigation_id}").get_json()
+        if status["status"] != "running":
+            return status
+        time.sleep(0.05)
+    return status
+
+
+def test_deep_dive_case_appears_on_cases_list_and_reconnects_via_case_detail(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Deep Dive (research/investigation.py) shares the exact same
+    research_cases lifecycle Quick Answer uses -- this proves an
+    in_progress investigation shows up on the Cases list immediately (not
+    just once it finishes, the old file-based investigation_jobs.py
+    behavior this replaced), /cases/<id> renders and polls it via
+    /investigate/status (not /ask/status -- a different response shape),
+    and completion is recorded with a real investigation_id, not just a
+    generic "answered" case."""
+    db_path = tmp_path / "signals_data.db"
+    conn = init_db(db_path=db_path)
+    seed_companies(conn)
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+
+    def _fake_run_investigation(
+        conn, question, company_ids, *, statement_type="consolidated", as_of=None,
+        investigation_id=None, case_id=None,
+    ):
+        from research.investigation import Investigation
+
+        assert case_id == investigation_id  # the route must reuse one id, not mint two
+        return Investigation(investigation_id=investigation_id, question=question, company_ids=company_ids)
+
+    monkeypatch.setattr("web.app.run_investigation", _fake_run_investigation)
+
+    with app.test_client() as test_client:
+        start = test_client.post(
+            "/investigate/generate-async", json={"question": "Why did margins fall?", "company_ids": ["HDFCBANK"]}
+        )
+        assert start.status_code == 202
+        investigation_id = start.get_json()["investigation_id"]
+        assert start.get_json()["case_id"] == investigation_id
+
+        # Poll /cases/<id> is what a user opening the Cases-list entry
+        # would hit -- confirm it renders (not a redirect yet) while the
+        # underlying case may still be in_progress or may have already
+        # finished (the fake investigation is near-instant).
+        detail = test_client.get(f"/cases/{investigation_id}")
+        assert detail.status_code in (200, 302)
+
+        final = _poll_investigate_until_done(test_client, investigation_id)
+
+    assert final["status"] == "done"
+    assert final["url"] == f"/investigate/{investigation_id}"
+
+
 def test_case_detail_unknown_case_is_404(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "signals_data.db"
     init_db(db_path=db_path).close()

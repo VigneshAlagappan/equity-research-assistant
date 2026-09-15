@@ -122,7 +122,6 @@ from llm.hardness import Tier, classify as classify_hardness
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
-from research.investigation_jobs import get_status as get_investigation_job_status, mark_done as mark_investigation_done, mark_error as mark_investigation_error, mark_running as mark_investigation_running
 from retrieval.tag_resolver import resolve_tags_in_text
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
@@ -3251,21 +3250,32 @@ def create_app() -> Flask:
     def case_detail(case_id: str):
         """Case detail/reconnect page -- opening this for an in_progress
         case shows its current activity and keeps polling (same
-        pollAskStatus()/ /ask/status/<job_id> mechanism the Ask AI drawer
-        already uses); a completed case redirects straight to its real
-        result (the generated_reports thread, or -- for an
-        outcome='insufficient_data' case, which never got a thread row at
-        all -- rendered inline here instead)."""
+        pollAskStatus() mechanism the Ask AI drawer already uses, just
+        pointed at whichever status endpoint/payload shape matches this
+        case's kind -- see _case_status_payload/_investigation_case_status_
+        payload); a completed case redirects straight to its real result
+        (the generated_reports thread for kind='ask', the /investigate/<id>
+        page for kind='investigation' -- or, for an outcome='insufficient_
+        data' case, which never got either, rendered inline here instead)."""
         db = get_db()
         case = get_research_case(db, case_id)
         if case is None:
             abort(404)
-        if case["status"] == "completed" and case["outcome"] == "answered" and case["thread_id"]:
-            return redirect(url_for("research_thread", thread_id=case["thread_id"]))
+        if case["status"] == "completed" and case["outcome"] == "answered":
+            if case["kind"] == "investigation" and case["investigation_id"]:
+                return redirect(url_for("investigate_view", investigation_id=case["investigation_id"]))
+            if case["kind"] != "investigation" and case["thread_id"]:
+                return redirect(url_for("research_thread", thread_id=case["thread_id"]))
+        if case["kind"] == "investigation":
+            status_url = url_for("investigate_status", investigation_id=case_id)
+            initial_status = _investigation_case_status_payload(case)
+        else:
+            status_url = url_for("ask_status", job_id=case_id)
+            initial_status = _case_status_payload(case)
         return render_template(
-            "case_detail.html", case_id=case_id, question=case["question"],
+            "case_detail.html", case_id=case_id, question=case["question"], kind=case["kind"],
             company_ids=json.loads(case["company_ids"] or "[]"),
-            initial_status=_case_status_payload(case),
+            status_url=status_url, initial_status=initial_status,
         )
 
     @app.route("/research/understand", methods=["POST"])
@@ -3606,8 +3616,19 @@ def create_app() -> Flask:
             if get_company(db, company_id) is None:
                 return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
 
+        # investigation_id doubles as case_id -- one id, not two, since
+        # nothing about this pipeline needs them to differ (unlike the Ask
+        # AI case/thread_id split, where a case can also complete WITHOUT a
+        # thread -- outcome='insufficient_data'). Same "own db connection,
+        # since a connection can't cross threads" shape every other -async
+        # route uses; research_cases (schemas/*.sql) is the durable, DB-
+        # backed record now -- see that table's own docstring for why this
+        # replaced the earlier per-job JSON file (research/investigation_
+        # jobs.py, now unused for this route) -- it has to survive a
+        # browser refresh/close, a network blip, AND this process
+        # restarting, none of which a disposable file on one gunicorn
+        # worker's local disk could promise.
         investigation_id = uuid.uuid4().hex[:12]
-        mark_investigation_running(investigation_id)
         # Built here, inside this real request's context, not inside the
         # background thread below -- url_for needs an active request (or
         # app) context to resolve SERVER_NAME/APPLICATION_ROOT, which a bare
@@ -3615,27 +3636,69 @@ def create_app() -> Flask:
         # at this point, so the URL it produces is valid regardless of how
         # the run underneath it turns out.
         result_url = url_for("investigate_view", investigation_id=investigation_id)
+        owner_id = g.user["user_id"] if g.user else None
 
-        def _run_in_background() -> None:
-            conn = scheduling_open_db()
+        start_case(
+            db, case_id=investigation_id, kind="investigation", question=question, company_ids=company_ids,
+            statement_type=statement_type, owner_id=owner_id,
+        )
+
+        def compute(conn) -> dict:
             try:
                 run_investigation(
                     conn, question, company_ids, statement_type=statement_type, as_of=as_of,
-                    investigation_id=investigation_id,
+                    investigation_id=investigation_id, case_id=investigation_id,
                 )
-                mark_investigation_done(investigation_id, result_url)
             except InvestigationError as exc:
-                mark_investigation_error(investigation_id, f"The investigation couldn't complete: {exc}")
+                raise RuntimeError(f"The investigation couldn't complete: {exc}") from exc
             except anthropic.APIError as exc:
-                mark_investigation_error(investigation_id, f"The assistant request failed: {exc}")
-            except Exception as exc:  # noqa: BLE001 -- surface any failure to the poller, not a silently stuck "running"
-                logger.exception("Async investigation %s failed", investigation_id)
-                mark_investigation_error(investigation_id, f"Unexpected error: {exc}")
-            finally:
-                conn.close()
+                raise RuntimeError(f"The assistant request failed: {exc}") from exc
+            return {"investigation_id": investigation_id, "url": result_url}
 
-        threading.Thread(target=_run_in_background, daemon=True).start()
-        return jsonify(investigation_id=investigation_id), 202
+        run_case_in_background(scheduling_open_db, investigation_id, "investigation", compute)
+        return jsonify(investigation_id=investigation_id, case_id=investigation_id), 202
+
+    def _investigation_case_status_payload(case) -> dict:
+        """Same {status, url}/{status, error} contract research.html's
+        pollInvestigationStatus() already polls against (unchanged, so the
+        already-deployed frontend keeps working) -- current_activity/
+        elapsed_seconds are new, additive fields for the Cases detail page
+        to use. Mirrors web/app.py's own _case_status_payload() (the Ask AI
+        equivalent) but returns `url` instead of `result` on completion,
+        since an investigation's real result is its own /investigate/<id>
+        page, not something to render inline."""
+        started = datetime.fromisoformat(case["started_at"])
+        now = datetime.now(started.tzinfo) if started.tzinfo else datetime.utcnow()
+        elapsed_seconds = max(0.0, (now - started).total_seconds())
+        payload = {
+            "case_id": case["case_id"],
+            "current_activity": case["current_activity"],
+            "elapsed_seconds": round(elapsed_seconds, 1),
+        }
+        if case["status"] == "in_progress":
+            payload["status"] = "running"
+            return payload
+        if case["status"] == "failed":
+            payload["status"] = "error"
+            payload["error"] = case["error_message"] or "Something went wrong."
+            return payload
+        if case["status"] == "cancelled":
+            payload["status"] = "error"
+            payload["error"] = "This request was cancelled."
+            return payload
+
+        # status == "completed"
+        if case["outcome"] == "insufficient_data":
+            raw = json.loads(case["result_json"]) if case["result_json"] else {}
+            payload["status"] = "error"
+            payload["error"] = raw.get("message", "Not enough data was found to answer this question.")
+            payload["outcome"] = "insufficient_data"
+            return payload
+        result = json.loads(case["result_json"]) if case["result_json"] else {}
+        payload["status"] = "done"
+        payload["outcome"] = case["outcome"]
+        payload["url"] = result.get("url")
+        return payload
 
     @app.route("/investigate/status/<investigation_id>")
     def investigate_status(investigation_id: str):
@@ -3648,10 +3711,10 @@ def create_app() -> Flask:
         returned inline. A 404 (unknown investigation_id — never tracked,
         e.g. a stale/mistyped link) is deliberately distinct from a real
         "error" status."""
-        status = get_investigation_job_status(investigation_id)
-        if status is None:
+        case = get_research_case(get_db(), investigation_id)
+        if case is None:
             abort(404)
-        return jsonify(status)
+        return jsonify(_investigation_case_status_payload(case))
 
     @app.route("/investigate/<investigation_id>")
     def investigate_view(investigation_id: str):
@@ -3839,11 +3902,16 @@ def create_app() -> Flask:
                 status_key, status_label = "case_insufficient_data", "Insufficient data"
             else:
                 status_key, status_label = _CASE_STATUS_LABEL[case["status"]]
+            # Same label a terminal (completed/answered) row of the same
+            # kind already uses elsewhere in this feed ("Quick Answer" /
+            # "Deep Dive") -- so the label doesn't change the moment a case
+            # flips from in_progress to done, just the right_tag does.
+            kind_label = "Deep Dive" if case["kind"] == "investigation" else "Quick Answer"
             entries.append(
                 {
                     "type": "case",
                     "id": case["case_id"],
-                    "type_label": "In Progress" if case["status"] == "in_progress" else "Case",
+                    "type_label": kind_label,
                     "href": url_for("case_detail", case_id=case["case_id"]),
                     "title": case["question"],
                     "subtitle": "",

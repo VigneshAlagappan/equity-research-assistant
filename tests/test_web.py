@@ -64,11 +64,6 @@ def _build_app(db_path: Path, tmp_path: Path, monkeypatch):
     # a report (research/ask routes) wrote a real file into this repo's own
     # threads/ directory instead of tmp_path.
     monkeypatch.setattr("config.settings.BASE_DIR", tmp_path)
-    # research/investigation_jobs.py's per-investigation status files
-    # (/investigate/generate-async, /investigate/status/<id>) — same
-    # "don't let a test write into this repo's real runtime dirs" reasoning
-    # as DOCUMENTS_DIR/RAW_DIR/PRICE_DB_PATH/BASE_DIR above.
-    monkeypatch.setattr("config.settings.INVESTIGATION_JOBS_DIR", tmp_path / "investigation_jobs")
     from web.app import create_app
 
     app = create_app()
@@ -1853,7 +1848,7 @@ def test_investigate_generate_async_runs_in_background_and_status_reaches_done(c
     used to hand straight back."""
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
 
-    def _fake_run_investigation(conn, question, company_ids, *, statement_type="consolidated", as_of=None, investigation_id=None):
+    def _fake_run_investigation(conn, question, company_ids, *, statement_type="consolidated", as_of=None, investigation_id=None, case_id=None):
         from research.investigation import Investigation
 
         assert investigation_id is not None, "the route must hand the pre-generated id through, not let a new one be minted"

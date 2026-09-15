@@ -222,6 +222,9 @@
       <button type="submit" class="btn btn-primary" id="investigate-button" {{ 'disabled' if not api_key_set }}>Investigate</button>
     </form>
     <p class="research-status" id="research-status"></p>
+    <p class="research-status" id="research-continue-bg" hidden>
+      <a href="#" id="research-continue-bg-link">Continue in background — view progress on Cases</a>
+    </p>
 
     <div class="research-result" id="research-result"></div>
   </div>
@@ -251,6 +254,26 @@
     const investigateButton = document.getElementById('investigate-button');
     const resultEl = document.getElementById('research-result');
     const COMPANIES = {{ companies|tojson }};
+
+    // "Continue in Background" -- the case (research_cases, either kind)
+    // was already created and is already running server-side, completely
+    // decoupled from this page/tab/browser the moment the -async POST
+    // below returns a case_id -- this link just makes that fact visible
+    // and gives an explicit way to leave: /cases/<id> is the same
+    // reconnect-and-poll page the Cases list itself links an in_progress
+    // row to, so closing this tab and coming back later (or from Cases)
+    // picks up exactly where this page would have shown it finishing.
+    const continueBg = document.getElementById('research-continue-bg');
+    const continueBgLink = document.getElementById('research-continue-bg-link');
+
+    function showContinueInBackground(caseId) {
+      continueBgLink.href = `/cases/${caseId}`;
+      continueBg.hidden = false;
+    }
+
+    function hideContinueInBackground() {
+      continueBg.hidden = true;
+    }
 
     // Quick Answer / Deep Dive picker -- research/company_resolver.py (LLM-
     // based entity resolution, replacing the old detectCompaniesInText()
@@ -601,11 +624,14 @@
           triggerButton.disabled = false;
           return;
         }
+        showContinueInBackground(data.case_id);
         const finished = await pollInvestigationStatus(data.investigation_id);
         window.location.href = finished.url;
       } catch (err) {
         status.textContent = 'Network error: ' + err.message;
         triggerButton.disabled = false;
+      } finally {
+        hideContinueInBackground();
       }
     }
 
@@ -707,6 +733,7 @@
           status.textContent = data.error || 'Something went wrong.';
           return;
         }
+        showContinueInBackground(data.case_id);
         const result = await pollAskStatus(data.job_id);
         status.textContent = '';
         renderResult(result);
@@ -714,6 +741,7 @@
         status.textContent = 'Network error: ' + err.message;
       } finally {
         investigateButton.disabled = false;
+        hideContinueInBackground();
       }
     });
   </script>

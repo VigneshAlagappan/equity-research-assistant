@@ -169,7 +169,7 @@ def run_case_in_background(
                 else:
                     complete_research_case(
                         conn, case_id, outcome="answered", result_json=json.dumps(result),
-                        thread_id=result.get("thread_id"),
+                        thread_id=result.get("thread_id"), investigation_id=result.get("investigation_id"),
                     )
         finally:
             conn.close()

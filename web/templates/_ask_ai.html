@@ -291,7 +291,24 @@
       <div class="askai-thinking">
         <div class="askai-thinking-q">${escapeHtml(question)}</div>
         <p class="askai-thinking-status">${escapeHtml(MODELS.find(m => m.key === model).name)} is reading the archive&hellip;</p>
+        <p class="askai-thinking-status" id="askai-continue-bg" hidden>
+          <a href="#" id="askai-continue-bg-link">Continue in background — view progress on Cases</a>
+        </p>
       </div>`;
+  }
+
+  // Same "the case is already running server-side, independent of this
+  // drawer/tab" reasoning as research.html's own showContinueInBackground
+  // -- /cases/<id> is the same reconnect-and-poll page the Cases list
+  // links an in_progress row to, so closing this drawer (or the whole
+  // tab) and coming back later picks up exactly where this would have
+  // shown it finishing.
+  function showAskAiContinueInBackground(caseId) {
+    const el = document.getElementById('askai-continue-bg');
+    const link = document.getElementById('askai-continue-bg-link');
+    if (!el || !link) return; // the panel was reset/re-rendered already -- nothing to show it in
+    link.href = `/cases/${caseId}`;
+    el.hidden = false;
   }
 
   function chartsMarkup(data) {
@@ -408,6 +425,7 @@
         renderError(question, data.error || 'Something went wrong.');
         return;
       }
+      showAskAiContinueInBackground(data.job_id);
       const result = await pollAskStatus(data.job_id);
       if (phase !== 'thinking') return;
       phase = 'answered';

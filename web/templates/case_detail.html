@@ -43,6 +43,7 @@
 (function () {
   const caseId = {{ case_id | tojson }};
   const question = {{ question | tojson }};
+  const statusUrl = {{ status_url | tojson }};
   const body = document.getElementById('case-body');
   const initial = JSON.parse(document.getElementById('case-initial-status').textContent);
 
@@ -78,8 +79,17 @@
   }
 
   function renderDone(status) {
+    // Two response shapes share this one page: Quick Answer's {result:
+    // {answer_html, thread_url, ...}} (web/app.py's _case_status_payload)
+    // and Deep Dive's {url: "/investigate/<id>"} (_investigation_case_
+    // status_payload) -- an investigation's real result is its own page,
+    // never rendered inline here.
     if (status.outcome === 'answered' && status.result && status.result.thread_url) {
       window.location.href = status.result.thread_url;
+      return;
+    }
+    if (status.outcome === 'answered' && status.url) {
+      window.location.href = status.url;
       return;
     }
     const answerHtml = status.result ? status.result.answer_html : 'No result.';
@@ -108,7 +118,7 @@
     for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
       let response;
       try {
-        response = await fetch(`/ask/status/${caseId}`);
+        response = await fetch(statusUrl);
       } catch (err) {
         await sleep(POLL_INTERVAL_MS);
         continue;
