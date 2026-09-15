@@ -1890,7 +1890,18 @@ def get_latest_data_timestamp(conn: DBConnection, company_ids: list[str]) -> str
     the closest Postgres-side equivalent -- the reconciled value's own
     timestamp, which only advances when new financial data has actually
     been decided/written, same freshness contract the excluded table's
-    created_at gave the SQLite version."""
+    created_at gave the SQLite version.
+
+    company_ids=[] (a macro-only question, research/macro_evidence.py --
+    no company to check freshness against) short-circuits before building
+    any SQL: `WHERE company_id IN ()` is a Postgres SYNTAX error, not just
+    an always-false condition the way SQLite tolerates it -- found live,
+    every macro-only question through the reuse-before-recompute check
+    (context/reuse.py's find_reusable_report, called on every answer_
+    question() -- the hot path of every /research/ask-shaped request) was
+    crashing outright under DATABASE_BACKEND=postgres."""
+    if not company_ids:
+        return None
     placeholders = ",".join(["%s"] * len(company_ids))
     with conn.cursor() as cur:
         cur.execute(

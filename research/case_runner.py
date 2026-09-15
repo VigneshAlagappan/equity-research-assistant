@@ -74,6 +74,19 @@ def _sentry_transaction(case_id: str, kind: str):
         yield transaction
 
 
+def _rollback(conn) -> None:
+    """Clears a poisoned Postgres transaction (see run_case_in_background's
+    own comment on why this must run before any of the terminal-state
+    writes below it) -- a plain no-op on SQLite when there's nothing to
+    roll back, so this is always safe to call unconditionally."""
+    try:
+        conn.rollback()
+    except Exception:  # noqa: BLE001 -- best-effort; if even rollback fails the connection is
+        # unrecoverable and the terminal-state write below will raise its
+        # own clear error rather than this one being silently swallowed.
+        pass
+
+
 def _capture_exception(exc: BaseException) -> None:
     try:
         import sentry_sdk
@@ -126,15 +139,32 @@ def run_case_in_background(
                 try:
                     result = compute(conn)
                 except InsufficientEvidenceError as exc:
+                    _rollback(conn)
                     complete_research_case(
                         conn, case_id, outcome="insufficient_data",
                         result_json=json.dumps({"message": str(exc)}),
                     )
                 except CaseCancelledError:
+                    _rollback(conn)
                     cancel_research_case(conn, case_id)
                 except Exception as exc:  # noqa: BLE001 -- surface any failure to the case row, never a silently stuck case
                     logger.exception("Case %s (kind=%s) failed", case_id, kind)
                     _capture_exception(exc)
+                    # Postgres (unlike SQLite's default autocommit-ish
+                    # behavior) leaves the connection in "current
+                    # transaction is aborted" state after ANY failed
+                    # statement -- every further command on it, including
+                    # this fail_research_case() write, would raise
+                    # InFailedSqlTransaction and be silently swallowed by
+                    # this same except block turning into an unhandled
+                    # exception in the thread, leaving the case stuck
+                    # in_progress forever (found live: a company_ids=[]
+                    # question's now-fixed IN () syntax error left the
+                    # case polling as "running" indefinitely). Rolling
+                    # back first clears that state on both backends
+                    # (a harmless no-op on SQLite when there's nothing to
+                    # roll back) so the failure actually gets recorded.
+                    _rollback(conn)
                     fail_research_case(conn, case_id, f"{type(exc).__name__}: {exc}")
                 else:
                     complete_research_case(

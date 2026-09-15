@@ -2402,7 +2402,16 @@ def get_latest_data_timestamp(conn: sqlite3.Connection, company_ids: list[str]) 
     cached generated_reports row against before reusing it. A generated
     report older than this timestamp was built from data that has since
     changed, so it must not be silently reused (README §17: "an old cached
-    result must not silently masquerade as current data")."""
+    result must not silently masquerade as current data").
+
+    company_ids=[] (a macro-only question) short-circuits before building
+    any SQL -- see storage/repositories_pg.py's own counterpart for why
+    (a `WHERE company_id IN ()` is a syntax error there, tolerated here
+    only because SQLite treats an empty IN() as always-false rather than
+    invalid -- short-circuiting keeps both backends' behavior identical
+    rather than relying on that difference)."""
+    if not company_ids:
+        return None
     placeholders = ",".join("?" * len(company_ids))
     row = conn.execute(
         f"""
