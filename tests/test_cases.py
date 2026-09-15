@@ -136,6 +136,132 @@ def test_cancel_unknown_case_is_404(tmp_path: Path, monkeypatch) -> None:
     assert response.status_code == 404
 
 
+def test_natural_shorthand_company_names_resolve_via_the_llm_fallback(tmp_path: Path, monkeypatch) -> None:
+    """The real, observed production bug: research.html's client-side
+    detectCompaniesInText() regex requires an exact whole-word match of a
+    company's full registered name -- "IDFC Bank" never matches the
+    registered "IDFC First Bank", "Federal Bank" never matches "The
+    Federal Bank", so a real comparison question went through with
+    company_ids=[] and came back "no evidence found" even though both
+    companies had financials ingested. This proves the server-side LLM
+    fallback (research/company_resolver.py, wired into _compute_answer_
+    question) catches exactly what the client-side regex misses."""
+    from companies.registry import register_company
+
+    db_path = tmp_path / "signals_data.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    register_company(conn, "IDFCFIRSTB", "IDFC First Bank Limited", "IDFC First Bank", nse_symbol="IDFCFIRSTB")
+    register_company(conn, "FEDERALBNK", "The Federal Bank Limited", "The Federal Bank", nse_symbol="FEDERALBNK")
+    for company_id in ("IDFCFIRSTB", "FEDERALBNK"):
+        file_path = tmp_path / f"{company_id}.xlsx"
+        _make_screener_workbook(file_path)
+        ingest_file(conn, file_path, company_id=company_id, source_id="screener")
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+
+    # Two different fake-LLM responses in sequence: the first call this
+    # pipeline makes is company resolution (JSON), the second is the real
+    # answer (plain text) -- a single fixed-text fake client would return
+    # the wrong shape to whichever call happened not to match.
+    import llm.providers.anthropic_provider as anthropic_provider
+    from types import SimpleNamespace
+
+    responses = iter([
+        '{"company_ids": ["IDFCFIRSTB", "FEDERALBNK"]}',
+        # 2 companies now resolved -> _compute_answer_question's own
+        # aggregate-intent check (research/aggregate_query.py) fires next,
+        # before falling through to the real per-company answer below.
+        '{"is_aggregate": false, "metric_key": null, "operation": null, "num_years": null}',
+        "IDFC First Bank is growing faster. [FACT] x.",
+    ])
+
+    class _SequencedMessages:
+        def create(self, **kwargs):
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text=next(responses))], stop_reason="end_turn")
+
+    monkeypatch.setattr(anthropic_provider.anthropic, "Anthropic", lambda *a, **kw: SimpleNamespace(messages=_SequencedMessages()))
+
+    with app.test_client() as test_client:
+        start = test_client.post(
+            "/research/ask-async",
+            json={
+                "question": "IDFC Bank Growth rate in last 5 years compared to Federal Bank. "
+                "Why one bank is growing faster, which one is that? and why?",
+                "company_ids": [],  # exactly what the client-side regex sends when it finds nothing
+            },
+        )
+        assert start.status_code == 202
+        case_id = start.get_json()["job_id"]
+
+        final = _poll_until_done(test_client, case_id)
+
+    assert final["status"] == "done"
+    assert final.get("outcome") != "insufficient_data"
+    assert sorted(final["result"]["company_ids"]) == ["FEDERALBNK", "IDFCFIRSTB"]
+    assert "IDFC First Bank is growing faster" in final["result"]["answer_html"]
+
+
+def test_research_understand_resolves_companies_and_suggests_deep_for_a_comparison(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from companies.registry import register_company
+
+    db_path = tmp_path / "signals_data.db"
+    conn = init_db(db_path=db_path)
+    register_company(conn, "IDFCFIRSTB", "IDFC First Bank Limited", "IDFC First Bank", nse_symbol="IDFCFIRSTB")
+    register_company(conn, "FEDERALBNK", "The Federal Bank Limited", "The Federal Bank", nse_symbol="FEDERALBNK")
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    _install_fake_llm(monkeypatch, text='{"company_ids": ["IDFCFIRSTB", "FEDERALBNK"]}')
+
+    with app.test_client() as test_client:
+        response = test_client.post(
+            "/research/understand",
+            json={"question": "IDFC Bank Growth rate compared to Federal Bank. Why one is growing faster?"},
+        )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert sorted(data["company_ids"]) == ["FEDERALBNK", "IDFCFIRSTB"]
+    assert sorted(data["company_labels"]) == ["IDFC First Bank", "The Federal Bank"]
+    assert data["suggested_case_type"] == "deep"  # >1 company -> always DEEP (llm/hardness.py)
+
+
+def test_research_understand_suggests_quick_for_a_plain_lookup(tmp_path: Path, monkeypatch) -> None:
+    from companies.registry import register_company
+
+    db_path = tmp_path / "signals_data.db"
+    conn = init_db(db_path=db_path)
+    register_company(conn, "HDFCBANK", "HDFC Bank Limited", "HDFC Bank", nse_symbol="HDFCBANK")
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    _install_fake_llm(monkeypatch, text='{"company_ids": ["HDFCBANK"]}')
+
+    with app.test_client() as test_client:
+        response = test_client.post(
+            "/research/understand", json={"question": "What is HDFC Bank's growth rate for the last 4 years?"}
+        )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["company_ids"] == ["HDFCBANK"]
+    assert data["suggested_case_type"] == "quick"
+
+
+def test_research_understand_requires_a_question(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "signals_data.db"
+    init_db(db_path=db_path).close()
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        response = test_client.post("/research/understand", json={"question": ""})
+    assert response.status_code == 400
+
+
 def test_case_detail_unknown_case_is_404(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "signals_data.db"
     init_db(db_path=db_path).close()

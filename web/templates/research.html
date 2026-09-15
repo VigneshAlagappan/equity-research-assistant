@@ -158,6 +158,37 @@
     .example-card:last-child { border-bottom: none; padding-bottom: 0; }
     .examples-grid { gap: 1.25rem; }
   }
+
+  /* Quick Answer / Deep Dive picker -- appears once /research/understand
+     resolves (debounced on typing), same segmented-control look as
+     company.html's .statement-toggle, plain <button>s bound in JS rather
+     than server-rendered links (same shape as that file's own
+     .vm-period-btn variant). Hidden by default so it doesn't flash empty
+     before the question has been understood at all. */
+  .research-picker {
+    display: none;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    width: 100%;
+    text-align: left;
+    padding-top: 0.75rem;
+    margin-top: 0.75rem;
+    border-top: 1px solid var(--border);
+  }
+  .research-picker.is-visible { display: flex; }
+  .case-type-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; flex-shrink: 0; }
+  .case-type-toggle button {
+    padding: 0.4rem 0.9rem; font-size: 0.85rem; border: none; background: transparent;
+    color: var(--ink-muted); cursor: pointer; font-family: inherit;
+  }
+  .case-type-toggle button.is-active { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .case-type-toggle button:not(.is-active):hover { background: var(--row-hover); }
+  .research-picker-suggestion { font-size: 0.8rem; opacity: 0.65; }
+  .research-scope-pill {
+    font-size: 0.8rem; padding: 0.3rem 0.7rem; border-radius: 999px;
+    background: var(--row-hover); color: var(--ink-muted);
+  }
 {% endblock %}
 
 {% block content %}
@@ -177,6 +208,15 @@
         <textarea class="input" id="research-query" name="question" rows="1" autocomplete="off"
                   placeholder="Ask anything about a company, sector, or economic relationship…"
                   {{ 'disabled' if not api_key_set }}></textarea>
+      </div>
+
+      <div class="research-picker" id="research-picker">
+        <div class="case-type-toggle" id="case-type-toggle">
+          <button type="button" data-case-type="quick">Quick answer</button>
+          <button type="button" data-case-type="deep">Deep dive</button>
+        </div>
+        <span class="research-picker-suggestion" id="research-picker-suggestion"></span>
+        <span class="research-scope-pill" id="research-scope-pill" hidden></span>
       </div>
 
       <button type="submit" class="btn btn-primary" id="investigate-button" {{ 'disabled' if not api_key_set }}>Investigate</button>
@@ -211,6 +251,91 @@
     const investigateButton = document.getElementById('investigate-button');
     const resultEl = document.getElementById('research-result');
     const COMPANIES = {{ companies|tojson }};
+
+    // Quick Answer / Deep Dive picker -- research/company_resolver.py (LLM-
+    // based entity resolution, replacing the old detectCompaniesInText()
+    // regex's exact-whole-word-match requirement that missed a natural
+    // shorthand like "IDFC Bank" for the registered "IDFC First Bank") and
+    // llm/hardness.py's existing complexity classifier (unchanged -- already
+    // used elsewhere in this app to pick a model tier, reused here to
+    // suggest a case type instead) together via one new endpoint,
+    // /research/understand. Debounced on typing so it doesn't fire a real
+    // LLM call on every keystroke; `understanding` holds its last result,
+    // `caseTypeOverride` is non-null only once the user has clicked a pill
+    // themselves (a fresh /research/understand result should update the
+    // suggestion again on further typing UNLESS the user already made an
+    // explicit choice for this exact round of edits).
+    const picker = document.getElementById('research-picker');
+    const caseTypeToggle = document.getElementById('case-type-toggle');
+    const suggestionLabel = document.getElementById('research-picker-suggestion');
+    const scopePill = document.getElementById('research-scope-pill');
+    let understanding = null;
+    let caseTypeOverride = null;
+    let understandRequestId = 0;
+
+    function debounce(fn, ms) {
+      let timer = null;
+      return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), ms);
+      };
+    }
+
+    function renderPicker() {
+      if (!understanding) {
+        picker.classList.remove('is-visible');
+        return;
+      }
+      picker.classList.add('is-visible');
+      const activeType = caseTypeOverride || understanding.suggested_case_type;
+      for (const btn of caseTypeToggle.querySelectorAll('button')) {
+        btn.classList.toggle('is-active', btn.dataset.caseType === activeType);
+      }
+      suggestionLabel.textContent = caseTypeOverride
+        ? ''
+        : 'Suggested for this question — click to switch';
+      if (understanding.company_labels && understanding.company_labels.length > 0) {
+        scopePill.hidden = false;
+        scopePill.textContent = 'Scoped: ' + understanding.company_labels.join(', ');
+      } else {
+        scopePill.hidden = true;
+      }
+      investigateButton.textContent = activeType === 'deep' ? 'Investigate' : 'Ask';
+    }
+
+    caseTypeToggle.addEventListener('click', (event) => {
+      const btn = event.target.closest('button[data-case-type]');
+      if (!btn) return;
+      caseTypeOverride = btn.dataset.caseType;
+      renderPicker();
+    });
+
+    const requestUnderstanding = debounce(async () => {
+      const question = query.value.trim();
+      if (!question) {
+        understanding = null;
+        caseTypeOverride = null;
+        renderPicker();
+        return;
+      }
+      const requestId = ++understandRequestId;
+      let response;
+      try {
+        response = await fetch('/research/understand', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question }),
+        });
+      } catch (err) {
+        return; // a transient network blip here just means no suggestion yet -- not fatal, Ask still works
+      }
+      if (requestId !== understandRequestId || !response.ok) return; // a newer keystroke already superseded this
+      understanding = await response.json();
+      caseTypeOverride = null; // fresh understanding -- let the new suggestion win unless the user clicks again
+      renderPicker();
+    }, 700);
+
+    query.addEventListener('input', requestUnderstanding);
 
     // No manual company picker — every question is scanned for company
     // names automatically. Plain deterministic substring matching against
@@ -529,26 +654,43 @@
       resultEl.classList.remove('is-visible');
       resultEl.innerHTML = '';
 
-      const companyIds = detectCompaniesInText(question);
-      let detectionNote = '';
-      if (companyIds.length > 0) {
-        const names = companyIds
-          .map((id) => COMPANIES.find((c) => c.company_id === id))
-          .filter(Boolean)
-          .map((c) => c.display_name);
-        detectionNote = `Detected ${names.join(', ')} in your question — scoping to ${names.length === 1 ? 'it' : 'them'}. `;
-      } else {
+      // Prefer the resolved companies from /research/understand (LLM-based,
+      // research/company_resolver.py -- catches a natural shorthand the old
+      // regex below misses entirely, e.g. "IDFC Bank" for the registered
+      // "IDFC First Bank"). Only falls back to the old client-side regex
+      // (detectCompaniesInText, still defined above for this one fallback)
+      // if understanding hasn't resolved yet -- e.g. Enter pressed before
+      // the 700ms debounce fired, or a network blip -- so submitting never
+      // just silently does nothing while waiting on that call.
+      const companyIds = understanding ? understanding.company_ids : detectCompaniesInText(question);
+      const companyLabels = understanding && understanding.company_labels.length > 0
+        ? understanding.company_labels
+        : companyIds.map((id) => COMPANIES.find((c) => c.company_id === id)).filter(Boolean).map((c) => c.display_name);
+      const detectionNote = companyLabels.length > 0
+        ? `Scoped to ${companyLabels.join(', ')}. `
         // No company named — could still be a macro/regulatory question
         // (rainfall, repo rate, ...), grounded in research/macro_evidence.py
-        // instead of any one company's Financials/Docs. Submit either way and
-        // let the server's evidence retrieval decide; if nothing matches at
-        // all, answer_question()'s own "no matching evidence" message comes
-        // back as a normal answer, not an error.
-        detectionNote = 'No company detected — checking macro/regulatory data. ';
-      }
+        // instead of any one company's Financials/Docs. Submit either way
+        // and let the server's evidence retrieval decide; if nothing
+        // matches at all, the case completes as Insufficient Data instead
+        // of an error.
+        : 'No company detected — checking macro/regulatory data. ';
+
+      const caseType = caseTypeOverride || (understanding && understanding.suggested_case_type) || 'quick';
 
       investigateButton.disabled = true;
-      status.textContent = detectionNote + 'Thinking…';
+      status.textContent = detectionNote + (caseType === 'deep' ? 'Investigating…' : 'Thinking…');
+
+      if (caseType === 'deep') {
+        // generateInvestigation() (defined above) already owns its own
+        // status/disabled-state handling and renders straight into
+        // resultEl via window.location.href on completion -- same
+        // function the post-answer "Run structured investigation" link
+        // already uses, just invoked up front here instead of after a
+        // Quick Answer.
+        await generateInvestigation(question, companyIds, investigateButton);
+        return;
+      }
 
       try {
         const response = await fetch('/research/ask-async', {

@@ -117,6 +117,8 @@ from ingestion.detector import ADAPTER_CLASSES
 from ingestion.pipeline import ingest_file
 from research.abstracts import generate_abstract
 from research.assistant import answer_question, sentry_span
+from research.company_resolver import resolve_companies
+from llm.hardness import Tier, classify as classify_hardness
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
@@ -2909,6 +2911,28 @@ def create_app() -> Flask:
             if get_company(db, company_id) is None:
                 raise _AskRequestError(f"No company registered with company_id={company_id!r}", 404)
 
+        # Neither the client's own company detection (research.html's
+        # detectCompaniesInText(), an exact-word-match regex) nor tag
+        # resolution (_parse_ask_request, above this function in the call
+        # chain) found anything -- last resort before treating this as a
+        # company-less/macro-only question: research/company_resolver.py's
+        # LLM-based resolution, which catches a natural shorthand neither
+        # of those does ("IDFC Bank" for the registered "IDFC First Bank",
+        # "Federal Bank" for "The Federal Bank" -- a real, observed failure
+        # that silently sent a real comparison question through empty and
+        # produced "no evidence found" for two companies whose financials
+        # were fully ingested). Deliberately NOT done in _parse_ask_request
+        # -- that runs synchronously before a case even exists, and an
+        # -async route's whole point is returning a case_id immediately;
+        # doing this here instead means it only ever costs time inside the
+        # background thread, tracked as its own case activity, never the
+        # request/response round trip.
+        if not company_ids and question:
+            if case_id is not None:
+                update_case_activity(db, case_id, "Understanding question")
+            with sentry_span("llm.anthropic", "Company resolution"):
+                company_ids = resolve_companies(db, question).company_ids
+
         # A group question ("Nifty 50 net profit CAGR") is a sum-then-CAGR
         # arithmetic problem, not something an LLM should reason about
         # company-by-company -- a real, observed failure otherwise: handing
@@ -3021,7 +3045,17 @@ def create_app() -> Flask:
 
     def _parse_ask_request(company_ids: list[str] | None):
         """Common request-parsing for both the synchronous and -async ask
-        routes -- returns (question, company_ids, statement_type)."""
+        routes -- returns (question, company_ids, statement_type).
+
+        Deliberately only cheap, deterministic resolution here (tag
+        matching) -- this runs synchronously, before a case even exists,
+        so it must stay fast (an -async route's whole point is returning a
+        case_id immediately; an LLM call here would silently undo that).
+        The LLM-based fallback (research/company_resolver.py, for a
+        natural shorthand tag/company_ids resolution above both missed --
+        "IDFC Bank" for the registered "IDFC First Bank", "Federal Bank"
+        for "The Federal Bank") runs INSIDE _compute_answer_question
+        instead, as its own case activity, only when needed."""
         payload = request.get_json(silent=True) or {}
         question = (payload.get("question") or "").strip()
         if company_ids is None:
@@ -3232,6 +3266,48 @@ def create_app() -> Flask:
             "case_detail.html", case_id=case_id, question=case["question"],
             company_ids=json.loads(case["company_ids"] or "[]"),
             initial_status=_case_status_payload(case),
+        )
+
+    @app.route("/research/understand", methods=["POST"])
+    def research_understand():
+        """Called by research.html as soon as the user pauses typing (or
+        before Ask/Investigate, whichever fires first) -- resolves which
+        companies the question is actually about (tags first, e.g. "Nifty
+        50", cheap and deterministic; research/company_resolver.py's
+        LLM-based resolution as the fallback for an individual company
+        named informally -- "IDFC Bank" for the registered "IDFC First
+        Bank" -- neither the client's own old regex matching nor tag
+        resolution catches that), and suggests Quick Answer vs Deep Dive
+        via llm/hardness.py's classify() (unchanged, existing heuristic --
+        DEEP for a peer comparison or "why"/"compare"/"versus"-shaped
+        question, otherwise Quick).
+
+        Returns a SUGGESTION, never a decision the caller is forced into
+        -- research.html's own toggle starts on whichever this names, but
+        the user can click the other option before submitting; nothing
+        here creates a case or spends more than this one resolution call
+        (no chart building, no full answer/investigation)."""
+        payload = request.get_json(silent=True) or {}
+        question = (payload.get("question") or "").strip()
+        if not question:
+            return jsonify(error="Ask a question first."), 400
+
+        db = get_db()
+        company_ids = resolve_tags_in_text(db, question)
+        if not company_ids:
+            company_ids = resolve_companies(db, question).company_ids
+
+        companies = [get_company(db, company_id) for company_id in company_ids]
+        company_labels = [c["display_name"] for c in companies if c is not None]
+
+        hardness = classify_hardness(question, company_ids, evidence_count=0)
+        suggested_case_type = "deep" if hardness.tier == Tier.DEEP else "quick"
+
+        return jsonify(
+            company_ids=company_ids,
+            company_labels=company_labels,
+            suggested_case_type=suggested_case_type,
+            suggestion_reason=hardness.reason,
         )
 
     @app.route("/research/ask", methods=["POST"])
