@@ -53,24 +53,16 @@ RUN mkdir -p /app/data/raw /app/data/normalized /app/data/documents /app/data/ch
 ENV PORT=8080
 EXPOSE 8080
 
-# Cap every CPU-threading library this app pulls in (torch, numpy/MKL/
-# OpenBLAS via sentence-transformers, HuggingFace tokenizers) at 1 thread
-# each -- all of them default to spawning one thread PER VISIBLE CORE,
-# which on this container's real allocation (Lightsail "micro" -- 0.25
-# vCPU) is pure thread-scheduling overhead and contention, never a real
-# speedup: there's less than one core to parallelize across in the first
-# place. Set here (env vars, before any Python process starts) rather
-# than in application code, since torch/MKL read these at their OWN
-# import/init time -- setting them in web/app.py would already be too
-# late for whichever of these libraries initializes first. Real, observed
-# motivation: repeated gunicorn WORKER TIMEOUT/SIGKILL crashes under
-# completely ordinary single-request load (one Ask AI question, no
-# concurrent batch jobs) on this exact instance size -- this is the free,
-# zero-risk mitigation to try before paying for a bigger instance.
-ENV OMP_NUM_THREADS=1
-ENV MKL_NUM_THREADS=1
-ENV OPENBLAS_NUM_THREADS=1
-ENV TOKENIZERS_PARALLELISM=false
+# Tried capping OMP_NUM_THREADS/MKL_NUM_THREADS/OPENBLAS_NUM_THREADS/
+# TOKENIZERS_PARALLELISM=1 here as a free mitigation for the WORKER
+# TIMEOUT/SIGKILL crashes below -- reverted (measured live: a single Quick
+# Answer went from ~60s to ~300s, an unacceptable trade). Reliability is
+# instead handled at the infrastructure level now -- signals-app's
+# Lightsail Container Service runs at scale:2 (two nodes behind its own
+# load balancer) specifically so one node hitting this same crash doesn't
+# take the whole app down for every user; see docs/SCHEDULED_JOBS.md /
+# operator notes for the "micro" tier's known CPU/RAM tightness under a
+# single heavy request (Deep Dive especially) if this needs revisiting.
 
 # gunicorn, not the Flask dev server -- create_app() is a factory
 # (web/app.py), so gunicorn needs the factory call, not a bare module
