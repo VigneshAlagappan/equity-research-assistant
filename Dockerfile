@@ -56,15 +56,28 @@ EXPOSE 8080
 # Tried capping OMP_NUM_THREADS/MKL_NUM_THREADS/OPENBLAS_NUM_THREADS/
 # TOKENIZERS_PARALLELISM=1 here as a free mitigation for the WORKER
 # TIMEOUT/SIGKILL crashes below -- reverted (measured live: a single Quick
-# Answer went from ~60s to ~300s, an unacceptable trade). Reliability is
-# instead handled at the infrastructure level now -- signals-app's
-# Lightsail Container Service runs at scale:2 (two nodes behind its own
-# load balancer) specifically so one node hitting this same crash doesn't
-# take the whole app down for every user; see docs/SCHEDULED_JOBS.md /
-# operator notes for the "micro" tier's known CPU/RAM tightness under a
-# single heavy request (Deep Dive especially) if this needs revisiting.
+# Answer went from ~60s to ~300s, an unacceptable trade). scale:2 (two
+# nodes behind Lightsail's own load balancer) was tried next, for
+# redundancy -- helps keep the app reachable when one node crashes, but
+# doesn't stop an individual node from OOM-killing whatever request was
+# running on it under memory pressure.
+#
+# --workers 2 -> 1 (2026-09-16): live metrics on the "micro" tier (1GB RAM)
+# showed ~63% memory utilization at genuine idle, before any request --
+# root-caused to gunicorn's sync worker model loading its OWN full copy of
+# the sentence-transformer embedding model (and the rest of the heavy
+# import graph: torch, transformers, anthropic, boto3, psycopg2, the
+# Qdrant/Neo4j clients) per worker process, never shared. Two workers on a
+# 1GB instance meant ~630MB of that was pure duplication before any actual
+# work, leaving little headroom before a single real request tips a node
+# into OOM (confirmed live: case 4bba06994efa failed exactly this way,
+# memory pinned at 98-99.9% right as it ran). One worker halves that fixed
+# cost. Tradeoff, accepted for now: only one request served at a time per
+# node (two nodes total via scale:2) instead of two -- revisit power/scale
+# if that concurrency ceiling turns out to matter more than the OOM risk
+# did.
 
 # gunicorn, not the Flask dev server -- create_app() is a factory
 # (web/app.py), so gunicorn needs the factory call, not a bare module
 # attribute: "web.app:create_app()".
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 2 --timeout 120 'web.app:create_app()'"]
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 1 --timeout 120 'web.app:create_app()'"]
