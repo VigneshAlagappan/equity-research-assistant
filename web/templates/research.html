@@ -600,7 +600,11 @@
         if (data.status === 'error') {
           throw new Error(data.error || 'Something went wrong.');
         }
-        // status === 'running' -- keep polling.
+        // status === 'running' -- surface the real current stage instead of
+        // leaving the same static "Running investigation…" line up for
+        // minutes at a time (the whole point being: a user watching this
+        // page should be able to tell it's making progress, not stuck).
+        if (data.current_activity) status.textContent = data.current_activity + '…';
       }
       throw new Error('This is taking longer than expected — check back on this page shortly, or try a narrower question.');
     }
@@ -663,7 +667,9 @@
         const data = await response.json();
         if (data.status === 'done') return data.result;
         if (data.status === 'error') throw new Error(data.error || 'Something went wrong.');
-        // status === 'running' -- keep polling.
+        // status === 'running' -- same live-stage reasoning as
+        // pollInvestigationStatus() above.
+        if (data.current_activity) status.textContent = data.current_activity + '…';
       }
       throw new Error('This is taking longer than expected — try again in a moment, or ask something narrower.');
     }
