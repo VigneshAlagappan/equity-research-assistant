@@ -3179,8 +3179,17 @@ def create_app() -> Flask:
         additive fields for the Cases list/detail UI to use without
         breaking any existing caller that ignores them."""
         started = datetime.fromisoformat(case["started_at"])
-        now = datetime.now(started.tzinfo) if started.tzinfo else datetime.utcnow()
-        elapsed_seconds = max(0.0, (now - started).total_seconds())
+        # A terminal case's elapsed time is frozen at how long it actually
+        # took (completed_at - started_at), not "how long ago it finished"
+        # -- using `now` unconditionally here was a real bug: polling a
+        # case minutes after it already completed reported an ever-growing
+        # "elapsed_seconds" that had nothing to do with its real processing
+        # time.
+        if case["status"] == "in_progress":
+            reference = datetime.now(started.tzinfo) if started.tzinfo else datetime.utcnow()
+        else:
+            reference = datetime.fromisoformat(case["completed_at"]) if case["completed_at"] else started
+        elapsed_seconds = max(0.0, (reference - started).total_seconds())
         payload = {
             "case_id": case["case_id"],
             "current_activity": case["current_activity"],
@@ -3668,8 +3677,14 @@ def create_app() -> Flask:
         since an investigation's real result is its own /investigate/<id>
         page, not something to render inline."""
         started = datetime.fromisoformat(case["started_at"])
-        now = datetime.now(started.tzinfo) if started.tzinfo else datetime.utcnow()
-        elapsed_seconds = max(0.0, (now - started).total_seconds())
+        # A terminal case's elapsed time is frozen at how long it actually
+        # took (completed_at - started_at), not "how long ago it finished"
+        # -- see _case_status_payload()'s identical fix for why.
+        if case["status"] == "in_progress":
+            reference = datetime.now(started.tzinfo) if started.tzinfo else datetime.utcnow()
+        else:
+            reference = datetime.fromisoformat(case["completed_at"]) if case["completed_at"] else started
+        elapsed_seconds = max(0.0, (reference - started).total_seconds())
         payload = {
             "case_id": case["case_id"],
             "current_activity": case["current_activity"],
