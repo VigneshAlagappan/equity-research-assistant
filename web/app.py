@@ -21,6 +21,27 @@ import storage.backend_bootstrap
 
 storage.backend_bootstrap.install()
 
+# Sentry -- initialized here, at import time, before Flask itself is
+# imported below, so its Flask integration auto-instruments every route
+# registered by create_app() (uncaught exceptions, request context) with
+# no per-route wiring. Gated on config.settings.SENTRY_DSN being set --
+# unset (every local dev/test run that doesn't export it) means this is a
+# no-op, same contract every other optional integration in this app
+# follows.
+from config.settings import SENTRY_DSN
+
+if SENTRY_DSN:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        # Request headers/IP on error events -- acceptable here since this
+        # is a small, internally-used app, not a consumer product with a
+        # broad user base to consider privacy policy implications for.
+        send_default_pii=True,
+        enable_logs=True,
+    )
+
 import hashlib
 import json
 import logging
@@ -95,12 +116,12 @@ from indicators.settings import (
 from ingestion.detector import ADAPTER_CLASSES
 from ingestion.pipeline import ingest_file
 from research.abstracts import generate_abstract
-from research.assistant import answer_question
+from research.assistant import answer_question, sentry_span
+from research.company_resolver import resolve_companies
+from llm.hardness import Tier, classify as classify_hardness
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
-from research.investigation_jobs import get_status as get_investigation_job_status, mark_done as mark_investigation_done, mark_error as mark_investigation_error, mark_running as mark_investigation_running
-from research.ask_jobs import get_status as get_ask_job_status, mark_done as mark_ask_job_done, mark_error as mark_ask_job_error, mark_running as mark_ask_job_running
 from retrieval.tag_resolver import resolve_tags_in_text
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
@@ -216,7 +237,14 @@ from storage.repositories import (
     set_overview_ratio_settings,
     update_system_insight_status,
     update_user_theme,
+    get_research_case,
+    list_research_cases_for_feed,
+    list_stale_in_progress_cases,
+    fail_research_case,
+    request_case_cancellation,
+    update_case_activity,
 )
+from research.case_runner import run_case_in_background, start_case
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
 from web.corporate_actions_feed import build_corporate_actions_feed
 from web.shareholding_feed import build_shareholding_feed
@@ -904,6 +932,36 @@ def create_app() -> Flask:
                 logger.exception("Auto-resume of interrupted job %r failed", job.job_id)
             finally:
                 conn.close()
+
+    def _resume_interrupted_cases() -> None:
+        """The research_cases equivalent of _resume_interrupted_batch_jobs()
+        above, called from the same startup guard -- a case still at
+        status='in_progress' when a fresh process starts was left running
+        by a process that died (crashed, or was restarted) mid-run, same
+        reasoning as that function's own docstring.
+
+        Unlike a batch job's per-company work (NSE fetch, SEC EDGAR pull,
+        ...), there's no safe way to replay "the rest of" one case: it may
+        have died mid-LLM-call, and research/assistant.py's evidence
+        gathering + LLM call together aren't naturally resumable from an
+        arbitrary point the way a per-company loop is. So these are marked
+        failed with a clear, honest note instead of silently replayed --
+        this is a genuine "the server restarted while this was running"
+        technical failure (not insufficient_data, not cancelled), and the
+        user can just ask again. This is a DIFFERENT guarantee than "Continue
+        in Background" / browser-disconnect resilience: those never touch
+        the server process at all, so the background thread this function
+        is cleaning up after was never interrupted by them in the first
+        place -- only a real process restart reaches this code path."""
+        conn = storage.backend_bootstrap.open_db()
+        try:
+            stale_cases = list_stale_in_progress_cases(conn)
+            for case in stale_cases:
+                fail_research_case(conn, case["case_id"], "Interrupted by a server restart — please ask again.")
+            if stale_cases:
+                logger.info("Marked %d interrupted research case(s) as failed on startup", len(stale_cases))
+        finally:
+            conn.close()
 
     def _schedule_panel_context(db) -> dict:
         """Only computed when the Schedule panel is actually being viewed,
@@ -2814,7 +2872,7 @@ def create_app() -> Flask:
 
     def _compute_answer_question(
         db, question: str, company_ids: list[str], *, statement_type: str, thread_id: str, thread_url: str,
-        owner_id: str | None,
+        owner_id: str | None, case_id: str | None = None,
     ) -> dict:
         """The actual "ask the LLM research assistant" work, extracted out
         of the old _answer_question_response() so it can run either
@@ -2852,6 +2910,28 @@ def create_app() -> Flask:
             if get_company(db, company_id) is None:
                 raise _AskRequestError(f"No company registered with company_id={company_id!r}", 404)
 
+        # Neither the client's own company detection (research.html's
+        # detectCompaniesInText(), an exact-word-match regex) nor tag
+        # resolution (_parse_ask_request, above this function in the call
+        # chain) found anything -- last resort before treating this as a
+        # company-less/macro-only question: research/company_resolver.py's
+        # LLM-based resolution, which catches a natural shorthand neither
+        # of those does ("IDFC Bank" for the registered "IDFC First Bank",
+        # "Federal Bank" for "The Federal Bank" -- a real, observed failure
+        # that silently sent a real comparison question through empty and
+        # produced "no evidence found" for two companies whose financials
+        # were fully ingested). Deliberately NOT done in _parse_ask_request
+        # -- that runs synchronously before a case even exists, and an
+        # -async route's whole point is returning a case_id immediately;
+        # doing this here instead means it only ever costs time inside the
+        # background thread, tracked as its own case activity, never the
+        # request/response round trip.
+        if not company_ids and question:
+            if case_id is not None:
+                update_case_activity(db, case_id, "Understanding question")
+            with sentry_span("llm.anthropic", "Company resolution"):
+                company_ids = resolve_companies(db, question).company_ids
+
         # A group question ("Nifty 50 net profit CAGR") is a sum-then-CAGR
         # arithmetic problem, not something an LLM should reason about
         # company-by-company -- a real, observed failure otherwise: handing
@@ -2887,9 +2967,14 @@ def create_app() -> Flask:
                 )
 
         try:
-            answer = answer_question(db, question, company_ids, statement_type=statement_type)
+            answer = answer_question(db, question, company_ids, statement_type=statement_type, case_id=case_id)
         except anthropic.APIError as exc:
             raise _AskRequestError(f"The assistant request failed: {exc}", 502) from exc
+        # InsufficientEvidenceError/CaseCancelledError (only ever raised when
+        # case_id is set) deliberately propagate past this try/except --
+        # research.case_runner.run_case_in_background()'s own except
+        # clauses are what translate those into the right research_cases
+        # outcome, not this function.
 
         # A peer-comparison question (>1 company) gets combined, indexed-to-100
         # comparison charts instead of separate same-company charts on each
@@ -2908,30 +2993,39 @@ def create_app() -> Flask:
         # this is the equivalent cap for the one-shot chart a text answer
         # embeds, a bit more generous since there's no legend-hover
         # interactivity here to lean on.
+        if case_id is not None:
+            update_case_activity(db, case_id, "Building charts")
+
         MAX_COMPARISON_CHART_COMPANIES = 8
         comparison_charts = {}
         charts_by_company = {}
-        if len(company_ids) > 1:
-            chart_company_ids = company_ids[:MAX_COMPARISON_CHART_COMPANIES]
-            comparison_charts = {
-                chart_key: figure_to_base64_png(figure)
-                for chart_key, figure in build_comparison_charts(db, chart_company_ids, statement_type=statement_type).items()
-            }
-        else:
-            charts_by_company = {
-                company_id: {
+        with sentry_span("db.postgres", "Chart data (canonical_financials)"):
+            if len(company_ids) > 1:
+                chart_company_ids = company_ids[:MAX_COMPARISON_CHART_COMPANIES]
+                comparison_charts = {
                     chart_key: figure_to_base64_png(figure)
-                    for chart_key, figure in build_company_charts(db, company_id, statement_type=statement_type).items()
+                    for chart_key, figure in build_comparison_charts(db, chart_company_ids, statement_type=statement_type).items()
                 }
-                for company_id in company_ids
-            }
+            else:
+                charts_by_company = {
+                    company_id: {
+                        chart_key: figure_to_base64_png(figure)
+                        for chart_key, figure in build_company_charts(db, company_id, statement_type=statement_type).items()
+                    }
+                    for company_id in company_ids
+                }
+
+        if case_id is not None:
+            update_case_activity(db, case_id, "Persisting result")
 
         question_embedding, question_embedding_model = _embed_question_for_reuse(question)
-        save_generated_report(
-            db, thread_id, question, company_ids, statement_type, answer,
-            question_embedding=question_embedding, question_embedding_model=question_embedding_model,
-        )
-        _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer, owner_id=owner_id)
+        with sentry_span("db.postgres", "save_generated_report"):
+            save_generated_report(
+                db, thread_id, question, company_ids, statement_type, answer,
+                question_embedding=question_embedding, question_embedding_model=question_embedding_model,
+            )
+        with sentry_span("s3", "_persist_generated_report_s3"):
+            _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer, owner_id=owner_id)
 
         return dict(
             question=question,
@@ -2950,7 +3044,17 @@ def create_app() -> Flask:
 
     def _parse_ask_request(company_ids: list[str] | None):
         """Common request-parsing for both the synchronous and -async ask
-        routes -- returns (question, company_ids, statement_type)."""
+        routes -- returns (question, company_ids, statement_type).
+
+        Deliberately only cheap, deterministic resolution here (tag
+        matching) -- this runs synchronously, before a case even exists,
+        so it must stay fast (an -async route's whole point is returning a
+        case_id immediately; an LLM call here would silently undo that).
+        The LLM-based fallback (research/company_resolver.py, for a
+        natural shorthand tag/company_ids resolution above both missed --
+        "IDFC Bank" for the registered "IDFC First Bank", "Federal Bank"
+        for "The Federal Bank") runs INSIDE _compute_answer_question
+        instead, as its own case activity, only when needed."""
         payload = request.get_json(silent=True) or {}
         question = (payload.get("question") or "").strip()
         if company_ids is None:
@@ -3003,16 +3107,21 @@ def create_app() -> Flask:
     def _answer_question_async_response(company_ids: list[str] | None = None):
         """Async counterpart of _answer_question_response() -- validates
         input synchronously (fails fast on bad input, same checks as the
-        sync path), then hands the actual _compute_answer_question() call
-        to a background thread and returns immediately with a job_id, same
-        pattern /investigate/generate-async already established. See
-        _compute_answer_question's own docstring for why this exists."""
+        sync path), creates a durable research_cases row (research/
+        case_runner.py), then hands the actual _compute_answer_question()
+        call to a background thread and returns immediately with a
+        case_id. See _compute_answer_question's own docstring for why this
+        exists, and research_cases' own schema comment (schemas/*.sql) for
+        why this is a DB row and not a JSON file: it has to survive a
+        browser refresh/close, a network blip, AND this process restarting
+        -- "Cases is the source of truth."""
         question, company_ids, statement_type = _parse_ask_request(company_ids)
 
         # Same validation _compute_answer_question() would raise on, done
         # here first so a bad request fails immediately rather than after
-        # a background thread has already started (mirrors /investigate/
-        # generate-async's identical reasoning).
+        # a background thread (and a research_cases row) has already
+        # started (mirrors /investigate/generate-async's identical
+        # reasoning).
         if not ANTHROPIC_API_KEY_SET:
             return jsonify(error="ANTHROPIC_API_KEY is not set on the server — the assistant can't run."), 503
         if not question:
@@ -3025,49 +3134,200 @@ def create_app() -> Flask:
             if get_company(db, company_id) is None:
                 return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
 
-        job_id = uuid.uuid4().hex[:12]
         thread_id = uuid.uuid4().hex[:12]
         thread_url = url_for("research_thread", thread_id=thread_id)
         # Resolved here, before the thread starts -- g is bound to this
         # request context and isn't available inside the background
         # thread below (same reasoning as thread_id/thread_url above).
         owner_id = g.user["user_id"] if g.user else None
-        mark_ask_job_running(job_id)
 
-        def _run_in_background() -> None:
-            conn = scheduling_open_db()
+        case_id = uuid.uuid4().hex[:12]
+        start_case(
+            db, case_id=case_id, kind="ask", question=question, company_ids=company_ids,
+            statement_type=statement_type, owner_id=owner_id,
+        )
+
+        def compute(conn) -> dict:
             try:
-                result = _compute_answer_question(
+                return _compute_answer_question(
                     conn, question, company_ids,
                     statement_type=statement_type, thread_id=thread_id, thread_url=thread_url,
-                    owner_id=owner_id,
+                    owner_id=owner_id, case_id=case_id,
                 )
-                mark_ask_job_done(job_id, result)
             except _AskRequestError as exc:
-                mark_ask_job_error(job_id, str(exc))
-            except Exception as exc:  # noqa: BLE001 -- surface any failure to the poller, not a silently stuck "running"
-                logger.exception("Async ask job %s failed", job_id)
-                mark_ask_job_error(job_id, f"Unexpected error: {exc}")
-            finally:
-                conn.close()
+                # Reached only via a race (e.g. a company archived between
+                # the pre-check above and the background thread running) --
+                # translated to a plain exception so run_case_in_background's
+                # generic handler marks the case failed with a readable
+                # message, same "technical failure" bucket, not
+                # insufficient_data (that's reserved for InsufficientEvidenceError).
+                raise RuntimeError(str(exc)) from exc
 
-        threading.Thread(target=_run_in_background, daemon=True).start()
-        return jsonify(job_id=job_id), 202
+        run_case_in_background(scheduling_open_db, case_id, "ask", compute)
+        # job_id kept for the already-deployed frontend's own polling code
+        # (ctx.askAsyncUrl callers do `pollAskStatus(data.job_id)`) --
+        # case_id is the same value, just the name new/Cases-aware callers
+        # should use going forward.
+        return jsonify(job_id=case_id, case_id=case_id), 202
+
+    def _case_status_payload(case) -> dict:
+        """Translates one research_cases row into the JSON shape /ask/
+        status/<job_id> returns -- {status: running|done|error, ...} is
+        the contract _ask_ai.html/chat.html/research.html's pollAskStatus()
+        already polls against (unchanged, so the already-deployed frontend
+        keeps working); current_activity/elapsed_seconds/case_id are new,
+        additive fields for the Cases list/detail UI to use without
+        breaking any existing caller that ignores them."""
+        started = datetime.fromisoformat(case["started_at"])
+        # A terminal case's elapsed time is frozen at how long it actually
+        # took (completed_at - started_at), not "how long ago it finished"
+        # -- using `now` unconditionally here was a real bug: polling a
+        # case minutes after it already completed reported an ever-growing
+        # "elapsed_seconds" that had nothing to do with its real processing
+        # time.
+        if case["status"] == "in_progress":
+            reference = datetime.now(started.tzinfo) if started.tzinfo else datetime.utcnow()
+        else:
+            reference = datetime.fromisoformat(case["completed_at"]) if case["completed_at"] else started
+        elapsed_seconds = max(0.0, (reference - started).total_seconds())
+        payload = {
+            "case_id": case["case_id"],
+            "current_activity": case["current_activity"],
+            "elapsed_seconds": round(elapsed_seconds, 1),
+        }
+        if case["status"] == "in_progress":
+            payload["status"] = "running"
+            return payload
+        if case["status"] == "failed":
+            payload["status"] = "error"
+            payload["error"] = case["error_message"] or "Something went wrong."
+            return payload
+        if case["status"] == "cancelled":
+            payload["status"] = "error"
+            payload["error"] = "This request was cancelled."
+            return payload
+
+        # status == "completed"
+        company_ids = json.loads(case["company_ids"] or "[]")
+        if case["outcome"] == "insufficient_data":
+            raw = json.loads(case["result_json"]) if case["result_json"] else {}
+            message = raw.get("message", "Not enough data was found to answer this question.")
+            result = {
+                "question": case["question"],
+                "company_ids": company_ids,
+                "answer_html": str(_render_markdown_with_tags(message)),
+                "charts": {},
+                "comparison_charts": {},
+                "comparison_chart_company_count": 0,
+                "total_company_count": len(company_ids),
+                "thread_id": None,
+                "thread_url": None,
+            }
+        else:
+            result = json.loads(case["result_json"]) if case["result_json"] else {}
+        payload["status"] = "done"
+        payload["outcome"] = case["outcome"]
+        payload["result"] = result
+        return payload
 
     @app.route("/ask/status/<job_id>")
     def ask_status(job_id: str):
         """Polled by _ask_ai.html/chat.html/research.html after their own
-        -async route returns a job_id. {status: "running"} keeps the page
-        waiting; {status: "done", result: {...}} is the exact JSON payload
-        the old synchronous routes used to return directly; {status:
-        "error", error: ...} surfaces the same message the synchronous
-        path would have returned inline. A 404 (unknown job_id) is
-        deliberately distinct from a real "error" status -- same
-        conventions as /investigate/status."""
-        status = get_ask_job_status(job_id)
-        if status is None:
+        -async route returns a job_id (== case_id -- see
+        _answer_question_async_response's own comment). A 404 (unknown
+        job_id) is deliberately distinct from a real "error" status --
+        same conventions as /investigate/status."""
+        case = get_research_case(get_db(), job_id)
+        if case is None:
             abort(404)
-        return jsonify(status)
+        return jsonify(_case_status_payload(case))
+
+    @app.route("/cases/<case_id>/cancel", methods=["POST"])
+    def case_cancel(case_id: str):
+        """Cooperative cancellation -- see schemas/*.sql's research_cases
+        docstring and research/assistant.py's CaseCancelledError. Returns
+        404 for an unknown case_id, 200 either way otherwise (whether or
+        not it was actually in_progress at the moment this ran -- a case
+        that finished a beat earlier isn't an error, just a no-op)."""
+        db = get_db()
+        if get_research_case(db, case_id) is None:
+            abort(404)
+        request_case_cancellation(db, case_id)
+        return jsonify(ok=True)
+
+    @app.route("/cases/<case_id>")
+    def case_detail(case_id: str):
+        """Case detail/reconnect page -- opening this for an in_progress
+        case shows its current activity and keeps polling (same
+        pollAskStatus() mechanism the Ask AI drawer already uses, just
+        pointed at whichever status endpoint/payload shape matches this
+        case's kind -- see _case_status_payload/_investigation_case_status_
+        payload); a completed case redirects straight to its real result
+        (the generated_reports thread for kind='ask', the /investigate/<id>
+        page for kind='investigation' -- or, for an outcome='insufficient_
+        data' case, which never got either, rendered inline here instead)."""
+        db = get_db()
+        case = get_research_case(db, case_id)
+        if case is None:
+            abort(404)
+        if case["status"] == "completed" and case["outcome"] == "answered":
+            if case["kind"] == "investigation" and case["investigation_id"]:
+                return redirect(url_for("investigate_view", investigation_id=case["investigation_id"]))
+            if case["kind"] != "investigation" and case["thread_id"]:
+                return redirect(url_for("research_thread", thread_id=case["thread_id"]))
+        if case["kind"] == "investigation":
+            status_url = url_for("investigate_status", investigation_id=case_id)
+            initial_status = _investigation_case_status_payload(case)
+        else:
+            status_url = url_for("ask_status", job_id=case_id)
+            initial_status = _case_status_payload(case)
+        return render_template(
+            "case_detail.html", case_id=case_id, question=case["question"], kind=case["kind"],
+            company_ids=json.loads(case["company_ids"] or "[]"),
+            status_url=status_url, initial_status=initial_status,
+        )
+
+    @app.route("/research/understand", methods=["POST"])
+    def research_understand():
+        """Called by research.html as soon as the user pauses typing (or
+        before Ask/Investigate, whichever fires first) -- resolves which
+        companies the question is actually about (tags first, e.g. "Nifty
+        50", cheap and deterministic; research/company_resolver.py's
+        LLM-based resolution as the fallback for an individual company
+        named informally -- "IDFC Bank" for the registered "IDFC First
+        Bank" -- neither the client's own old regex matching nor tag
+        resolution catches that), and suggests Quick Answer vs Deep Dive
+        via llm/hardness.py's classify() (unchanged, existing heuristic --
+        DEEP for a peer comparison or "why"/"compare"/"versus"-shaped
+        question, otherwise Quick).
+
+        Returns a SUGGESTION, never a decision the caller is forced into
+        -- research.html's own toggle starts on whichever this names, but
+        the user can click the other option before submitting; nothing
+        here creates a case or spends more than this one resolution call
+        (no chart building, no full answer/investigation)."""
+        payload = request.get_json(silent=True) or {}
+        question = (payload.get("question") or "").strip()
+        if not question:
+            return jsonify(error="Ask a question first."), 400
+
+        db = get_db()
+        company_ids = resolve_tags_in_text(db, question)
+        if not company_ids:
+            company_ids = resolve_companies(db, question).company_ids
+
+        companies = [get_company(db, company_id) for company_id in company_ids]
+        company_labels = [c["display_name"] for c in companies if c is not None]
+
+        hardness = classify_hardness(question, company_ids, evidence_count=0)
+        suggested_case_type = "deep" if hardness.tier == Tier.DEEP else "quick"
+
+        return jsonify(
+            company_ids=company_ids,
+            company_labels=company_labels,
+            suggested_case_type=suggested_case_type,
+            suggestion_reason=hardness.reason,
+        )
 
     @app.route("/research/ask", methods=["POST"])
     def research_ask():
@@ -3365,8 +3625,19 @@ def create_app() -> Flask:
             if get_company(db, company_id) is None:
                 return jsonify(error=f"No company registered with company_id={company_id!r}"), 404
 
+        # investigation_id doubles as case_id -- one id, not two, since
+        # nothing about this pipeline needs them to differ (unlike the Ask
+        # AI case/thread_id split, where a case can also complete WITHOUT a
+        # thread -- outcome='insufficient_data'). Same "own db connection,
+        # since a connection can't cross threads" shape every other -async
+        # route uses; research_cases (schemas/*.sql) is the durable, DB-
+        # backed record now -- see that table's own docstring for why this
+        # replaced the earlier per-job JSON file (research/investigation_
+        # jobs.py, now unused for this route) -- it has to survive a
+        # browser refresh/close, a network blip, AND this process
+        # restarting, none of which a disposable file on one gunicorn
+        # worker's local disk could promise.
         investigation_id = uuid.uuid4().hex[:12]
-        mark_investigation_running(investigation_id)
         # Built here, inside this real request's context, not inside the
         # background thread below -- url_for needs an active request (or
         # app) context to resolve SERVER_NAME/APPLICATION_ROOT, which a bare
@@ -3374,27 +3645,75 @@ def create_app() -> Flask:
         # at this point, so the URL it produces is valid regardless of how
         # the run underneath it turns out.
         result_url = url_for("investigate_view", investigation_id=investigation_id)
+        owner_id = g.user["user_id"] if g.user else None
 
-        def _run_in_background() -> None:
-            conn = scheduling_open_db()
+        start_case(
+            db, case_id=investigation_id, kind="investigation", question=question, company_ids=company_ids,
+            statement_type=statement_type, owner_id=owner_id,
+        )
+
+        def compute(conn) -> dict:
             try:
                 run_investigation(
                     conn, question, company_ids, statement_type=statement_type, as_of=as_of,
-                    investigation_id=investigation_id,
+                    investigation_id=investigation_id, case_id=investigation_id,
                 )
-                mark_investigation_done(investigation_id, result_url)
             except InvestigationError as exc:
-                mark_investigation_error(investigation_id, f"The investigation couldn't complete: {exc}")
+                raise RuntimeError(f"The investigation couldn't complete: {exc}") from exc
             except anthropic.APIError as exc:
-                mark_investigation_error(investigation_id, f"The assistant request failed: {exc}")
-            except Exception as exc:  # noqa: BLE001 -- surface any failure to the poller, not a silently stuck "running"
-                logger.exception("Async investigation %s failed", investigation_id)
-                mark_investigation_error(investigation_id, f"Unexpected error: {exc}")
-            finally:
-                conn.close()
+                raise RuntimeError(f"The assistant request failed: {exc}") from exc
+            return {"investigation_id": investigation_id, "url": result_url}
 
-        threading.Thread(target=_run_in_background, daemon=True).start()
-        return jsonify(investigation_id=investigation_id), 202
+        run_case_in_background(scheduling_open_db, investigation_id, "investigation", compute)
+        return jsonify(investigation_id=investigation_id, case_id=investigation_id), 202
+
+    def _investigation_case_status_payload(case) -> dict:
+        """Same {status, url}/{status, error} contract research.html's
+        pollInvestigationStatus() already polls against (unchanged, so the
+        already-deployed frontend keeps working) -- current_activity/
+        elapsed_seconds are new, additive fields for the Cases detail page
+        to use. Mirrors web/app.py's own _case_status_payload() (the Ask AI
+        equivalent) but returns `url` instead of `result` on completion,
+        since an investigation's real result is its own /investigate/<id>
+        page, not something to render inline."""
+        started = datetime.fromisoformat(case["started_at"])
+        # A terminal case's elapsed time is frozen at how long it actually
+        # took (completed_at - started_at), not "how long ago it finished"
+        # -- see _case_status_payload()'s identical fix for why.
+        if case["status"] == "in_progress":
+            reference = datetime.now(started.tzinfo) if started.tzinfo else datetime.utcnow()
+        else:
+            reference = datetime.fromisoformat(case["completed_at"]) if case["completed_at"] else started
+        elapsed_seconds = max(0.0, (reference - started).total_seconds())
+        payload = {
+            "case_id": case["case_id"],
+            "current_activity": case["current_activity"],
+            "elapsed_seconds": round(elapsed_seconds, 1),
+        }
+        if case["status"] == "in_progress":
+            payload["status"] = "running"
+            return payload
+        if case["status"] == "failed":
+            payload["status"] = "error"
+            payload["error"] = case["error_message"] or "Something went wrong."
+            return payload
+        if case["status"] == "cancelled":
+            payload["status"] = "error"
+            payload["error"] = "This request was cancelled."
+            return payload
+
+        # status == "completed"
+        if case["outcome"] == "insufficient_data":
+            raw = json.loads(case["result_json"]) if case["result_json"] else {}
+            payload["status"] = "error"
+            payload["error"] = raw.get("message", "Not enough data was found to answer this question.")
+            payload["outcome"] = "insufficient_data"
+            return payload
+        result = json.loads(case["result_json"]) if case["result_json"] else {}
+        payload["status"] = "done"
+        payload["outcome"] = case["outcome"]
+        payload["url"] = result.get("url")
+        return payload
 
     @app.route("/investigate/status/<investigation_id>")
     def investigate_status(investigation_id: str):
@@ -3407,10 +3726,10 @@ def create_app() -> Flask:
         returned inline. A 404 (unknown investigation_id — never tracked,
         e.g. a stale/mistyped link) is deliberately distinct from a real
         "error" status."""
-        status = get_investigation_job_status(investigation_id)
-        if status is None:
+        case = get_research_case(get_db(), investigation_id)
+        if case is None:
             abort(404)
-        return jsonify(status)
+        return jsonify(_investigation_case_status_payload(case))
 
     @app.route("/investigate/<investigation_id>")
     def investigate_view(investigation_id: str):
@@ -3509,6 +3828,16 @@ def create_app() -> Flask:
             ("supported", "Supported"), ("partially_supported", "Partially Supported"),
             ("refuted", "Refuted"), ("insufficient_evidence", "Insufficient Evidence"),
             ("no_verdict", "No verdict yet"),
+            # A third, distinct status vocabulary for research_cases entries
+            # below (case_ prefix so these can never collide with the two
+            # existing ones) -- "case_insufficient_data" for a *completed*
+            # case is intentionally its own key, not reused from
+            # "insufficient_evidence" above: that one is a per-hypothesis
+            # Deep Dive verdict (Step 2G), this one is a whole case's
+            # outcome (research/assistant.py's InsufficientEvidenceError) --
+            # genuinely different concepts that happen to share a word.
+            ("case_in_progress", "In progress"), ("case_failed", "Failed"),
+            ("case_cancelled", "Cancelled"), ("case_insufficient_data", "Insufficient data"),
         ]
 
         entries = []
@@ -3567,6 +3896,45 @@ def create_app() -> Flask:
                     "status_key": status_key,
                     "generated_at": inv["generated_at"] or "",
                     "hidden": bool(inv["hidden_at"]),
+                }
+            )
+        # research_cases -- only the ones with no other representation in
+        # this feed (list_research_cases_for_feed already excludes
+        # status='completed' outcome='answered', which shows up as its own
+        # generated_reports row above instead -- see that function's own
+        # docstring). This is what makes "Cases is the source of truth"
+        # real for a user Browse-ing this page: an in_progress case is
+        # here immediately on submit, not just once it finishes.
+        _CASE_STATUS_LABEL = {
+            "in_progress": ("case_in_progress", "In progress"),
+            "failed": ("case_failed", "Failed"),
+            "cancelled": ("case_cancelled", "Cancelled"),
+        }
+        owner_id = g.user["user_id"] if g.user else None
+        for case in list_research_cases_for_feed(get_db(), owner_id=owner_id):
+            company_ids = json.loads(case["company_ids"] or "[]")
+            if case["status"] == "completed":  # only outcome='insufficient_data' reaches here
+                status_key, status_label = "case_insufficient_data", "Insufficient data"
+            else:
+                status_key, status_label = _CASE_STATUS_LABEL[case["status"]]
+            # Same label a terminal (completed/answered) row of the same
+            # kind already uses elsewhere in this feed ("Quick Answer" /
+            # "Deep Dive") -- so the label doesn't change the moment a case
+            # flips from in_progress to done, just the right_tag does.
+            kind_label = "Deep Dive" if case["kind"] == "investigation" else "Quick Answer"
+            entries.append(
+                {
+                    "type": "case",
+                    "id": case["case_id"],
+                    "type_label": kind_label,
+                    "href": url_for("case_detail", case_id=case["case_id"]),
+                    "title": case["question"],
+                    "subtitle": "",
+                    "companies_label": ", ".join(company_ids) or "Macro/regulatory",
+                    "right_tag": status_label,
+                    "status_key": status_key,
+                    "generated_at": case["started_at"] or "",
+                    "hidden": False,
                 }
             )
         entries.sort(key=lambda r: r["generated_at"], reverse=True)
@@ -3896,5 +4264,6 @@ def create_app() -> Flask:
     # var is never set, so the `not app.debug` half covers that case.
     if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         _resume_interrupted_batch_jobs()
+        _resume_interrupted_cases()
 
     return app

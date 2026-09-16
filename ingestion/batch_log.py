@@ -26,6 +26,7 @@ itself."""
 
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -36,6 +37,8 @@ from storage.repositories import (
     start_batch_job_item,
     start_batch_job_run,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _Item:
@@ -63,11 +66,22 @@ class BatchRun:
         # reach here -- this only fires for a bug in the loop itself
         # (unhandled outside `with run.item(...)`), which the run really
         # did fail on.
-        finish_batch_job_run(
-            self._conn, self.run_id,
-            status="failed" if exc_type is not None else "completed",
-            notes=str(exc) if exc_type is not None else None,
-        )
+        try:
+            finish_batch_job_run(
+                self._conn, self.run_id,
+                status="failed" if exc_type is not None else "completed",
+                notes=str(exc) if exc_type is not None else None,
+            )
+        except Exception:  # noqa: BLE001 -- see item() below: don't let a dead connection's
+            # audit-trail write mask whatever exc actually caused this (a
+            # connection death mid-run being the real, observed case --
+            # research/macro_knowledge_builder.py's classify_macro_factors()
+            # on a long-lived Neon connection during scripts/
+            # classify_macro_factors_batch.py's manual backfill run --
+            # finish_batch_job_run() raising psycopg2.InterfaceError on the
+            # same dead connection used to bury the real cause under a
+            # confusing "connection already closed" traceback instead).
+            logger.warning("Failed to record batch_job_run finish status for run_id=%s", self.run_id, exc_info=True)
         return False  # never suppress -- let a real bug surface to the caller
 
     @contextmanager
@@ -77,6 +91,14 @@ class BatchRun:
         try:
             yield holder
         except Exception as exc:  # noqa: BLE001 -- one bad company shouldn't kill the whole batch
-            finish_batch_job_item(self._conn, item_id, status="failed", detail=str(exc))
+            try:
+                finish_batch_job_item(self._conn, item_id, status="failed", detail=str(exc))
+            except Exception:  # noqa: BLE001 -- same reasoning as __exit__ above: recording
+                # the failure must never itself become a worse, more
+                # confusing failure than the one being recorded.
+                logger.warning("Failed to record batch_job_item failure for item_id=%s", item_id, exc_info=True)
         else:
-            finish_batch_job_item(self._conn, item_id, status="ok", detail=holder.detail)
+            try:
+                finish_batch_job_item(self._conn, item_id, status="ok", detail=holder.detail)
+            except Exception:  # noqa: BLE001 -- see above
+                logger.warning("Failed to record batch_job_item success for item_id=%s", item_id, exc_info=True)

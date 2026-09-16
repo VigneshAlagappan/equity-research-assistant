@@ -698,6 +698,63 @@ CREATE TABLE IF NOT EXISTS knowledge_evidence (
 CREATE INDEX IF NOT EXISTS idx_knowledge_evidence_claim ON knowledge_evidence(claim_id);
 
 -- ============================================================
+-- Research Cases -- the durable, DB-backed source of truth for every
+-- long-running research request (Ask AI, /research/ask, /chat, and the
+-- 2E-2H hypothesis-driven investigation pipeline all create one of these),
+-- replacing the earlier per-job JSON files under data/ask_jobs/ and
+-- data/investigation_jobs/ (research/ask_jobs.py, research/
+-- investigation_jobs.py -- both those files' own docstrings explicitly
+-- argued against a DB table for this at the time; superseded here because
+-- "Cases is the source of truth" is now a hard requirement: a case must
+-- reconnect correctly after a browser refresh/close, a network blip, or
+-- even this process restarting, none of which a disposable JSON file on
+-- one gunicorn worker's local disk can promise).
+--
+-- Exactly four states (status): in_progress -> completed | cancelled | failed.
+-- Everything a case does WHILE in_progress (planning, retrieving evidence,
+-- analyzing, generating, persisting) is an *activity* within that one
+-- state, tracked in current_activity for the polling UI to show -- never
+-- its own status value, and never a fake percentage/countdown.
+--
+-- outcome distinguishes two different reasons a case reaches 'completed':
+-- 'answered' (a real result was produced) vs. 'insufficient_data' (the
+-- early evidence-sufficiency check in research/case_runner.py found
+-- nothing to ground an answer in, and the case stopped gracefully rather
+-- than paying for a full LLM/retrieval pass that could never succeed).
+-- 'failed' is reserved for a genuine technical failure (LLM provider
+-- unavailable, DB error, ...), never for "the data just isn't there."
+--
+-- cancel_requested is a cooperative-cancellation flag, not a fifth status
+-- -- /cases/<case_id>/cancel sets it, and research/case_runner.py checks
+-- it between stages (never mid-LLM-call) and transitions straight to
+-- status='cancelled' at the next checkpoint.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS research_cases (
+  case_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,               -- ask | investigation -- which pipeline this case runs
+  question TEXT NOT NULL,
+  company_ids TEXT NOT NULL,        -- JSON array of company_id
+  statement_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'in_progress',  -- in_progress | completed | cancelled | failed
+  outcome TEXT,                     -- answered | insufficient_data -- only set when status='completed'
+  current_activity TEXT,            -- human-readable, e.g. "Retrieving evidence", "Generating answer"
+  cancel_requested INTEGER NOT NULL DEFAULT 0,
+  owner_id INTEGER,                 -- users.user_id, nullable -- no REFERENCES (users is defined later in
+                                     -- this file; matches generated_reports.owner_id's own convention)
+  result_json TEXT,                 -- the full result payload once status='completed' -- same
+                                     -- shape web/app.py's _compute_answer_question() already returns
+  error_message TEXT,               -- set when status='failed'
+  thread_id TEXT,                   -- generated_reports.thread_id this case's answer was saved as, if any
+  investigation_id TEXT,            -- investigations.investigation_id this case's investigation became, if any
+  started_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_research_cases_owner ON research_cases(owner_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_research_cases_status ON research_cases(status);
+
+-- ============================================================
 -- Hypothesis-driven investigations (Steps 2E-2H, research/investigation.py)
 -- -- the full "generate competing hypotheses -> gather evidence -> evaluate
 -- each independently -> rank/synthesize" loop. Distinct from

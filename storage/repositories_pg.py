@@ -1096,6 +1096,110 @@ def _insert_investigation_companies_pg(conn: DBConnection, investigation_id: str
         )
 
 
+def create_research_case(
+    conn: DBConnection, case_id: str, *, kind: str, question: str, company_ids: list[str],
+    statement_type: str, owner_id: int | None,
+) -> Row:
+    now = _utcnow_iso()
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO research_cases (case_id, kind, question, company_ids, statement_type, status, "
+            "current_activity, owner_id, started_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, 'in_progress', 'Queued', %s, %s, %s)",
+            (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now),
+        )
+    conn.commit()
+    return get_research_case(conn, case_id)
+
+
+def get_research_case(conn: DBConnection, case_id: str) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM research_cases WHERE case_id = %s", (case_id,))
+        return cur.fetchone()
+
+
+def update_case_activity(conn: DBConnection, case_id: str, activity: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE research_cases SET current_activity = %s, updated_at = %s "
+            "WHERE case_id = %s AND status = 'in_progress'",
+            (activity, _utcnow_iso(), case_id),
+        )
+    conn.commit()
+
+
+def complete_research_case(
+    conn: DBConnection, case_id: str, *, outcome: str, result_json: str,
+    thread_id: str | None = None, investigation_id: str | None = None,
+) -> None:
+    now = _utcnow_iso()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE research_cases SET status = 'completed', outcome = %s, result_json = %s, thread_id = %s, "
+            "investigation_id = %s, current_activity = NULL, updated_at = %s, completed_at = %s WHERE case_id = %s",
+            (outcome, result_json, thread_id, investigation_id, now, now, case_id),
+        )
+    conn.commit()
+
+
+def fail_research_case(conn: DBConnection, case_id: str, error_message: str) -> None:
+    now = _utcnow_iso()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE research_cases SET status = 'failed', error_message = %s, current_activity = NULL, "
+            "updated_at = %s, completed_at = %s WHERE case_id = %s",
+            (error_message, now, now, case_id),
+        )
+    conn.commit()
+
+
+def request_case_cancellation(conn: DBConnection, case_id: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE research_cases SET cancel_requested = 1 WHERE case_id = %s AND status = 'in_progress'",
+            (case_id,),
+        )
+        affected = cur.rowcount
+    conn.commit()
+    return affected > 0
+
+
+def is_case_cancel_requested(conn: DBConnection, case_id: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT cancel_requested FROM research_cases WHERE case_id = %s", (case_id,))
+        row = cur.fetchone()
+    return bool(row and row["cancel_requested"])
+
+
+def cancel_research_case(conn: DBConnection, case_id: str) -> None:
+    now = _utcnow_iso()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE research_cases SET status = 'cancelled', current_activity = NULL, updated_at = %s, "
+            "completed_at = %s WHERE case_id = %s",
+            (now, now, case_id),
+        )
+    conn.commit()
+
+
+def list_research_cases_for_feed(conn: DBConnection, *, owner_id: int | None = None) -> list[Row]:
+    sql = "SELECT * FROM research_cases WHERE NOT (status = 'completed' AND outcome = 'answered')"
+    params: list = []
+    if owner_id is not None:
+        sql += " AND owner_id = %s"
+        params.append(owner_id)
+    sql += " ORDER BY started_at DESC"
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
+
+
+def list_stale_in_progress_cases(conn: DBConnection) -> list[Row]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM research_cases WHERE status = 'in_progress'")
+        return cur.fetchall()
+
+
 def save_investigation(
     conn: DBConnection,
     *,
@@ -1786,7 +1890,18 @@ def get_latest_data_timestamp(conn: DBConnection, company_ids: list[str]) -> str
     the closest Postgres-side equivalent -- the reconciled value's own
     timestamp, which only advances when new financial data has actually
     been decided/written, same freshness contract the excluded table's
-    created_at gave the SQLite version."""
+    created_at gave the SQLite version.
+
+    company_ids=[] (a macro-only question, research/macro_evidence.py --
+    no company to check freshness against) short-circuits before building
+    any SQL: `WHERE company_id IN ()` is a Postgres SYNTAX error, not just
+    an always-false condition the way SQLite tolerates it -- found live,
+    every macro-only question through the reuse-before-recompute check
+    (context/reuse.py's find_reusable_report, called on every answer_
+    question() -- the hot path of every /research/ask-shaped request) was
+    crashing outright under DATABASE_BACKEND=postgres."""
+    if not company_ids:
+        return None
     placeholders = ",".join(["%s"] * len(company_ids))
     with conn.cursor() as cur:
         cur.execute(

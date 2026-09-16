@@ -1304,6 +1304,133 @@ def set_ingestion_queue_item_status(conn: sqlite3.Connection, item_id: int, stat
     return get_ingestion_queue_item(conn, item_id)
 
 
+def create_research_case(
+    conn: sqlite3.Connection, case_id: str, *, kind: str, question: str, company_ids: list[str],
+    statement_type: str, owner_id: int | None,
+) -> sqlite3.Row:
+    """The one write that starts a case -- research/case_runner.py calls
+    this synchronously, in the real request, before handing off to a
+    background thread, so the caller always gets a real case_id back
+    immediately (schemas/*.sql's research_cases table docstring has the
+    full state-machine rationale)."""
+    now = utcnow_iso()
+    conn.execute(
+        "INSERT INTO research_cases (case_id, kind, question, company_ids, statement_type, status, "
+        "current_activity, owner_id, started_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, 'in_progress', 'Queued', ?, ?, ?)",
+        (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now),
+    )
+    conn.commit()
+    return get_research_case(conn, case_id)
+
+
+def get_research_case(conn: sqlite3.Connection, case_id: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM research_cases WHERE case_id = ?", (case_id,)).fetchone()
+
+
+def update_case_activity(conn: sqlite3.Connection, case_id: str, activity: str) -> None:
+    """Called between pipeline stages (planning, retrieving evidence,
+    analyzing, generating, persisting) -- never a percentage, just a plain
+    human-readable label the polling UI shows as-is alongside elapsed time
+    (case_id's started_at)."""
+    conn.execute(
+        "UPDATE research_cases SET current_activity = ?, updated_at = ? WHERE case_id = ? AND status = 'in_progress'",
+        (activity, utcnow_iso(), case_id),
+    )
+    conn.commit()
+
+
+def complete_research_case(
+    conn: sqlite3.Connection, case_id: str, *, outcome: str, result_json: str,
+    thread_id: str | None = None, investigation_id: str | None = None,
+) -> None:
+    """outcome is 'answered' (a real result) or 'insufficient_data' (the
+    early sufficiency check found nothing to ground an answer in) -- never
+    'failed', which is reserved for a genuine technical failure and goes
+    through fail_research_case below instead."""
+    now = utcnow_iso()
+    conn.execute(
+        "UPDATE research_cases SET status = 'completed', outcome = ?, result_json = ?, thread_id = ?, "
+        "investigation_id = ?, current_activity = NULL, updated_at = ?, completed_at = ? WHERE case_id = ?",
+        (outcome, result_json, thread_id, investigation_id, now, now, case_id),
+    )
+    conn.commit()
+
+
+def fail_research_case(conn: sqlite3.Connection, case_id: str, error_message: str) -> None:
+    now = utcnow_iso()
+    conn.execute(
+        "UPDATE research_cases SET status = 'failed', error_message = ?, current_activity = NULL, "
+        "updated_at = ?, completed_at = ? WHERE case_id = ?",
+        (error_message, now, now, case_id),
+    )
+    conn.commit()
+
+
+def request_case_cancellation(conn: sqlite3.Connection, case_id: str) -> bool:
+    """Cooperative cancellation -- sets a flag research/case_runner.py
+    checks between pipeline stages (never mid-LLM-call); doesn't itself
+    change `status`. Returns False if the case doesn't exist or already
+    left status='in_progress' (nothing left to cancel), same "tell the
+    caller whether there was anything to do" convention hide_investigation
+    etc. already follow."""
+    cursor = conn.execute(
+        "UPDATE research_cases SET cancel_requested = 1 WHERE case_id = ? AND status = 'in_progress'",
+        (case_id,),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def is_case_cancel_requested(conn: sqlite3.Connection, case_id: str) -> bool:
+    row = conn.execute("SELECT cancel_requested FROM research_cases WHERE case_id = ?", (case_id,)).fetchone()
+    return bool(row and row["cancel_requested"])
+
+
+def cancel_research_case(conn: sqlite3.Connection, case_id: str) -> None:
+    """Called by research/case_runner.py itself once it notices
+    cancel_requested at a checkpoint -- the actual status='cancelled'
+    transition, distinct from request_case_cancellation() setting the flag
+    a route handler calls synchronously."""
+    now = utcnow_iso()
+    conn.execute(
+        "UPDATE research_cases SET status = 'cancelled', current_activity = NULL, updated_at = ?, "
+        "completed_at = ? WHERE case_id = ?",
+        (now, now, case_id),
+    )
+    conn.commit()
+
+
+def list_research_cases_for_feed(conn: sqlite3.Connection, *, owner_id: int | None = None) -> list[sqlite3.Row]:
+    """Every case worth showing on the Cases list page in its own right --
+    excludes status='completed' outcome='answered' cases, since those
+    already appear in the merged feed as their own generated_reports/
+    investigations row (web/app.py's investigations() view) and would
+    otherwise show up twice. in_progress (reconnect to it), failed,
+    cancelled, and completed/insufficient_data cases all have no other
+    representation, so they're the only case rows this returns."""
+    sql = (
+        "SELECT * FROM research_cases WHERE NOT (status = 'completed' AND outcome = 'answered')"
+    )
+    params: list = []
+    if owner_id is not None:
+        sql += " AND owner_id = ?"
+        params.append(owner_id)
+    sql += " ORDER BY started_at DESC"
+    return conn.execute(sql, params).fetchall()
+
+
+def list_stale_in_progress_cases(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every case still at status='in_progress' -- called once at process
+    startup (web/app.py's _resume_interrupted_batch_jobs-style hook) to
+    detect cases whose background thread died with the process (a genuine
+    server restart/crash, not a client-side disconnect -- the background
+    thread already survives those). There's no safe way to resume mid-LLM-
+    call, so these are marked failed with a clear note, same honesty
+    principle fail_research_case's docstring already establishes."""
+    return conn.execute("SELECT * FROM research_cases WHERE status = 'in_progress'").fetchall()
+
+
 def save_investigation(
     conn: sqlite3.Connection,
     *,
@@ -2275,7 +2402,16 @@ def get_latest_data_timestamp(conn: sqlite3.Connection, company_ids: list[str]) 
     cached generated_reports row against before reusing it. A generated
     report older than this timestamp was built from data that has since
     changed, so it must not be silently reused (README §17: "an old cached
-    result must not silently masquerade as current data")."""
+    result must not silently masquerade as current data").
+
+    company_ids=[] (a macro-only question) short-circuits before building
+    any SQL -- see storage/repositories_pg.py's own counterpart for why
+    (a `WHERE company_id IN ()` is a syntax error there, tolerated here
+    only because SQLite treats an empty IN() as always-false rather than
+    invalid -- short-circuiting keeps both backends' behavior identical
+    rather than relying on that difference)."""
+    if not company_ids:
+        return None
     placeholders = ",".join("?" * len(company_ids))
     row = conn.execute(
         f"""

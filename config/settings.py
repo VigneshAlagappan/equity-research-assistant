@@ -23,21 +23,6 @@ NORMALIZED_DIR = DATA_DIR / "normalized"
 DOCUMENTS_DIR = DATA_DIR / "documents"
 CHARTS_DIR = DATA_DIR / "charts"
 
-# Tiny per-investigation status files (research/investigation_jobs.py) so
-# /investigate/generate-async's background thread and /investigate/status's
-# poll can agree on progress across gunicorn's forked workers, which don't
-# share memory -- local disk is shared across those forked workers (same
-# container filesystem) at today's scale=1 Lightsail deployment, so this is
-# NOT safe if the service is ever scaled to more than one container
-# instance (each instance gets its own disk) -- would need to move to a
-# shared store (e.g. the investigations table itself, or Postgres/S3) first.
-INVESTIGATION_JOBS_DIR = DATA_DIR / "investigation_jobs"
-# Same shape/same single-container-instance caveat as INVESTIGATION_JOBS_DIR
-# above, for /chat, /research/ask, and /companies/<id>/ask's own async+poll
-# flow (research/ask_jobs.py) -- a separate directory, not the same one,
-# since these track full answer payloads rather than investigation-page
-# redirect URLs.
-ASK_JOBS_DIR = DATA_DIR / "ask_jobs"
 LOG_DIR = BASE_DIR / "logs"
 
 SCHEMA_PATH = BASE_DIR / "schemas" / "sqlite_schema.sql"
@@ -271,6 +256,15 @@ ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL")
 # research/signals_report.py pin to when ANTHROPIC_MODEL is unset.
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
 ANTHROPIC_API_KEY_SET = bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+# ------------------------------------------------------------------
+# Sentry (error/log monitoring -- web/app.py calls sentry_sdk.init() once,
+# at import time, gated on this being set). Unset (the default, e.g. every
+# local dev/test run that doesn't export it) means sentry_sdk.init() is
+# never called at all -- no network calls, no dependency on reaching
+# Sentry's ingest endpoint, same "absent is a no-op" contract every other
+# optional integration in this file follows (NEO4J_URI, QDRANT_URL, ...).
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
 
 # ------------------------------------------------------------------
 # Local model (llm/providers/local_provider.py, llm/capability_registry.py)

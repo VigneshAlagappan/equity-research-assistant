@@ -53,6 +53,17 @@ RUN mkdir -p /app/data/raw /app/data/normalized /app/data/documents /app/data/ch
 ENV PORT=8080
 EXPOSE 8080
 
+# Tried capping OMP_NUM_THREADS/MKL_NUM_THREADS/OPENBLAS_NUM_THREADS/
+# TOKENIZERS_PARALLELISM=1 here as a free mitigation for the WORKER
+# TIMEOUT/SIGKILL crashes below -- reverted (measured live: a single Quick
+# Answer went from ~60s to ~300s, an unacceptable trade). Reliability is
+# instead handled at the infrastructure level now -- signals-app's
+# Lightsail Container Service runs at scale:2 (two nodes behind its own
+# load balancer) specifically so one node hitting this same crash doesn't
+# take the whole app down for every user; see docs/SCHEDULED_JOBS.md /
+# operator notes for the "micro" tier's known CPU/RAM tightness under a
+# single heavy request (Deep Dive especially) if this needs revisiting.
+
 # gunicorn, not the Flask dev server -- create_app() is a factory
 # (web/app.py), so gunicorn needs the factory call, not a bare module
 # attribute: "web.app:create_app()".

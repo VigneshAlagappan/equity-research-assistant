@@ -34,6 +34,7 @@ from scripts.batch_fetch_fred import run_fred_batch, TRACKED_SERIES
 from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
 from scripts.batch_generate_insights import run_key_insights_batch
+from scripts.classify_macro_factors_batch import run_macro_factor_classification_batch
 from scripts.db_shard import run_db_shard_job
 from scripts.fetch_daily_prices import run_price_history_update
 from scripts.fetch_daily_prices_usa import run_price_history_update_usa
@@ -292,6 +293,10 @@ def _run_doc_analysis(conn) -> int:
     return run_document_processing_batch(conn)
 
 
+def _run_macro_factor_classification(conn) -> int:
+    return run_macro_factor_classification_batch(conn)
+
+
 def _run_insights_companies(conn) -> int:
     return run_key_insights_batch(conn)
 
@@ -395,6 +400,8 @@ SCHEDULED_JOBS: list[ScheduledJob] = [
     ScheduledJob("insights_macro", "Macro insights", "Monthly", "Macro", None,
                  "The generation function itself doesn't exist yet — needs a design "
                  "decision on what a macro insight is first", None),
+    ScheduledJob("macro_factor_classification", "Macro factors -> knowledge graph (Neo4j)", "Monthly", "Macro",
+                 "macro_factor_classification", None, _run_macro_factor_classification),
     ScheduledJob("insights_companies", "Company insights", "Monthly", "Insights",
                  "key_insights_batch", None, _run_insights_companies),
     ScheduledJob("doc_analysis", "Document analysis (all uploaded PDFs/audio)", "Daily", "Documents",

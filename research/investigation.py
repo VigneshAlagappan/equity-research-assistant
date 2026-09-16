@@ -58,6 +58,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from research.assistant import CaseCancelledError, InsufficientEvidenceError, gather_evidence
 from research.capabilities import PlannerCapabilities, default_capabilities
 from research.hypothesis_evaluator import HypothesisEvaluation, HypothesisEvaluationError, evaluate_hypothesis
 from research.hypothesis_generator import Hypothesis, HypothesisGenerationError, generate_hypotheses
@@ -189,7 +190,7 @@ def _investigate_hypothesis(
 def run_investigation(
     conn: DBConnection, question: str, company_ids: list[str], *, statement_type: str = "consolidated",
     model: str | None = None, capabilities: PlannerCapabilities | None = None, fact_store: FactStore | None = None,
-    as_of: str | None = None, investigation_id: str | None = None,
+    as_of: str | None = None, investigation_id: str | None = None, case_id: str | None = None,
 ) -> Investigation:
     """`as_of` (ISO date) runs the whole investigation point-in-time: every
     evidence capability is bound to that cutoff (research/temporal.py via
@@ -204,11 +205,43 @@ def run_investigation(
     fresh one -- lets a caller (web/app.py's /investigate/generate-async)
     hand out the id up front, before this (potentially several-minute) call
     even starts, so it has something to poll progress against from the
-    first response."""
+    first response.
+
+    `case_id` (only ever passed by research/case_runner.py's async/Cases
+    path -- see research/assistant.py's answer_question() for the same
+    parameter on the Quick Answer side) turns on current_activity updates
+    between stages, an early sufficiency check before hypothesis
+    generation even starts, and one cancellation checkpoint. Every
+    pre-existing caller leaves this unset and sees identical behavior."""
     investigation_id = investigation_id or uuid.uuid4().hex[:12]
     fs = fact_store or default_fact_store()
     cutoff = normalize_as_of(as_of)
     caps = capabilities or default_capabilities(fact_store=fs, as_of=cutoff, investigation_id=investigation_id)
+
+    if case_id is not None:
+        from storage.repositories import update_case_activity
+
+        update_case_activity(conn, case_id, "Checking evidence sufficiency")
+        # Cheap (DB queries + a vector search, no LLM call) -- same
+        # reasoning research/assistant.py's answer_question() gives for
+        # calling gather_evidence() before committing to a full pass: no
+        # point starting a multi-hypothesis, multi-LLM-call investigation
+        # when there's nothing at all to ground even one hypothesis in.
+        financial_evidence, variable_evidence = gather_evidence(conn, question, company_ids, statement_type)
+        if not (financial_evidence + variable_evidence):
+            if company_ids:
+                message = (
+                    f"No data ingested yet for {', '.join(company_ids)}. "
+                    "Run `python main.py ingest ...` first, then try again."
+                )
+            else:
+                message = (
+                    "No matching evidence found for this question. Name a company to ground it in that "
+                    "company's Financials/Docs, or ask about a macro topic that's been ingested "
+                    "(e.g. rainfall, repo rate, credit growth)."
+                )
+            raise InsufficientEvidenceError(message)
+        update_case_activity(conn, case_id, "Generating hypotheses")
 
     try:
         hypotheses = generate_hypotheses(
@@ -223,7 +256,13 @@ def run_investigation(
     investigation.hypotheses = hypotheses
     deadline = time.monotonic() + INVESTIGATION_TIMEOUT_SECONDS
 
-    for hypothesis in hypotheses:
+    for index, hypothesis in enumerate(hypotheses):
+        if case_id is not None:
+            from storage.repositories import is_case_cancel_requested, update_case_activity
+
+            if is_case_cancel_requested(conn, case_id):
+                raise CaseCancelledError()
+            update_case_activity(conn, case_id, f"Evaluating hypothesis {index + 1} of {len(hypotheses)}")
         plan, evaluation = _investigate_hypothesis(
             conn, hypothesis, question, model=model, capabilities=caps, fact_store=fs, deadline=deadline,
         )
@@ -236,11 +275,21 @@ def run_investigation(
     if not investigation.evaluations:
         raise InvestigationError("every hypothesis's evaluation failed — nothing to synthesize")
 
+    if case_id is not None:
+        from storage.repositories import update_case_activity
+
+        update_case_activity(conn, case_id, "Synthesizing findings")
+
     try:
         investigation.synthesis = synthesize(conn, question, hypotheses, investigation.evaluations, model=model)
     except ResearchSynthesisError as exc:
         logger.warning("Research synthesis failed for investigation %s: %s", investigation_id, exc, exc_info=True)
         investigation.synthesis = None
+
+    if case_id is not None:
+        from storage.repositories import update_case_activity
+
+        update_case_activity(conn, case_id, "Persisting result")
 
     _persist(conn, investigation, statement_type, fs)
     return investigation
