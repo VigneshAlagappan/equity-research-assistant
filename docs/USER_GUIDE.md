@@ -705,9 +705,9 @@ every rule's hour shifts one hour early in ET terms and needs a manual
 
 | Category | Job | Cadence | Trigger (ET) | EventBridge rule |
 |---|---|---|---|---|
-| Daily price | India — close price & volume (Nifty 500) | Daily | Weekdays 10:00pm | `signals-app-price-history-india-daily` |
-| Daily price | India — close price & volume (Nifty Micro-Cap) | Monthly | 1st Sat, 9:00am | `signals-app-daily-price-india-microcap` |
-| Daily price | USA — close price & volume | Weekly | Weekdays 10:00pm | `signals-app-price-history-usa-daily` |
+| Daily price | India — close price & volume (Nifty 500) | Daily | Weekdays midnight | `signals-app-price-history-india-daily` |
+| Daily price | India — close price & volume (Nifty Micro-Cap) | Monthly | 1st Sat, 4:00am | `signals-app-daily-price-india-microcap` |
+| Daily price | USA — close price & volume | Weekly | Weekdays midnight | `signals-app-price-history-usa-daily` |
 | History price | Nifty 50, 20y incremental | Manual→Weekly | Sat 7:00am | `signals-app-history-price-nifty50` |
 | History price | Nifty Next 50, 20y incremental | Manual→Weekly | Sat 7:15am | `signals-app-history-price-next50` |
 | History price | Nifty Midcap 150, 20y incremental | Manual→Weekly | Sat 7:30am | `signals-app-history-price-midcap150` |
