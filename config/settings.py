@@ -468,6 +468,42 @@ DOCUMENT_STORE_BACKEND = os.environ.get("DOCUMENT_STORE_BACKEND", "local")
 S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "signals-app-documents-862938824222")
 S3_REGION_NAME = os.environ.get("AWS_REGION", "us-east-2")
 
+def _warn_if_document_store_misconfigured(
+    database_backend: str, local_dev_database_url: str | None, document_store_backend: str,
+) -> None:
+    """Real production drift, not hypothetical: a local Docker smoke test
+    with DATABASE_BACKEND=postgres pointed at the real production NEON
+    credential but no explicit DOCUMENT_STORE_BACKEND=s3 silently falls
+    back to "local" -- every DB write lands in the real shared Postgres,
+    but every document write lands on that container's own throwaway disk.
+    A generated_reports row then carries a real s3_key that never actually
+    resolves in the real bucket -- found live 2026-09-17, 7 of 8 broken
+    s3_key rows traced to exactly this. Loud, not fatal (matches this
+    file's own optional-infra philosophy -- Neo4j/Qdrant degrade the same
+    way, never hard-block), since a real "local Postgres + local documents"
+    combo (LOCAL_DEV_DATABASE_URL set) is legitimate and must not warn.
+
+    A standalone function, not inline module-level code, specifically so
+    it's unit-testable without reloading this module -- config.settings is
+    imported by nearly everything else in this app, and other modules cache
+    references to its constants (`from config.settings import BASE_DIR`
+    etc.) that importlib.reload() would silently leave stale, corrupting
+    unrelated tests that run afterward in the same process."""
+    if database_backend == "postgres" and not local_dev_database_url and document_store_backend != "s3":
+        logging.getLogger(__name__).warning(
+            "DATABASE_BACKEND=postgres is pointed at the real NEON credential, but "
+            "DOCUMENT_STORE_BACKEND=%r (not 's3') -- every document write will silently "
+            "land on local disk instead of the real S3 bucket, while every DB write still "
+            "lands in the real shared database. Set DOCUMENT_STORE_BACKEND=s3 explicitly "
+            "if that's intentional.",
+            document_store_backend,
+        )
+
+
+_warn_if_document_store_misconfigured(
+    DATABASE_BACKEND, os.environ.get("LOCAL_DEV_DATABASE_URL"), DOCUMENT_STORE_BACKEND,
+)
+
 # EMBEDDING_PROVIDER selects which concrete EmbeddingProvider
 # (retrieval/embedding_provider.py) computes chunk/query vectors. "local"
 # (default) runs sentence-transformers entirely on-device — zero API cost,
