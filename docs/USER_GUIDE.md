@@ -743,8 +743,9 @@ every rule's hour shifts one hour early in ET terms and needs a manual
 | Documents | Investor relations documents | Quarterly | — (on hold) | — |
 | Maintenance | DB sharding | Daily | — (on hold) | — |
 | Maintenance | Raw object catalog reconciliation | Weekly | Sun 5:00am | `signals-app-raw-object-reconciliation-weekly` |
+| Maintenance | Research thread reconciliation (S3 <-> Postgres) | Weekly | Sun 5:15am | `signals-app-generated-report-reconciliation-weekly` |
 
-30 of 38 registry jobs are automated (5 of those monthly instead of their
+31 of 39 registry jobs are automated (5 of those monthly instead of their
 declared weekly/quarterly cadence, per an explicit operator decision to
 keep NSE/SEC EDGAR load down for the largest tier). 4 are deliberately on
 hold (Insights, Documents×2, DB sharding — not yet wanted on autopilot). 2
