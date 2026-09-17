@@ -59,6 +59,14 @@ investor presentation), citing which document it came from
 lines. Never state an inference as if it were confirmed fact; use language like "may have", \
 "is consistent with", "suggests".
 
+End your answer with a confidence line, exactly this format: \
+**Confidence:** High / Moderate / Low — one sentence explaining why. Base it on how directly the \
+evidence answers the question, not on how confident the underlying business looks: High — the \
+question is answered mainly with [FACT]/[CALCULATION] lines that directly cover what was asked. \
+Moderate — the evidence covers most of the question but leans on [INFERENCE] or [MANAGEMENT_STATEMENT], \
+or only partially covers it. Low — the evidence is thin, mostly inferred, or only tangentially related \
+to the question.
+
 Do not compute any new number yourself — every number in your answer must come \
 directly from a FACT or CALCULATION line in the evidence. If the evidence doesn't \
 cover something the question asks about, say so plainly rather than guessing or \
