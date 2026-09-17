@@ -1,0 +1,19 @@
+{% from "badges.html" import verdict_badge %}
+{#
+  Executive summary / strongest explanation. Renders only what exists —
+  an investigation whose synthesis step didn't run (or predates it) simply
+  omits this section rather than showing an empty shell (see the
+  {% if %} guard around the include in deep_dive/report.html).
+#}
+{% macro executive_summary(report) %}
+<p class="signal-section-label">Executive Summary</p>
+<div class="signal-exec-summary">
+  <p>{{ report.strongest_explanation }}</p>
+  {% if report.overall_verdict %}
+  <div class="signal-verdict-row">
+    {{ verdict_badge(report.overall_verdict) }}
+    <span class="signal-verdict-note">Verdict of the highest-ranked hypothesis below.</span>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}

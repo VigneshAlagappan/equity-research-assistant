@@ -1,0 +1,92 @@
+/*
+  Signal report print stylesheet — used for the browser's own
+  "Print / Export PDF" (window.print()). Requirements: A4/Letter friendly,
+  no orphaned hypothesis headers, minimal row-splitting, repeated table
+  headers, sensible margins, title/footer/page numbers, hide
+  interactive-only chrome, no localhost/browser-print artifacts.
+*/
+
+@media print {
+  @page {
+    size: A4;
+    margin: 16mm 14mm 18mm;
+  }
+
+  /* Named page for running footer text (page counters) — most engines
+     (Chrome/Chromium, which drives most "Print to PDF") support @page
+     content in the margin boxes; degrades harmlessly elsewhere. */
+  @page {
+    @bottom-center {
+      content: "Signals · Deep Dive Research Report — page " counter(page) " of " counter(pages);
+      font-size: 8.5pt;
+      color: #555;
+    }
+  }
+
+  html, body { background: #fff !important; }
+
+  /* App chrome (nav, sidebar, Ask AI trigger, toasts) never belongs on a
+     printed research report. */
+  .signals-sidebar, .signals-topbar, .no-print, .askai-overlay, .askai-trigger {
+    display: none !important;
+  }
+  .signals-shell-main { margin-left: 0 !important; }
+  .page, .page.page-wide { width: auto !important; max-width: none !important; padding: 0 !important; background: #fff !important; }
+
+  .signal-report {
+    border: none !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+  .signal-report a { color: #000 !important; text-decoration: none !important; }
+
+  /* Flatten the metric-card grid's gap-as-background trick, which relies
+     on a background color print engines often drop; use real borders
+     instead so the grid lines still show in a black-and-white print. */
+  .signal-metric-grid { background: transparent !important; border-color: #999 !important; }
+  .signal-metric-card { border: 1px solid #999 !important; }
+
+  .signal-badge, .signal-chain-step, .signal-pill, .signal-evidence-status {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    border-color: #999 !important;
+  }
+
+  /* Avoid orphaned section/hypothesis headers and split rows/cards where
+     practical. Not "avoid !important" everywhere — a hypothesis section
+     can legitimately be taller than one page, in which case the browser
+     must still be allowed to break it rather than leave endless blank
+     space; only the *header* and short atomic units are pinned. */
+  .signal-section-label, .signal-header-title, .signal-hyp-claim {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  .signal-hypothesis {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+  /* A hypothesis card taller than a page (long evidence matrix) is allowed
+     to split rather than force blank pages — but never split its own
+     header away from its first line of content. */
+  .signal-hyp-tagrow, .signal-hyp-claim {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .signal-evidence-row, .signal-chain-row, .signal-metric-card, .signal-trend-item {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .signal-table tr { break-inside: avoid; page-break-inside: avoid; }
+  .signal-table thead { display: table-header-group; } /* repeat header row on each page */
+  .signal-table tfoot { display: table-footer-group; }
+
+  .signal-header { break-after: avoid; page-break-after: avoid; }
+
+  /* Report letterhead — only shown in print, gives the PDF its own
+     title/generated-on line since the on-screen page chrome is hidden. */
+  .signal-print-masthead { display: block !important; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 2px solid #000; }
+
+  a[href]::after { content: ""; } /* suppress browsers' default "(url)" link-expansion artifact in print */
+}
+
+.signal-print-masthead { display: none; }

@@ -1,0 +1,29 @@
+{#
+  Shared verdict / score-band badge rendering, reused by the summary table,
+  hypothesis header, and executive summary. Data-driven off the verdict
+  string (research/hypothesis_evaluator.py) and score band
+  (reports.schema.score_band) — no per-hypothesis or per-company branching.
+#}
+{% macro verdict_label(verdict) -%}
+  {%- if verdict == 'SUPPORTED' -%}Supported
+  {%- elif verdict == 'PARTIALLY_SUPPORTED' -%}Partially supported
+  {%- elif verdict == 'REFUTED' -%}Refuted
+  {%- elif verdict == 'INSUFFICIENT_EVIDENCE' -%}Insufficient evidence
+  {%- else -%}Not evaluated
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro verdict_badge(verdict) %}
+<span class="signal-badge signal-verdict-{{ verdict or 'NONE' }}">{{ verdict_label(verdict) }}</span>
+{% endmacro %}
+
+{% macro score_badge(hypothesis) %}
+{% if hypothesis.score is not none %}
+<span class="signal-badge signal-band-{{ hypothesis.band }}"
+      title="The evaluator's own 0-100 estimate of how strongly the evidence it reviewed supports this verdict — not a probability the hypothesis is true. See Methodology below.">
+  {{ hypothesis.band_label }} &middot; {{ hypothesis.score }}%
+</span>
+{% else %}
+<span class="signal-badge signal-band-unscored" title="No evidence-strength estimate is available for this hypothesis.">Unscored</span>
+{% endif %}
+{% endmacro %}
