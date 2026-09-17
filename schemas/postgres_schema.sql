@@ -1240,3 +1240,106 @@ CREATE TABLE IF NOT EXISTS ingestion_queue_items (
   error_message TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ingestion_queue_status ON ingestion_queue_items(status, item_kind);
+
+-- ============================================================
+-- Economic graph (Phase 1 of "India Economic Graph + Economic Data
+-- Ingestion Foundation" -- registry schema + canonical observation model
+-- only; the causal graph (CausalAssertion/Mechanism), Neo4j sync, and
+-- scheduler safety fields are Phase 2, a separate later task). Ported
+-- verbatim from schemas/sqlite_schema.sql's own "Economic graph" section
+-- -- see that file's header comment for the Indicator-vs-Series
+-- distinction and the deliberate non-collision with the existing
+-- indicators/ package (company-level rule-triggered indicators).
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS source_organizations (
+  source_org_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  authority_level TEXT,
+  description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS source_datasets (
+  dataset_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  source_org_id INTEGER NOT NULL REFERENCES source_organizations(source_org_id),
+  authority_level TEXT,
+  priority INTEGER,
+  access_method TEXT,
+  cadence TEXT,
+  historical_start TEXT,
+  backfill_supported INTEGER,
+  license_notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_source_datasets_org ON source_datasets(source_org_id);
+
+CREATE TABLE IF NOT EXISTS source_endpoints (
+  endpoint_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  dataset_id INTEGER NOT NULL REFERENCES source_datasets(dataset_id),
+  url TEXT,
+  access_method TEXT,
+  priority INTEGER,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  authentication_type TEXT,
+  parser_config TEXT,
+  availability_status TEXT,
+  last_verified_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_source_endpoints_dataset ON source_endpoints(dataset_id);
+
+CREATE TABLE IF NOT EXISTS economic_indicator_registry (
+  indicator_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  category TEXT NOT NULL,
+  economic_meaning TEXT,
+  higher_is TEXT,
+  leading_lagging TEXT,
+  report_section TEXT,
+  headline_weight REAL,
+  preferred_chart_window TEXT,
+  material_change_mom REAL,
+  material_change_yoy REAL,
+  material_change_ytd REAL,
+  status TEXT NOT NULL DEFAULT 'registered_only',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (status IN ('registered_only', 'ingesting', 'live')),
+  CHECK (higher_is IS NULL OR higher_is IN ('good', 'bad', 'neutral')),
+  CHECK (leading_lagging IS NULL OR leading_lagging IN ('leading', 'lagging', 'coincident'))
+);
+CREATE INDEX IF NOT EXISTS idx_economic_indicator_registry_category ON economic_indicator_registry(category);
+
+CREATE TABLE IF NOT EXISTS economic_series (
+  series_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  indicator_id INTEGER NOT NULL REFERENCES economic_indicator_registry(indicator_id),
+  dataset_id INTEGER REFERENCES source_datasets(dataset_id),
+  series_key TEXT NOT NULL UNIQUE,
+  geography TEXT,
+  unit TEXT,
+  frequency TEXT,
+  seasonal_adjustment TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_economic_series_indicator ON economic_series(indicator_id);
+CREATE INDEX IF NOT EXISTS idx_economic_series_dataset ON economic_series(dataset_id);
+
+CREATE TABLE IF NOT EXISTS economic_observations (
+  observation_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  series_id INTEGER NOT NULL REFERENCES economic_series(series_id),
+  period TEXT NOT NULL,
+  period_type TEXT NOT NULL,
+  release_date TEXT NOT NULL,
+  vintage TEXT NOT NULL,
+  revision_status TEXT NOT NULL,
+  value REAL NOT NULL,
+  unit TEXT NOT NULL,
+  raw_object_id INTEGER REFERENCES raw_objects(object_id),
+  ingested_at TEXT NOT NULL,
+  CHECK (revision_status IN ('provisional', 'revised', 'final')),
+  UNIQUE(series_id, period, vintage)
+);
+CREATE INDEX IF NOT EXISTS idx_economic_observations_series_period ON economic_observations(series_id, period);
+CREATE INDEX IF NOT EXISTS idx_economic_observations_release ON economic_observations(series_id, release_date);

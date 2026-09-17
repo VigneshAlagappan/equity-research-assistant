@@ -1,0 +1,65 @@
+category: logistics
+indicators:
+- key: port_cargo_traffic
+  name: Port Cargo Traffic
+  economic_meaning: Total cargo handled at major ports -- a trade-volume and industrial-activity proxy.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Logistics
+  headline_weight: 0.5
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+- key: rail_freight_traffic
+  name: Rail Freight Traffic
+  economic_meaning: Freight tonnage carried by Indian Railways -- tracks bulk-commodity movement (coal,
+    cement, steel, foodgrain).
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Logistics
+  headline_weight: 0.5
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+- key: eway_bill_generation
+  name: E-way Bill Generation
+  economic_meaning: Count/value of electronic waybills generated for goods movement under GST -- a high-frequency
+    proxy for domestic trade activity.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Logistics
+  headline_weight: 0.5
+  preferred_chart_window: 1y
+  material_change_mom: 3.0
+  material_change_yoy: 5.0
+  material_change_ytd: 5.0
+  status: registered_only
+- key: air_cargo_traffic
+  name: Air Cargo Traffic
+  economic_meaning: Total air cargo tonnage handled -- a proxy for high-value/time-sensitive trade.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Logistics
+  headline_weight: 0.3
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 3.0
+  material_change_ytd: 3.0
+  status: registered_only
+- key: container_throughput
+  name: Container Throughput
+  economic_meaning: TEU (twenty-foot equivalent unit) container volume handled at major ports -- a containerized-trade
+    proxy distinct from bulk cargo tonnage.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Logistics
+  headline_weight: 0.3
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 3.0
+  material_change_ytd: 3.0
+  status: registered_only

@@ -1,0 +1,116 @@
+category: inflation
+indicators:
+- key: cpi_combined
+  name: CPI Combined
+  economic_meaning: Consumer Price Index (combined rural+urban), India's headline retail inflation measure
+    and the RBI's inflation-targeting anchor.
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Inflation
+  headline_weight: 1.0
+  preferred_chart_window: 5y
+  material_change_mom: 0.3
+  material_change_yoy: 0.5
+  material_change_ytd: 1.0
+  status: registered_only
+  source:
+    organization:
+      name: Ministry of Statistics and Programme Implementation (MoSPI)
+      authority_level: official_primary
+      description: Publishes the monthly Consumer Price Index release.
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: html_table
+      cadence: monthly
+      historical_start: 2012-01
+      backfill_supported: true
+      license_notes: Public data, Government of India Open Data Licence
+    endpoints:
+    - url: https://www.mospi.gov.in
+      access_method: html_table
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: cpi_combined_yoy_in
+      geography: IN
+      unit: percent_yoy
+      frequency: monthly
+      seasonal_adjustment: nsa
+- key: cpi_core
+  name: CPI Core
+  economic_meaning: CPI excluding volatile food and fuel components -- the underlying, demand-driven inflation
+    trend the RBI watches most closely.
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Inflation
+  headline_weight: 0.9
+  preferred_chart_window: 5y
+  material_change_mom: 0.2
+  material_change_yoy: 0.4
+  material_change_ytd: 0.8
+  status: registered_only
+- key: cpi_food
+  name: CPI Food
+  economic_meaning: The food-and-beverages component of CPI -- typically the most volatile and monsoon-sensitive
+    sub-index.
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Inflation
+  headline_weight: 0.6
+  preferred_chart_window: 3y
+  material_change_mom: 0.5
+  material_change_yoy: 1.0
+  material_change_ytd: 1.5
+  status: registered_only
+- key: cpi_rural
+  name: CPI Rural
+  economic_meaning: CPI computed for rural India alone -- diverges from the urban index during agri-price
+    or wage shocks.
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Inflation
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: 0.3
+  material_change_yoy: 0.5
+  material_change_ytd: 1.0
+  status: registered_only
+- key: cpi_urban
+  name: CPI Urban
+  economic_meaning: CPI computed for urban India alone.
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Inflation
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: 0.3
+  material_change_yoy: 0.5
+  material_change_ytd: 1.0
+  status: registered_only
+- key: wpi
+  name: WPI
+  economic_meaning: Wholesale Price Index -- tracks producer/wholesale-level prices; an early read on
+    pipeline inflation pressure before it reaches retail.
+  higher_is: bad
+  leading_lagging: leading
+  report_section: Inflation
+  headline_weight: 0.7
+  preferred_chart_window: 5y
+  material_change_mom: 0.3
+  material_change_yoy: 0.5
+  material_change_ytd: 1.0
+  status: registered_only
+- key: wpi_manufactured
+  name: WPI Manufactured Products
+  economic_meaning: The manufactured-products component of WPI, the largest single weight in the WPI basket.
+  higher_is: bad
+  leading_lagging: leading
+  report_section: Inflation
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: 0.3
+  material_change_yoy: 0.5
+  material_change_ytd: 1.0
+  status: registered_only

@@ -3440,3 +3440,343 @@ def list_worker_processing_log(
     return conn.execute(
         f"SELECT * FROM worker_processing_log {where} ORDER BY log_id ASC", params
     ).fetchall()
+
+
+# ------------------------------------------------------------------
+# Economic graph (Phase 1 -- registry + canonical observation model).
+# See schemas/sqlite_schema.sql's "Economic graph" section for the table
+# shapes and the Indicator-vs-Series distinction. Deliberately NOT under
+# indicators/ (that package is the unrelated company-level rule-triggered
+# indicator system) -- Python model code for this graph lives in
+# economic_graph/, repository functions live here, mirroring where
+# macro_observations' functions live in this same file.
+# ------------------------------------------------------------------
+
+
+def upsert_source_organization(
+    conn: sqlite3.Connection,
+    name: str,
+    *,
+    authority_level: str | None = None,
+    description: str | None = None,
+) -> int:
+    """Idempotent by name -- a repeat call for the same org (e.g. the
+    economic_graph loader re-run against infrastructure/economic_graph/
+    indicators/*.yaml) updates authority_level/description rather than
+    creating a duplicate row."""
+    conn.execute(
+        """
+        INSERT INTO source_organizations (name, authority_level, description)
+        VALUES (?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+            authority_level = excluded.authority_level,
+            description = excluded.description
+        """,
+        (name, authority_level, description),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT source_org_id FROM source_organizations WHERE name = ?", (name,)
+    ).fetchone()
+    return row["source_org_id"]
+
+
+def get_source_organization(conn: sqlite3.Connection, source_org_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM source_organizations WHERE source_org_id = ?", (source_org_id,)
+    ).fetchone()
+
+
+def insert_source_dataset(
+    conn: sqlite3.Connection,
+    source_org_id: int,
+    *,
+    authority_level: str | None = None,
+    priority: int | None = None,
+    access_method: str | None = None,
+    cadence: str | None = None,
+    historical_start: str | None = None,
+    backfill_supported: bool | None = None,
+    license_notes: str | None = None,
+) -> int:
+    now = utcnow_iso()
+    cursor = conn.execute(
+        """
+        INSERT INTO source_datasets (
+            source_org_id, authority_level, priority, access_method, cadence,
+            historical_start, backfill_supported, license_notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            source_org_id, authority_level, priority, access_method, cadence,
+            historical_start, None if backfill_supported is None else int(backfill_supported),
+            license_notes, now, now,
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_source_dataset(conn: sqlite3.Connection, dataset_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM source_datasets WHERE dataset_id = ?", (dataset_id,)).fetchone()
+
+
+def insert_source_endpoint(
+    conn: sqlite3.Connection,
+    dataset_id: int,
+    *,
+    url: str | None = None,
+    access_method: str | None = None,
+    priority: int | None = None,
+    enabled: bool = True,
+    authentication_type: str | None = None,
+    parser_config: str | None = None,
+    availability_status: str | None = None,
+    last_verified_at: str | None = None,
+) -> int:
+    cursor = conn.execute(
+        """
+        INSERT INTO source_endpoints (
+            dataset_id, url, access_method, priority, enabled, authentication_type,
+            parser_config, availability_status, last_verified_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            dataset_id, url, access_method, priority, int(enabled), authentication_type,
+            parser_config, availability_status, last_verified_at,
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def list_source_endpoints_for_dataset(conn: sqlite3.Connection, dataset_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM source_endpoints WHERE dataset_id = ? ORDER BY priority IS NULL, priority ASC, endpoint_id ASC",
+        (dataset_id,),
+    ).fetchall()
+
+
+def upsert_economic_indicator(
+    conn: sqlite3.Connection,
+    name: str,
+    category: str,
+    *,
+    economic_meaning: str | None = None,
+    higher_is: str | None = None,
+    leading_lagging: str | None = None,
+    report_section: str | None = None,
+    headline_weight: float | None = None,
+    preferred_chart_window: str | None = None,
+    material_change_mom: float | None = None,
+    material_change_yoy: float | None = None,
+    material_change_ytd: float | None = None,
+    status: str = "registered_only",
+) -> int:
+    """Idempotent by name -- the economic_graph loader script's primary
+    write path for infrastructure/economic_graph/indicators/*.yaml. Never
+    defaults status to anything but 'registered_only' unless the caller
+    explicitly passes a different value (README instruction: status must
+    never be faked)."""
+    if status not in ("registered_only", "ingesting", "live"):
+        raise ValueError(f"invalid status: {status!r}")
+    now = utcnow_iso()
+    conn.execute(
+        """
+        INSERT INTO economic_indicator_registry (
+            name, category, economic_meaning, higher_is, leading_lagging, report_section,
+            headline_weight, preferred_chart_window, material_change_mom, material_change_yoy,
+            material_change_ytd, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+            category = excluded.category,
+            economic_meaning = excluded.economic_meaning,
+            higher_is = excluded.higher_is,
+            leading_lagging = excluded.leading_lagging,
+            report_section = excluded.report_section,
+            headline_weight = excluded.headline_weight,
+            preferred_chart_window = excluded.preferred_chart_window,
+            material_change_mom = excluded.material_change_mom,
+            material_change_yoy = excluded.material_change_yoy,
+            material_change_ytd = excluded.material_change_ytd,
+            status = excluded.status,
+            updated_at = excluded.updated_at
+        """,
+        (
+            name, category, economic_meaning, higher_is, leading_lagging, report_section,
+            headline_weight, preferred_chart_window, material_change_mom, material_change_yoy,
+            material_change_ytd, status, now, now,
+        ),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT indicator_id FROM economic_indicator_registry WHERE name = ?", (name,)
+    ).fetchone()
+    return row["indicator_id"]
+
+
+def get_economic_indicator(conn: sqlite3.Connection, indicator_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM economic_indicator_registry WHERE indicator_id = ?", (indicator_id,)
+    ).fetchone()
+
+
+def get_economic_indicator_by_name(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM economic_indicator_registry WHERE name = ?", (name,)
+    ).fetchone()
+
+
+def list_economic_indicators(
+    conn: sqlite3.Connection, *, category: str | None = None, status: str | None = None
+) -> list[sqlite3.Row]:
+    clauses, params = [], []
+    if category is not None:
+        clauses.append("category = ?")
+        params.append(category)
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.execute(
+        f"SELECT * FROM economic_indicator_registry {where} ORDER BY category, name", params
+    ).fetchall()
+
+
+def insert_economic_series(
+    conn: sqlite3.Connection,
+    indicator_id: int,
+    series_key: str,
+    *,
+    dataset_id: int | None = None,
+    geography: str | None = None,
+    unit: str | None = None,
+    frequency: str | None = None,
+    seasonal_adjustment: str | None = None,
+    notes: str | None = None,
+) -> int:
+    now = utcnow_iso()
+    cursor = conn.execute(
+        """
+        INSERT INTO economic_series (
+            indicator_id, dataset_id, series_key, geography, unit, frequency,
+            seasonal_adjustment, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            indicator_id, dataset_id, series_key, geography, unit, frequency,
+            seasonal_adjustment, notes, now, now,
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_economic_series(conn: sqlite3.Connection, series_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM economic_series WHERE series_id = ?", (series_id,)).fetchone()
+
+
+def get_economic_series_by_key(conn: sqlite3.Connection, series_key: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM economic_series WHERE series_key = ?", (series_key,)
+    ).fetchone()
+
+
+def list_series_for_indicator(conn: sqlite3.Connection, indicator_id: int) -> list[sqlite3.Row]:
+    """One indicator -> many series (by geography/frequency/source) --
+    the whole point of separating economic_indicator_registry from
+    economic_series."""
+    return conn.execute(
+        "SELECT * FROM economic_series WHERE indicator_id = ? ORDER BY series_id", (indicator_id,)
+    ).fetchall()
+
+
+def insert_economic_observations(conn: sqlite3.Connection, observations: Iterable) -> list[int]:
+    """Append-only, same discipline as insert_financial_observations/
+    insert_macro_observations -- a revision is a NEW row, never an
+    overwrite of a prior vintage. Unlike those two tables, this one has a
+    real UNIQUE(series_id, period, vintage) constraint, so a duplicate
+    exact (series_id, period, vintage) tuple raises sqlite3.IntegrityError
+    rather than silently appending a duplicate -- vintages are meant to be
+    distinct revisions, not repeat ingests of the same one."""
+    now = utcnow_iso()
+    ids: list[int] = []
+    for obs in observations:
+        cursor = conn.execute(
+            """
+            INSERT INTO economic_observations (
+                series_id, period, period_type, release_date, vintage, revision_status,
+                value, unit, raw_object_id, ingested_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                obs.series_id, obs.period, obs.period_type, obs.release_date, obs.vintage,
+                obs.revision_status, obs.value, obs.unit, obs.raw_object_id, obs.ingested_at or now,
+            ),
+        )
+        ids.append(cursor.lastrowid)
+    conn.commit()
+    return ids
+
+
+def economic_observation_latest(conn: sqlite3.Connection, series_id: int) -> sqlite3.Row | None:
+    """The highest vintage of the most recent period on file for this series."""
+    return conn.execute(
+        """
+        SELECT * FROM economic_observations
+        WHERE series_id = ?
+        ORDER BY period DESC, vintage DESC
+        LIMIT 1
+        """,
+        (series_id,),
+    ).fetchone()
+
+
+def economic_observation_as_of(conn: sqlite3.Connection, series_id: int, date: str) -> sqlite3.Row | None:
+    """What was known for this series using only vintages released on or
+    before `date` -- a real-time-data query (ALFRED-style "as it stood on
+    this date"), not "the value as of this period". Picks the most recent
+    period among those vintages, and within that period the highest
+    (most-revised) vintage released by `date`."""
+    return conn.execute(
+        """
+        SELECT * FROM economic_observations
+        WHERE series_id = ? AND release_date <= ?
+        ORDER BY period DESC, vintage DESC
+        LIMIT 1
+        """,
+        (series_id, date),
+    ).fetchone()
+
+
+def economic_observation_history(
+    conn: sqlite3.Connection, series_id: int, start_date: str, end_date: str
+) -> list[sqlite3.Row]:
+    """Latest vintage per period in [start_date, end_date] (inclusive),
+    ordered by period ascending -- a revision-free time series suitable
+    for charting."""
+    return conn.execute(
+        """
+        SELECT o.* FROM economic_observations o
+        WHERE o.series_id = ? AND o.period >= ? AND o.period <= ?
+          AND o.vintage = (
+              SELECT MAX(o2.vintage) FROM economic_observations o2
+              WHERE o2.series_id = o.series_id AND o2.period = o.period
+          )
+        ORDER BY o.period ASC
+        """,
+        (series_id, start_date, end_date),
+    ).fetchall()
+
+
+def economic_observation_vintages(conn: sqlite3.Connection, series_id: int, period: str) -> list[sqlite3.Row]:
+    """Every vintage of one period, in release order (provisional ->
+    revised -> final, typically)."""
+    return conn.execute(
+        """
+        SELECT * FROM economic_observations
+        WHERE series_id = ? AND period = ?
+        ORDER BY release_date ASC, vintage ASC
+        """,
+        (series_id, period),
+    ).fetchall()

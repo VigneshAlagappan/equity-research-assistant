@@ -1,0 +1,118 @@
+category: fiscal
+indicators:
+- key: fiscal_deficit
+  name: Fiscal Deficit
+  economic_meaning: Central government's fiscal deficit as a share of budgeted/GDP -- the headline fiscal-discipline
+    metric watched by rating agencies and bond markets.
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Fiscal
+  headline_weight: 0.9
+  preferred_chart_window: 10y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: 0.5
+  status: registered_only
+- key: gst_collections
+  name: GST Collections
+  economic_meaning: Monthly gross Goods and Services Tax revenue -- a real-time proxy for formal-economy
+    consumption and compliance.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Fiscal
+  headline_weight: 0.8
+  preferred_chart_window: 3y
+  material_change_mom: 3.0
+  material_change_yoy: 5.0
+  material_change_ytd: 5.0
+  status: registered_only
+  source:
+    organization:
+      name: Goods and Services Tax Network (GSTN)
+      authority_level: official_primary
+      description: Operates the GST portal and publishes monthly GST revenue collection figures.
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: html_table
+      cadence: monthly
+      historical_start: 2017-07
+      backfill_supported: true
+      license_notes: Public data, Government of India Open Data Licence
+    endpoints:
+    - url: https://www.gst.gov.in
+      access_method: html_table
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: gst_collections_in
+      geography: IN
+      unit: inr_crore
+      frequency: monthly
+      seasonal_adjustment: nsa
+- key: revenue_deficit
+  name: Revenue Deficit
+  economic_meaning: The gap between government revenue receipts and revenue expenditure -- the portion
+    of the fiscal deficit not funding capital/asset creation.
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Fiscal
+  headline_weight: 0.5
+  preferred_chart_window: 10y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: 0.5
+  status: registered_only
+- key: direct_tax_collections
+  name: Direct Tax Collections
+  economic_meaning: Cumulative direct tax (income tax + corporate tax) collections -- a proxy for corporate
+    profitability and household income growth.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Fiscal
+  headline_weight: 0.5
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 5.0
+  material_change_ytd: 5.0
+  status: registered_only
+- key: indirect_tax_collections
+  name: Indirect Tax Collections
+  economic_meaning: Cumulative indirect tax collections (GST, customs, excise) -- a proxy for consumption
+    and trade activity.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Fiscal
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 5.0
+  material_change_ytd: 5.0
+  status: registered_only
+- key: public_debt_to_gdp
+  name: Public Debt to GDP
+  economic_meaning: General government debt as a share of GDP -- the stock-side counterpart to the flow-side
+    fiscal deficit.
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Fiscal
+  headline_weight: 0.5
+  preferred_chart_window: 10y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: 1.0
+  status: registered_only
+- key: primary_deficit
+  name: Primary Deficit
+  economic_meaning: Fiscal deficit excluding interest payments -- isolates the deficit from past borrowing
+    costs, showing the current-year fiscal stance.
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Fiscal
+  headline_weight: 0.4
+  preferred_chart_window: 10y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: 0.5
+  status: registered_only
