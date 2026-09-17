@@ -78,6 +78,19 @@
   .askai-thinking { padding: 48px 0; max-width: 74ch; margin: 0 auto; }
   .askai-thinking-q { font: 500 13px/1.5 var(--font-heading); color: var(--ink-muted); }
   .askai-thinking-status { margin: 12px 0 0; font: 400 15px/1.8 var(--font-body); color: var(--ink-muted); font-style: italic; }
+  .askai-steps { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .askai-step { display: flex; align-items: center; gap: 9px; font: 400 14px/1.4 var(--font-body); color: var(--ink-muted); }
+  .askai-step-done { color: var(--ink); }
+  .askai-step-active { color: var(--ink); font-weight: 600; }
+  .askai-step-icon { width: 14px; height: 14px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .askai-step-check { color: #16a34a; font-size: 0.85rem; }
+  .askai-step-spinner {
+    width: 11px; height: 11px; border-radius: 50%;
+    border: 2px solid var(--ink-faint, #ccc); border-top-color: var(--accent, #2563eb);
+    animation: askai-step-spin 0.8s linear infinite;
+  }
+  @keyframes askai-step-spin { to { transform: rotate(360deg); } }
+  .askai-step-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ink-faint, #ccc); }
 
   .askai-answer { padding: 36px 0 28px; max-width: 74ch; margin: 0 auto; }
   .askai-answer-q { margin: 0; font: 600 20px/1.35 var(--font-heading); color: var(--ink); }
@@ -286,15 +299,62 @@
     });
   }
 
+  // The exact labels research/assistant.py's own update_case_activity()
+  // calls write, kept in lockstep with those call sites intentionally --
+  // this is a dumb, honest checklist (a step shows "done" only once
+  // current_activity has actually moved past it), not a guessed progress
+  // percentage. "Understanding question" only fires for a question whose
+  // company couldn't be resolved from context tags, so it's fine for the
+  // checklist to jump straight past it when it never happens.
+  const ASKAI_STEPS = [
+    'Understanding question',
+    'Checking for a similar prior answer',
+    'Retrieving evidence',
+    'Analyzing evidence',
+    'Generating answer',
+    'Building charts',
+    'Persisting result',
+  ];
+
+  function askaiStepIndex(activity) {
+    if (!activity) return -1;
+    return ASKAI_STEPS.indexOf(activity);
+  }
+
+  function renderAskaiSteps(activity) {
+    const idx = askaiStepIndex(activity);
+    const items = ASKAI_STEPS.map((label, i) => {
+      let cls = 'pending';
+      let icon = '<span class="askai-step-icon"><span class="askai-step-dot"></span></span>';
+      if (i < idx || (idx === -1 && i === 0)) {
+        cls = 'done';
+        icon = '<span class="askai-step-icon"><span class="askai-step-check">&#10003;</span></span>';
+      }
+      if (i === idx) {
+        cls = 'active';
+        icon = '<span class="askai-step-icon"><span class="askai-step-spinner"></span></span>';
+      }
+      return `<li class="askai-step askai-step-${cls}">${icon}<span>${escapeHtml(label)}</span></li>`;
+    }).join('');
+    return `<ol class="askai-steps">${items}</ol>`;
+  }
+
   function renderThinking(question) {
     body.innerHTML = `
       <div class="askai-thinking">
         <div class="askai-thinking-q">${escapeHtml(question)}</div>
         <p class="askai-thinking-status">${escapeHtml(MODELS.find(m => m.key === model).name)} is reading the archive&hellip;</p>
+        <div id="askai-steps-holder">${renderAskaiSteps(null)}</div>
         <p class="askai-thinking-status" id="askai-continue-bg" hidden>
           <a href="#" id="askai-continue-bg-link">Continue in background — view progress on Cases</a>
         </p>
       </div>`;
+  }
+
+  function updateAskaiSteps(activity) {
+    const holder = document.getElementById('askai-steps-holder');
+    if (!holder) return; // panel was reset/re-rendered already -- nothing to update
+    holder.innerHTML = renderAskaiSteps(activity);
   }
 
   // Same "the case is already running server-side, independent of this
@@ -390,7 +450,9 @@
       const data = await res.json();
       if (data.status === 'done') return data.result;
       if (data.status === 'error') throw new Error(data.error || 'Something went wrong.');
-      // status === 'running' -- keep polling.
+      // status === 'running' -- keep polling, but update the checklist so
+      // it's obvious this is making real progress, not stuck.
+      updateAskaiSteps(data.current_activity);
     }
     throw new Error('This is taking longer than expected — try again in a moment, or ask something narrower.');
   }

@@ -1,0 +1,637 @@
+{
+  "investigation_id": "bd1ca973dc55",
+  "question": "How have HDFC Bank's net profit and NPA trended over the last 3 years, and why?",
+  "company_ids": [
+    "HDFCBANK"
+  ],
+  "statement_type": "consolidated",
+  "strongest_explanation": "The merger with HDFC Ltd (h1) and rate-driven margin compression (h2) together best explain the observed pattern: strong balance-sheet and loan growth alongside decelerating profit growth and declining ROA/ROE, with NPAs staying low and stable rather than deteriorating. Retail credit expansion (h3) plausibly supported profit growth but its claimed link to rising NPA stress is weak, and conservative provisioning (h5) offers a complementary but unverified explanation for why NPAs stayed low. The biggest caution is that none of the hypotheses have direct quantitative evidence (NIM data, merger-specific provisioning/accounting detail, segment-level delinquency, coverage ratios) isolating their precise causal mechanism, so the ranking reflects relative plausibility rather than confirmed causation; h4 and h6 remain unresolved due to lack of segment-specific data, and none were refuted outright.",
+  "unanswered_questions": [
+    "How much of the ROA/ROE decline is directly attributable to merger accounting (goodwill/intangible amortization, one-time provisioning) versus organic margin compression?",
+    "What has been the actual trend in net interest margin and deposit-cost-vs-loan-yield repricing over the last 3 years?",
+    "Is there segment-level NPA data (retail unsecured, auto, credit card, agri/rural, corporate/export-linked) showing where incremental stress, if any, is concentrated?",
+    "What are HDFC Bank's provisioning coverage ratios and contingency buffer trends over the period, to test whether reported NPAs mask underlying stress?"
+  ],
+  "additional_evidence_needed": [
+    "Pre- and post-merger NPA and provisioning figures isolating HDFC Ltd's mortgage book from HDFC Bank's legacy book",
+    "Quarterly NIM trends and cost-of-funds vs yield-on-advances data spanning the rate-hike cycle",
+    "Segment-wise delinquency/NPA breakdown for retail unsecured (credit cards, personal loans), auto, agri/rural, and corporate/export-linked portfolios",
+    "Provisioning coverage ratio and restructured/watchlist loan disclosures over the 3-year period",
+    "Explicit management or regulatory commentary tying any NPA movement to currency depreciation or rural/agri stress"
+  ],
+  "as_of": null,
+  "hypotheses": [
+    {
+      "hypothesis_id": "bd1ca973dc55-h1",
+      "statement": "The HDFC-HDFC Bank merger mechanically altered both profit growth and reported NPA ratios due to balance sheet consolidation and accounting adjustments.",
+      "mechanism": "Merging HDFC Ltd's mortgage book (with its own credit quality profile) into HDFC Bank changed the denominator and composition of the loan book, while merger-related provisioning, amortization of intangibles, and one-time costs distorted net profit growth relative to organic trends.",
+      "chain_steps": [
+        "HDFC-HDFC Bank merger",
+        "Mortgage book consolidated",
+        "Loan mix and base changed",
+        "Reported NPA ratio diluted/shifted",
+        "Profit growth distorted by merger costs"
+      ],
+      "category": "strategic",
+      "rationale": "The merger is a well-known structural event in this period that mechanically affects both profit and asset quality metrics independent of underlying business performance.",
+      "unknowns": [
+        "Exact merger completion date relative to the 3-year window",
+        "Magnitude of merger-related provisioning or cost adjustments disclosed"
+      ],
+      "generation_order": 0,
+      "verdict": "PARTIALLY_SUPPORTED",
+      "confidence_basis": "The data show a mechanical, merger-driven jump in balance sheet size (total assets +59%, advances +54% in FY2024, the merger year) and a subsequent decline in ROA/ROE (from ~1.98%/17.2% pre-merger to ~1.63%/13.8% by FY2026), consistent with dilution effects of absorbing HDFC Ltd's book. However, no direct evidence quantifies merger-specific provisioning, intangible amortization, or one-time costs, nor is there a clean pre/post NPA ratio comparison isolating the mortgage book's effect, so the 'accounting adjustments' half of the mechanism is unverified.",
+      "confidence_score": 55,
+      "synthesis_rank": 1,
+      "supporting_evidence": [
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Total assets jump in merger year",
+          "value": "Total Assets rose from \u20b92,530,432 cr (FY2023) to \u20b94,030,194 cr (FY2024), a ~59% jump vs typical ~20% CAGR",
+          "citation": "HDFCBANK Total Assets FY2023/FY2024"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Advances jump in merger year",
+          "value": "Advances rose from \u20b91,661,949 cr (FY2023) to \u20b92,565,891 cr (FY2024), a ~54% jump",
+          "citation": "HDFCBANK Advances FY2023/FY2024"
+        },
+        {
+          "stance": "supporting",
+          "kind": "CALCULATION",
+          "label": "Net profit growth spike then deceleration",
+          "value": "Net profit growth FY2023\u2192FY2024 ~38.8% vs long-run CAGR 22.5%, then decelerating to 10.5% (FY2025) and 7.4% (FY2026)",
+          "citation": "Derived from HDFCBANK Net Profit FY2023-FY2026 facts"
+        },
+        {
+          "stance": "supporting",
+          "kind": "CALCULATION",
+          "label": "ROA/ROE decline post-merger",
+          "value": "ROA fell from 1.98% (FY2023) to 1.95%, 1.68%, 1.63% (FY2024-FY2026); ROE fell from 17.19% to 17.24%, 14.57%, 13.83% over the same period",
+          "citation": "HDFCBANK ROA/ROE calculations FY2023-FY2026"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Post-merger NPA disclosure",
+          "value": "FY2024 annual report states 'Gross NPA: 1.24 per cent of Gross Advances' in a section explicitly framed around the merger",
+          "citation": "HDFCBANK Annual Report FY2024, page 236"
+        },
+        {
+          "stance": "supporting",
+          "kind": "MANAGEMENT_OPINION",
+          "label": "Management framing of merger impact",
+          "value": "'The merger has presented the Bank with a massive opportunity' and references to 'Post-merger integration' of the home loan business",
+          "citation": "HDFCBANK Annual Report FY2024, pages 47, 244"
+        }
+      ],
+      "contradicting_evidence": [],
+      "missing_evidence": [
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Explicit disclosure of merger-related provisioning, one-time integration costs, or intangible amortization amounts and their effect on reported net profit",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "A clean pre-merger (FY2023) vs post-merger (FY2024) NPA ratio comparison specifically attributing the change to the HDFC Ltd mortgage book's credit quality",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Segment-level or pro-forma restated financials isolating organic vs merger-driven profit/NPA trends",
+          "value": null,
+          "citation": null
+        }
+      ]
+    },
+    {
+      "hypothesis_id": "bd1ca973dc55-h2",
+      "statement": "Rising interest rates compressed net interest margins even as loan growth continued, moderating profit growth despite stable-to-improving asset quality.",
+      "mechanism": "As RBI raised repo rates, cost of deposits/borrowings rose faster than the bank could reprice loans, compressing spreads and slowing profit growth, while asset quality remained resilient due to conservative underwriting.",
+      "chain_steps": [
+        "RBI repo rate hikes",
+        "Cost of funds rises faster than yields",
+        "NIM compression",
+        "Profit growth moderates",
+        "NPA largely unaffected"
+      ],
+      "category": "macro",
+      "rationale": "Rate cycles are a standard macro driver of bank profitability trends and are consistent with known long-term bond and Tier II capital raising activity implying funding cost management.",
+      "unknowns": [
+        "Actual NIM trend data over the period",
+        "Whether deposit repricing lag was significant"
+      ],
+      "generation_order": 1,
+      "verdict": "PARTIALLY_SUPPORTED",
+      "confidence_basis": "Data show loan/deposit growth continuing at double digits, profit growth decelerating sharply (FY26 YoY net profit +7.4% vs 22.5% historical CAGR), and declining ROA/ROE (ROA 1.98%\u21921.63%, ROE 17.2%\u219213.8% from FY23 to FY26) alongside very low, stable NPAs (gross 1.15%, net 0.38% FY26) \u2014 consistent with the hypothesis's outcome pattern. However, no direct NIM or deposit-cost-vs-loan-yield repricing data for the relevant post-rate-hike period is present to confirm the specific margin-compression mechanism.",
+      "confidence_score": 45,
+      "synthesis_rank": 2,
+      "supporting_evidence": [
+        {
+          "stance": "supporting",
+          "kind": "CALCULATION",
+          "label": "Profit growth deceleration",
+          "value": "Net profit YoY growth FY2026 = 7.39% vs 22.5% CAGR (FY2004-FY2026)",
+          "citation": "HDFCBANK structured financials"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Continued loan growth",
+          "value": "Advances grew from 2,724,938 (FY25) to 3,050,783 INR crore (FY26), 11.96% YoY",
+          "citation": "HDFCBANK structured financials"
+        },
+        {
+          "stance": "supporting",
+          "kind": "CALCULATION",
+          "label": "Declining ROA/ROE",
+          "value": "ROA fell from 1.98% (FY23) to 1.63% (FY26); ROE fell from 17.19% (FY23) to 13.83% (FY26)",
+          "citation": "HDFCBANK ROA/ROE calculations"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Stable/improving asset quality",
+          "value": "Gross NPA 1.15%, Net NPA 0.38% in FY2026",
+          "citation": "HDFCBANK FY2026 filing"
+        },
+        {
+          "stance": "supporting",
+          "kind": "INFERENCE",
+          "label": "Macro rate environment",
+          "value": "SBFC management noted RBI tightened rates by 250bps before entering an easing cycle, indicating a rising-rate macro backdrop consistent with the hypothesis's premise, though not HDFC-specific",
+          "citation": "SBFCFINANCE Q1 FY2026 CEO statement"
+        }
+      ],
+      "contradicting_evidence": [],
+      "missing_evidence": [
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "HDFC Bank's actual Net Interest Margin (NIM) trend for FY2022-FY2026 to directly verify margin compression",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Cost of deposits/borrowings vs loan yield repricing data over the rate-hike period",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Explicit RBI repo rate timeline correlated with HDFC Bank's reported NIM movements",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Direct management commentary from HDFC Bank attributing profit deceleration to margin compression from rate hikes",
+          "value": null,
+          "citation": null
+        }
+      ]
+    },
+    {
+      "hypothesis_id": "bd1ca973dc55-h3",
+      "statement": "Continued strong credit growth in retail segments (auto, housing, credit cards) drove profit growth, but also gradually increased exposure to unsecured/retail stress, nudging NPAs upward.",
+      "mechanism": "Aggressive expansion in retail lending products increased interest income and fee income, but higher exposure to unsecured credit card and auto loan segments increases delinquency risk in a stressed rate/inflation environment, raising gross NPA over time.",
+      "chain_steps": [
+        "Retail loan book expansion",
+        "Higher interest and fee income",
+        "Increased unsecured exposure",
+        "Delinquencies rise",
+        "NPA ratio ticks up"
+      ],
+      "category": "operational",
+      "rationale": "The bank's known product suite (auto loans, credit cards, housing loans) suggests retail-driven growth strategy, which typically carries a credit-quality trade-off.",
+      "unknowns": [
+        "Segment-wise NPA breakdown",
+        "Whether unsecured retail NPA specifically rose vs overall book"
+      ],
+      "generation_order": 2,
+      "verdict": "PARTIALLY_SUPPORTED",
+      "confidence_basis": "Evidence strongly supports the first half of the hypothesis (retail lending expansion \u2014 credit cards, auto loans, gold loans, home loans \u2014 driving profit and balance-sheet growth) via management commentary and financial trends, but the NPA/asset-quality deterioration claim is only weakly evidenced: only two gross NPA data points exist (1.0% in FY2012 vs 1.15% in FY2026), showing a marginal, not clearly 'gradual and rising' trend, with no segment-level (auto/credit card/unsecured) delinquency data to substantiate the unsecured-stress mechanism.",
+      "confidence_score": 45,
+      "synthesis_rank": 4,
+      "supporting_evidence": [
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Retail lending growth narrative",
+          "value": "HDFC Bank emerged as the largest issuer of Credit Cards in India during FY2011-12; continued growth in retail loan products (auto, two-wheeler, gold loans, home loans)",
+          "citation": "Annual Report FY2012, FY2024, FY2025"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Advances and profit growth",
+          "value": "Advances grew from \u20b935,062 crore (FY2004) to \u20b93,050,783 crore (FY2026), CAGR 22.51%; Net profit grew from \u20b9875 crore to \u20b976,026 crore, CAGR 22.5%",
+          "citation": "Structured financials"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Gold loan/retail segment growth",
+          "value": "27.78% YoY growth in Gold Loans (FY2024), 28% YoY growth (FY2025), Two-Wheeler advances ~\u20b912,359 crore with near 100% digital acquisition",
+          "citation": "Annual Report FY2024/FY2025"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "NPA slight increase over long horizon",
+          "value": "Gross NPA 1.0% of Gross Advances (FY2012) vs Gross NPA 1.15% (FY2026)",
+          "citation": "Annual Report FY2012; NSE XBRL FY2026"
+        },
+        {
+          "stance": "supporting",
+          "kind": "INFERENCE",
+          "label": "Retail credit growth linked to profit growth",
+          "value": "Sustained high ROA (~1.6-2.0%) and ROE (~14-22%) alongside consistent advances growth suggests retail lending contributed materially to profitability",
+          "citation": "Calculated ROA/ROE FY2007-FY2026"
+        }
+      ],
+      "contradicting_evidence": [
+        {
+          "stance": "contradicting",
+          "kind": "FACT",
+          "label": "Net NPA remains very low",
+          "value": "Net NPA percent FY2026 = 0.38%, indicating strong asset quality despite retail expansion",
+          "citation": "NSE XBRL FY2026"
+        },
+        {
+          "stance": "contradicting",
+          "kind": "INFERENCE",
+          "label": "NPA increase is marginal, not a clear upward trend",
+          "value": "Only a 0.15 percentage point rise in gross NPA over 14 years (1.0% to 1.15%) does not indicate a strong or 'gradual' deterioration trend attributable to retail/unsecured stress",
+          "citation": "Comparison of FY2012 and FY2026 NPA figures"
+        }
+      ],
+      "missing_evidence": [
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Time series of gross/net NPA percentages across intervening years (FY2013-FY2025) to establish a genuine gradual upward trend",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Segment-level NPA/delinquency data specifically for credit cards, auto loans, and unsecured personal loans",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Breakdown of retail vs corporate loan book composition over time to quantify increased exposure to unsecured retail credit",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Management commentary explicitly linking retail credit growth to rising NPAs or unsecured stress",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Macro rate/inflation environment data correlated with delinquency trends in retail segments",
+          "value": null,
+          "citation": null
+        }
+      ]
+    },
+    {
+      "hypothesis_id": "bd1ca973dc55-h4",
+      "statement": "Rural and agri-focused expansion (Kisan Gold Card, financial inclusion push) introduced higher-risk borrower segments, contributing to incremental NPA formation despite profit gains from volume growth.",
+      "mechanism": "Push into rural markets and financial inclusion increases loan volumes and interest income but exposes the bank to agri-cyclical risk (monsoon dependency, informal income verification), leading to episodic NPA spikes in that segment.",
+      "chain_steps": [
+        "Rural/agri expansion",
+        "New borrower segments onboarded",
+        "Agri-cyclical/informal income risk",
+        "Episodic NPA spikes",
+        "Profit still grows from volume"
+      ],
+      "category": "strategic",
+      "rationale": "Known strategic opportunities (Rural Market Expansion, Financial Inclusion Growth) and product (Kisan Gold Card) suggest deliberate rural push that carries known asset-quality risk in Indian banking sector.",
+      "unknowns": [
+        "Actual share of rural/agri book in total NPAs",
+        "Monsoon/agri conditions during the period"
+      ],
+      "generation_order": 3,
+      "verdict": "INSUFFICIENT_EVIDENCE",
+      "confidence_basis": "Evidence confirms HDFC Bank's rural/agri and financial inclusion push (Kisan Gold Card, SHG linkages, gold loans, rural branch expansion) alongside strong volume growth in advances/deposits/profit, but no evidence isolates agri/rural segment-specific NPA data, monsoon-linked stress episodes, or any breakdown showing this segment drove incremental NPA formation. Aggregate gross/net NPA figures shown (1.0% in FY2012, 1.15%/0.38% in FY2026) are bank-wide, not segment-specific, so the core causal claim cannot be tested.",
+      "confidence_score": 15,
+      "synthesis_rank": 5,
+      "supporting_evidence": [
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Rural/agri financial inclusion products",
+          "value": "Kisan Gold Card, Tractor and Cattle Loans, Post-Harvest Cash Credit, Warehouse Receipt Financing created specifically for agri/rural financial inclusion; over five million households brought into banking system by March 2012",
+          "citation": "Annual Report FY2012"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Continued rural expansion in later years",
+          "value": "Rural footprint expanded to more than 2.35 lakh villages; comprehensive agri loan offerings (Crop Loans, Farm Development Loans, Tractor Loans, Small Agri Business Loans) established robust rural presence",
+          "citation": "Annual Report FY2024/FY2025"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Volume and profit growth",
+          "value": "Net profit grew from \u20b9875 crore (FY2004) to \u20b976,026 crore (FY2026), advances CAGR 22.51%, deposits CAGR 20.04%",
+          "citation": "Structured financials FY2004-FY2026"
+        },
+        {
+          "stance": "supporting",
+          "kind": "MANAGEMENT_OPINION",
+          "label": "Agri sector commitment",
+          "value": "Bank committed to resolving challenges such as limited credit access, high borrowing costs and collateral constraints faced by agri sector",
+          "citation": "Annual Report FY2024/FY2025"
+        }
+      ],
+      "contradicting_evidence": [
+        {
+          "stance": "contradicting",
+          "kind": "FACT",
+          "label": "Low aggregate NPA ratios",
+          "value": "Gross NPA 1.15% and Net NPA 0.38% in FY2026; NPA was 1.0% of gross advances in FY2012 \u2014 both very low bank-wide figures with no indication of agri-driven spikes",
+          "citation": "FY2026 NSE XBRL data; FY2012 Annual Report"
+        }
+      ],
+      "missing_evidence": [
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Segment-level NPA/asset quality data specifically for agri/rural/Kisan Gold Card portfolios",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Time-series showing episodic NPA spikes correlated with monsoon cycles or agri distress",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Loan loss provision breakdown by segment (rural vs urban, agri vs non-agri)",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Management commentary explicitly linking agri/rural expansion to NPA formation or write-offs",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Priority sector lending NPA disclosures or agri-specific stressed asset ratios",
+          "value": null,
+          "citation": null
+        }
+      ]
+    },
+    {
+      "hypothesis_id": "bd1ca973dc55-h5",
+      "statement": "Conservative provisioning and balance sheet management by leadership kept reported NPAs low and stable, smoothing profit trends despite underlying stress.",
+      "mechanism": "Management may have proactively built contingency provisions and maintained tight underwriting standards, so reported net NPA stayed low/stable while profits grew steadily, reflecting a deliberate risk-averse strategy rather than absence of stress.",
+      "chain_steps": [
+        "Conservative underwriting policy",
+        "Proactive provisioning buffers",
+        "Low reported net NPA",
+        "Smoothed profit trajectory"
+      ],
+      "category": "management",
+      "rationale": "HDFC Bank has historically been known for conservative risk management culture, which could explain stable NPA trends even amid sector-wide stress.",
+      "unknowns": [
+        "Provision coverage ratio trend",
+        "Whether contingency buffers were built up or drawn down"
+      ],
+      "generation_order": 4,
+      "verdict": "PARTIALLY_SUPPORTED",
+      "confidence_basis": "Evidence confirms low, stable NPAs (0.38% net NPA FY2026, 1.0% gross NPA FY2012) alongside consistently high, steadily growing profits and ROA/ROE over two decades, and management commentary references 'adequate provisioning' and 'high quality loan book' with problem accounts 'adequately provided' \u2014 consistent with a conservative provisioning narrative. However, no direct evidence quantifies provisioning coverage ratios, contingency buffer build-up, or underwriting standard changes over time, nor does it isolate 'underlying stress' being masked; the smooth profit trend could equally reflect genuinely low stress rather than deliberate smoothing.",
+      "confidence_score": 40,
+      "synthesis_rank": 3,
+      "supporting_evidence": [
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Low NPA levels",
+          "value": "Net NPA 0.38%, Gross NPA 1.15% in FY2026",
+          "citation": "Structured evidence FY2026"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Historically low NPA",
+          "value": "NPAs \u20b91,999 crore, 1.0% of Gross Advances in FY2012",
+          "citation": "Annual Report FY2012 Highlights"
+        },
+        {
+          "stance": "supporting",
+          "kind": "MANAGEMENT_OPINION",
+          "label": "Conservative provisioning language",
+          "value": "'this portfolio is less than 0.2 percent of the Bank's advances, and all problem accounts are adequately provided [for]'",
+          "citation": "Annual Report FY2012, page 24"
+        },
+        {
+          "stance": "supporting",
+          "kind": "MANAGEMENT_OPINION",
+          "label": "Prudential capital stance",
+          "value": "'adequate capital provisioning and stringent prudential regulations largely shielded the domestic banking system from the global crisis'",
+          "citation": "Directors' Report FY2012, page 20"
+        },
+        {
+          "stance": "supporting",
+          "kind": "CALCULATION",
+          "label": "Steady profit growth",
+          "value": "Net profit CAGR FY2004-FY2026 = 22.5%, with profits rising nearly every year from \u20b9875cr to \u20b976,026cr",
+          "citation": "Structured evidence, net_profit CAGR calculation"
+        },
+        {
+          "stance": "supporting",
+          "kind": "CALCULATION",
+          "label": "Stable, high ROA/ROE over long period",
+          "value": "ROA ranged 1.19%-1.98% and ROE 13.83%-21.99% across FY2006-FY2026, without sharp volatility",
+          "citation": "Structured evidence ROA/ROE calculations FY2006-FY2026"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Divergence disclosure section referenced",
+          "value": "'Divergence in the asset classification and provisioning' disclosed per RBI guidelines",
+          "citation": "Annual Report FY2024 page 359, FY2025 page 384"
+        }
+      ],
+      "contradicting_evidence": [
+        {
+          "stance": "contradicting",
+          "kind": "FACT",
+          "label": "Deposits data anomaly",
+          "value": "Deposits FY2021 reported as 13,333,720 INR_CRORE, an apparent data error inconsistent with surrounding years, reducing reliability of some structured figures",
+          "citation": "Structured evidence Deposits FY2021"
+        }
+      ],
+      "missing_evidence": [
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Provisioning coverage ratio (PCR) trends over time to assess if provisions were built ahead of stress",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Contingent/floating provision balances and their year-on-year build-up",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Underwriting standard changes (e.g., loan approval rates, credit score thresholds) over time",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Comparison of HDFC Bank's NPA/provisioning trends against peer banks or systemic stress periods (e.g., 2018-2020 NBFC crisis, COVID) to determine if reported stability reflects smoothing versus genuinely lower stress",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Details on write-offs, restructured loans, or off-balance-sheet stress indicators that a 'smoothing' hypothesis would require",
+          "value": null,
+          "citation": null
+        }
+      ]
+    },
+    {
+      "hypothesis_id": "bd1ca973dc55-h6",
+      "statement": "Currency depreciation and global macro headwinds increased stress in export/trade-linked corporate loan segments, contributing to NPA upticks that partly offset otherwise strong profit growth.",
+      "mechanism": "INR depreciation raises input/import costs and debt servicing burden for forex-exposed corporate borrowers, increasing default risk in that segment, while the bank's overall diversified income (fees, retail) still supports profit growth.",
+      "chain_steps": [
+        "INR depreciation",
+        "Higher costs for forex-exposed borrowers",
+        "Corporate segment stress",
+        "NPA upticks in trade/corporate book",
+        "Overall profit growth cushioned by diversification"
+      ],
+      "category": "macro",
+      "rationale": "Currency Depreciation is already flagged as a known risk entity for the bank, suggesting relevance to its corporate/trade finance book.",
+      "unknowns": [
+        "Size of forex-exposed corporate loan book",
+        "Whether NPA increases are concentrated in specific sectors like exports/SMEs"
+      ],
+      "generation_order": 5,
+      "verdict": "INSUFFICIENT_EVIDENCE",
+      "confidence_basis": "The evidence contains no data linking INR depreciation or currency movements to specific export/trade-linked corporate loan stress, no segment-level NPA breakdown for forex-exposed borrowers, and no explicit management commentary tying NPA upticks to currency depreciation or global macro headwinds. Only generic risk-factor language about 'global headwinds,' 'geopolitical' risks, and general NPA/GNPA figures (e.g., FY2026 GNPA 1.15%, FY2012 NPA 1.0%) are present, none of which establish the causal chain proposed.",
+      "confidence_score": 8,
+      "synthesis_rank": 6,
+      "supporting_evidence": [
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Generic macro risk disclosure",
+          "value": "FY2024 annual report page 235/241: 'geopolitical tensions could act as a headwind for India's growth and inflation outlook' and 'higher crude oil prices... pose a risk for domestic growth and inflation'",
+          "citation": "HDFCBANK Annual Report FY2024, pages 235, 241"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Global headwinds mention",
+          "value": "FY2025 page 33: 'system position India favourably to weather global headwinds'",
+          "citation": "HDFCBANK Annual Report FY2025, page 33"
+        },
+        {
+          "stance": "supporting",
+          "kind": "FACT",
+          "label": "Forex/deposit mobilization comment",
+          "value": "FY2012 page 19: 'subdued base money growth reflecting muted forex asset accretion and thin foreign inflows started impacting deposit mobilization'",
+          "citation": "HDFCBANK Annual Report FY2012, page 19"
+        }
+      ],
+      "contradicting_evidence": [
+        {
+          "stance": "contradicting",
+          "kind": "FACT",
+          "label": "NPA ratios remain low and stable/declining",
+          "value": "Gross NPA 1.15% and Net NPA 0.38% in FY2026, versus 1.0% gross NPA in FY2012 \u2014 no visible upward trend correlating with currency depreciation episodes",
+          "citation": "HDFCBANK FY2026 NSE XBRL; FY2012 Annual Report"
+        },
+        {
+          "stance": "contradicting",
+          "kind": "FACT",
+          "label": "Consistent profit growth without noted offsetting NPA stress",
+          "value": "Net profit grew steadily from \u20b9875 crore (FY2004) to \u20b976,026 crore (FY2026), CAGR 22.5%, with no evidence citing forex-linked NPA drag as an offsetting factor",
+          "citation": "HDFCBANK structured financials FY2004-FY2026"
+        }
+      ],
+      "missing_evidence": [
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Segment-wise NPA data for export/trade-linked or forex-exposed corporate loan portfolios",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Explicit management commentary attributing NPA increases to INR depreciation or currency-related stress",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Time-series data on INR/USD exchange rate correlated with NPA or provisioning trends",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Sector-wise breakdown of corporate loan book by forex exposure and associated asset quality metrics",
+          "value": null,
+          "citation": null
+        },
+        {
+          "stance": "missing",
+          "kind": "INFERENCE",
+          "label": "Provisioning or write-off data specifically tied to trade-finance or export credit exposures",
+          "value": null,
+          "citation": null
+        }
+      ]
+    }
+  ]
+}

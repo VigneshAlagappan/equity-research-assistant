@@ -1431,6 +1431,32 @@ def list_stale_in_progress_cases(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM research_cases WHERE status = 'in_progress'").fetchall()
 
 
+def list_research_cases_for_audit(
+    conn: sqlite3.Connection, *, status: str | None = None, kind: str | None = None,
+    since_iso: str | None = None, limit: int = 200,
+) -> list[sqlite3.Row]:
+    """Every case, every status/outcome -- unlike list_research_cases_for_
+    feed() above (which deliberately hides completed/answered cases because
+    those already have their own generated_reports/investigations row in
+    the user-facing feed), the Audit Log's job is to be a complete record
+    of every Quick Answer/Deep Dive run for operators: did it finish, how
+    long did it take, why did it fail. So nothing is excluded here."""
+    sql = "SELECT * FROM research_cases WHERE 1 = 1"
+    params: list = []
+    if status:
+        sql += " AND status = ?"
+        params.append(status)
+    if kind:
+        sql += " AND kind = ?"
+        params.append(kind)
+    if since_iso:
+        sql += " AND started_at >= ?"
+        params.append(since_iso)
+    sql += " ORDER BY started_at DESC LIMIT ?"
+    params.append(limit)
+    return conn.execute(sql, params).fetchall()
+
+
 def save_investigation(
     conn: sqlite3.Connection,
     *,

@@ -239,6 +239,7 @@ from storage.repositories import (
     update_user_theme,
     get_research_case,
     list_research_cases_for_feed,
+    list_research_cases_for_audit,
     list_stale_in_progress_cases,
     fail_research_case,
     request_case_cancellation,
@@ -1107,7 +1108,7 @@ def create_app() -> Flask:
         runs at a handful of items each is small, the same "just eager-load
         it, it's cheap" call this function already makes for recent_log
         above."""
-        _AUDIT_TABS = ("reconciliation", "usa_reconciliation", "job_runs")
+        _AUDIT_TABS = ("reconciliation", "usa_reconciliation", "job_runs", "cases")
         active_tab = request.args.get("al_tab") if request.args.get("al_tab") in _AUDIT_TABS else "reconciliation"
 
         # Schwab "Transfer Activity"-style filter bar: a job picker (their
@@ -1158,6 +1159,30 @@ def create_app() -> Flask:
             run["items_started_live"] = len(run["items"])
             run["items_succeeded_live"] = sum(1 for i in run["items"] if i["status"] == "ok")
             run["items_failed_live"] = sum(1 for i in run["items"] if i["status"] == "failed")
+
+        # Cases tab -- every Quick Answer/Deep Dive run, not just the ones
+        # a user currently sees on /cases (list_research_cases_for_feed
+        # deliberately hides completed/answered cases there since those
+        # already have their own generated_reports/investigations row;
+        # here the point is a complete operator-facing record, so nothing
+        # is excluded). duration_seconds is None for a still-running case
+        # -- only a terminal case has a real, frozen duration to show,
+        # same reasoning as _case_status_payload()'s own elapsed_seconds fix.
+        case_status_filter = request.args.get("al_case_status") or ""
+        case_kind_filter = request.args.get("al_case_kind") or ""
+        case_rows = [
+            dict(c) for c in list_research_cases_for_audit(
+                db, status=case_status_filter or None, kind=case_kind_filter or None,
+                since_iso=since_iso, limit=200,
+            )
+        ]
+        for row in case_rows:
+            started = datetime.fromisoformat(row["started_at"])
+            if row["completed_at"]:
+                completed = datetime.fromisoformat(row["completed_at"])
+                row["duration_seconds"] = round((completed - started).total_seconds(), 1)
+            else:
+                row["duration_seconds"] = None
 
         status_filter = request.args.get("al_status") or ""
         query = (request.args.get("al_q") or "").strip().lower()
@@ -1233,6 +1258,9 @@ def create_app() -> Flask:
             "audit_job_filter": job_filter,
             "audit_job_filter_options": job_filter_options,
             "audit_period_filter": period_filter,
+            "audit_case_rows": case_rows,
+            "audit_case_status_filter": case_status_filter,
+            "audit_case_kind_filter": case_kind_filter,
         }
 
     @app.route("/admin")

@@ -1482,6 +1482,8 @@
            href="{{ url_for('settings', panel='admin-audit', al_tab='usa_reconciliation') }}">Data Reconciliation — USA</a>
         <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab == 'job_runs' }}"
            href="{{ url_for('settings', panel='admin-audit', al_tab='job_runs') }}">Job Runs ({{ audit_job_runs|length }})</a>
+        <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab == 'cases' }}"
+           href="{{ url_for('settings', panel='admin-audit', al_tab='cases') }}">Cases ({{ audit_case_rows|length }})</a>
       </div>
 
       <div class="admin-audit-subpanel" id="admin-audit-subpanel-reconciliation" {{ 'hidden' if audit_active_tab != 'reconciliation' }}>
@@ -1771,6 +1773,94 @@
       </table>
       {% else %}
       <div class="empty-state">No job runs recorded yet — trigger one from Data Operations &rarr; Schedule.</div>
+      {% endif %}
+      </div>
+
+      <div class="admin-audit-subpanel" id="admin-audit-subpanel-cases" {{ 'hidden' if audit_active_tab != 'cases' }}>
+      <p class="muted">
+        Every Quick Answer/Deep Dive case (<code>research_cases</code>) — a complete operator-facing record
+        including cases a user never sees again (an already-completed-and-answered case's only representation
+        is its own Thread/Investigation page, not a row here). Duration is frozen at completion time
+        (<code>completed_at - started_at</code>), not "time since started" — a still-running case shows no
+        duration yet.
+      </p>
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-audit">
+        <input type="hidden" name="al_tab" value="cases">
+        <div class="field">
+          <label for="case-status">Status</label>
+          <select class="input" id="case-status" name="al_case_status">
+            <option value="">All statuses</option>
+            <option value="in_progress" {{ 'selected' if audit_case_status_filter == 'in_progress' }}>In progress</option>
+            <option value="completed" {{ 'selected' if audit_case_status_filter == 'completed' }}>Completed</option>
+            <option value="failed" {{ 'selected' if audit_case_status_filter == 'failed' }}>Failed</option>
+            <option value="cancelled" {{ 'selected' if audit_case_status_filter == 'cancelled' }}>Cancelled</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="case-kind">Kind</label>
+          <select class="input" id="case-kind" name="al_case_kind">
+            <option value="">Quick Answer + Deep Dive</option>
+            <option value="ask" {{ 'selected' if audit_case_kind_filter == 'ask' }}>Quick Answer</option>
+            <option value="investigation" {{ 'selected' if audit_case_kind_filter == 'investigation' }}>Deep Dive</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="case-period">Time period</label>
+          <select class="input" id="case-period" name="al_period">
+            <option value="" {{ 'selected' if audit_period_filter == '' }}>All time</option>
+            <option value="1h" {{ 'selected' if audit_period_filter == '1h' }}>Last 1 hour</option>
+            <option value="4h" {{ 'selected' if audit_period_filter == '4h' }}>Last 4 hours</option>
+            <option value="8h" {{ 'selected' if audit_period_filter == '8h' }}>Last 8 hours</option>
+            <option value="24h" {{ 'selected' if audit_period_filter == '24h' }}>Last 24 hours</option>
+            <option value="5d" {{ 'selected' if audit_period_filter == '5d' }}>Last 5 days</option>
+            <option value="30d" {{ 'selected' if audit_period_filter == '30d' }}>Last 30 days</option>
+            <option value="90d" {{ 'selected' if audit_period_filter == '90d' }}>Last 90 days</option>
+            <option value="365d" {{ 'selected' if audit_period_filter == '365d' }}>Last year</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Apply</button>
+        {% if audit_case_status_filter or audit_case_kind_filter or audit_period_filter %}
+        <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-audit', al_tab='cases') }}">Clear</a>
+        {% endif %}
+      </form>
+
+      {% if audit_case_rows %}
+      <table class="table admin-audit-table">
+        <thead>
+          <tr><th>Case</th><th>Kind</th><th>Question</th><th>Started</th><th>Duration</th><th>Status</th><th>Failure reason</th></tr>
+        </thead>
+        <tbody>
+          {% for case in audit_case_rows %}
+          <tr>
+            <td><code>{{ case['case_id'] }}</code></td>
+            <td>{{ 'Deep Dive' if case['kind'] == 'investigation' else 'Quick Answer' }}</td>
+            <td title="{{ case['question'] }}">{{ case['question'][:80] }}{{ '…' if case['question']|length > 80 }}</td>
+            <td><span class="local-time" data-utc="{{ case['started_at'] }}">{{ case['started_at'] }}</span></td>
+            <td>
+              {% if case['duration_seconds'] is not none %}
+                {{ (case['duration_seconds'] // 60) | int }}m {{ (case['duration_seconds'] % 60) | round(1) }}s
+              {% else %}
+                <span class="muted">running&hellip;</span>
+              {% endif %}
+            </td>
+            <td>
+              {% set status_tag = 'tag-success' if case['status'] == 'completed' and case['outcome'] == 'answered'
+                 else 'tag-neutral' if case['status'] == 'in_progress'
+                 else 'tag-outline' if case['status'] == 'completed'
+                 else 'tag-error' %}
+              <span class="tag {{ status_tag }}">
+                {{ 'insufficient data' if case['status'] == 'completed' and case['outcome'] == 'insufficient_data' else case['status'] }}
+              </span>
+            </td>
+            <td>{{ case['error_message'] or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">No cases match this filter.</div>
       {% endif %}
       </div>
     </div>

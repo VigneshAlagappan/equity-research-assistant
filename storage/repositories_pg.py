@@ -1200,6 +1200,31 @@ def list_stale_in_progress_cases(conn: DBConnection) -> list[Row]:
         return cur.fetchall()
 
 
+def list_research_cases_for_audit(
+    conn: DBConnection, *, status: str | None = None, kind: str | None = None,
+    since_iso: str | None = None, limit: int = 200,
+) -> list[Row]:
+    """Postgres sibling of storage.repositories' own -- see that docstring
+    for why the Audit Log intentionally excludes nothing, unlike the
+    user-facing Cases feed."""
+    sql = "SELECT * FROM research_cases WHERE 1 = 1"
+    params: list = []
+    if status:
+        sql += " AND status = %s"
+        params.append(status)
+    if kind:
+        sql += " AND kind = %s"
+        params.append(kind)
+    if since_iso:
+        sql += " AND started_at >= %s"
+        params.append(since_iso)
+    sql += " ORDER BY started_at DESC LIMIT %s"
+    params.append(limit)
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
+
+
 def save_investigation(
     conn: DBConnection,
     *,
