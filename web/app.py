@@ -130,7 +130,7 @@ from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
 from storage.company_repository import select_company_ids_by_index
 from storage.database import init_db, init_postgres_db
-from storage.document_store import default_document_store
+from storage.document_store import DocumentStoreError, default_document_store
 from storage.investigation_repository import (
     count_investigation_hypotheses,
     select_investigations_for_company,
@@ -3474,12 +3474,26 @@ def create_app() -> Flask:
             # the two entities' render logic consistent, and proves the
             # artifact is genuinely the thing served, not just written and
             # never read.
+            #
+            # A real gap found live (2026-09-17): a handful of rows carry
+            # an s3_key whose object no longer exists in the bucket -- this
+            # used to be an unhandled DocumentStoreError -> unstyled 500,
+            # even though the Postgres columns below are the exact same
+            # "belt-and-suspenders" copy this comment already described.
+            # Fall back to them instead of crashing.
+            report_markdown = report_evidence = report_followups = None
             if generated["s3_key"]:
-                artifact = json.loads(default_document_store().retrieve(generated["s3_key"]))
-                report_markdown = artifact["report_markdown"]
-                report_evidence = artifact["evidence"]
-                report_followups = artifact["followups"]
-            else:
+                try:
+                    artifact = json.loads(default_document_store().retrieve(generated["s3_key"]))
+                    report_markdown = artifact["report_markdown"]
+                    report_evidence = artifact["evidence"]
+                    report_followups = artifact["followups"]
+                except DocumentStoreError:
+                    logger.warning(
+                        "Thread %s: s3_key=%r unreadable, falling back to Postgres copy",
+                        thread_id, generated["s3_key"],
+                    )
+            if report_markdown is None:
                 report_markdown = generated["report_markdown"]
                 report_evidence = list_report_evidence(db, thread_id)
                 report_followups = list_report_followups(db, thread_id)
