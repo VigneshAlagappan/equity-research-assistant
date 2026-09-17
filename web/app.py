@@ -57,7 +57,10 @@ from typing import Callable
 from urllib.parse import urlparse
 
 import anthropic
-from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Blueprint, Flask, abort, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
+from jinja2 import ChoiceLoader, FileSystemLoader
+
+from reports.schema import from_investigation_data
 from markupsafe import Markup, escape
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -485,6 +488,39 @@ def _parse_docs_period_id(period_id: str, type_key: str) -> tuple[str, str | Non
 def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
+
+    # Signal Report Design System (reports/) -- registers its component/
+    # template directories onto Jinja's search path and its theme CSS as a
+    # small static blueprint, without moving those files under web/. See
+    # reports/__init__.py for the Investigation Engine -> InvestigationReport
+    # -> Signal Report Design System -> Web/Print data flow this supports.
+    _repo_root = Path(__file__).resolve().parent.parent
+    _reports_templates_dir = _repo_root / "reports" / "templates"
+    _reports_components_dir = _repo_root / "reports" / "components"
+    _reports_theme_dir = _repo_root / "reports" / "theme"
+    app.jinja_loader = ChoiceLoader(
+        [
+            app.jinja_loader,
+            FileSystemLoader(str(_reports_templates_dir)),
+            FileSystemLoader(str(_reports_components_dir)),
+        ]
+    )
+    reports_theme_bp = Blueprint(
+        "reports_theme", __name__, static_folder=str(_reports_theme_dir), static_url_path="/reports-theme"
+    )
+    app.register_blueprint(reports_theme_bp)
+
+    @app.template_global("reports_theme_url")
+    def reports_theme_url(filename: str) -> str:
+        """Same cache-busting idea as static_url() above, scoped to the
+        Signal report theme CSS served from reports/theme/ via the
+        reports_theme blueprint registered just above."""
+        url = url_for("reports_theme.static", filename=filename)
+        try:
+            mtime = int((_reports_theme_dir / filename).stat().st_mtime)
+        except OSError:
+            return url
+        return f"{url}?v={mtime}"
 
     @app.route("/health")
     def health():
@@ -3824,15 +3860,21 @@ def create_app() -> Flask:
                 "additional_evidence_needed": json.loads(investigation_row["additional_evidence_needed"] or "[]"),
             }
 
-        return render_template(
-            "investigation.html",
-            investigation=investigation,
-            hypotheses=hypotheses,
-            # llm_call_log stays SQLite-only regardless of DATABASE_BACKEND
-            # -- get_logs_db(), not db (which may be a Postgres connection
-            # here, used for the investigation/hypotheses queries above).
-            cost=get_investigation_cost_summary(get_logs_db(), investigation_id),
-        )
+        # llm_call_log stays SQLite-only regardless of DATABASE_BACKEND --
+        # get_logs_db(), not db (which may be a Postgres connection here,
+        # used for the investigation/hypotheses queries above).
+        cost = get_investigation_cost_summary(get_logs_db(), investigation_id)
+
+        # Presentation layer: reshape the same investigation/hypotheses data
+        # (whichever branch above produced it -- S3 artifact or legacy
+        # table read, both dict shapes) into the normalized
+        # reports.schema.InvestigationReport via a pure read-side adapter,
+        # then render it through the Signal Report Design System
+        # (reports/templates/deep_dive/report.html). No research logic is
+        # touched or duplicated -- see reports/schema/investigation_report.py.
+        report = from_investigation_data(investigation, hypotheses, cost)
+
+        return render_template("deep_dive/report.html", report=report)
 
     INVESTIGATIONS_PAGE_SIZE = 20
     WATCHLIST_PAGE_SIZE = 25
