@@ -57,7 +57,10 @@ from typing import Callable
 from urllib.parse import urlparse
 
 import anthropic
-from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Blueprint, Flask, abort, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
+from jinja2 import ChoiceLoader, FileSystemLoader
+
+from reports.schema import from_investigation_data
 from markupsafe import Markup, escape
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -130,7 +133,7 @@ from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
 from storage.company_repository import select_company_ids_by_index
 from storage.database import init_db, init_postgres_db
-from storage.document_store import default_document_store
+from storage.document_store import DocumentStoreError, default_document_store
 from storage.investigation_repository import (
     count_investigation_hypotheses,
     select_investigations_for_company,
@@ -152,6 +155,7 @@ from storage.repositories import (
     add_industry,
     add_sector,
     add_watchlist_item,
+    company_has_canonical_financials,
     count_companies_by_index_tag,
     count_companies_by_industry,
     count_companies_by_sector,
@@ -485,6 +489,39 @@ def _parse_docs_period_id(period_id: str, type_key: str) -> tuple[str, str | Non
 def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
+
+    # Signal Report Design System (reports/) -- registers its component/
+    # template directories onto Jinja's search path and its theme CSS as a
+    # small static blueprint, without moving those files under web/. See
+    # reports/__init__.py for the Investigation Engine -> InvestigationReport
+    # -> Signal Report Design System -> Web/Print data flow this supports.
+    _repo_root = Path(__file__).resolve().parent.parent
+    _reports_templates_dir = _repo_root / "reports" / "templates"
+    _reports_components_dir = _repo_root / "reports" / "components"
+    _reports_theme_dir = _repo_root / "reports" / "theme"
+    app.jinja_loader = ChoiceLoader(
+        [
+            app.jinja_loader,
+            FileSystemLoader(str(_reports_templates_dir)),
+            FileSystemLoader(str(_reports_components_dir)),
+        ]
+    )
+    reports_theme_bp = Blueprint(
+        "reports_theme", __name__, static_folder=str(_reports_theme_dir), static_url_path="/reports-theme"
+    )
+    app.register_blueprint(reports_theme_bp)
+
+    @app.template_global("reports_theme_url")
+    def reports_theme_url(filename: str) -> str:
+        """Same cache-busting idea as static_url() above, scoped to the
+        Signal report theme CSS served from reports/theme/ via the
+        reports_theme blueprint registered just above."""
+        url = url_for("reports_theme.static", filename=filename)
+        try:
+            mtime = int((_reports_theme_dir / filename).stat().st_mtime)
+        except OSError:
+            return url
+        return f"{url}?v={mtime}"
 
     @app.route("/health")
     def health():
@@ -1988,6 +2025,23 @@ def create_app() -> Flask:
 
         valuation_model_file = company["valuation_model_file"]
         has_ported_dataset = bool(valuation_model_file) and _valuation_model_data_path(valuation_model_file).exists()
+        # canonical_financials is this app's one source of truth for
+        # financial facts (see the migration writeup off web/static/data/
+        # *.json's stale, hand-ported workbook copies — those independently
+        # forked the exact same data errors canonical_financials itself has
+        # since fixed, and lack years canonical_financials already has).
+        # A "ported dataset" company only keeps reading the static file for
+        # financials_data_url when canonical_financials has genuinely
+        # nothing for it yet (verified per-company against real Neon: 1 of
+        # 21 ported companies, SRG Housing Finance, was never ingested at
+        # all) — switching an empty-live company would blank the whole
+        # Financials tab, a real regression, not a data-quality improvement.
+        # valuation_data_url (the Valuation Model tab's Growth Projection
+        # calculator) is untouched by this: still the static file for every
+        # ported company regardless, since that section is assumption-
+        # driven config this migration deliberately didn't touch — see
+        # web/valuation_feed.py's module docstring.
+        has_live_financials = has_ported_dataset and company_has_canonical_financials(db, company_id)
 
         # valuation_data_url backs only the Valuation Model tab's Growth
         # Projection / Intrinsic Value calculator (assumptions-driven,
@@ -1999,10 +2053,15 @@ def create_app() -> Flask:
         if has_ported_dataset:
             # A richer, manually-ported dataset (see the "HDFC Bank Equity
             # Dashboard" Claude Design import) — not statement_type-aware
-            # and annual-only (no period_type concept at all), so both
-            # dashboards read the same static file here.
+            # and annual-only (no period_type concept at all), so the
+            # Valuation Model tab keeps reading the static file here
+            # regardless of has_live_financials above.
             valuation_data_url = url_for("static", filename=f"data/{valuation_model_file}")
-            financials_data_url = valuation_data_url
+            financials_data_url = (
+                valuation_data_url
+                if not has_live_financials
+                else url_for("company_charts_feed", company_id=company_id, statement_type=statement_type)
+            )
         else:
             # Same dashboard template, every company — built live from
             # whatever this company's canonical_financials actually has.
@@ -2197,6 +2256,7 @@ def create_app() -> Flask:
             enabled_ratio_keys=enabled_ratio_keys,
             is_watchlisted=is_watchlisted(db, "company", company_id),
             has_ported_dataset=has_ported_dataset,
+            has_live_financials=has_live_financials,
             valuation_data_url=valuation_data_url,
             financials_data_url=financials_data_url,
             docs_data_url=url_for("company_docs_feed", company_id=company_id),
@@ -2630,18 +2690,23 @@ def create_app() -> Flask:
     def company_document_file(company_id: str, document_id: int):
         db = get_db()
         row = get_company_document(db, company_id, document_id)
-        if row is None or not row["raw_file_path"]:
+        if row is None or not (row["raw_file_path"] or row["storage_object_key"]):
             abort(404)
         # Mixed-mode during migration: a presigned URL when the active
         # backend can produce one (S3), falling back to today's send_file
         # for a document still only on local disk (LocalDocumentStore's
         # presigned_url() always returns None, same as before this routed
-        # through DocumentStore).
+        # through DocumentStore). A document with only storage_object_key
+        # (no raw_file_path at all -- e.g. one uploaded straight to S3,
+        # never staged on local disk) has no local-disk fallback to send,
+        # so it depends on the active backend producing a presigned URL.
         key = row["storage_object_key"] or row["raw_file_path"]
         store = default_document_store()
         url = store.presigned_url(key)
         if url:
             return redirect(url)
+        if not row["raw_file_path"]:
+            abort(404)
         return send_file(from_repo_relative(row["raw_file_path"]))
 
     def _safe_login_next() -> str:
@@ -3474,12 +3539,26 @@ def create_app() -> Flask:
             # the two entities' render logic consistent, and proves the
             # artifact is genuinely the thing served, not just written and
             # never read.
+            #
+            # A real gap found live (2026-09-17): a handful of rows carry
+            # an s3_key whose object no longer exists in the bucket -- this
+            # used to be an unhandled DocumentStoreError -> unstyled 500,
+            # even though the Postgres columns below are the exact same
+            # "belt-and-suspenders" copy this comment already described.
+            # Fall back to them instead of crashing.
+            report_markdown = report_evidence = report_followups = None
             if generated["s3_key"]:
-                artifact = json.loads(default_document_store().retrieve(generated["s3_key"]))
-                report_markdown = artifact["report_markdown"]
-                report_evidence = artifact["evidence"]
-                report_followups = artifact["followups"]
-            else:
+                try:
+                    artifact = json.loads(default_document_store().retrieve(generated["s3_key"]))
+                    report_markdown = artifact["report_markdown"]
+                    report_evidence = artifact["evidence"]
+                    report_followups = artifact["followups"]
+                except DocumentStoreError:
+                    logger.warning(
+                        "Thread %s: s3_key=%r unreadable, falling back to Postgres copy",
+                        thread_id, generated["s3_key"],
+                    )
+            if report_markdown is None:
                 report_markdown = generated["report_markdown"]
                 report_evidence = list_report_evidence(db, thread_id)
                 report_followups = list_report_followups(db, thread_id)
@@ -3810,15 +3889,21 @@ def create_app() -> Flask:
                 "additional_evidence_needed": json.loads(investigation_row["additional_evidence_needed"] or "[]"),
             }
 
-        return render_template(
-            "investigation.html",
-            investigation=investigation,
-            hypotheses=hypotheses,
-            # llm_call_log stays SQLite-only regardless of DATABASE_BACKEND
-            # -- get_logs_db(), not db (which may be a Postgres connection
-            # here, used for the investigation/hypotheses queries above).
-            cost=get_investigation_cost_summary(get_logs_db(), investigation_id),
-        )
+        # llm_call_log stays SQLite-only regardless of DATABASE_BACKEND --
+        # get_logs_db(), not db (which may be a Postgres connection here,
+        # used for the investigation/hypotheses queries above).
+        cost = get_investigation_cost_summary(get_logs_db(), investigation_id)
+
+        # Presentation layer: reshape the same investigation/hypotheses data
+        # (whichever branch above produced it -- S3 artifact or legacy
+        # table read, both dict shapes) into the normalized
+        # reports.schema.InvestigationReport via a pure read-side adapter,
+        # then render it through the Signal Report Design System
+        # (reports/templates/deep_dive/report.html). No research logic is
+        # touched or duplicated -- see reports/schema/investigation_report.py.
+        report = from_investigation_data(investigation, hypotheses, cost)
+
+        return render_template("deep_dive/report.html", report=report)
 
     INVESTIGATIONS_PAGE_SIZE = 20
     WATCHLIST_PAGE_SIZE = 25

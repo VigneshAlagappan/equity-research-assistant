@@ -40,6 +40,7 @@ from scripts.fetch_daily_prices import run_price_history_update
 from scripts.fetch_daily_prices_usa import run_price_history_update_usa
 from scripts.fetch_investor_relations import run_investor_relations_batch, SUPPORTED_COMPANY_IDS
 from scripts.process_pending_documents_batch import run_document_processing_batch
+from scripts.reconcile_generated_reports import run_generated_report_reconciliation
 from scripts.reconcile_raw_objects import run_raw_object_reconciliation
 from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
 
@@ -285,6 +286,15 @@ def _run_raw_object_reconciliation(conn) -> int:
     return run_raw_object_reconciliation(conn)
 
 
+def _run_generated_report_reconciliation(conn) -> int:
+    """S3<->Postgres reconciliation for generated_reports.s3_key -- same
+    ADR-022 report-only reasoning as _run_raw_object_reconciliation above,
+    just for research threads instead of ingested documents. See scripts/
+    reconcile_generated_reports.py's own docstring for the production gap
+    that motivated this (research_thread() 500ing on a missing S3 object)."""
+    return run_generated_report_reconciliation(conn)
+
+
 def _run_fred_macro(conn) -> int:
     return run_fred_batch(conn, TRACKED_SERIES, scope_label=f"FRED ({len(TRACKED_SERIES)} series)")
 
@@ -412,6 +422,8 @@ SCHEDULED_JOBS: list[ScheduledJob] = [
                  "db_shard", None, _run_db_shard),
     ScheduledJob("raw_object_reconciliation", "Raw object catalog reconciliation (S3 <-> Postgres)", "Weekly",
                  "Maintenance", "raw_object_reconciliation", None, _run_raw_object_reconciliation),
+    ScheduledJob("generated_report_reconciliation", "Research thread reconciliation (S3 <-> Postgres)", "Weekly",
+                 "Maintenance", "generated_report_reconciliation", None, _run_generated_report_reconciliation),
 ]
 
 

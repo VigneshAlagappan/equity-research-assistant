@@ -243,6 +243,40 @@ def test_uploaded_document_stores_repo_relative_path_and_serves_correctly(client
     assert file_response.data == b"%PDF-fake"
 
 
+def test_document_with_only_storage_object_key_is_servable(client, monkeypatch) -> None:
+    # A document written straight to S3 (storage_object_key set,
+    # raw_file_path NULL -- e.g. the NSE-filing-PDF backfill) used to 404
+    # on both docs-feed.json's file_url and the file route itself, because
+    # each only checked raw_file_path even though the file route's own
+    # presigned-URL fallback already handled storage_object_key correctly
+    # three lines later -- a real gap the guard clause didn't match.
+    import config.settings as settings
+
+    conn = init_db(db_path=settings.DB_PATH)
+    conn.execute(
+        "INSERT INTO documents (company_id, source, document_type, fiscal_year, quarter, "
+        "storage_object_key, source_url, retrieved_at, processing_status) "
+        "VALUES ('HDFCBANK', 'nse', 'financial_result', 'FY2015', 'Q2', "
+        "'data/documents/HDFCBANK/fake.pdf', 'https://example.com/fake.zip', '2026-01-01', 'pending')"
+    )
+    conn.commit()
+    document_id = conn.execute("SELECT document_id FROM documents WHERE storage_object_key = 'data/documents/HDFCBANK/fake.pdf'").fetchone()["document_id"]
+
+    feed = client.get("/companies/HDFCBANK/docs-feed.json").get_json()
+    fy2015 = next(y for y in feed["years"] if y["fy"] == "FY2015")
+    q2 = next(q for q in fy2015["quarters"] if q["id"] == "q2fy2015")
+    assert q2["docs"]["result"]["file_url"] == f"/companies/HDFCBANK/docs/{document_id}/file"
+
+    class _FakeStore:
+        def presigned_url(self, key: str) -> str:
+            return f"https://fake-s3.example.com/{key}"
+
+    monkeypatch.setattr("web.app.default_document_store", lambda: _FakeStore())
+    file_response = client.get(f"/companies/HDFCBANK/docs/{document_id}/file")
+    assert file_response.status_code == 302
+    assert file_response.headers["Location"] == "https://fake-s3.example.com/data/documents/HDFCBANK/fake.pdf"
+
+
 def test_docs_feed_period_options_span_2005_onward(client) -> None:
     response = client.get("/companies/HDFCBANK/docs-feed.json")
     data = response.get_json()
@@ -371,6 +405,77 @@ def test_company_report_defaults_to_overview_tab(client) -> None:
 def test_company_report_invalid_tab_is_400(client) -> None:
     response = client.get("/companies/HDFCBANK?tab=bogus")
     assert response.status_code == 400
+
+
+def test_ported_dataset_company_with_no_live_data_keeps_static_financials_url(tmp_path: Path, monkeypatch) -> None:
+    """A company with a ported valuation_model_file (web/static/data/*.json,
+    see scripts/import_equity_analysis_workbooks.py) but zero
+    canonical_financials rows must keep reading the static file for the
+    Financials tab -- switching it to the live feed would blank the whole
+    tab, a real regression (verified against real Neon: this is exactly
+    SRG Housing Finance's situation in production today, the one ported
+    company out of 21 with nothing ingested at all)."""
+    db_path = tmp_path / "ported_no_data.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    from storage.company_repository import update_company_valuation_model_file
+
+    update_company_valuation_model_file(conn, "HDFCBANK", "hdfcbank-analysis.json")
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        response = test_client.get("/companies/HDFCBANK?tab=financials")
+
+    body = response.data.decode()
+    assert response.status_code == 200
+    assert 'id="valuation-dashboard" class="vm-layout" data-url="/static/data/hdfcbank-analysis.json"' in body
+    # Charts tab (unconditionally live, unaffected by has_ported_dataset)
+    # still points at charts-feed.json, so a blanket substring check on
+    # "/charts-feed.json" would false-positive -- assert on the
+    # Financials-tab data-url specifically instead, above.
+    assert "/companies/HDFCBANK/charts-feed.json" not in body
+    # No Annual/Quarterly or Consolidated/Standalone toggle -- the static
+    # file has no period_type/statement_type concept at all. (The
+    # ".vm-period-toggle" CSS rule itself is always present in <style>, so
+    # check for the data attribute init() actually looks for instead.)
+    assert "data-vm-period-toggle" not in body
+
+
+def test_ported_dataset_company_with_live_data_switches_financials_url(tmp_path: Path, monkeypatch) -> None:
+    """The same ported company, but now with at least one canonical_
+    financials row ingested -- the Financials tab (and only that tab; the
+    Valuation Model tab's Growth Projection calculator stays on the static
+    file, see web/app.py's company_report()) should switch to the live
+    charts-feed.json route instead, with the Annual/Quarterly and
+    Consolidated/Standalone toggles now showing (both are period_type/
+    statement_type concepts the live feed has and the static file never
+    did)."""
+    db_path = tmp_path / "ported_with_data.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    from storage.company_repository import update_company_valuation_model_file
+
+    update_company_valuation_model_file(conn, "HDFCBANK", "hdfcbank-analysis.json")
+    file_path = tmp_path / "HDFCBANK.xlsx"
+    _make_screener_workbook(file_path)
+    ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        response = test_client.get("/companies/HDFCBANK?tab=financials")
+        feed = test_client.get("/companies/HDFCBANK/charts-feed.json").get_json()
+
+    body = response.data.decode()
+    assert response.status_code == 200
+    assert 'id="valuation-dashboard" class="vm-layout" data-url="/companies/HDFCBANK/charts-feed.json' in body
+    # The static file is still used, but only for the Valuation Model tab.
+    assert 'id="valuation-dashboard-interactive" class="vm-layout" data-url="/static/data/hdfcbank-analysis.json"' in body
+    assert "data-vm-period-toggle" in body
+    assert feed["PERIODS"] == ["FY2023", "FY2024"]
 
 
 def test_statement_type_toggle_switches_data(tmp_path: Path, monkeypatch) -> None:

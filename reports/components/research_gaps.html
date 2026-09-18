@@ -1,0 +1,13 @@
+{#
+  Additional evidence required (report.additional_evidence_needed) — the
+  data gaps a future investigation pass could close. Renders nothing when
+  empty; distinct from follow_up_research.html's open questions.
+#}
+{% macro research_gaps(items) %}
+{% if items %}
+<p class="signal-section-label">Additional Evidence Required</p>
+<div class="signal-pill-row">
+  {% for e in items %}<span class="signal-pill">{{ e }}</span>{% endfor %}
+</div>
+{% endif %}
+{% endmacro %}

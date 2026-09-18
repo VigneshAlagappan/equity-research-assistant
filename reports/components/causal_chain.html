@@ -1,0 +1,24 @@
+{#
+  Causal chain: A -> B -> C -> D. Renders `h.causal_chain` (a short list of
+  stages) as a connected pill row when present; falls back to `h.mechanism`
+  prose for hypotheses generated before the staged chain existed. Neither
+  is fabricated — a hypothesis with neither renders nothing.
+#}
+{% macro causal_chain(h) %}
+{% if h.causal_chain %}
+<div class="signal-chain">
+  <div class="signal-section-label" style="margin-bottom:6px;">Causal Chain</div>
+  <div class="signal-chain-row">
+    {% for step in h.causal_chain %}
+    <span class="signal-chain-step{{ ' signal-chain-step-last' if loop.last else '' }}">{{ step }}</span>
+    {% if not loop.last %}<span class="signal-chain-arrow" aria-hidden="true">&rarr;</span>{% endif %}
+    {% endfor %}
+  </div>
+</div>
+{% elif h.mechanism %}
+<div class="signal-chain">
+  <div class="signal-section-label" style="margin-bottom:6px;">Mechanism</div>
+  <p class="signal-chain-prose">{{ h.mechanism }}</p>
+</div>
+{% endif %}
+{% endmacro %}

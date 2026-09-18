@@ -1,0 +1,265 @@
+/*
+  Signal report visual identity — a restrained institutional research
+  style (top-tier consulting/investment-research inspired, but an original
+  palette, not a copy of any one house style). Scoped entirely under
+  `.signal-report` so it layers on top of the app's existing
+  classical/styles.css (data-theme="signals" etc.) without fighting it —
+  the surrounding chrome (nav, sidebar) keeps the app's own theme; only the
+  report body itself switches to this identity.
+
+  Design principles (see reports/README-less docstring in
+  reports/__init__.py for the architecture this sits in):
+    - white / off-white background, dark navy text
+    - one restrained teal accent, used sparingly
+    - subtle gray borders/backgrounds, no drop shadows
+    - no gradients, no oversized rounded "SaaS card" chrome
+    - strong type hierarchy, generous whitespace between major sections
+*/
+
+.signal-report {
+  --signal-navy: #101a2b;
+  --signal-navy-700: #1c2b43;
+  --signal-teal: #0f6f66;
+  --signal-teal-700: #0b544d;
+  --signal-slate: #4b5768;
+  --signal-border: #d8dce2;
+  --signal-bg: #fdfdfc;
+  --signal-bg-muted: #f4f5f7;
+  --signal-success: #1a7a4c;
+  --signal-success-bg: #eaf5ee;
+  --signal-warning: #9a6400;
+  --signal-warning-bg: #fbf1de;
+  --signal-risk: #a3392b;
+  --signal-risk-bg: #fbeae8;
+
+  background: var(--signal-bg);
+  color: var(--signal-navy);
+  border: 1px solid var(--signal-border);
+  border-radius: 3px;
+  padding: 0;
+}
+
+/* Dark mode: the app itself supports data-theme="dark" (see base.html) —
+   the report keeps its own print-like identity (a research report doesn't
+   usually go "dark"), but swap enough tokens that it doesn't glare white
+   inside an otherwise-dark shell. */
+:root[data-theme="dark"] .signal-report,
+:root:not([data-theme]) .signal-report {
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="signals-light"]) .signal-report {
+    --signal-bg: #12161d;
+    --signal-bg-muted: #1a1f28;
+    --signal-navy: #eef1f5;
+    --signal-navy-700: #d6dbe3;
+    --signal-slate: #a7b0bd;
+    --signal-border: #2c333f;
+    --signal-success-bg: #12291d;
+    --signal-warning-bg: #2c2312;
+    --signal-risk-bg: #2c1613;
+  }
+}
+:root[data-theme="dark"] .signal-report {
+  --signal-bg: #12161d;
+  --signal-bg-muted: #1a1f28;
+  --signal-navy: #eef1f5;
+  --signal-navy-700: #d6dbe3;
+  --signal-slate: #a7b0bd;
+  --signal-border: #2c333f;
+  --signal-success-bg: #12291d;
+  --signal-warning-bg: #2c2312;
+  --signal-risk-bg: #2c1613;
+}
+
+.signal-report * { box-sizing: border-box; }
+
+.signal-report a { color: var(--signal-teal-700); }
+.signal-report a:hover { color: var(--signal-teal); }
+
+/* ---- Section rhythm ---- */
+.signal-section {
+  padding: 28px 40px;
+  border-bottom: 1px solid var(--signal-border);
+}
+.signal-section:last-child { border-bottom: none; }
+.signal-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--signal-teal-700);
+  margin: 0 0 10px;
+}
+
+/* ---- Header ---- */
+.signal-header {
+  padding: 32px 40px 24px;
+  border-bottom: 2px solid var(--signal-navy);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.signal-header-brand {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--signal-slate);
+}
+.signal-header-title { margin: 4px 0 0; font-size: 25px; line-height: 1.3; color: var(--signal-navy); }
+.signal-header-meta {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 12.5px;
+  color: var(--signal-slate);
+}
+.signal-header-meta-item { white-space: nowrap; }
+.signal-header-meta-item strong { color: var(--signal-navy-700); font-weight: 600; }
+
+/* ---- Key metric cards ---- */
+.signal-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--signal-border);
+  border: 1px solid var(--signal-border);
+}
+.signal-metric-card { background: var(--signal-bg); padding: 14px 16px; }
+.signal-metric-label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--signal-slate); }
+.signal-metric-value { margin-top: 6px; font-size: 21px; font-weight: 700; color: var(--signal-navy); font-variant-numeric: tabular-nums; }
+.signal-metric-delta { margin-top: 3px; font-size: 12px; }
+.signal-metric-delta.tone-positive { color: var(--signal-success); }
+.signal-metric-delta.tone-negative { color: var(--signal-risk); }
+.signal-metric-delta.tone-neutral { color: var(--signal-slate); }
+
+/* ---- Trend snapshot ---- */
+.signal-trend-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.signal-trend-item {
+  border: 1px solid var(--signal-border);
+  border-radius: 2px;
+  padding: 8px 12px;
+  min-width: 96px;
+}
+.signal-trend-item-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--signal-slate); }
+.signal-trend-item-value { margin-top: 3px; font-size: 14px; font-weight: 600; color: var(--signal-navy); }
+
+/* ---- Executive summary ---- */
+.signal-exec-summary p { margin: 0; text-align: justify; }
+.signal-verdict-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.signal-verdict-note { font-size: 12.5px; color: var(--signal-slate); }
+
+/* ---- Verdict / status badges ---- */
+.signal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 4px 9px;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.signal-badge-outline { background: transparent; border-color: var(--signal-border); color: var(--signal-slate); }
+.signal-badge-navy { background: var(--signal-navy); color: #fff; }
+.signal-badge-teal { background: var(--signal-teal); color: #fff; }
+.signal-badge-success { background: var(--signal-success-bg); color: var(--signal-success); }
+.signal-badge-warning { background: var(--signal-warning-bg); color: var(--signal-warning); }
+.signal-badge-risk { background: var(--signal-risk-bg); color: var(--signal-risk); }
+.signal-badge-muted { background: var(--signal-bg-muted); color: var(--signal-slate); }
+
+/* Verdict → color mapping (data-driven, no company/investigation-specific
+   values — verdict strings come from research/hypothesis_evaluator.py). */
+.signal-verdict-SUPPORTED { background: var(--signal-success-bg); color: var(--signal-success); }
+.signal-verdict-PARTIALLY_SUPPORTED { background: var(--signal-warning-bg); color: var(--signal-warning); }
+.signal-verdict-REFUTED { background: var(--signal-bg-muted); color: var(--signal-slate); }
+.signal-verdict-INSUFFICIENT_EVIDENCE { background: transparent; color: var(--signal-slate); border-color: var(--signal-border); }
+
+/* Score band → color mapping (reports/schema's score_band()). */
+.signal-band-leading { background: var(--signal-success-bg); color: var(--signal-success); }
+.signal-band-contested { background: var(--signal-warning-bg); color: var(--signal-warning); }
+.signal-band-weak { background: var(--signal-bg-muted); color: var(--signal-slate); }
+.signal-band-unscored { background: transparent; color: var(--signal-slate); border-color: var(--signal-border); border-style: dashed; }
+
+/* ---- Hypothesis ranking overview table ---- */
+.signal-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.signal-table th, .signal-table td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--signal-border); vertical-align: top; }
+.signal-table thead th {
+  font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--signal-slate);
+  border-bottom: 2px solid var(--signal-navy); font-weight: 700;
+}
+.signal-table tbody tr:hover { background: var(--signal-bg-muted); }
+.signal-table td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.signal-table-link { color: var(--signal-navy); text-decoration-color: var(--signal-border); }
+.signal-table-link:hover { color: var(--signal-teal-700); }
+
+/* ---- Hypothesis section ---- */
+.signal-hypothesis {
+  padding: 26px 0;
+  border-top: 1px solid var(--signal-border);
+  scroll-margin-top: 20px;
+}
+.signal-hypothesis:first-of-type { border-top: none; }
+.signal-hyp-tagrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.signal-hyp-rank { font-size: 12px; color: var(--signal-slate); font-weight: 600; }
+.signal-hyp-claim { margin: 12px 0 0; font-size: 16px; line-height: 1.45; color: var(--signal-navy); font-weight: 600; }
+.signal-hyp-assessment { margin: 10px 0 0; font-size: 13.5px; line-height: 1.65; color: var(--signal-navy-700); text-align: justify; }
+
+/* ---- Causal chain ---- */
+.signal-chain { margin-top: 16px; }
+.signal-chain-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.signal-chain-step {
+  border: 1px solid var(--signal-border); border-radius: 2px; padding: 6px 11px;
+  font-size: 12.5px; font-weight: 600; color: var(--signal-navy-700); background: var(--signal-bg-muted);
+}
+.signal-chain-step-last { color: var(--signal-navy); background: var(--signal-bg); border-width: 2px; }
+.signal-chain-arrow { color: var(--signal-slate); flex: none; }
+.signal-chain-prose { margin: 0; font-size: 13px; color: var(--signal-navy-700); font-style: italic; }
+
+/* ---- Evidence matrix ---- */
+.signal-evidence-group { margin-top: 16px; }
+.signal-evidence-group-title { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--signal-slate); margin-bottom: 6px; }
+.signal-evidence-row {
+  display: flex; align-items: baseline; gap: 10px; padding: 7px 0;
+  border-top: 1px solid var(--signal-border); font-size: 13px;
+}
+.signal-evidence-row:first-child { border-top: none; }
+.signal-evidence-icon { flex: none; width: 1.3em; text-align: center; font-weight: 700; }
+.signal-evidence-have .signal-evidence-icon { color: var(--signal-success); }
+.signal-evidence-contradicts .signal-evidence-icon { color: var(--signal-warning); }
+.signal-evidence-missing .signal-evidence-icon { color: var(--signal-slate); opacity: 0.65; }
+.signal-evidence-kind { flex: none; }
+.signal-evidence-text { flex: 1; min-width: 0; color: var(--signal-navy-700); }
+.signal-evidence-value { color: var(--signal-slate); }
+.signal-evidence-citation { color: var(--signal-slate); font-size: 12px; }
+.signal-evidence-status { flex: none; font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--signal-slate); }
+
+/* ---- Follow-up / research gaps pills ---- */
+.signal-pill-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.signal-pill {
+  display: inline-block; border: 1px solid var(--signal-border); border-radius: 2px;
+  padding: 6px 11px; font-size: 12.5px; color: var(--signal-navy-700); background: var(--signal-bg);
+}
+
+/* ---- Methodology ---- */
+.signal-methodology summary {
+  cursor: pointer; font-weight: 700; font-size: 13px; color: var(--signal-navy);
+  list-style: none;
+}
+.signal-methodology summary::-webkit-details-marker { display: none; }
+.signal-methodology summary::before { content: "▸ "; color: var(--signal-teal); }
+.signal-methodology[open] summary::before { content: "▾ "; }
+.signal-methodology p, .signal-methodology li { font-size: 12.5px; line-height: 1.7; color: var(--signal-slate); }
+.signal-methodology ul { margin: 8px 0 0; padding-left: 1.2em; }
+
+/* ---- Footer / no-print toolbar ---- */
+.signal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.signal-print-btn {
+  font-size: 12.5px; font-weight: 600; padding: 8px 14px; border-radius: 2px;
+  border: 1px solid var(--signal-navy); background: var(--signal-navy); color: #fff; cursor: pointer;
+}
+.signal-print-btn:hover { background: var(--signal-navy-700); }
