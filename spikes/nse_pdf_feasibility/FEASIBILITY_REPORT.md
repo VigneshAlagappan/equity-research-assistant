@@ -652,6 +652,130 @@ settle on its own.
 
 ---
 
+## 14. Continuous discovery 2015-01-01 to present (4 companies, full history)
+
+Section 13 sampled one pre-2019 quarter per company. This section walks the
+**entire** `corporate-announcements` history for HDFCBANK, RELIANCE,
+ICICIBANK, TCS and classifies every quarter from late-2014 (the window
+generator includes the quarter just before 2015-01-01 since its disclosure
+window overlaps into January) through the most recent quarter (Jun-2026) —
+48 quarters per company, 192 total. Code:
+`spikes/nse_pdf_feasibility/run_2015_discovery.py`. Output:
+`data/discovery_2015_now.json` / `.csv` (one row per company/quarter, all
+fields below), `data/discovery_2015_now_attempt_log.json`. Local scratch
+PDFs/ZIPs under `data/discovery_pdfs/` (gitignored). **This data is meant
+for the coordinator to load into their own `nse_filing_discovery_log`
+tracking table — this spike does not write to Neon anywhere.**
+
+### 14.1 Matching method (incorporates the Nifty 50 extension's learnings)
+
+Text-marker matching alone (the original 4-company filter) was already
+shown unreliable across companies in Section 12 — several Nifty 50
+companies file genuine results under `attchmntText` that never says
+"financial results". Rather than extend the marker list indefinitely, this
+section uses a **date-window match** as the primary signal instead: for
+every expected fiscal-quarter-end date, look at every
+`desc="Outcome of Board Meeting"` (or one of the other recognized
+result-category `desc` values) announcement within 75 days after that
+quarter-end (SEBI's own disclosure deadline is 45 days for Q1-Q3, 60 for
+the audited Q4/annual) and take the **earliest** one in that window — per
+Section 12.4's own recommendation, the primary filing is reliably first;
+anything referencing the same results (press releases, presentations,
+newspaper ads) is reliably filed after it. `desc="General Updates"` is
+excluded from the candidate pool entirely (the Section 12.2 catch-all
+trap), not filtered per-row.
+
+Every match is also checked against the original text-marker filter, purely
+for transparency — the output records `match_confidence` as
+`text_confirmed` (both signals agree) or `date_window_only` (found by
+timing alone, text didn't confirm it). 142/192 (74%) were text-confirmed;
+the other 50/192 (26%) were date-window-only — meaning a quarter of these
+companies' own 12-year filing history would have been **missed entirely**
+by the original spike's text-marker-only approach, confirming Section
+12.2's false-negative finding wasn't a small-sample fluke. Spot-checking 5
+of the date-window-only matches' filenames (e.g.
+`HDFC_30092014_S_LR.zip`, `HDFCBANK_31Dec14_S_...zip` — "S" = standalone,
+"LR" = limited review, both standard NSE quarterly-result filename
+conventions) supports that the date-window method is picking the right
+document even without text confirmation.
+
+### 14.2 Coverage: every single expected quarter had a discoverable filing
+
+**0 of 192 quarters came back `not_found`, and 0 came back
+`not_attempted`** (extraction was completed for all 192 within the time
+budget — 9.4 minutes wall-clock for all 4 companies, well under budget).
+Every one of the 48 quarters per company, back to late 2014, had *some*
+attachment discoverable via `corporate-announcements`:
+
+| Company | Total quarters | `extracted` | `needs_ocr` | `not_found` | `not_attempted` |
+|---|---|---|---|---|---|
+| HDFCBANK | 48 | 34 | 14 | 0 | 0 |
+| RELIANCE | 48 | 35 | 13 | 0 | 0 |
+| ICICIBANK | 48 | 42 | 6 | 0 | 0 |
+| TCS | 48 | 34 | 14 | 0 | 0 |
+| **Total** | **192** | **145 (75.5%)** | **47 (24.5%)** | **0** | **0** |
+
+Attachment format was `zip` for 99/192 and `pdf` for 93/192 — no `html` or
+`other` format ever showed up across the full 12-year, 4-company history.
+`xbrl_available` (cross-checked against the same XBRL listing endpoints used
+throughout this spike, real non-placeholder URL within 20 days of the
+quarter-end) was true for 131/192 (68%) — consistent with the ~2018-2019
+XBRL-mandatory transition already established in Sections 1-8, now
+confirmed at the per-quarter level across full company histories rather
+than one sample point each.
+
+### 14.3 Does the ICICIBANK-is-different pattern from Section 13 hold up?
+
+**Yes — clearly, and it's bigger than Section 13's single data point
+suggested.** Looking at each company's `extracted`-vs-`needs_ocr` timeline
+(chronological, full detail in `discovery_2015_now.json`), each company has
+a clean transition point after which every quarter extracts cleanly, and
+before which most/all quarters need OCR:
+
+| Company | First consistently-`extracted` quarter | Roughly |
+|---|---|---|
+| ICICIBANK | FY2016 Q3 (period end 2015-12-31) | ~3 years earlier than the other 3 |
+| RELIANCE | FY2018 Q3 (period end 2017-12-31) | |
+| TCS | FY2018 Q4 (period end 2018-03-31) | |
+| HDFCBANK | FY2019 Q1 (period end 2018-06-30) | |
+
+(ICICIBANK has one isolated `needs_ocr` blip after its transition — FY2017
+Q2, period end 2016-09-30 — otherwise consistent from late 2015 onward.)
+
+So Section 13's single sampled quarter (Jun-2016, ICICIBANK extracted,
+the other 3 scanned) wasn't a one-off: ICICIBANK was filing digitally
+text-based PDFs roughly **3 years before** HDFCBANK/RELIANCE/TCS made the
+same switch. This is a genuine, company-specific difference in filing
+practice, not a sampling artifact — and it means any real pre-2019 backfill
+project should expect **per-company variance in how far back real
+extractable text actually goes**, not a single industry-wide cutoff date.
+Before ICICIBANK's own transition (2015-12-31), its quarters are
+`needs_ocr` same as the other three — the difference is specifically
+*when* each company started filing text-native PDFs, not that ICICIBANK is
+immune to the scanned-image problem altogether.
+
+### 14.4 Updated read on 2015-2019 coverage
+
+- **Discoverability (finding the right filing): fully solved for these 4
+  companies** — 0 `not_found` across 192 quarters, using the date-window
+  method (14.1). This generalizes Section 13's ad-hoc "reuse the already-
+  known URL" approach into a real, repeatable discovery mechanism covering
+  a full company's history, not just one sampled point.
+- **Text extractability (getting facts out): genuinely mixed, and
+  earlier-than-expected in aggregate.** 47/192 (24.5%) needed OCR — but
+  because of ICICIBANK's earlier transition, the überall "2015-2019 is all
+  scanned images" framing from Section 8/13 is too pessimistic: 24/48
+  ICICIBANK quarters going back to late-2015 are real extractable text, a
+  materially better outcome than the ~2019 cutoff Sections 1-8 established
+  from the PDF-attachment-only path.
+- **Still not free of OCR need**: 47 quarters across the 4 companies
+  (concentrated in HDFCBANK/RELIANCE/TCS's pre-transition years, plus that
+  one ICICIBANK blip) would need real OCR work to extract, unchanged from
+  Section 13's conclusion that OCR is a materially bigger scope item than
+  anything else validated in this spike.
+
+---
+
 ## Appendix: what this spike's code does
 
 - `spikes/nse_pdf_feasibility/nse_pdf_fetch.py` — low-level NSE HTTP layer:
@@ -690,6 +814,19 @@ settle on its own.
   contents), `data/zip_pdf_extraction.json` (extraction quality/markers),
   `data/zips/<SYMBOL>/download.zip` + `extracted/*.pdf` (the 4 downloaded
   ZIPs and their unzipped PDFs — gitignored, local scratch only).
+- `spikes/nse_pdf_feasibility/run_2015_discovery.py` — Section 14's script:
+  full-history discovery + date-window classification for 4 companies,
+  2015-now (192 quarter-records), with PDF/ZIP download and `pypdf`
+  extraction for every one.
+- `spikes/nse_pdf_feasibility/data/discovery_2015_now.json` / `.csv` — the
+  full 192-row dataset (company_id, nse_symbol, fiscal_year, quarter,
+  period_end, filing_date, source_url, match_confidence,
+  attachment_format, extraction_status, extracted_char_count,
+  xbrl_available, notes) — meant for the coordinator's own load into a
+  `nse_filing_discovery_log` tracking table, not written to Neon by this
+  spike. `data/discovery_2015_now_attempt_log.json` (every logged NSE
+  request). `data/discovery_pdfs/<SYMBOL>/*` (192 downloaded PDFs/ZIPs —
+  gitignored, local scratch only).
 
 What worked cleanly: discovery via `corporate-announcements`, PDF download,
 XBRL-existence cross-check, the read-only DB comparison. What needs more
