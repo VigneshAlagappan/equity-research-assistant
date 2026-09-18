@@ -40,6 +40,11 @@ _USER_AGENT = (
 _REQUEST_TIMEOUT_SECONDS = 15  # hard cap per the task's network-safety rule
 _SPIKE_MAX_ATTEMPTS = 2        # deliberately small — spike should fail fast, not hang
 _BACKOFF_SECONDS = 2.0
+# Matches sources/nse_xbrl.py's own _REQUEST_PACING_SECONDS — a courtesy
+# delay applied after every real NSE request (bootstrap or data call), not
+# just data calls, so a 50-company run behaves like production's own batch
+# job would, rather than this spike's earlier faster dev-iteration pacing.
+_REQUEST_PACING_SECONDS = 1.0
 
 
 class NSESpikeFetchError(RuntimeError):
@@ -85,6 +90,8 @@ def new_session() -> requests.Session | None:
         _record(url, "GET", getattr(exc.response, "status_code", None), False, str(exc), elapsed)
         logger.warning("NSE bootstrap failed: %s", exc)
         return None
+    finally:
+        time.sleep(_REQUEST_PACING_SECONDS)
 
 
 def _get(session: requests.Session, url: str, params: dict | None = None) -> requests.Response | None:
@@ -95,29 +102,36 @@ def _get(session: requests.Session, url: str, params: dict | None = None) -> req
     immediate retries only for transient network errors, not for 403/429
     (those are recorded as a blocking finding, not retried)."""
     last_err = None
-    for attempt in range(1, _SPIKE_MAX_ATTEMPTS + 1):
-        t0 = time.monotonic()
-        try:
-            resp = session.get(
-                url, params=params,
-                headers={"Accept": "*/*", "Referer": f"{_BASE}{_BOOTSTRAP_PATH}"},
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-            )
-            elapsed = time.monotonic() - t0
-            _record(url, "GET", resp.status_code, resp.ok, None, elapsed)
-            if resp.status_code in (403, 429):
-                logger.warning("NSE blocked request (status=%s): %s", resp.status_code, url)
-                return resp  # return it so caller can inspect/log the block, not None
-            resp.raise_for_status()
-            return resp
-        except requests.RequestException as exc:
-            elapsed = time.monotonic() - t0
-            _record(url, "GET", getattr(exc.response, "status_code", None), False, str(exc), elapsed)
-            last_err = exc
-            if attempt < _SPIKE_MAX_ATTEMPTS:
-                time.sleep(_BACKOFF_SECONDS)
-    logger.warning("NSE request failed after %d attempts: %s (%s)", _SPIKE_MAX_ATTEMPTS, url, last_err)
-    return None
+    try:
+        for attempt in range(1, _SPIKE_MAX_ATTEMPTS + 1):
+            t0 = time.monotonic()
+            try:
+                resp = session.get(
+                    url, params=params,
+                    headers={"Accept": "*/*", "Referer": f"{_BASE}{_BOOTSTRAP_PATH}"},
+                    timeout=_REQUEST_TIMEOUT_SECONDS,
+                )
+                elapsed = time.monotonic() - t0
+                _record(url, "GET", resp.status_code, resp.ok, None, elapsed)
+                if resp.status_code in (403, 429):
+                    logger.warning("NSE blocked request (status=%s): %s", resp.status_code, url)
+                    return resp  # return it so caller can inspect/log the block, not None
+                resp.raise_for_status()
+                return resp
+            except requests.RequestException as exc:
+                elapsed = time.monotonic() - t0
+                _record(url, "GET", getattr(exc.response, "status_code", None), False, str(exc), elapsed)
+                last_err = exc
+                if attempt < _SPIKE_MAX_ATTEMPTS:
+                    time.sleep(_BACKOFF_SECONDS)
+        logger.warning("NSE request failed after %d attempts: %s (%s)", _SPIKE_MAX_ATTEMPTS, url, last_err)
+        return None
+    finally:
+        # Courtesy pacing after every real request this function made,
+        # matching sources/nse_xbrl.py's own _REQUEST_PACING_SECONDS —
+        # applies even on failure so a string of errors doesn't turn into a
+        # tight loop against NSE.
+        time.sleep(_REQUEST_PACING_SECONDS)
 
 
 def fetch_filing_index_raw(session: requests.Session, symbol: str, nse_period: str = "Quarterly") -> list[dict] | None:

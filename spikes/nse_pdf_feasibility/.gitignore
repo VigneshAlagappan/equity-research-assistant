@@ -2,3 +2,4 @@
 # meant to live in git history (36MB+ of binary NSE filings). Re-run
 # run_spike.py to regenerate them locally.
 data/pdfs/
+data/pdfs_nifty50/
