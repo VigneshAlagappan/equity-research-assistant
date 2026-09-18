@@ -526,6 +526,132 @@ the BHARTIARTL mis-pick in 12.3.
 
 ---
 
+## 13. Pre-2019 ZIP archives: what's actually inside
+
+Section 8 found that the ~10-years-ago (quarter ended 30-Jun-2016) sample
+for all four original companies has a `.zip` attachment on
+`corporate-announcements` rather than a `.pdf`, and left the contents
+uninvestigated. This follow-up downloads and unzips all four (URLs reused
+verbatim from `data/results.json`'s `~10y_ago.attchmnt_file` field — no new
+discovery call needed) and reports exactly what's inside. Code:
+`spikes/nse_pdf_feasibility/run_zip_spike.py`. Raw output:
+`data/zip_results.json`, `data/zip_pdf_extraction.json`. Files stored
+locally under `data/zips/<SYMBOL>/` (`download.zip` +
+`extracted/*.pdf`) — worktree scratch only, never the real
+`signals-app-documents-*` S3 bucket or `storage/document_store.py` (neither
+imported nor touched by this script).
+
+### 13.1 Download and unzip: clean, 4/4
+
+All four ZIPs downloaded successfully (200 OK, 0.4s-1.9s each,
+`nsearchives.nseindia.com` — same host the original PDF downloads used, no
+NSE anti-bot session bootstrap needed for this host, consistent with the
+original spike's own observation) and every one is a **valid ZIP archive
+containing exactly one file — a genuine PDF**, not an HTML error page, not
+a different archive format, not empty:
+
+| Company | ZIP size | Contents |
+|---|---|---|
+| HDFCBANK | 218 KB | `Result30062016.pdf` (223 KB) |
+| RELIANCE | 1.19 MB | `4185_001.pdf` (1.25 MB) |
+| ICICIBANK | 752 KB | `BSE_NSE_29072016_f.pdf` (891 KB) |
+| TCS | 1.41 MB | `TCSQ1FY17.pdf` (1.47 MB) |
+
+So the "ZIP vs PDF" distinction Section 8 flagged is real but narrower than
+it first looked: NSE's `corporate-announcements` system was already
+attaching a real PDF for these 2016 filings — just wrapped in a ZIP
+container the original spike's downloader didn't unwrap (it only recognized
+`.pdf`-suffixed URLs directly). The actual open question was never "is
+there a PDF" but "does that PDF have extractable text" (13.2).
+
+### 13.2 Text extraction: 1 of 4 has real extractable financial data, 3 of 4 are scanned images
+
+Running the same `pypdf` extraction used throughout this spike on all four
+unzipped PDFs:
+
+| Company | Pages | Extracted chars | Content |
+|---|---|---|---|
+| HDFCBANK | 10 | 9 (all whitespace) | **Scanned image, no text layer** |
+| RELIANCE | 18 | 17 (all whitespace) | **Scanned image, no text layer** |
+| TCS | 22 | 21 (all whitespace) | **Scanned image, no text layer** |
+| ICICIBANK | 14 | 13,280 | **Real, genuine financial-statement text** |
+
+For HDFCBANK/RELIANCE/TCS, `pypdf` returns pure `\n` characters and nothing
+else across every page — verified directly (not a parsing bug on this
+spike's side; these PDFs genuinely carry no embedded text layer, consistent
+with a scanned paper filing rather than a digitally-typeset one). Getting
+data out of these three would require OCR, not just a better PDF-text
+library — a materially different (and less reliable) extraction path than
+everything else this spike tested.
+
+ICICIBANK's PDF, by contrast, is a real digital PDF with a full text layer.
+Directly extracted (no estimation), its **Capital and Liabilities / Assets**
+table for the quarter ended 30-Jun-2016 (₹ crore, as printed, standalone,
+three columns — 30-Jun-2016, 30-Jun-2015, 31-Mar-2016):
+
+```
+Capital                          1,161    1,164    1,163
+Reserves and surplus            82,191   90,779   88,566
+Deposits                       367,877  424,086  421,426
+Borrowings (incl. sub debt)    163,120  174,095  174,807
+Other liabilities               26,970   37,092   34,726
+Total Capital and Liabilities  641,326  727,223  720,695
+
+Cash & bal. with RBI            20,234   25,647   27,106
+Bal. with banks & money at call 10,159   13,084   32,763
+Investments                    148,078  168,322  160,412
+Advances                       399,738  449,427  435,264
+Fixed assets                     4,729    7,609    7,577
+Other assets                    58,388   63,134   57,573
+Total Assets                   641,326  727,223  720,695
+```
+
+This is a genuine, complete Balance Sheet for a period (2016) where the
+original spike's Section 7/8 established `canonical_financials` has no
+quarterly data at all (only annual, pre-FY2023) and XBRL itself is a
+placeholder. It directly confirms real financial-statement content is
+recoverable from at least some pre-2019 filings via this ZIP path — not
+guaranteed, but real when it works.
+
+### 13.3 Does this extend usable historical coverage earlier than 2019-2021?
+
+**Partially, and company-dependent — not a clean "yes" across the board.**
+
+- **For ICICIBANK specifically**: yes, concretely — this ZIP path gets a
+  real, extractable Balance Sheet for Jun-2016, roughly 3 years earlier than
+  ICICIBANK's own earliest-PDF finding in Section 3 (2019-01-07).
+- **For HDFCBANK/RELIANCE/TCS at this exact sampled period (2016)**: no —
+  the ZIP unwraps to a scanned image with no extractable text, no better
+  than not having the document at all for automated fact extraction
+  (OCR was out of scope for this spike and not attempted).
+- **Whether ICICIBANK's case generalizes** (to other companies, other
+  pre-2019 quarters, or even other ICICIBANK quarters) **was not tested** —
+  this section covers exactly one sampled quarter per company, per the
+  task's scope. A real answer requires sampling several more
+  companies/periods in this ZIP-attachment era specifically to see what
+  fraction are scanned vs. real-text PDFs — genuinely unknown from this
+  data alone, and should be stated as unknown rather than extrapolated from
+  a 1-of-4 sample.
+
+### 13.4 Updated recommendation on pre-2019 coverage
+
+**Worth a small follow-up probe, not yet worth building on.** The 1-of-4
+real-text result is enough to justify checking a wider sample (e.g. 10-15
+companies × 2-3 pre-2019 quarters each, same ZIP-download-and-unzip method,
+no new discovery mechanism needed) before concluding pre-2019 coverage is a
+dead end — but it is very much NOT yet established as a reliable path the
+way 2019+ PDF coverage is (Sections 1-11). Two concrete next steps if this
+is pursued further: (a) the wider sample just described, to get an actual
+scanned-vs-text ratio instead of one data point; (b) if the ratio turns out
+favorable, OCR (e.g. `pytesseract` — not installed in this environment, not
+evaluated here) would be needed for the scanned majority, which is a
+meaningfully bigger scope than anything else validated in this spike so
+far — a fair call on whether that investment is worthwhile belongs to
+whoever owns the backfill-scope decision, not something this spike can
+settle on its own.
+
+---
+
 ## Appendix: what this spike's code does
 
 - `spikes/nse_pdf_feasibility/nse_pdf_fetch.py` — low-level NSE HTTP layer:
@@ -557,6 +683,13 @@ the BHARTIARTL mis-pick in 12.3.
   false-positive/negative review), `nifty50_results.json` (per-company
   summary + PDF spot-check outcomes), `nifty50_attempt_log.json` (all 112
   logged requests), `pdfs_nifty50/*.pdf` (12 spot-check downloads).
+- `spikes/nse_pdf_feasibility/run_zip_spike.py` — Section 13's script:
+  downloads the 4 already-discovered `~10y_ago` ZIP URLs, unzips them, and
+  runs the same `pypdf` extraction used elsewhere in this spike.
+- `spikes/nse_pdf_feasibility/data/zip_results.json` (per-company ZIP
+  contents), `data/zip_pdf_extraction.json` (extraction quality/markers),
+  `data/zips/<SYMBOL>/download.zip` + `extracted/*.pdf` (the 4 downloaded
+  ZIPs and their unzipped PDFs — gitignored, local scratch only).
 
 What worked cleanly: discovery via `corporate-announcements`, PDF download,
 XBRL-existence cross-check, the read-only DB comparison. What needs more

@@ -1,0 +1,50 @@
+{
+  "HDFCBANK": {
+    "pages": 10,
+    "chars": 9,
+    "markers": {
+      "balance sheet / statement of assets": false,
+      "deposits": false,
+      "advances": false,
+      "profit": false,
+      "total income": false,
+      "cash flow": false
+    }
+  },
+  "RELIANCE": {
+    "pages": 18,
+    "chars": 17,
+    "markers": {
+      "balance sheet / statement of assets": false,
+      "deposits": false,
+      "advances": false,
+      "profit": false,
+      "total income": false,
+      "cash flow": false
+    }
+  },
+  "ICICIBANK": {
+    "pages": 14,
+    "chars": 13280,
+    "markers": {
+      "balance sheet / statement of assets": true,
+      "deposits": true,
+      "advances": true,
+      "profit": true,
+      "total income": false,
+      "cash flow": true
+    }
+  },
+  "TCS": {
+    "pages": 22,
+    "chars": 21,
+    "markers": {
+      "balance sheet / statement of assets": false,
+      "deposits": false,
+      "advances": false,
+      "profit": false,
+      "total income": false,
+      "cash flow": false
+    }
+  }
+}
