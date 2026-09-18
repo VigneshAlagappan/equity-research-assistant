@@ -157,6 +157,25 @@
      somewhere correct to land, matching the other three now rather than
      needing a second design pass later. */
   .tag-statement { background: var(--statement-bg); color: var(--statement); }
+
+  /* Per-value provenance marker (web/static/js/valuation_dashboard.js's
+     Financials tab table) -- distinguishes an XBRL-filed figure from one
+     parsed out of an NSE filing PDF (web/charts_feed.py's "sources" array,
+     _classify_provenance()). Deliberately a single-letter superscript, not
+     a full .tag pill like FACT/CALC above -- this sits inside an already-
+     dense numbers table (one cell per period), so a pill-per-cell would
+     visually overwhelm the table; the existing FACT/CALC badge stays
+     row-level, this is the one place a provenance signal needs to be
+     per-cell instead, since a single row can span filings of both kinds. */
+  .prov-tag {
+    font-size: 0.6rem;
+    font-weight: 700;
+    vertical-align: super;
+    margin-left: 0.15rem;
+    cursor: help;
+  }
+  .prov-xbrl { color: var(--success, var(--fact)); }
+  .prov-nse_pdf { color: var(--calc); }
   /* Indicator classification pills — same .tag shape/scale as the tags
      above (so the per-theme .tag border-radius overrides in
      classical/styles.css apply unchanged), just carrying the three

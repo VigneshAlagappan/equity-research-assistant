@@ -929,7 +929,13 @@
 
   <section class="merged-section" id="sec-financials">
     <h2>Financials</h2>
-    {% if not has_ported_dataset %}
+    {# Annual/Quarterly + Consolidated/Standalone only make sense against
+       the live feed (web/charts_feed.py) -- a ported static file (see
+       has_ported_dataset) has neither concept. has_live_financials means
+       this specific ported company was switched to the live feed anyway
+       (canonical_financials has at least some data for it), so it gets
+       the same toggle row as every non-ported company. #}
+    {% if not has_ported_dataset or has_live_financials %}
     <div class="vm-toggle-row">
       <div class="statement-toggle">
         <a class="{{ 'active' if statement_type == 'consolidated' else '' }}"

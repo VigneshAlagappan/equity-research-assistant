@@ -155,6 +155,7 @@ from storage.repositories import (
     add_industry,
     add_sector,
     add_watchlist_item,
+    company_has_canonical_financials,
     count_companies_by_index_tag,
     count_companies_by_industry,
     count_companies_by_sector,
@@ -2024,6 +2025,23 @@ def create_app() -> Flask:
 
         valuation_model_file = company["valuation_model_file"]
         has_ported_dataset = bool(valuation_model_file) and _valuation_model_data_path(valuation_model_file).exists()
+        # canonical_financials is this app's one source of truth for
+        # financial facts (see the migration writeup off web/static/data/
+        # *.json's stale, hand-ported workbook copies — those independently
+        # forked the exact same data errors canonical_financials itself has
+        # since fixed, and lack years canonical_financials already has).
+        # A "ported dataset" company only keeps reading the static file for
+        # financials_data_url when canonical_financials has genuinely
+        # nothing for it yet (verified per-company against real Neon: 1 of
+        # 21 ported companies, SRG Housing Finance, was never ingested at
+        # all) — switching an empty-live company would blank the whole
+        # Financials tab, a real regression, not a data-quality improvement.
+        # valuation_data_url (the Valuation Model tab's Growth Projection
+        # calculator) is untouched by this: still the static file for every
+        # ported company regardless, since that section is assumption-
+        # driven config this migration deliberately didn't touch — see
+        # web/valuation_feed.py's module docstring.
+        has_live_financials = has_ported_dataset and company_has_canonical_financials(db, company_id)
 
         # valuation_data_url backs only the Valuation Model tab's Growth
         # Projection / Intrinsic Value calculator (assumptions-driven,
@@ -2035,10 +2053,15 @@ def create_app() -> Flask:
         if has_ported_dataset:
             # A richer, manually-ported dataset (see the "HDFC Bank Equity
             # Dashboard" Claude Design import) — not statement_type-aware
-            # and annual-only (no period_type concept at all), so both
-            # dashboards read the same static file here.
+            # and annual-only (no period_type concept at all), so the
+            # Valuation Model tab keeps reading the static file here
+            # regardless of has_live_financials above.
             valuation_data_url = url_for("static", filename=f"data/{valuation_model_file}")
-            financials_data_url = valuation_data_url
+            financials_data_url = (
+                valuation_data_url
+                if not has_live_financials
+                else url_for("company_charts_feed", company_id=company_id, statement_type=statement_type)
+            )
         else:
             # Same dashboard template, every company — built live from
             # whatever this company's canonical_financials actually has.
@@ -2233,6 +2256,7 @@ def create_app() -> Flask:
             enabled_ratio_keys=enabled_ratio_keys,
             is_watchlisted=is_watchlisted(db, "company", company_id),
             has_ported_dataset=has_ported_dataset,
+            has_live_financials=has_live_financials,
             valuation_data_url=valuation_data_url,
             financials_data_url=financials_data_url,
             docs_data_url=url_for("company_docs_feed", company_id=company_id),
