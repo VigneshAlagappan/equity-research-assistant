@@ -32,6 +32,17 @@ division against eps_series/book_value_series, not placeholders) but are
 narrower still — populated only where a period has both a close price AND
 the underlying per-share fundamental, so they fill in as more price history
 is backfilled even for periods that already have every other metric.
+
+Balance-sheet/income-statement "fact" rows (not calc rows, which combine
+more than one source) also carry an optional per-period "sources" array —
+"xbrl" | "nse_pdf" | null, from _provenance_by_period() tracing each
+period's chosen_observation_id through financial_observations to
+documents.parser_version. Lets the Financials tab show which filing type
+backs a given number, now that both the ported-workbook companies and
+every other company read from the same live table (see the migration off
+web/static/data/*.json — scripts/import_equity_analysis_workbooks.py's
+static files are no longer the source for any company with at least one
+canonical_financials row, web/app.py's company_report()).
 """
 
 from __future__ import annotations
@@ -43,7 +54,7 @@ from datetime import date
 from companies.registry import get_company
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
 from storage.price_repository import get_avg_volume, get_close_as_of_range
-from storage.repositories import get_canonical_series
+from storage.repositories import get_canonical_series, get_canonical_series_provenance
 
 # See web/valuation_feed.py's identical table for the rationale — rescales
 # any unit that isn't already each currency's "big" display unit (crore for
@@ -105,6 +116,44 @@ def _period_label(fiscal_year: str, quarter: str | None) -> str:
     return f"{quarter} {fiscal_year}" if quarter else fiscal_year
 
 
+def _classify_provenance(source: str | None, parser_version: str | None) -> str | None:
+    """"xbrl" | "nse_pdf" | None (unclassified -- Screener/Proprietary
+    workbook rows, or a canonical value with no traceable observation).
+    An NSE filing PDF is identified by its parsed-from document's
+    parser_version, not by source alone -- `source` is still "nse" for a
+    PDF-derived observation, same as an XBRL one, since both originate from
+    an NSE filing; parser_version is what actually tells them apart (its
+    XBRL ingestion path, sources/nse_xbrl.py, never sets source_document_id
+    at all, so a "nse"-sourced observation with no parser_version-starting-
+    "nse_pdf" document behind it is XBRL by elimination)."""
+    # verified against real Neon: financial_observations.source is one of
+    # {"nse", "proprietary", "screener", "sec_edgar", "yfinance"}, and
+    # documents.parser_version includes "nse_pdf_spike_v1" among live rows
+    # (the nse-pdf-feasibility-spike branch's PDF parser) -- so this
+    # startswith() already matches production data, not just a hypothetical
+    # future parser_version naming scheme.
+    if parser_version and parser_version.startswith("nse_pdf"):
+        return "nse_pdf"
+    if source in ("nse", "sec_edgar"):
+        return "xbrl"
+    return None
+
+
+def _provenance_by_period(
+    conn: DBConnection, company_id: str, metric_key: str, period_type: str, statement_type: str
+) -> dict[tuple[int, int], str | None]:
+    """fiscal period -> "xbrl" | "nse_pdf" | None, for one raw metric series
+    -- the Financials tab's per-cell provenance tag (web/static/js/
+    valuation_dashboard.js). Only meaningful for a "fact" row (a raw
+    canonical_financials value passed through as-is); a "calc" row is built
+    from more than one metric/period so there's no single observation to
+    attribute it to, and callers below don't fetch this for those rows."""
+    out: dict[tuple[int, int], str | None] = {}
+    for row in get_canonical_series_provenance(conn, company_id, metric_key, period_type, statement_type):
+        out[_period_key(row["fiscal_year"], row["quarter"])] = _classify_provenance(row["source"], row["parser_version"])
+    return out
+
+
 def _series_by_period(
     conn: DBConnection, company_id: str, metric_key: str, period_type: str, statement_type: str
 ) -> dict[tuple[int, int], float]:
@@ -148,6 +197,7 @@ def _values_for(period_keys: list[tuple[int, int]], series: dict[tuple[int, int]
 def _row(
     key: str, label: str, unit: str, period_keys: list[tuple[int, int]], series: dict[tuple[int, int], float],
     row_type: str = "fact",
+    provenance: dict[tuple[int, int], str | None] | None = None,
 ) -> dict:
     """row_type is "fact" (a canonical_financials value passed through
     unchanged — even if just relabeled, like "networth" = raw reserves) or
@@ -158,8 +208,20 @@ def _row(
     cell). Surfaced client-side as the Financials tab's FACT/CALC badge
     (web/static/js/valuation_dashboard.js) — same tag-fact/tag-calculation
     styling already used for [FACT]/[CALCULATION] in AI-generated insights
-    (base.html), reused here rather than inventing a second badge design."""
-    return {"key": key, "label": label, "unit": unit, "values": _values_for(period_keys, series), "type": row_type}
+    (base.html), reused here rather than inventing a second badge design.
+
+    `provenance`, when given (only ever for a "fact" row backed by exactly
+    one raw metric series — see _provenance_by_period()'s docstring), adds
+    a parallel "sources" array: one of "xbrl" | "nse_pdf" | null per period,
+    null where the period has no value at all or the chosen observation
+    isn't traceable to either. Omitted from the dict entirely when not
+    given, so a row with no provenance data looks exactly as it did before
+    this existed — the JS only renders the per-cell tag when "sources" is
+    present."""
+    out = {"key": key, "label": label, "unit": unit, "values": _values_for(period_keys, series), "type": row_type}
+    if provenance is not None:
+        out["sources"] = [provenance.get(pk) for pk in period_keys]
+    return out
 
 
 def build_charts_feed(
@@ -328,23 +390,31 @@ def build_charts_feed(
         }
         pe_label, pb_label = "P/E Ratio", "P/B Ratio (Price to Book)"
 
+    # Per-cell XBRL-vs-NSE-PDF provenance -- only for rows below that pass a
+    # single raw metric series straight through ("fact" rows here; "she" is
+    # a fill_missing of two, so it's excluded same as every other calc row).
+    # One extra query per row, all against an already-indexed table
+    # (idx_obs_lookup / the canonical_financials primary key), same cost
+    # shape as the _series_by_period() call already made for each of these.
+    prov = lambda metric_key: _provenance_by_period(conn, company_id, metric_key, period_type, statement_type)
+
     metrics: dict[str, list[dict]] = {
         "balanceSheet": [
-            _row("networth", "Networth (reserves only)", "big", period_keys, networth),
+            _row("networth", "Networth (reserves only)", "big", period_keys, networth, provenance=prov("reserves")),
             _row("she", "Shareholders Equity (SHE)", "big", period_keys, she, row_type="calc"),
-            _row("deposits", "Gross Deposits", "big", period_keys, raw["deposits"]),
-            _row("borrowings", "Gross Borrowings", "big", period_keys, raw["borrowings"]),
-            _row("advances", "Advances", "big", period_keys, raw["advances"]),
-            _row("investments", "Investments", "big", period_keys, raw["investments"]),
-            _row("totalAssets", "Total Assets / Liabilities", "big", period_keys, raw["total_assets"]),
+            _row("deposits", "Gross Deposits", "big", period_keys, raw["deposits"], provenance=prov("deposits")),
+            _row("borrowings", "Gross Borrowings", "big", period_keys, raw["borrowings"], provenance=prov("borrowings")),
+            _row("advances", "Advances", "big", period_keys, raw["advances"], provenance=prov("advances")),
+            _row("investments", "Investments", "big", period_keys, raw["investments"], provenance=prov("investments")),
+            _row("totalAssets", "Total Assets / Liabilities", "big", period_keys, raw["total_assets"], provenance=prov("total_assets")),
         ],
         "incomeStatement": [
-            _row("earnings", "Earnings (Total Income)", "big", period_keys, raw["total_revenue"]),
-            _row("expenses", "Expenses", "big", period_keys, raw["operating_expenses"]),
-            _row("interestOutgo", "Interest Out-go", "big", period_keys, raw["interest_expended"]),
-            _row("otherIncome", "Other Income", "big", period_keys, raw["other_income"]),
-            _row("depreciation", "Depreciation", "big", period_keys, raw["depreciation"]),
-            _row("netProfit", "Net Profit (PAT)", "big", period_keys, raw["net_profit"]),
+            _row("earnings", "Earnings (Total Income)", "big", period_keys, raw["total_revenue"], provenance=prov("total_revenue")),
+            _row("expenses", "Expenses", "big", period_keys, raw["operating_expenses"], provenance=prov("operating_expenses")),
+            _row("interestOutgo", "Interest Out-go", "big", period_keys, raw["interest_expended"], provenance=prov("interest_expended")),
+            _row("otherIncome", "Other Income", "big", period_keys, raw["other_income"], provenance=prov("other_income")),
+            _row("depreciation", "Depreciation", "big", period_keys, raw["depreciation"], provenance=prov("depreciation")),
+            _row("netProfit", "Net Profit (PAT)", "big", period_keys, raw["net_profit"], provenance=prov("net_profit")),
         ],
         "perShare": [
             _row("eps", "EPS (Net Profit / share)", "perShare", period_keys, eps_series, row_type="calc"),

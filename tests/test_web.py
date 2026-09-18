@@ -407,6 +407,77 @@ def test_company_report_invalid_tab_is_400(client) -> None:
     assert response.status_code == 400
 
 
+def test_ported_dataset_company_with_no_live_data_keeps_static_financials_url(tmp_path: Path, monkeypatch) -> None:
+    """A company with a ported valuation_model_file (web/static/data/*.json,
+    see scripts/import_equity_analysis_workbooks.py) but zero
+    canonical_financials rows must keep reading the static file for the
+    Financials tab -- switching it to the live feed would blank the whole
+    tab, a real regression (verified against real Neon: this is exactly
+    SRG Housing Finance's situation in production today, the one ported
+    company out of 21 with nothing ingested at all)."""
+    db_path = tmp_path / "ported_no_data.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    from storage.company_repository import update_company_valuation_model_file
+
+    update_company_valuation_model_file(conn, "HDFCBANK", "hdfcbank-analysis.json")
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        response = test_client.get("/companies/HDFCBANK?tab=financials")
+
+    body = response.data.decode()
+    assert response.status_code == 200
+    assert 'id="valuation-dashboard" class="vm-layout" data-url="/static/data/hdfcbank-analysis.json"' in body
+    # Charts tab (unconditionally live, unaffected by has_ported_dataset)
+    # still points at charts-feed.json, so a blanket substring check on
+    # "/charts-feed.json" would false-positive -- assert on the
+    # Financials-tab data-url specifically instead, above.
+    assert "/companies/HDFCBANK/charts-feed.json" not in body
+    # No Annual/Quarterly or Consolidated/Standalone toggle -- the static
+    # file has no period_type/statement_type concept at all. (The
+    # ".vm-period-toggle" CSS rule itself is always present in <style>, so
+    # check for the data attribute init() actually looks for instead.)
+    assert "data-vm-period-toggle" not in body
+
+
+def test_ported_dataset_company_with_live_data_switches_financials_url(tmp_path: Path, monkeypatch) -> None:
+    """The same ported company, but now with at least one canonical_
+    financials row ingested -- the Financials tab (and only that tab; the
+    Valuation Model tab's Growth Projection calculator stays on the static
+    file, see web/app.py's company_report()) should switch to the live
+    charts-feed.json route instead, with the Annual/Quarterly and
+    Consolidated/Standalone toggles now showing (both are period_type/
+    statement_type concepts the live feed has and the static file never
+    did)."""
+    db_path = tmp_path / "ported_with_data.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    from storage.company_repository import update_company_valuation_model_file
+
+    update_company_valuation_model_file(conn, "HDFCBANK", "hdfcbank-analysis.json")
+    file_path = tmp_path / "HDFCBANK.xlsx"
+    _make_screener_workbook(file_path)
+    ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        response = test_client.get("/companies/HDFCBANK?tab=financials")
+        feed = test_client.get("/companies/HDFCBANK/charts-feed.json").get_json()
+
+    body = response.data.decode()
+    assert response.status_code == 200
+    assert 'id="valuation-dashboard" class="vm-layout" data-url="/companies/HDFCBANK/charts-feed.json' in body
+    # The static file is still used, but only for the Valuation Model tab.
+    assert 'id="valuation-dashboard-interactive" class="vm-layout" data-url="/static/data/hdfcbank-analysis.json"' in body
+    assert "data-vm-period-toggle" in body
+    assert feed["PERIODS"] == ["FY2023", "FY2024"]
+
+
 def test_statement_type_toggle_switches_data(tmp_path: Path, monkeypatch) -> None:
     """The toggle now drives the valuation-feed endpoint (the dashboard's
     data source), not server-rendered page content."""
