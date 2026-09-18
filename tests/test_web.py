@@ -243,6 +243,40 @@ def test_uploaded_document_stores_repo_relative_path_and_serves_correctly(client
     assert file_response.data == b"%PDF-fake"
 
 
+def test_document_with_only_storage_object_key_is_servable(client, monkeypatch) -> None:
+    # A document written straight to S3 (storage_object_key set,
+    # raw_file_path NULL -- e.g. the NSE-filing-PDF backfill) used to 404
+    # on both docs-feed.json's file_url and the file route itself, because
+    # each only checked raw_file_path even though the file route's own
+    # presigned-URL fallback already handled storage_object_key correctly
+    # three lines later -- a real gap the guard clause didn't match.
+    import config.settings as settings
+
+    conn = init_db(db_path=settings.DB_PATH)
+    conn.execute(
+        "INSERT INTO documents (company_id, source, document_type, fiscal_year, quarter, "
+        "storage_object_key, source_url, retrieved_at, processing_status) "
+        "VALUES ('HDFCBANK', 'nse', 'financial_result', 'FY2015', 'Q2', "
+        "'data/documents/HDFCBANK/fake.pdf', 'https://example.com/fake.zip', '2026-01-01', 'pending')"
+    )
+    conn.commit()
+    document_id = conn.execute("SELECT document_id FROM documents WHERE storage_object_key = 'data/documents/HDFCBANK/fake.pdf'").fetchone()["document_id"]
+
+    feed = client.get("/companies/HDFCBANK/docs-feed.json").get_json()
+    fy2015 = next(y for y in feed["years"] if y["fy"] == "FY2015")
+    q2 = next(q for q in fy2015["quarters"] if q["id"] == "q2fy2015")
+    assert q2["docs"]["result"]["file_url"] == f"/companies/HDFCBANK/docs/{document_id}/file"
+
+    class _FakeStore:
+        def presigned_url(self, key: str) -> str:
+            return f"https://fake-s3.example.com/{key}"
+
+    monkeypatch.setattr("web.app.default_document_store", lambda: _FakeStore())
+    file_response = client.get(f"/companies/HDFCBANK/docs/{document_id}/file")
+    assert file_response.status_code == 302
+    assert file_response.headers["Location"] == "https://fake-s3.example.com/data/documents/HDFCBANK/fake.pdf"
+
+
 def test_docs_feed_period_options_span_2005_onward(client) -> None:
     response = client.get("/companies/HDFCBANK/docs-feed.json")
     data = response.get_json()

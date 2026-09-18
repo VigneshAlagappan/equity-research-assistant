@@ -2666,18 +2666,23 @@ def create_app() -> Flask:
     def company_document_file(company_id: str, document_id: int):
         db = get_db()
         row = get_company_document(db, company_id, document_id)
-        if row is None or not row["raw_file_path"]:
+        if row is None or not (row["raw_file_path"] or row["storage_object_key"]):
             abort(404)
         # Mixed-mode during migration: a presigned URL when the active
         # backend can produce one (S3), falling back to today's send_file
         # for a document still only on local disk (LocalDocumentStore's
         # presigned_url() always returns None, same as before this routed
-        # through DocumentStore).
+        # through DocumentStore). A document with only storage_object_key
+        # (no raw_file_path at all -- e.g. one uploaded straight to S3,
+        # never staged on local disk) has no local-disk fallback to send,
+        # so it depends on the active backend producing a presigned URL.
         key = row["storage_object_key"] or row["raw_file_path"]
         store = default_document_store()
         url = store.presigned_url(key)
         if url:
             return redirect(url)
+        if not row["raw_file_path"]:
+            abort(404)
         return send_file(from_repo_relative(row["raw_file_path"]))
 
     def _safe_login_next() -> str:
