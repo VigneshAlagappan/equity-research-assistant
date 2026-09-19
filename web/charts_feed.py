@@ -53,6 +53,7 @@ from datetime import date
 
 from companies.registry import get_company
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
+from storage.company_repository import select_corporate_actions
 from storage.price_repository import get_avg_volume, get_close_as_of_range
 from storage.repositories import get_canonical_series, get_canonical_series_provenance
 
@@ -110,6 +111,36 @@ def _period_date_range(fiscal_year_end_month: int, year_num: int, quarter_num: i
     start = date(start_year, start_month, 1)
     end = date(end_year, end_month, calendar.monthrange(end_year, end_month)[1])
     return start, end
+
+
+def _corporate_actions_by_period(
+    conn: DBConnection, company_id: str, fiscal_year_end_month: int, period_keys: list[tuple[int, int]]
+) -> list[list[dict]]:
+    """One bucket per period_key, holding every corporate action (ingestion/
+    corporate_actions.py's classify_action_type() output, via
+    storage.company_repository.select_corporate_actions) whose ex_date falls
+    inside that period's calendar date range (_period_date_range() above --
+    the same date-range derivation Price/Volume already uses to place daily
+    bars onto this feed's fiscal-period x-axis). This is deliberately
+    period-granularity, not exact-date placement: the Charts tab's x-axis is
+    a discrete list of fiscal periods (one column per FY/quarter, evenly
+    spaced regardless of the real calendar gap between them), not a
+    continuous time axis, so an event is placed on the period column that
+    contains it rather than at a sub-column pixel offset that the axis has
+    no room to represent. web/static/js/charts_overlay.js renders these as
+    small marker icons in a strip above the plot area, independent of
+    whichever attributes are on the left/right y-axes."""
+    ranges = [_period_date_range(fiscal_year_end_month, year_num, q_num) for year_num, q_num in period_keys]
+    buckets: list[list[dict]] = [[] for _ in period_keys]
+    for row in select_corporate_actions(conn, company_id):
+        ex_date = row["ex_date"]
+        if not ex_date:
+            continue
+        for i, (start, end) in enumerate(ranges):
+            if start.isoformat() <= ex_date <= end.isoformat():
+                buckets[i].append({"action_type": row["action_type"], "subject": row["subject"], "ex_date": ex_date})
+                break
+    return buckets
 
 
 def _period_label(fiscal_year: str, quarter: str | None) -> str:
@@ -459,4 +490,20 @@ def build_charts_feed(
     # (web/static/js/charts_overlay.js's Compare With) without re-parsing a
     # formatted label like "Q1 FY2024" back into a sortable key.
     period_key_pairs = [[year, quarter] for year, quarter in period_keys]
-    return {"PERIODS": periods, "PERIOD_KEYS": period_key_pairs, "CURRENCY": currency, "METRICS": metrics}
+    # CORPORATE_ACTIONS, parallel to PERIODS/PERIOD_KEYS -- see
+    # _corporate_actions_by_period()'s docstring. Empty list per period when
+    # the company isn't registered (mirrors every other company-dependent
+    # feature above bailing out the same way) rather than omitting the key,
+    # so the client never needs a null-check before indexing into it.
+    corporate_actions = (
+        _corporate_actions_by_period(conn, company_id, company["fiscal_year_end_month"], period_keys)
+        if company is not None
+        else [[] for _ in period_keys]
+    )
+    return {
+        "PERIODS": periods,
+        "PERIOD_KEYS": period_key_pairs,
+        "CURRENCY": currency,
+        "METRICS": metrics,
+        "CORPORATE_ACTIONS": corporate_actions,
+    }

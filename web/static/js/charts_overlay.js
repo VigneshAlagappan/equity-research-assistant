@@ -100,6 +100,23 @@
   };
   const DEFAULT_RANGE = { annual: "10", quarterly: "8" };
 
+  // Corporate-action event markers (ingestion/corporate_actions.py's
+  // classify_action_type() values) — drawn as small icons in a strip above
+  // the plot area (renderChart()'s markerY band), not as a left/right
+  // series, since a corporate action is a point-in-time event, not a
+  // quantity with its own axis. Color-coded by type so a glance at the
+  // marker strip already hints what happened before opening its tooltip.
+  const ACTION_TYPE_META = {
+    dividend: { color: "#16a34a", label: "Dividend" },
+    bonus: { color: "#2563eb", label: "Bonus" },
+    split: { color: "#9333ea", label: "Split" },
+    fv_split: { color: "#9333ea", label: "Face Value Split" },
+    rights: { color: "#d97706", label: "Rights Issue" },
+    scheme_of_arrangement: { color: "#64748b", label: "Scheme of Arrangement" },
+    other: { color: "#64748b", label: "Other" },
+  };
+  function actionMeta(type) { return ACTION_TYPE_META[type] || ACTION_TYPE_META.other; }
+
   function attrId(section, key) { return section + ":" + key; }
   function colorVar(idx) { return "var(--chart-series-" + ((idx % PALETTE_SIZE) + 1) + ")"; }
   function cacheKey(companyId, periodType) { return companyId + "|" + periodType; }
@@ -191,7 +208,7 @@
     return leftCount <= rightCount ? "left" : "right";
   }
 
-  function renderControls(periodType, range) {
+  function renderControls(periodType, range, showCorpActions, hasCorpActions) {
     const periodBtns = ["annual", "quarterly"].map((pt) => {
       return '<button type="button" class="chart-overlay-side-btn' + (periodType === pt ? " is-active" : "") +
         '" data-period-type="' + pt + '">' + (pt === "annual" ? "Annual" : "Quarterly") + "</button>";
@@ -203,10 +220,31 @@
       return '<button type="button" class="chart-overlay-side-btn' + (o.v === range ? " is-active" : "") +
         '" data-range-btn="' + escapeHtml(o.v) + '">' + escapeHtml(o.l) + "</button>";
     }).join("");
+    // Only worth showing the toggle when the primary company actually has
+    // at least one corporate action in range — an always-visible control
+    // that never does anything for most companies is worse than not having
+    // it, same reasoning as flattenAttributes() hiding all-null attributes.
+    //
+    // A checkbox, not a single-button "toggle" pill (what this used to be)
+    // — a lone button in its own bordered group reads as a static badge
+    // when checked (indistinguishable from "Last 10 FY" above, a real
+    // segmented choice) and as plain unstyled text when unchecked (a
+    // single-button group's outer border has no internal divider line to
+    // create contrast against the page background, unlike Annual/Quarterly
+    // or the range buttons). A checkbox is unambiguous either way, and
+    // matches the exact affordance the attribute picker below already uses
+    // for the same "on/off, not a multi-way choice" interaction shape.
+    const corpActionsToggle = hasCorpActions
+      ? '<label class="chart-overlay-corpaction-toggle" title="Show dividend/bonus/split/rights events on the timeline">' +
+          '<input type="checkbox" data-toggle-corp-actions' + (showCorpActions ? " checked" : "") + ">" +
+          "Corporate Actions" +
+        "</label>"
+      : "";
     return (
       '<div class="chart-overlay-controls">' +
         '<span class="chart-overlay-side-toggle">' + periodBtns + "</span>" +
         '<span class="chart-overlay-side-toggle">' + rangeBtns + "</span>" +
+        corpActionsToggle +
       "</div>"
     );
   }
@@ -391,7 +429,7 @@
     return units.size === 1 ? seriesList[0].unit : null;
   }
 
-  function renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames, chartWidth) {
+  function renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames, chartWidth, corpActions, showCorpActions) {
     if (leftSeries.length === 0 && rightSeries.length === 0) {
       return '<div class="chart-overlay-empty">Select any number of attributes on the left to see them plotted over time.</div>';
     }
@@ -413,7 +451,13 @@
     const w = Math.max(720, Math.round(chartWidth) || 720), h = 320;
     const padLeft = leftSeries.length ? 62 : 16;
     const padRight = rightSeries.length ? 62 : 16;
-    const padTop = 16, padBottom = 32;
+    // Corporate-action markers (below) get their own reserved strip above
+    // the plot area rather than floating over whatever's plotted at the
+    // top of the y-range — extra padTop only when there's actually
+    // something to show there, so a chart/company with no corporate
+    // actions in range renders pixel-identical to before this existed.
+    const anyCorpActions = showCorpActions && corpActions && corpActions.some((list) => list.length > 0);
+    const padTop = anyCorpActions ? 30 : 16, padBottom = 32;
     const x0 = padLeft, x1 = w - padRight, y0 = padTop, y1 = h - padBottom;
     const n = PERIODS.length;
 
@@ -439,7 +483,39 @@
       grid += '<line x1="' + x0 + '" y1="' + y.toFixed(1) + '" x2="' + x1 + '" y2="' + y.toFixed(1) + '" class="chart-overlay-gridline"></line>';
     });
 
-    let lines = "", bars = "", dots = "", axisLabels = "";
+    let lines = "", bars = "", dots = "", axisLabels = "", corpMarkers = "";
+
+    // Corporate-action event markers: one small diamond per period column
+    // that has at least one action, sitting in the reserved top strip
+    // (independent of both y-axes) with a short tick line down to the plot
+    // area so it visually reads as tied to that column, not just floating
+    // text. A tooltip data-tooltip attribute — the same click-to-pin
+    // mechanism the price/attribute dots below already use — lists every
+    // action in that period, since more than one can land in the same
+    // fiscal period (e.g. an interim + final dividend).
+    if (anyCorpActions) {
+      const markerY = 10;
+      corpActions.forEach((list, i) => {
+        if (!list || list.length === 0) return;
+        const x = n === 1 ? x0 : x0 + (i / (n - 1)) * (x1 - x0);
+        const types = list.map((a) => a.action_type);
+        const uniformType = types.every((t) => t === types[0]) ? types[0] : null;
+        const color = uniformType ? actionMeta(uniformType).color : "#334155";
+        const tooltipText =
+          "Corporate Actions — " + PERIODS[i] + "\n" +
+          list.map((a) => actionMeta(a.action_type).label + ": " + a.subject + " (" + a.ex_date + ")").join("\n");
+        const countBadge = list.length > 1
+          ? '<text x="' + (x + 6).toFixed(1) + '" y="' + (markerY - 3) + '" class="chart-overlay-corpaction-count">' + list.length + "</text>"
+          : "";
+        corpMarkers +=
+          '<line x1="' + x.toFixed(1) + '" y1="' + (markerY + 5) + '" x2="' + x.toFixed(1) + '" y2="' + y0 +
+          '" class="chart-overlay-corpaction-tick"></line>' +
+          '<path d="M ' + x.toFixed(1) + ' ' + (markerY - 5) + ' L ' + (x + 5).toFixed(1) + ' ' + markerY +
+          ' L ' + x.toFixed(1) + ' ' + (markerY + 5) + ' L ' + (x - 5).toFixed(1) + ' ' + markerY +
+          ' Z" class="chart-overlay-corpaction-marker" style="fill: ' + color + '" data-tooltip="' + escapeHtml(tooltipText) + '"><title>' + escapeHtml(tooltipText) + "</title></path>" +
+          countBadge;
+      });
+    }
 
     // Volume reads as a magnitude at each period, not a trend to trace
     // point-to-point — every real price/volume chart (see the reference
@@ -539,11 +615,27 @@
       );
     }).join("");
 
+    const corpActionLegend = anyCorpActions
+      ? '<div class="chart-overlay-legend chart-overlay-corpaction-legend">' +
+          Array.from(new Set(corpActions.reduce((acc, list) => acc.concat(list.map((a) => a.action_type)), [])))
+            .map((t) => {
+              const meta = actionMeta(t);
+              return (
+                '<span class="chart-overlay-legend-item">' +
+                  '<span class="chart-overlay-swatch" style="background: ' + meta.color + '; transform: rotate(45deg);"></span>' +
+                  escapeHtml(meta.label) +
+                "</span>"
+              );
+            }).join("") +
+        "</div>"
+      : "";
+
     return (
       '<svg viewBox="0 0 ' + w + " " + h + '" class="chart-overlay-svg" preserveAspectRatio="xMidYMid meet">' +
-        grid + bars + lines + dots + axisLabels + xLabels +
+        grid + bars + lines + dots + corpMarkers + axisLabels + xLabels +
       "</svg>" +
       '<div class="chart-overlay-legend">' + legend + "</div>" +
+      corpActionLegend +
       '<div class="chart-overlay-tooltip" hidden></div>'
     );
   }
@@ -578,6 +670,7 @@
       // one attribute in each of two sections left both permanently
       // expanded, stacked on top of the chart.
       openSectionId: null,
+      showCorpActions: true,
     };
 
     function colorOf(id) {
@@ -621,6 +714,7 @@
             CURRENCY: data.CURRENCY || "INR",
             attributes: attributes,
             byId: byId,
+            CORPORATE_ACTIONS: data.CORPORATE_ACTIONS || [],
           };
           state.cache[key] = ds;
           return ds;
@@ -663,6 +757,24 @@
       const PERIODS = sliceLast(union.PERIODS, state.range);
       const offset = union.PERIODS.length - PERIODS.length;
 
+      // Corporate actions are only ever drawn for the primary company
+      // (state.companies[0]) — a "Compare With" peer's dividends/splits
+      // would clutter the same period columns with a second, unrelated set
+      // of events and there's no company-color-coding on the marker strip
+      // to disambiguate them, unlike the price/attribute lines below which
+      // already carry a per-company dash pattern. Remapped onto the union
+      // axis the same way each attribute is, just for one company.
+      const corpActionsUnion = union.PERIODS.map(() => []);
+      const primaryLoaded = loaded.find((x) => x.company.id === state.companies[0].id);
+      if (primaryLoaded && primaryLoaded.ds.CORPORATE_ACTIONS) {
+        primaryLoaded.ds.CORPORATE_ACTIONS.forEach((list, i) => {
+          const idx = unionIndexByKey[periodKeyStr(primaryLoaded.ds.PERIOD_KEYS[i])];
+          if (idx !== undefined) corpActionsUnion[idx] = list;
+        });
+      }
+      const corpActionsSliced = corpActionsUnion.slice(offset);
+      const hasCorpActions = corpActionsSliced.some((list) => list.length > 0);
+
       const allSeries = [];
       state.order.forEach((id) => {
         loaded.forEach((x, companyIndex) => {
@@ -695,10 +807,12 @@
       root.innerHTML =
         renderCompareBar(state) +
         '<div class="chart-overlay-toolbar">' +
-          renderControls(state.periodType, state.range) +
+          renderControls(state.periodType, state.range, state.showCorpActions, hasCorpActions) +
           renderPicker(unionAttrs, state.order, state.sides, colorOf, state.openSectionId) +
         "</div>" +
-        '<div class="chart-overlay-chart">' + renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames, chartWidth) + "</div>";
+        '<div class="chart-overlay-chart">' +
+          renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames, chartWidth, corpActionsSliced, state.showCorpActions) +
+        "</div>";
 
       root.querySelectorAll("[data-attr-id]").forEach((checkbox) => {
         checkbox.addEventListener("change", () => {
@@ -755,6 +869,13 @@
       root.querySelectorAll("[data-range-btn]").forEach((btn) => {
         btn.addEventListener("click", () => {
           state.range = btn.dataset.rangeBtn;
+          render();
+        });
+      });
+
+      root.querySelectorAll("[data-toggle-corp-actions]").forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          state.showCorpActions = checkbox.checked;
           render();
         });
       });

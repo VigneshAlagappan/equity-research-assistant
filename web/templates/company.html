@@ -585,6 +585,23 @@
      carries its own data-tooltip/click target directly, no separate hit
      shape needed the way a thin line's dots require one. */
   .chart-overlay-bar { opacity: 0.35; cursor: pointer; }
+  /* Corporate-action event markers (charts_overlay.js's renderChart()) — a
+     small diamond in a reserved strip above the plot area, tied to its
+     period column by a short tick line, so an event reads as "something
+     happened at this point in time" without occupying either y-axis the
+     way a plotted attribute does. */
+  .chart-overlay-corpaction-tick { stroke: var(--color-divider); stroke-width: 1; stroke-dasharray: 2,2; }
+  .chart-overlay-corpaction-marker { cursor: pointer; stroke: var(--surface); stroke-width: 1; }
+  .chart-overlay-corpaction-count { font-size: 8px; font-weight: 700; fill: var(--ink-muted); }
+  .chart-overlay-corpaction-legend { margin-top: 2px; }
+  .chart-overlay-corpaction-legend .chart-overlay-swatch { border-radius: 1px; }
+  /* Checkbox + label, not a button — see renderControls()'s own comment on
+     why a lone toggle button reads as a static badge either way. */
+  .chart-overlay-corpaction-toggle {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+    color: var(--ink-muted); cursor: pointer; user-select: none; white-space: nowrap;
+  }
+  .chart-overlay-corpaction-toggle input[type="checkbox"] { accent-color: var(--color-accent-700); cursor: pointer; }
 
   /* "Run now" status badges (company_report()'s run_now_status, sourced
      from get_latest_batch_item_for_company -- the same batch_job_items rows
