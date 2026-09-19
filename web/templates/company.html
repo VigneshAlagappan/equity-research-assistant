@@ -595,13 +595,11 @@
   .chart-overlay-corpaction-count { font-size: 8px; font-weight: 700; fill: var(--ink-muted); }
   .chart-overlay-corpaction-legend { margin-top: 2px; }
   .chart-overlay-corpaction-legend .chart-overlay-swatch { border-radius: 1px; }
-  /* Checkbox + label, not a button — see renderControls()'s own comment on
-     why a lone toggle button reads as a static badge either way. */
-  .chart-overlay-corpaction-toggle {
-    display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
-    color: var(--ink-muted); cursor: pointer; user-select: none; white-space: nowrap;
-  }
-  .chart-overlay-corpaction-toggle input[type="checkbox"] { accent-color: var(--color-accent-700); cursor: pointer; }
+  /* Diamond swatches in the Corporate Actions dropdown (renderCorpActionsPicker())
+     — same square .chart-overlay-swatch every other checkbox row in this
+     picker uses, just rotated 45deg to match the diamond markers it toggles
+     on the chart, so the swatch shape itself hints what's being controlled. */
+  .chart-overlay-corpaction-swatch { transform: rotate(45deg); border-radius: 1px; }
 
   /* "Run now" status badges (company_report()'s run_now_status, sourced
      from get_latest_batch_item_for_company -- the same batch_job_items rows

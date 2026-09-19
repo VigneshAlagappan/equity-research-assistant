@@ -208,7 +208,7 @@
     return leftCount <= rightCount ? "left" : "right";
   }
 
-  function renderControls(periodType, range, showCorpActions, hasCorpActions) {
+  function renderControls(periodType, range) {
     const periodBtns = ["annual", "quarterly"].map((pt) => {
       return '<button type="button" class="chart-overlay-side-btn' + (periodType === pt ? " is-active" : "") +
         '" data-period-type="' + pt + '">' + (pt === "annual" ? "Annual" : "Quarterly") + "</button>";
@@ -220,32 +220,52 @@
       return '<button type="button" class="chart-overlay-side-btn' + (o.v === range ? " is-active" : "") +
         '" data-range-btn="' + escapeHtml(o.v) + '">' + escapeHtml(o.l) + "</button>";
     }).join("");
-    // Only worth showing the toggle when the primary company actually has
-    // at least one corporate action in range — an always-visible control
-    // that never does anything for most companies is worse than not having
-    // it, same reasoning as flattenAttributes() hiding all-null attributes.
-    //
-    // A checkbox, not a single-button "toggle" pill (what this used to be)
-    // — a lone button in its own bordered group reads as a static badge
-    // when checked (indistinguishable from "Last 10 FY" above, a real
-    // segmented choice) and as plain unstyled text when unchecked (a
-    // single-button group's outer border has no internal divider line to
-    // create contrast against the page background, unlike Annual/Quarterly
-    // or the range buttons). A checkbox is unambiguous either way, and
-    // matches the exact affordance the attribute picker below already uses
-    // for the same "on/off, not a multi-way choice" interaction shape.
-    const corpActionsToggle = hasCorpActions
-      ? '<label class="chart-overlay-corpaction-toggle" title="Show dividend/bonus/split/rights events on the timeline">' +
-          '<input type="checkbox" data-toggle-corp-actions' + (showCorpActions ? " checked" : "") + ">" +
-          "Corporate Actions" +
-        "</label>"
-      : "";
     return (
       '<div class="chart-overlay-controls">' +
         '<span class="chart-overlay-side-toggle">' + periodBtns + "</span>" +
         '<span class="chart-overlay-side-toggle">' + rangeBtns + "</span>" +
-        corpActionsToggle +
       "</div>"
+    );
+  }
+
+  // Which corporate-action types to show is its own dropdown pill —
+  // .chart-overlay-section, the exact same accordion component
+  // INCOME STATEMENT/BALANCE SHEET/etc. below already use for "pick some
+  // checkboxes from a list, one open at a time" — rather than a single
+  // on/off checkbox for every action type at once. Individual dividend/
+  // bonus/split/rights checkboxes so a user can isolate just one type
+  // (e.g. only bonuses) on a dense dividend-heavy chart. Order is fixed
+  // (not alphabetical) so it reads dividend-first, the most common action
+  // by far, down to the rarest.
+  const ACTION_TYPE_ORDER = ["dividend", "bonus", "split", "fv_split", "rights", "scheme_of_arrangement", "other"];
+
+  function renderCorpActionsPicker(availableTypes, hiddenTypes, openSectionId) {
+    if (availableTypes.length === 0) return "";
+    const enabledCount = availableTypes.filter((t) => !hiddenTypes.has(t)).length;
+    const badge = enabledCount < availableTypes.length
+      ? ' <span class="chart-overlay-section-count">' + enabledCount + "/" + availableTypes.length + "</span>"
+      : "";
+    const isOpen = openSectionId === "corpActions";
+    const rows = availableTypes.map((t) => {
+      const meta = actionMeta(t);
+      const checked = !hiddenTypes.has(t);
+      const swatch = checked
+        ? '<span class="chart-overlay-swatch chart-overlay-corpaction-swatch" style="background: ' + meta.color + '"></span>'
+        : '<span class="chart-overlay-swatch chart-overlay-corpaction-swatch" style="background: transparent"></span>';
+      return (
+        '<div class="chart-overlay-attr">' +
+          '<input type="checkbox" id="chart-corpaction-' + escapeHtml(t) + '" data-corpaction-type="' + escapeHtml(t) + '"' +
+          (checked ? " checked" : "") + ">" +
+          swatch +
+          '<label for="chart-corpaction-' + escapeHtml(t) + '">' + escapeHtml(meta.label) + "</label>" +
+        "</div>"
+      );
+    }).join("");
+    return (
+      '<details class="chart-overlay-section" data-section="corpActions"' + (isOpen ? " open" : "") + ">" +
+        "<summary>Corporate Actions" + badge + "</summary>" +
+        '<div class="chart-overlay-section-body">' + rows + "</div>" +
+      "</details>"
     );
   }
 
@@ -429,7 +449,7 @@
     return units.size === 1 ? seriesList[0].unit : null;
   }
 
-  function renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames, chartWidth, corpActions, showCorpActions) {
+  function renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames, chartWidth, corpActions) {
     if (leftSeries.length === 0 && rightSeries.length === 0) {
       return '<div class="chart-overlay-empty">Select any number of attributes on the left to see them plotted over time.</div>';
     }
@@ -456,7 +476,7 @@
     // top of the y-range — extra padTop only when there's actually
     // something to show there, so a chart/company with no corporate
     // actions in range renders pixel-identical to before this existed.
-    const anyCorpActions = showCorpActions && corpActions && corpActions.some((list) => list.length > 0);
+    const anyCorpActions = corpActions && corpActions.some((list) => list.length > 0);
     const padTop = anyCorpActions ? 30 : 16, padBottom = 32;
     const x0 = padLeft, x1 = w - padRight, y0 = padTop, y1 = h - padBottom;
     const n = PERIODS.length;
@@ -670,7 +690,7 @@
       // one attribute in each of two sections left both permanently
       // expanded, stacked on top of the chart.
       openSectionId: null,
-      showCorpActions: true,
+      hiddenCorpActionTypes: new Set(),  // action_type values unchecked in the Corporate Actions dropdown
     };
 
     function colorOf(id) {
@@ -764,16 +784,29 @@
       // to disambiguate them, unlike the price/attribute lines below which
       // already carry a per-company dash pattern. Remapped onto the union
       // axis the same way each attribute is, just for one company.
+      //
+      // availableCorpActionTypes drives the Corporate Actions dropdown's
+      // own checkbox list -- computed from the FULL (unsliced) series so
+      // switching the trailing-window range never makes a type's checkbox
+      // disappear just because none of its actions happen to fall in the
+      // current window; corpActionsUnion, what actually gets drawn, is
+      // filtered by state.hiddenCorpActionTypes right here so every
+      // downstream consumer (hasCorpActions, renderChart's marker/legend
+      // drawing) already only sees the types the user left checked.
       const corpActionsUnion = union.PERIODS.map(() => []);
       const primaryLoaded = loaded.find((x) => x.company.id === state.companies[0].id);
+      const presentCorpActionTypes = new Set();
       if (primaryLoaded && primaryLoaded.ds.CORPORATE_ACTIONS) {
         primaryLoaded.ds.CORPORATE_ACTIONS.forEach((list, i) => {
+          list.forEach((a) => presentCorpActionTypes.add(a.action_type));
           const idx = unionIndexByKey[periodKeyStr(primaryLoaded.ds.PERIOD_KEYS[i])];
-          if (idx !== undefined) corpActionsUnion[idx] = list;
+          if (idx !== undefined) {
+            corpActionsUnion[idx] = list.filter((a) => !state.hiddenCorpActionTypes.has(a.action_type));
+          }
         });
       }
+      const availableCorpActionTypes = ACTION_TYPE_ORDER.filter((t) => presentCorpActionTypes.has(t));
       const corpActionsSliced = corpActionsUnion.slice(offset);
-      const hasCorpActions = corpActionsSliced.some((list) => list.length > 0);
 
       const allSeries = [];
       state.order.forEach((id) => {
@@ -807,11 +840,12 @@
       root.innerHTML =
         renderCompareBar(state) +
         '<div class="chart-overlay-toolbar">' +
-          renderControls(state.periodType, state.range, state.showCorpActions, hasCorpActions) +
+          renderControls(state.periodType, state.range) +
+          renderCorpActionsPicker(availableCorpActionTypes, state.hiddenCorpActionTypes, state.openSectionId) +
           renderPicker(unionAttrs, state.order, state.sides, colorOf, state.openSectionId) +
         "</div>" +
         '<div class="chart-overlay-chart">' +
-          renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames, chartWidth, corpActionsSliced, state.showCorpActions) +
+          renderChart(PERIODS, leftSeries, rightSeries, colorOf, currency, showCompanyNames, chartWidth, corpActionsSliced) +
         "</div>";
 
       root.querySelectorAll("[data-attr-id]").forEach((checkbox) => {
@@ -873,9 +907,11 @@
         });
       });
 
-      root.querySelectorAll("[data-toggle-corp-actions]").forEach((checkbox) => {
+      root.querySelectorAll("[data-corpaction-type]").forEach((checkbox) => {
         checkbox.addEventListener("change", () => {
-          state.showCorpActions = checkbox.checked;
+          const t = checkbox.dataset.corpactionType;
+          if (checkbox.checked) state.hiddenCorpActionTypes.delete(t);
+          else state.hiddenCorpActionTypes.add(t);
           render();
         });
       });
