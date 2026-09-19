@@ -1,0 +1,62 @@
+{
+  "HDFCBANK": {
+    "symbol": "HDFCBANK",
+    "zip_url": "https://nsearchives.nseindia.com/corporate/Result30062016_21072016115151.zip",
+    "downloaded": true,
+    "zip_size_bytes": 218267,
+    "local_zip_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/zips/HDFCBANK/download.zip",
+    "zip_valid": true,
+    "contents": [
+      {
+        "name": "Result30062016.pdf",
+        "size_bytes": 223245
+      }
+    ],
+    "extracted_to": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/zips/HDFCBANK/extracted"
+  },
+  "RELIANCE": {
+    "symbol": "RELIANCE",
+    "zip_url": "https://nsearchives.nseindia.com/corporate/4185_001_15072016170723.zip",
+    "downloaded": true,
+    "zip_size_bytes": 1189729,
+    "local_zip_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/zips/RELIANCE/download.zip",
+    "zip_valid": true,
+    "contents": [
+      {
+        "name": "4185_001.pdf",
+        "size_bytes": 1246122
+      }
+    ],
+    "extracted_to": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/zips/RELIANCE/extracted"
+  },
+  "ICICIBANK": {
+    "symbol": "ICICIBANK",
+    "zip_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_29072016_f_29072016163907.zip",
+    "downloaded": true,
+    "zip_size_bytes": 751519,
+    "local_zip_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/zips/ICICIBANK/download.zip",
+    "zip_valid": true,
+    "contents": [
+      {
+        "name": "BSE_NSE_29072016_f.pdf",
+        "size_bytes": 890665
+      }
+    ],
+    "extracted_to": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/zips/ICICIBANK/extracted"
+  },
+  "TCS": {
+    "symbol": "TCS",
+    "zip_url": "https://nsearchives.nseindia.com/corporate/TCSQ1FY17_14072016161204.zip",
+    "downloaded": true,
+    "zip_size_bytes": 1410633,
+    "local_zip_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/zips/TCS/download.zip",
+    "zip_valid": true,
+    "contents": [
+      {
+        "name": "TCSQ1FY17.pdf",
+        "size_bytes": 1473272
+      }
+    ],
+    "extracted_to": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/zips/TCS/extracted"
+  }
+}

@@ -1,0 +1,1010 @@
+[
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.87,
+    "timestamp": "2026-09-18T02:30:42.248869"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.88,
+    "timestamp": "2026-09-18T02:30:45.137815"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.84,
+    "timestamp": "2026-09-18T02:30:47.004471"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.65,
+    "timestamp": "2026-09-18T02:30:48.661724"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.91,
+    "timestamp": "2026-09-18T02:30:50.592519"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.24,
+    "timestamp": "2026-09-18T02:30:52.838761"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.92,
+    "timestamp": "2026-09-18T02:30:54.781369"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.24,
+    "timestamp": "2026-09-18T02:30:57.024378"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.91,
+    "timestamp": "2026-09-18T02:30:59.965946"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.77,
+    "timestamp": "2026-09-18T02:31:02.742999"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.61,
+    "timestamp": "2026-09-18T02:31:04.394091"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.93,
+    "timestamp": "2026-09-18T02:31:06.324463"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.02,
+    "timestamp": "2026-09-18T02:31:08.366535"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.19,
+    "timestamp": "2026-09-18T02:31:10.566170"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.31,
+    "timestamp": "2026-09-18T02:31:12.896622"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.44,
+    "timestamp": "2026-09-18T02:31:15.345793"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.42,
+    "timestamp": "2026-09-18T02:31:17.781817"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.88,
+    "timestamp": "2026-09-18T02:31:20.665898"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.71,
+    "timestamp": "2026-09-18T02:31:22.394798"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.63,
+    "timestamp": "2026-09-18T02:31:25.029342"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BHARTIARTL_05082026131552_AirtelStxIntimationNewpaperAdv.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 3.37,
+    "timestamp": "2026-09-18T02:31:29.433488"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.13,
+    "timestamp": "2026-09-18T02:31:31.710319"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.62,
+    "timestamp": "2026-09-18T02:31:34.335677"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.65,
+    "timestamp": "2026-09-18T02:31:36.010304"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.52,
+    "timestamp": "2026-09-18T02:31:38.534597"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/COALINDIA_28072026131828_Newspaper_publication_Q1.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.68,
+    "timestamp": "2026-09-18T02:31:40.237347"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.13,
+    "timestamp": "2026-09-18T02:31:42.471473"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.99,
+    "timestamp": "2026-09-18T02:31:45.461893"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.73,
+    "timestamp": "2026-09-18T02:31:47.216296"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.34,
+    "timestamp": "2026-09-18T02:31:49.562029"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.72,
+    "timestamp": "2026-09-18T02:31:51.302078"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.19,
+    "timestamp": "2026-09-18T02:31:53.498806"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.75,
+    "timestamp": "2026-09-18T02:31:55.262133"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.46,
+    "timestamp": "2026-09-18T02:31:57.718439"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.83,
+    "timestamp": "2026-09-18T02:31:59.575977"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 2.23,
+    "timestamp": "2026-09-18T02:32:02.802733"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.61,
+    "timestamp": "2026-09-18T02:32:04.443356"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.35,
+    "timestamp": "2026-09-18T02:32:06.798864"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.57,
+    "timestamp": "2026-09-18T02:32:08.402028"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.13,
+    "timestamp": "2026-09-18T02:32:10.531505"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.7,
+    "timestamp": "2026-09-18T02:32:12.246008"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.31,
+    "timestamp": "2026-09-18T02:32:14.558493"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.53,
+    "timestamp": "2026-09-18T02:32:16.114805"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.32,
+    "timestamp": "2026-09-18T02:32:18.434356"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HINDUNILVR_30042026102743_OutcomeofBoardMeeting30042026signed.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 2.4,
+    "timestamp": "2026-09-18T02:32:21.860302"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.7,
+    "timestamp": "2026-09-18T02:32:25.366527"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.7,
+    "timestamp": "2026-09-18T02:32:28.070093"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.86,
+    "timestamp": "2026-09-18T02:32:29.978833"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.15,
+    "timestamp": "2026-09-18T02:32:32.127114"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.82,
+    "timestamp": "2026-09-18T02:32:33.967869"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.73,
+    "timestamp": "2026-09-18T02:32:36.703191"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Infosys_23072026161911_Outcome23072026V1_1.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.75,
+    "timestamp": "2026-09-18T02:32:39.481040"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.63,
+    "timestamp": "2026-09-18T02:32:44.517012"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.31,
+    "timestamp": "2026-09-18T02:32:46.832315"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ITC_31072026162945_Results.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.91,
+    "timestamp": "2026-09-18T02:32:48.766328"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.69,
+    "timestamp": "2026-09-18T02:32:50.656827"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.03,
+    "timestamp": "2026-09-18T02:32:52.696188"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.85,
+    "timestamp": "2026-09-18T02:32:54.554714"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.48,
+    "timestamp": "2026-09-18T02:32:57.034044"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.69,
+    "timestamp": "2026-09-18T02:32:58.751304"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.45,
+    "timestamp": "2026-09-18T02:33:00.206468"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/KMBLTAB_18072026184256_OutcomeofBMJuly182026signed.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.67,
+    "timestamp": "2026-09-18T02:33:01.911289"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.79,
+    "timestamp": "2026-09-18T02:33:04.178298"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.56,
+    "timestamp": "2026-09-18T02:33:06.741922"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.61,
+    "timestamp": "2026-09-18T02:33:08.380180"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.51,
+    "timestamp": "2026-09-18T02:33:10.899298"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.84,
+    "timestamp": "2026-09-18T02:33:12.778695"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.32,
+    "timestamp": "2026-09-18T02:33:15.106468"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/MARUTI_31072026163813_QuickResults_Q1_FY2026_27.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.13,
+    "timestamp": "2026-09-18T02:33:17.266007"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.95,
+    "timestamp": "2026-09-18T02:33:19.333843"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.18,
+    "timestamp": "2026-09-18T02:33:21.517673"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.55,
+    "timestamp": "2026-09-18T02:33:23.087237"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.07,
+    "timestamp": "2026-09-18T02:33:25.159307"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.53,
+    "timestamp": "2026-09-18T02:33:26.701819"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.23,
+    "timestamp": "2026-09-18T02:33:28.930004"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.46,
+    "timestamp": "2026-09-18T02:33:31.419539"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.21,
+    "timestamp": "2026-09-18T02:33:33.630763"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ONGC_04082026200149_finalfinancials04082026.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.93,
+    "timestamp": "2026-09-18T02:33:35.587499"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.65,
+    "timestamp": "2026-09-18T02:33:40.018983"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.38,
+    "timestamp": "2026-09-18T02:33:42.394954"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.41,
+    "timestamp": "2026-09-18T02:33:43.832575"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.87,
+    "timestamp": "2026-09-18T02:33:46.708850"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.4,
+    "timestamp": "2026-09-18T02:33:48.141252"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.12,
+    "timestamp": "2026-09-18T02:33:50.261679"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.48,
+    "timestamp": "2026-09-18T02:33:51.759118"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.69,
+    "timestamp": "2026-09-18T02:33:54.452187"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SBIN_07082026134346_FR.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.09,
+    "timestamp": "2026-09-18T02:33:56.573020"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.41,
+    "timestamp": "2026-09-18T02:33:58.227611"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.65,
+    "timestamp": "2026-09-18T02:34:00.880903"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.41,
+    "timestamp": "2026-09-18T02:34:02.330186"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.63,
+    "timestamp": "2026-09-18T02:34:04.958363"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SUNSEC_22052026144322_BMOutcome22052026.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.25,
+    "timestamp": "2026-09-18T02:34:07.230679"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.41,
+    "timestamp": "2026-09-18T02:34:09.175908"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.2,
+    "timestamp": "2026-09-18T02:34:11.381567"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.43,
+    "timestamp": "2026-09-18T02:34:12.838237"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.43,
+    "timestamp": "2026-09-18T02:34:15.266058"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NIDHIFADNAVIS_30072026184647_BSENSEOutcome.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 3.02,
+    "timestamp": "2026-09-18T02:34:19.310737"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.44,
+    "timestamp": "2026-09-18T02:34:21.216529"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.8,
+    "timestamp": "2026-09-18T02:34:24.016511"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.63,
+    "timestamp": "2026-09-18T02:34:25.690660"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.26,
+    "timestamp": "2026-09-18T02:34:27.958480"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.84,
+    "timestamp": "2026-09-18T02:34:29.827904"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.26,
+    "timestamp": "2026-09-18T02:34:32.091284"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.58,
+    "timestamp": "2026-09-18T02:34:33.691815"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.36,
+    "timestamp": "2026-09-18T02:34:36.047632"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.71,
+    "timestamp": "2026-09-18T02:34:37.790307"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.28,
+    "timestamp": "2026-09-18T02:34:40.071748"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.67,
+    "timestamp": "2026-09-18T02:34:41.766646"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.31,
+    "timestamp": "2026-09-18T02:34:44.077865"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.56,
+    "timestamp": "2026-09-18T02:34:45.662655"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.4,
+    "timestamp": "2026-09-18T02:34:48.072534"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Cslogin_16072026154829_Reg33Financials.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.1,
+    "timestamp": "2026-09-18T02:34:50.211660"
+  }
+]

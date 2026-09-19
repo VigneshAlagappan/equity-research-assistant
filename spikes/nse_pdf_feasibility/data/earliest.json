@@ -1,0 +1,30 @@
+{
+  "HDFCBANK": {
+    "earliest_fin_row_date": "2007-07-10 13:38:00",
+    "earliest_fin_row_desc": "Standalone Results Update, Quarter ended, 30-JUN-2007",
+    "earliest_pdf_date": "2020-08-27 13:12:24",
+    "earliest_pdf_file": "https://nsearchives.nseindia.com/corporate/HDFCBANK_27082020131224_SEResult27082020.pdf",
+    "earliest_ann_overall": "2004-09-29 00:00:00"
+  },
+  "RELIANCE": {
+    "earliest_fin_row_date": "2005-11-16 00:00:00",
+    "earliest_fin_row_desc": "Miscellaneous",
+    "earliest_pdf_date": "2021-04-30 19:34:56",
+    "earliest_pdf_file": "https://nsearchives.nseindia.com/corporate/FSUpload_30042021193456.pdf",
+    "earliest_ann_overall": "2004-12-13 00:00:00"
+  },
+  "ICICIBANK": {
+    "earliest_fin_row_date": "2007-07-21 12:18:00",
+    "earliest_fin_row_desc": "Standalone Results Update, Quarter ended, 30-JUN-2007",
+    "earliest_pdf_date": "2019-01-07 17:11:00",
+    "earliest_pdf_file": "https://nsearchives.nseindia.com/corporate/ICICIBANK_07012019164956_Final_BSE_NSE_NP_7JAN19_173.pdf",
+    "earliest_ann_overall": "2004-09-21 00:00:00"
+  },
+  "TCS": {
+    "earliest_fin_row_date": "2005-04-07 00:00:00",
+    "earliest_fin_row_desc": "Limited Review Report",
+    "earliest_pdf_date": "2021-04-12 18:43:59",
+    "earliest_pdf_file": "https://nsearchives.nseindia.com/corporate/SEfilingPg1and2.pdf",
+    "earliest_ann_overall": "2004-09-29 00:00:00"
+  }
+}
