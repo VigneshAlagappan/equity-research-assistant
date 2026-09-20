@@ -105,12 +105,13 @@ def insert_financial_observations(conn: DBConnection, observations: Iterable) ->
                     company_id, metric_key, period_type, fiscal_year, quarter, statement_type,
                     value, unit, currency, source, source_document_id, source_file, source_url,
                     retrieved_at, parser_version, normalization_version, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING observation_id
                 """,
                 (
                     obs.company_id, obs.metric_key, obs.period_type, obs.fiscal_year, obs.quarter,
-                    obs.statement_type, obs.value, obs.unit, obs.currency, obs.source, obs.source_file,
+                    obs.statement_type, obs.value, obs.unit, obs.currency, obs.source,
+                    getattr(obs, "source_document_id", None), obs.source_file,
                     obs.source_url, obs.retrieved_at or now, obs.parser_version, NORMALIZATION_VERSION, now,
                 ),
             )
@@ -1002,6 +1003,76 @@ def get_company_document(conn: DBConnection, company_id: str, document_id: int) 
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM documents WHERE document_id = %s AND company_id = %s", (document_id, company_id))
         return cur.fetchone()
+
+
+def upsert_nse_filing_discovery_log(
+    conn: DBConnection,
+    *,
+    company_id: str,
+    nse_symbol: str,
+    fiscal_year: str,
+    quarter: str,
+    period_end: str,
+    extraction_status: str,
+    filing_date: str | None = None,
+    source_url: str | None = None,
+    document_id: str | None = None,
+    match_confidence: str | None = None,
+    attachment_format: str = "none",
+    extracted_char_count: int | None = None,
+    registered_document_id: int | None = None,
+    notes: str | None = None,
+) -> Row:
+    """Postgres port of repositories.upsert_nse_filing_discovery_log() — see
+    that function's own docstring. Uses a real ON CONFLICT upsert (Postgres
+    supports it natively, unlike the NULL-safe manual check-then-branch the
+    SQLite side needs elsewhere in this module) since the natural key here
+    has no nullable column."""
+    now = _utcnow_iso()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO nse_filing_discovery_log (
+                company_id, nse_symbol, fiscal_year, quarter, period_end, filing_date, source_url,
+                document_id, match_confidence, attachment_format, extraction_status,
+                extracted_char_count, registered_document_id, notes, discovered_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (company_id, fiscal_year, quarter) DO UPDATE SET
+                nse_symbol = EXCLUDED.nse_symbol, period_end = EXCLUDED.period_end,
+                filing_date = EXCLUDED.filing_date, source_url = EXCLUDED.source_url,
+                document_id = EXCLUDED.document_id, match_confidence = EXCLUDED.match_confidence,
+                attachment_format = EXCLUDED.attachment_format, extraction_status = EXCLUDED.extraction_status,
+                extracted_char_count = EXCLUDED.extracted_char_count,
+                registered_document_id = EXCLUDED.registered_document_id, notes = EXCLUDED.notes,
+                updated_at = EXCLUDED.updated_at
+            RETURNING *
+            """,
+            (
+                company_id, nse_symbol, fiscal_year, quarter, period_end, filing_date, source_url,
+                document_id, match_confidence, attachment_format, extraction_status,
+                extracted_char_count, registered_document_id, notes, now, now,
+            ),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return row
+
+
+def list_nse_filing_discovery_log(
+    conn: DBConnection, *, company_id: str | None = None, extraction_status: str | None = None,
+) -> list[Row]:
+    query = "SELECT * FROM nse_filing_discovery_log WHERE 1=1"
+    params: list[object] = []
+    if company_id is not None:
+        query += " AND company_id = %s"
+        params.append(company_id)
+    if extraction_status is not None:
+        query += " AND extraction_status = %s"
+        params.append(extraction_status)
+    query += " ORDER BY company_id, fiscal_year, quarter"
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+        return cur.fetchall()
 
 
 def save_company_document(

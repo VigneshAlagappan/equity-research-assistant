@@ -264,6 +264,60 @@ CREATE TABLE IF NOT EXISTS reconciliation_log (
 );
 
 -- ============================================================
+-- NSE filing discovery log (nse-pdf-backfill, 2026-09) -- one row per
+-- (company, fiscal_year, quarter) the sources/nse_pdf_filings.py date-
+-- window discovery pass has classified, whether or not a fact was ever
+-- extracted from it. Two jobs this table does:
+--   1. Tracks what's already been attempted so a re-run doesn't
+--      re-discover/re-download unchanged history every time (same
+--      "don't repeat cheap-but-not-free work" role sources/nse_fetch.py's
+--      own listing cache plays, just persisted instead of TTL'd).
+--   2. Surfaces `extraction_status='needs_ocr'` rows (a scanned/no-text-
+--      layer PDF or ZIP -- feasibility report Sections 8/13.2/14) as a
+--      queue for future OCR work, per the report's own Section 14
+--      appendix recommendation -- this app never attempts OCR itself
+--      (see sources/nse_pdf_extractor.py's module docstring).
+-- Mirrors spikes/nse_pdf_feasibility/run_2015_discovery.py's own
+-- QuarterRecord shape (already retroactively validated against 192 real
+-- quarters, 0 not_found) -- this table is that shape promoted to
+-- production storage, not a redesign.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS nse_filing_discovery_log (
+  log_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  nse_symbol TEXT NOT NULL,
+  fiscal_year TEXT NOT NULL,
+  quarter TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  filing_date TEXT,                 -- NSE's own an_dt/sort_date for the matched announcement
+  source_url TEXT,                  -- attchmntFile -- the NSE/nsearchives URL the PDF/ZIP was fetched from
+  document_id TEXT,                 -- NSE's own announcement seq_id (external identifier -- NOT documents.document_id)
+  match_confidence TEXT,            -- text_confirmed | date_window_only (sources/nse_pdf_filings.py)
+  attachment_format TEXT NOT NULL DEFAULT 'none',  -- pdf | zip | html | other | none
+  -- extracted: real facts written to canonical_financials, source PDF
+  --   registered in `documents` (Docs tab).
+  -- needs_ocr: a real attachment exists but has no usable text layer --
+  --   queued for future OCR work, never attempted here.
+  -- not_found: no discoverable filing in the date-window (rare -- 0/192
+  --   in the feasibility report's own retroactive validation).
+  -- not_attempted: discovered but extraction not yet run (time/scope
+  --   budget) -- distinct from not_found, which means the discovery pass
+  --   itself came up empty.
+  -- failed: an attempt was made and errored (download/parse) -- notes
+  --   carries the reason; safe to retry.
+  extraction_status TEXT NOT NULL DEFAULT 'not_attempted'
+    CHECK (extraction_status IN ('extracted', 'needs_ocr', 'not_found', 'not_attempted', 'failed')),
+  extracted_char_count INTEGER,
+  registered_document_id INTEGER REFERENCES documents(document_id),  -- set once extracted -- the internal Docs-tab row
+  notes TEXT,
+  discovered_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(company_id, fiscal_year, quarter)
+);
+CREATE INDEX IF NOT EXISTS idx_nse_filing_discovery_status ON nse_filing_discovery_log(extraction_status);
+
+-- ============================================================
 -- Macro observations (non-company data: RBI, IMD, MOSPI, ...)
 --
 -- Mirrors financial_observations' shape (raw, per-source, append-only —

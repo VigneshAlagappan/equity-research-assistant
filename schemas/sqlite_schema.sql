@@ -247,6 +247,32 @@ CREATE TABLE IF NOT EXISTS reconciliation_log (
   note TEXT
 );
 
+-- NSE filing discovery log (nse-pdf-backfill) -- mirrors
+-- schemas/postgres_schema.sql's own comment on this table for the full
+-- rationale; see that file, this is the SQLite-syntax twin.
+CREATE TABLE IF NOT EXISTS nse_filing_discovery_log (
+  log_id INTEGER PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  nse_symbol TEXT NOT NULL,
+  fiscal_year TEXT NOT NULL,
+  quarter TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  filing_date TEXT,
+  source_url TEXT,
+  document_id TEXT,                 -- NSE's own seq_id (external) -- not documents.document_id
+  match_confidence TEXT,
+  attachment_format TEXT NOT NULL DEFAULT 'none',
+  extraction_status TEXT NOT NULL DEFAULT 'not_attempted'
+    CHECK (extraction_status IN ('extracted', 'needs_ocr', 'not_found', 'not_attempted', 'failed')),
+  extracted_char_count INTEGER,
+  registered_document_id INTEGER REFERENCES documents(document_id),
+  notes TEXT,
+  discovered_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(company_id, fiscal_year, quarter)
+);
+CREATE INDEX IF NOT EXISTS idx_nse_filing_discovery_status ON nse_filing_discovery_log(extraction_status);
+
 -- ============================================================
 -- Macro observations (non-company data: RBI, IMD, MOSPI, ...)
 --
