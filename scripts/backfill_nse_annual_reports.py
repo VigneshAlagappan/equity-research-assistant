@@ -104,23 +104,60 @@ class CompanyBackfillResult:
         )
 
 
-def _resolve_symbol(conn, company_id: str) -> str:
-    company = get_company(conn, company_id)
-    if company is None:
-        raise ValueError(f"no company registered as {company_id!r}")
-    symbol = company["nse_symbol"]
-    if not symbol:
-        raise ValueError(f"{company_id} has no nse_symbol on file")
-    return symbol
+def _is_stale_connection_error(exc: BaseException) -> bool:
+    """True for a Postgres connection that's gone bad mid-run -- Neon
+    closing/recycling a long-lived connection during a multi-hundred-
+    company batch. Observed live during this job's own full-Nifty-500
+    dry run: succeeded cleanly for 109 companies (each one a single quick
+    DB lookup interleaved with NSE network calls), then died on company
+    110 with psycopg2's own "server closed the connection unexpectedly".
+    Matched by exception class name/message rather than a hard `import
+    psycopg2` at module level, since this script (like storage/database.py's
+    init_postgres_db) must stay importable in a SQLite-only environment
+    with psycopg2 not installed at all -- the SQLite path never raises
+    this shape of error in the first place, so a false-negative match
+    there is harmless."""
+    name = type(exc).__name__
+    text = str(exc)
+    return name in ("OperationalError", "InterfaceError") and (
+        "server closed the connection" in text
+        or "connection already closed" in text
+        or "terminat" in text.lower()
+    )
 
 
-def _resolve_companies_by_index(conn, index_name: str) -> list[str]:
-    """company_id list for every Nifty 500 (or other index) member with an
-    nse_symbol on file -- companies without one can't be attempted at all
-    (there's no symbol to query the endpoint with), so they're excluded
-    here rather than failing individually inside the loop."""
+def _resolve_symbol_map(conn, companies: list[str]) -> dict[str, str]:
+    """company_id -> nse_symbol for every company that has one on file,
+    resolved ONCE up front (a handful of quick, closely-spaced DB calls)
+    rather than inside the per-company discovery loop -- that loop's own
+    DB touch is exactly what triggered the stale-connection failure above:
+    a single shared connection sitting through a hundred-plus NSE network
+    round-trips, each one a fresh opportunity for Neon to have recycled it
+    since the loop's last (equally brief) query. A company with no
+    nse_symbol on file is logged and left out of the returned map, same
+    "skip rather than fail the whole run" contract _resolve_companies_by_
+    index() already applies for the --index path."""
+    symbols: dict[str, str] = {}
+    for company_id in companies:
+        company = get_company(conn, company_id)
+        if company is None:
+            logger.warning("%s: no company registered under this id -- skipping", company_id)
+            continue
+        symbol = company["nse_symbol"]
+        if not symbol:
+            logger.warning("%s: no nse_symbol on file -- skipping", company_id)
+            continue
+        symbols[company_id] = symbol
+    return symbols
+
+
+def _resolve_companies_by_index(conn, index_name: str) -> dict[str, str]:
+    """company_id -> nse_symbol for every Nifty 500 (or other index) member
+    with an nse_symbol on file -- one single query already returns both
+    columns, so (unlike _resolve_symbol_map's --companies path) there's
+    nothing further to resolve per company."""
     rows = select_index_members_with_nse_symbol(conn, index_name)
-    return [row["company_id"] for row in rows]
+    return {row["company_id"]: row["nse_symbol"] for row in rows}
 
 
 def _log_ref(ref: AnnualReportRef, *, action: str) -> None:
@@ -131,12 +168,13 @@ def _log_ref(ref: AnnualReportRef, *, action: str) -> None:
     )
 
 
-def dry_run_company(conn, company_id: str) -> CompanyBackfillResult:
+def dry_run_company(company_id: str, symbol: str) -> CompanyBackfillResult:
     """Discovery + dedup + 2015 filter only -- one network call (the
-    annual-reports listing), zero PDF/ZIP downloads, zero writes to S3 or
-    raw_objects. Every ref that would be stored is logged so the output
-    can be reviewed by a human before any real run."""
-    symbol = _resolve_symbol(conn, company_id)
+    annual-reports listing), zero PDF/ZIP downloads, zero DB reads/writes
+    of any kind (symbol is resolved once up front by the caller, not here
+    -- see _resolve_symbol_map()'s docstring for why that matters at
+    Nifty-500 scale). Every ref that would be stored is logged so the
+    output can be reviewed by a human before any real run."""
     logger.info("%s (%s): discovering via %s", company_id, symbol, annual_reports_url(symbol))
 
     session = _new_session()
@@ -161,15 +199,25 @@ def dry_run_company(conn, company_id: str) -> CompanyBackfillResult:
     return result
 
 
-def backfill_company(conn, company_id: str) -> CompanyBackfillResult:
+def backfill_company(company_id: str, symbol: str) -> CompanyBackfillResult:
     """Discovery + dedup + real download/store, unwrapping a ZIP to its
     real annual-report PDF before storing. Every stored fiscal year is
     handed to store_raw_object(), which dedups by content hash (a
     byte-identical re-fetch across repeat runs writes nothing new) and
     leaves the new raw_objects row at state="stored" -- this function
     never calls update_raw_object_state(), so no row from this job is ever
-    advanced past "stored" (see this module's docstring)."""
-    symbol = _resolve_symbol(conn, company_id)
+    advanced past "stored" (see this module's docstring).
+
+    Opens (and closes) its OWN short-lived DB connection for the
+    store_raw_object() calls, rather than sharing one connection across
+    the whole multi-hundred-company run -- deliberately, per the same
+    stale-connection finding _resolve_symbol_map() documents: a
+    connection that only needs to be alive for one company's own
+    (typically few-second) download+store sequence, opened right before
+    it's needed, is far less likely to have gone stale than one held for
+    the entire run's wall-clock duration. Also retried once via
+    _is_stale_connection_error() as a further backstop, in case even a
+    single company's own processing time is enough to trip it."""
     logger.info("%s (%s): discovering via %s", company_id, symbol, annual_reports_url(symbol))
 
     session = _new_session()
@@ -181,44 +229,68 @@ def backfill_company(conn, company_id: str) -> CompanyBackfillResult:
         result.pdf_count = sum(1 for ref in refs if not ref.is_zip)
         result.zip_count = sum(1 for ref in refs if ref.is_zip)
 
-        for ref in refs:
-            try:
-                downloaded = download_file(session, ref.file_url)
-            except NSEFetchError as exc:
-                result.download_errors += 1
-                logger.warning("%s: failed to download %s->%s (%s): %s",
-                                company_id, ref.from_yr, ref.to_yr, ref.file_url, exc)
-                continue
-
-            if ref.is_zip:
+        store_conn = open_db() if refs else None
+        try:
+            for ref in refs:
                 try:
-                    content = extract_annual_report_pdf(downloaded)
-                except AnnualReportZipError as exc:
-                    result.zip_extraction_errors += 1
-                    logger.warning("%s: ZIP for %s->%s (%s) has no usable PDF: %s",
+                    downloaded = download_file(session, ref.file_url)
+                except NSEFetchError as exc:
+                    result.download_errors += 1
+                    logger.warning("%s: failed to download %s->%s (%s): %s",
                                     company_id, ref.from_yr, ref.to_yr, ref.file_url, exc)
                     continue
-            else:
-                content = downloaded
 
-            period = fiscal_year_label(ref.to_yr)
-            raw_result = store_raw_object(
-                conn,
-                source=_SOURCE,
-                entity=company_id,
-                object_type=_OBJECT_TYPE,
-                period=period,
-                source_url=ref.file_url,
-                raw_prefix=_RAW_PREFIX,
-                content=content,
-                extension="pdf",
-            )
-            if raw_result.is_new:
-                result.stored_new += 1
-                _log_ref(ref, action=f"STORED object_id={raw_result.object_id} key={raw_result.s3_key}")
-            else:
-                result.stored_duplicate += 1
-                _log_ref(ref, action=f"DUPLICATE (existing object_id={raw_result.object_id})")
+                if ref.is_zip:
+                    try:
+                        content = extract_annual_report_pdf(downloaded)
+                    except AnnualReportZipError as exc:
+                        result.zip_extraction_errors += 1
+                        logger.warning("%s: ZIP for %s->%s (%s) has no usable PDF: %s",
+                                        company_id, ref.from_yr, ref.to_yr, ref.file_url, exc)
+                        continue
+                else:
+                    content = downloaded
+
+                period = fiscal_year_label(ref.to_yr)
+                try:
+                    raw_result = store_raw_object(
+                        store_conn,
+                        source=_SOURCE,
+                        entity=company_id,
+                        object_type=_OBJECT_TYPE,
+                        period=period,
+                        source_url=ref.file_url,
+                        raw_prefix=_RAW_PREFIX,
+                        content=content,
+                        extension="pdf",
+                    )
+                except Exception as exc:  # noqa: BLE001 -- reconnect-and-retry-once backstop
+                    if not _is_stale_connection_error(exc):
+                        raise
+                    logger.warning("%s: DB connection went stale mid-company (%s) -- reopening and retrying once",
+                                    company_id, exc)
+                    store_conn.close()
+                    store_conn = open_db()
+                    raw_result = store_raw_object(
+                        store_conn,
+                        source=_SOURCE,
+                        entity=company_id,
+                        object_type=_OBJECT_TYPE,
+                        period=period,
+                        source_url=ref.file_url,
+                        raw_prefix=_RAW_PREFIX,
+                        content=content,
+                        extension="pdf",
+                    )
+                if raw_result.is_new:
+                    result.stored_new += 1
+                    _log_ref(ref, action=f"STORED object_id={raw_result.object_id} key={raw_result.s3_key}")
+                else:
+                    result.stored_duplicate += 1
+                    _log_ref(ref, action=f"DUPLICATE (existing object_id={raw_result.object_id})")
+        finally:
+            if store_conn is not None:
+                store_conn.close()
     finally:
         session.close()
 
@@ -226,31 +298,65 @@ def backfill_company(conn, company_id: str) -> CompanyBackfillResult:
     return result
 
 
-def run_backfill(conn, companies: list[str], *, dry_run: bool) -> list[CompanyBackfillResult]:
-    """The per-company loop, audited via BatchRun (same "one capability,
-    Audit Log -> Job Runs gets every run" convention as
-    scripts/batch_fetch_nse.py's run_nse_batch()) -- but ONLY in real-run
-    mode. A dry run makes no writes of any kind, and a BatchRun itself
+def run_dry_run(symbol_map: dict[str, str]) -> list[CompanyBackfillResult]:
+    """The dry-run per-company loop -- zero DB reads/writes of any kind
+    (symbol_map is already fully resolved by the caller), zero PDF/ZIP
+    downloads. A dry run makes no writes at all, and BatchRun itself
     writes batch_job_runs/batch_job_items rows, so dry-run mode
-    intentionally skips it rather than logging a run that did nothing
-    real."""
+    intentionally never touches BatchRun -- logging a run that did
+    nothing real would misrepresent the audit log."""
     results: list[CompanyBackfillResult] = []
-    if dry_run:
-        for company_id in companies:
-            try:
-                results.append(dry_run_company(conn, company_id))
-            except (ValueError, NSEFetchError) as exc:
-                logger.error("%s: dry-run failed: %s", company_id, exc)
-        return results
+    for company_id, symbol in symbol_map.items():
+        try:
+            results.append(dry_run_company(company_id, symbol))
+        except NSEFetchError as exc:
+            logger.error("%s: dry-run failed: %s", company_id, exc)
+    return results
 
-    scope_label = f"nse_annual_reports_backfill ({len(companies)} companies)"
-    with BatchRun(conn, JOB_NAME, scope_label) as run:
-        logger.info("run_id=%s", run.run_id)
-        for company_id in companies:
-            with run.item(company_id) as item:
-                result = backfill_company(conn, company_id)
-                item.detail = result.summary()
-                results.append(result)
+
+def run_real_backfill(conn, symbol_map: dict[str, str]) -> list[CompanyBackfillResult]:
+    """The real-run per-company loop, audited via BatchRun (same "one
+    capability, Audit Log -> Job Runs gets every run" convention as
+    scripts/batch_fetch_nse.py's run_nse_batch()). `conn` is used ONLY for
+    BatchRun's own lightweight start/finish bookkeeping -- backfill_company()
+    opens its own short-lived connection per company for the actual
+    store_raw_object() writes (see that function's docstring).
+
+    Wrapped in an outer retry loop that resumes with the remaining
+    (not-yet-attempted) companies under a fresh run_id if BatchRun's own
+    bookkeeping connection goes stale mid-run -- a genuinely long run
+    across Nifty 500's full company list is exactly the shape of run that
+    hit this in dry-run form (109 companies in before the connection
+    died), so a real run (much slower per company, real downloads) must
+    not let one blip lose everything already done."""
+    results: list[CompanyBackfillResult] = []
+    remaining = dict(symbol_map)
+    while remaining:
+        scope_label = f"nse_annual_reports_backfill ({len(remaining)} companies remaining)"
+        done: list[str] = []
+        try:
+            with BatchRun(conn, JOB_NAME, scope_label) as run:
+                logger.info("run_id=%s", run.run_id)
+                for company_id, symbol in remaining.items():
+                    with run.item(company_id) as item:
+                        result = backfill_company(company_id, symbol)
+                        item.detail = result.summary()
+                        results.append(result)
+                    done.append(company_id)
+            remaining = {}
+        except Exception as exc:  # noqa: BLE001 -- reconnect-and-resume backstop, see docstring
+            if not _is_stale_connection_error(exc):
+                raise
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001 -- best-effort close of an already-broken connection
+                pass
+            conn = open_db()
+            remaining = {cid: sym for cid, sym in remaining.items() if cid not in done}
+            logger.warning(
+                "BatchRun bookkeeping connection went stale (%s) -- reopened it and resuming "
+                "under a new run_id with %d company(ies) remaining", exc, len(remaining),
+            )
     return results
 
 
@@ -266,16 +372,20 @@ def main() -> None:
     conn = open_db()
     try:
         if args.companies:
-            companies = [c.strip().upper() for c in args.companies.split(",") if c.strip()]
-            if not companies:
+            requested = [c.strip().upper() for c in args.companies.split(",") if c.strip()]
+            if not requested:
                 raise SystemExit("--companies resolved to an empty list")
+            symbol_map = _resolve_symbol_map(conn, requested)
         else:
-            companies = _resolve_companies_by_index(conn, args.index)
-            if not companies:
-                raise SystemExit(f"--index {args.index!r} resolved to an empty company list")
-            logger.info("--index %r resolved to %d companies with an nse_symbol on file", args.index, len(companies))
+            symbol_map = _resolve_companies_by_index(conn, args.index)
+            logger.info("--index %r resolved to %d companies with an nse_symbol on file", args.index, len(symbol_map))
+        if not symbol_map:
+            raise SystemExit("company selection resolved to an empty list")
 
-        results = run_backfill(conn, companies, dry_run=args.dry_run)
+        if args.dry_run:
+            results = run_dry_run(symbol_map)
+        else:
+            results = run_real_backfill(conn, symbol_map)
     finally:
         conn.close()
 
