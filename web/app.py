@@ -75,6 +75,7 @@ from companies.lifecycle import (
     restore_company,
 )
 from companies.registry import get_company, list_companies, register_company, search_companies
+from storage.raw_object_repository import list_raw_objects
 from ingestion.onboarding import onboard_new_company
 from sources.yfinance_company_lookup import CompanyLookupError, search_companies as search_yfinance_companies
 from companies.stock_actions import (
@@ -1145,7 +1146,7 @@ def create_app() -> Flask:
         runs at a handful of items each is small, the same "just eager-load
         it, it's cheap" call this function already makes for recent_log
         above."""
-        _AUDIT_TABS = ("reconciliation", "usa_reconciliation", "job_runs", "cases")
+        _AUDIT_TABS = ("reconciliation", "usa_reconciliation", "job_runs", "cases", "raw_documents")
         active_tab = request.args.get("al_tab") if request.args.get("al_tab") in _AUDIT_TABS else "reconciliation"
 
         # Schwab "Transfer Activity"-style filter bar: a job picker (their
@@ -1273,6 +1274,48 @@ def create_app() -> Flask:
         for row in usa_migration_rows:
             row["recent_log"] = usa_recent_log_by_company.get(row["company_id"], [])
 
+        # Raw Documents tab -- per-company coverage of the "pull and store,
+        # don't process yet" NSE backfills (raw_objects catalog, ADR-022:
+        # docs/ADR/022-s3-raw-processed-object-store-with-lineage-catalog.md).
+        # Aggregated here in Python, not a new SQL GROUP BY per backend --
+        # matches list_all_raw_objects()'s own "cheap at this app's scale"
+        # reasoning (hundreds of companies × a handful of doc types each).
+        # `processed` counts any state past 'fetched'/'stored' -- always 0
+        # today (every backfill built so far deliberately stops at
+        # 'stored'), but the column is real and will start moving the
+        # moment a future processing step advances any row's state, with
+        # no template change needed then.
+        _RAW_DOC_TYPE_ORDER = (
+            "quarterly_result_filing", "investor_presentation", "concall_transcript", "annual_report",
+        )
+        raw_query = (request.args.get("al_raw_q") or "").strip().lower()
+        raw_objects_all = list_raw_objects(db, source="nse", limit=50000)
+        raw_by_company: dict[str, dict] = {}
+        for obj in raw_objects_all:
+            company_id = obj["entity"] or "—"
+            bucket = raw_by_company.setdefault(company_id, {
+                "company_id": company_id, "by_type": {}, "total": 0,
+                "processed": 0, "latest_fetched_at": None,
+            })
+            bucket["by_type"][obj["object_type"]] = bucket["by_type"].get(obj["object_type"], 0) + 1
+            bucket["total"] += 1
+            if obj["state"] not in ("fetched", "stored"):
+                bucket["processed"] += 1
+            if bucket["latest_fetched_at"] is None or obj["fetched_at"] > bucket["latest_fetched_at"]:
+                bucket["latest_fetched_at"] = obj["fetched_at"]
+
+        raw_company_names = {c["company_id"]: c["display_name"] for c in list_companies(db)}
+        raw_rows = list(raw_by_company.values())
+        for row in raw_rows:
+            row["display_name"] = raw_company_names.get(row["company_id"], row["company_id"])
+        if raw_query:
+            raw_rows = [
+                r for r in raw_rows
+                if raw_query in r["company_id"].lower() or raw_query in (r["display_name"] or "").lower()
+            ]
+        raw_rows.sort(key=lambda r: r["display_name"] or r["company_id"])
+        raw_doc_types_present = [t for t in _RAW_DOC_TYPE_ORDER if any(t in r["by_type"] for r in raw_rows)]
+
         return {
             "audit_rows": page["rows"],
             "audit_total": page["total"],
@@ -1298,6 +1341,10 @@ def create_app() -> Flask:
             "audit_case_rows": case_rows,
             "audit_case_status_filter": case_status_filter,
             "audit_case_kind_filter": case_kind_filter,
+            "audit_raw_rows": raw_rows,
+            "audit_raw_query": request.args.get("al_raw_q", ""),
+            "audit_raw_doc_types": raw_doc_types_present,
+            "audit_raw_total_objects": len(raw_objects_all),
         }
 
     @app.route("/admin")
