@@ -88,10 +88,20 @@ _CONCALL_DESC_CATEGORIES = frozenset({
     "Recording of Analysts/Institutional Investor Meet/Con. Call",
 })
 
-#: NSE's catch-all bucket, confirmed (Section 12.2) to co-mingle genuine
-#: investor presentations and newspaper ads under one desc label -- a row
-#: here needs attchmntText disambiguation, never a blanket accept/reject.
-_GENERAL_UPDATES_DESC = "General Updates"
+#: NSE's own genuinely mixed-bag desc labels -- confirmed live against BOTH
+#: validation companies' real full history (not just the feasibility
+#: spike's own Section 12.2 "General Updates" finding): "Updates" (BANKBARODA,
+#: 470 rows spanning everything from a plain director appointment to a
+#: genuine "Transcript of Analyst and Media Meet"), "General Updates" /
+#: "General updates" (both capitalizations seen live), and "Analysts/
+#: Institutional Investor Meet/Con. Call Updates" (409 rows, spanning plain
+#: meeting-schedule intimations to a genuine "Earning Conference Call
+#: transcript" attachment) ALL co-mingle unrelated content under one label.
+#: None of these desc values is itself evidence of anything -- compared
+#: case-insensitively since NSE's own data isn't consistently cased.
+_MIXED_BAG_DESC_VALUES = frozenset({
+    "general updates", "updates", "analysts/institutional investor meet/con. call updates",
+})
 
 #: Phrases confirming a genuine financial-results announcement, taken
 #: verbatim from the feasibility spike's own verified real-data findings
@@ -103,13 +113,51 @@ _RESULT_TEXT_MARKERS = (
     "financial results of",
 )
 
-_INVESTOR_PRESENTATION_TEXT_MARKERS = ("investor presentation", "presentation for the earnings conference call",
-                                       "presentation for earnings conference call")
-
-_CONCALL_TEXT_MARKERS = (
-    "con. call transcript", "con call transcript", "conference call transcript",
-    "earnings call transcript", "transcript of", "recording of",
+#: Verified live: "investor presentation" (the common case) plus "analyst
+#: presentation"/"analysts presentation" (BANKBARODA's own real older
+#: phrasing, e.g. "Analyst Presentation Q2 Results FY 2016-17") and the
+#: "presentation for ... conference call" variants (KOTAKBANK, Section 12.2).
+_INVESTOR_PRESENTATION_TEXT_MARKERS = (
+    "investor presentation", "analyst presentation", "analysts presentation",
+    "presentation for the earnings conference call", "presentation for earnings conference call",
 )
+
+#: Verified live: real mixed-bag rows describe a transcript/recording far
+#: more tersely than the feasibility spike's own dedicated-category
+#: wording ("Bank Of Baroda has informed the Exchange about Transcript",
+#: "...Transcript and Link of Recording", "Earning Call Transcript" --
+#: note "Earning" singular, unlike the spike's "Earnings Call Transcript"
+#: marker) -- a bare "transcript"/"recording" substring is used here
+#: instead of a longer phrase, since it's only ever applied within an
+#: already-narrowed mixed-bag desc bucket (see _disambiguate_mixed_bag_by_
+#: content), not globally.
+_CONCALL_TEXT_MARKERS = ("transcript", "recording")
+
+#: A "Schedule of ..." announcement (a notice about an UPCOMING meet/call)
+#: is not itself a presentation/transcript document, even when its own
+#: text happens to mention "Presentation" or a call -- verified live
+#: (BANKBARODA: "Schedule of Analysts Meet / Presentation and Media Meet on
+#: Bank's Financial Results..." under both desc="Analysts/Institutional
+#: Investor Meet/Con. Call Updates" and desc="Analysts Meet", attached file
+#: literally named "...MeetSchedule...") -- this guard exists specifically
+#: because "Presentation"/"transcript" alone would otherwise mis-fire on
+#: these schedule notices.
+_SCHEDULE_NOTICE_MARKER = "schedule of"
+
+
+def _disambiguate_mixed_bag_by_content(text_l: str) -> str | None:
+    """Shared content-only disambiguation for NSE's confirmed mixed-bag
+    desc labels (_MIXED_BAG_DESC_VALUES) -- none of them is itself
+    evidence of anything, so attchmntText is the only signal, and a
+    schedule/notice about a future event is excluded up front rather than
+    risking a false match on incidental wording."""
+    if _SCHEDULE_NOTICE_MARKER in text_l:
+        return None
+    if any(marker in text_l for marker in _INVESTOR_PRESENTATION_TEXT_MARKERS):
+        return "investor_presentation"
+    if any(marker in text_l for marker in _CONCALL_TEXT_MARKERS):
+        return "concall_transcript"
+    return None
 
 
 def _is_result_desc_category(desc: str) -> bool:
@@ -154,15 +202,14 @@ def classify_announcement_row(row: dict) -> str | None:
         return None
     if _is_result_desc_category(desc):
         return "quarterly_result_filing"
-    if desc == _GENERAL_UPDATES_DESC:
-        # Verified live (Section 12.2): this catch-all bucket leaks genuine
-        # investor presentations and newspaper ads under the same desc --
-        # content is the only signal here at all.
-        if any(marker in text_l for marker in _INVESTOR_PRESENTATION_TEXT_MARKERS):
-            return "investor_presentation"
-        if any(marker in text_l for marker in _CONCALL_TEXT_MARKERS):
-            return "concall_transcript"
-        return None
+    if desc.lower() in _MIXED_BAG_DESC_VALUES:
+        # Verified live across both validation companies' full history:
+        # every one of these desc labels is a genuine mixed bag (Section
+        # 12.2 for "General Updates"; BANKBARODA's/AAVAS's own real
+        # history, found during this task's own dry run, for "Updates" and
+        # "Analysts/Institutional Investor Meet/Con. Call Updates") --
+        # content is the only usable signal for any of them.
+        return _disambiguate_mixed_bag_by_content(text_l)
     return None
 
 

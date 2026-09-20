@@ -172,21 +172,46 @@ def test_dedicated_concall_recording_desc() -> None:
     assert classify_announcement_row(row) == "concall_transcript"
 
 
-def test_analysts_institutional_investor_meet_con_call_updates_desc_is_unclassified() -> None:
-    """FEASIBILITY_REPORT.md Section 4's own real quote: the "Analysts/
-    Institutional Investor Meet/Con. Call Updates" desc category's
-    attchmntText reads "...Link of Recording" -- this is a SCHEDULE/notice
-    about an upcoming call, not the transcript/recording document itself
-    (it isn't one of the two dedicated Transcript/Recording desc values,
-    nor does its own text mention a transcript). Left unclassified rather
-    than guessed."""
+def test_analysts_institutional_investor_meet_con_call_updates_plain_schedule_is_unclassified() -> None:
+    """Real AAVAS row (found live during this task's own dry run against
+    AAVAS's full NSE history) -- "Analysts/Institutional Investor Meet/
+    Con. Call Updates" is a genuine mixed bag: most rows under this exact
+    desc are plain meeting-schedule intimations with no transcript/
+    recording/presentation content at all, and must stay unclassified
+    rather than guessed."""
     row = {
         "desc": "Analysts/Institutional Investor Meet/Con. Call Updates",
-        "attchmntText": "Analysts/Institutional Investor Meet/Con. Call Updates - Link of Recording",
-        "attchmntFile": "https://nsearchives.nseindia.com/corporate/HDFCBANK_concall_updates.pdf",
-        "an_dt": "2026-07-18 09:00:00",
+        "attchmntText": (
+            "Aavas Financiers Limited has informed the Exchange regarding "
+            "Analysts/Institutional Investor Meet/Con. Call Updates the "
+            "details of company meet with investor."
+        ),
+        "attchmntFile": "https://nsearchives.nseindia.com/corporate/AAVAS_ExchangeIntimation.pdf",
+        "sort_date": "2018-12-06 18:29:47",
     }
     assert classify_announcement_row(row) is None
+
+
+def test_analysts_institutional_investor_meet_con_call_updates_real_transcript_leak() -> None:
+    """Real AAVAS row (found live during this task's own dry run) -- the
+    exact same "Analysts/Institutional Investor Meet/Con. Call Updates"
+    desc also carries a genuine Earning Conference Call transcript
+    attachment, confirmed by its own attchmntText and filename
+    ("ConferenceCallTranscript"). This is a real, concrete instance of the
+    same "content is the only signal" leak pattern the feasibility report
+    documented for the "General Updates" bucket (Section 12.2), just under
+    a different desc label this task's own validation run surfaced."""
+    row = {
+        "desc": "Analysts/Institutional Investor Meet/Con. Call Updates",
+        "attchmntText": (
+            "Aavas Financiers Limited has informed the Exchange regarding "
+            "Analysts/Institutional Investor Meet/Con. Call Updates that "
+            "the Earning Conference Call transcript is enclosed."
+        ),
+        "attchmntFile": "https://nsearchives.nseindia.com/corporate/AAVAS_ConferenceCallTranscript_161.pdf",
+        "sort_date": "2018-11-21 16:59:50",
+    }
+    assert classify_announcement_row(row) == "concall_transcript"
 
 
 def test_press_release_is_never_classified_even_when_it_mentions_results() -> None:
@@ -219,6 +244,64 @@ def test_dividend_row_is_unclassified() -> None:
         "attchmntText": "Dividend recommendation for the year ended March 31, 2026.",
         "attchmntFile": "https://nsearchives.nseindia.com/corporate/RELIANCE_dividend.pdf",
         "sort_date": "2026-05-01 10:00:00",
+    }
+    assert classify_announcement_row(row) is None
+
+
+def test_updates_desc_bare_transcript_mention_is_concall_transcript() -> None:
+    """Real BANKBARODA row (found live during this task's own dry run
+    against BANKBARODA's full NSE history) -- desc="Updates" (a THIRD
+    mixed-bag desc label, distinct from "General Updates", not documented
+    by the feasibility spike at all) carries a genuine transcript with
+    much terser wording than any of the spike's own text markers."""
+    row = {
+        "desc": "Updates",
+        "attchmntText": "Bank Of Baroda has informed the Exchange about Transcript",
+        "attchmntFile": "https://nsearchives.nseindia.com/corporate/BANKBARODA_Transcript_300725.pdf",
+        "sort_date": "2025-07-30 15:42:53",
+    }
+    assert classify_announcement_row(row) == "concall_transcript"
+
+
+def test_general_updates_lowercase_variant_is_still_recognized() -> None:
+    """Real BANKBARODA desc value "General updates" (lowercase "u") --
+    NSE's own casing isn't consistent, confirmed live; the mixed-bag
+    comparison must be case-insensitive."""
+    row = {
+        "desc": "General updates",
+        "attchmntText": "Bank Of Baroda has submitted an Investor Presentation for the quarter.",
+        "attchmntFile": "https://nsearchives.nseindia.com/corporate/BANKBARODA_gu_presentation.pdf",
+        "sort_date": "2024-01-01 10:00:00",
+    }
+    assert classify_announcement_row(row) == "investor_presentation"
+
+
+def test_analyst_presentation_phrasing_is_investor_presentation() -> None:
+    """Real BANKBARODA row -- older phrasing ("Analyst Presentation", not
+    "Investor Presentation") under desc="Updates"."""
+    row = {
+        "desc": "Updates",
+        "attchmntText": "Bank Of Baroda has informed the Exchange regarding Analyst Presentation Q2 Results FY 2016-17.",
+        "attchmntFile": "https://nsearchives.nseindia.com/corporate/BobAnalystPresentationQ2ResultFy1617.zip",
+        "sort_date": "2016-11-11 18:18:13",
+    }
+    assert classify_announcement_row(row) == "investor_presentation"
+
+
+def test_schedule_of_notice_is_never_classified_even_when_it_mentions_presentation() -> None:
+    """Real BANKBARODA row -- a "Schedule of Analysts Meet / Presentation"
+    notice about an UPCOMING meet, not the presentation deck itself
+    (confirmed by the attached file's own name, "...MeetSchedule..."). The
+    _SCHEDULE_NOTICE_MARKER guard exists specifically for this real case."""
+    row = {
+        "desc": "Analysts/Institutional Investor Meet/Con. Call Updates",
+        "attchmntText": (
+            "Bank Of Baroda has informed the Exchange regarding Schedule of "
+            "Analysts Meet / Presentation and Media Meet on Bank's Financial "
+            "Results for the Quarter"
+        ),
+        "attchmntFile": "https://nsearchives.nseindia.com/corporate/BoBAnalystMeetQ1Result_MeetSchedule.zip",
+        "sort_date": "2016-08-09 17:25:54",
     }
     assert classify_announcement_row(row) is None
 
