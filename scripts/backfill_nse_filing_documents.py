@@ -35,6 +35,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+
+# Must run before any other import in this file touches storage.repositories/
+# company_repository/raw_object_repository -- see storage/backend_bootstrap.py's
+# own docstring and scripts/run_job.py's identical top-of-file comment: a
+# module that does `from storage import company_repository as repo` at
+# import time (companies/registry.py does exactly this) binds to the
+# pre-swap SQLite module forever if install() runs after that import.
+import storage.backend_bootstrap
+
+storage.backend_bootstrap.install()
+
 from dataclasses import dataclass, field
 
 from companies.registry import get_company
