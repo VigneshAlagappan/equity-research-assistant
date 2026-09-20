@@ -18,6 +18,7 @@ from datetime import date
 
 from sources.nse_filing_documents import (
     ClassifiedFiling,
+    _parse_broadcast_date,
     attachment_extension,
     classify_announcement_row,
     classify_announcements,
@@ -350,6 +351,20 @@ def test_has_downloadable_attachment() -> None:
 def test_attachment_extension() -> None:
     assert attachment_extension("https://x/y.pdf") == "pdf"
     assert attachment_extension("https://x/Y.ZIP") == "zip"
+
+
+def test_parse_broadcast_date_handles_an_dt_and_sort_date_different_formats() -> None:
+    """Real BANKBARODA row -- an_dt ("DD-Mon-YYYY") and sort_date
+    ("YYYY-MM-DD") are two different date formats on the same row. A
+    caller that only tries one format against whichever field happens to
+    be picked first silently gets None for every row (a real bug found
+    live during this task's own dry run, before this fix)."""
+    row = {"an_dt": "10-Sep-2026 17:01:45", "sort_date": "2026-09-10 17:01:45"}
+    assert _parse_broadcast_date(row) == date(2026, 9, 10)
+    # Only one of the two fields present, either format.
+    assert _parse_broadcast_date({"an_dt": "10-Sep-2026 17:01:45"}) == date(2026, 9, 10)
+    assert _parse_broadcast_date({"sort_date": "2026-09-10 17:01:45"}) == date(2026, 9, 10)
+    assert _parse_broadcast_date({}) is None
 
 
 def test_period_string_quarterly() -> None:

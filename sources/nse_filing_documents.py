@@ -272,17 +272,24 @@ def period_string(period_end: date | None) -> str | None:
 
 
 def _parse_broadcast_date(row: dict) -> date | None:
-    """an_dt / sort_date are both "YYYY-MM-DD HH:MM:SS" on this endpoint
-    (verified against real rows in spikes/nse_pdf_feasibility/data/) --
-    unlike sources/nse_fetch.py's "DD-Mon-YYYY" listings, this is a
-    different endpoint with its own date format."""
-    raw = row.get("an_dt") or row.get("sort_date")
-    if not raw:
-        return None
-    try:
-        return datetime.strptime(raw.split(" ")[0], "%Y-%m-%d").date()
-    except ValueError:
-        return None
+    """`sort_date` is "YYYY-MM-DD HH:MM:SS"; `an_dt` is "DD-Mon-YYYY
+    HH:MM:SS" -- two DIFFERENT date formats on the SAME row, verified live
+    against real BANKBARODA data (e.g. an_dt="10-Sep-2026 17:01:45" next to
+    sort_date="2026-09-10 17:01:45" on the identical announcement) -- a
+    real bug caught only by inspecting live output (an earlier version of
+    this function tried an_dt first with sort_date's format and silently
+    got None for every single row, never raising or logging). Both fields
+    are tried, in either format, before giving up."""
+    for raw in (row.get("an_dt"), row.get("sort_date")):
+        if not raw:
+            continue
+        date_part = raw.split(" ")[0]
+        for fmt in ("%Y-%m-%d", "%d-%b-%Y"):
+            try:
+                return datetime.strptime(date_part, fmt).date()
+            except ValueError:
+                continue
+    return None
 
 
 @dataclass(frozen=True)
