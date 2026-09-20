@@ -13,6 +13,7 @@
 .about-pillar .card-kicker{margin-bottom:8px}
 .about-pillar p{font-size:14px;margin-bottom:0}
 .about-tags{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.about-close{font-family:var(--font-heading);font-weight:400;font-size:19px;line-height:1.5;margin:0}
 @media (max-width: 640px) {
   .about-pillars{grid-template-columns:1fr}
 }
@@ -20,59 +21,103 @@
 {% block content %}
 <div class="about-wrap">
   <div class="about-kicker">About Signals</div>
-  <h1>A personal research desk, not a data terminal.</h1>
+  <h1>A personal research desk.</h1>
   <p class="about-lede">
-    Signals consolidates a company's financials, filings, and commentary into one place, and answers
-    questions against that evidence instead of a headline. It's built to behave like a research analyst
-    working for you — reading the primary sources, showing its work, and telling you plainly when it's
-    guessing.
+    Signals pulls a company's financials, filings, commentary and relevant outside data into one place,
+    and lets you ask questions against that evidence instead of against a headline. It works like a
+    research analyst on your side. It reads primary sources, connects the evidence, shows how it got
+    there, and says so when an answer stops being fact and turns into interpretation.
   </p>
 
   <div class="about-section">
-    <h2>What it does</h2>
+    <h2>Why Signals exists</h2>
     <p>
-      Every number on this site traces back to a source document and a reconciliation decision — annual
-      reports, exchange filings, and licensed data exports, cross-checked against each other rather than
-      taken on faith from a single vendor. On top of that layer sits a research assistant you can ask
-      real questions: analyze a company over ten years, compare two companies, explain why a margin
-      moved, or trace how a macro shift might show up in a specific balance sheet.
+      <strong>Our mission:</strong> to bring clarity to financial decisions.
     </p>
     <p>
-      Answers are labeled, not just written. Every claim the assistant makes is tagged
-      <span class="tag tag-accent" style="margin:0 2px">FACT</span>,
-      <span class="tag tag-accent-2" style="margin:0 2px">CALCULATION</span>, or
-      <span class="tag tag-neutral" style="margin:0 2px">INFERENCE</span> —
-      so it's always clear what came straight from a filing, what was derived from it, and where the
-      model is reasoning beyond the data. That distinction is the point of the product, not a footnote.
+      <strong>Our vision:</strong> to give every investor an equal chance at a good financial decision.
+    </p>
+    <p>
+      An equal chance doesn't mean everyone should decide the same way or end up in the same place.
+      Investors have different goals, risk tolerances, time horizons and ideas of success. It means the
+      quality of information, evidence and analysis available to an individual investor shouldn't depend
+      on whether they have an institutional research desk behind them. Signals is built to close that
+      gap, so investors can see the evidence, understand what it means, try different questions, and
+      form their own view.
+    </p>
+  </div>
+
+  <div class="about-section">
+    <h2>How it works</h2>
+    <p>
+      Everything starts with the sources. Every number on Signals traces back to a source document and a
+      reconciliation decision: annual reports, exchange filings, regulatory disclosures and licensed data
+      exports, cross-checked where that makes sense instead of taken on faith from a single vendor.
+    </p>
+    <p>
+      On top of that evidence sits a research assistant you can put real questions to. Analyze a company
+      over ten years. Compare two businesses. Dig into why a margin moved. Look at how macroeconomic
+      conditions relate to company performance, or follow a broader economic shift until it shows up in
+      one balance sheet.
+    </p>
+    <p>
+      Because the goal is to make the reasoning visible, each claim the assistant makes carries a label.
+      A <span class="tag tag-accent" style="margin:0 2px">FACT</span> comes straight from a source. A
+      <span class="tag tag-accent-2" style="margin:0 2px">CALCULATION</span> is derived from the
+      underlying data. An <span class="tag tag-neutral" style="margin:0 2px">INFERENCE</span> is the
+      model reasoning beyond what was reported. That labeling is central to the product, and it connects
+      directly to how we think investing should work.
     </p>
   </div>
 
   <div class="about-section">
     <h2>An investment philosophy</h2>
     <p>
-      Signals exists because of a simple belief: good investing decisions come from clarity, not
-      conviction borrowed from someone else's headline. Two kinds of clarity, specifically.
+      Signals starts from a belief: good investing decisions come from clarity, not from conviction
+      borrowed from someone else's headline. That clarity has two parts.
     </p>
     <div class="about-pillars">
       <div class="about-pillar">
         <div class="card-kicker">Thinking clarity</div>
         <p>
-          Form the view yourself, from primary sources, before letting anyone else's opinion into the
-          room. Noise is cheap and constant — a filing, a ratio trend, a management transcript is not.
-          The discipline is going back to what a company actually reported and reasoning forward from
-          there, rather than backward from a price move or a narrative that's already popular.
+          Form the view yourself, from evidence, before someone else's opinion becomes your starting
+          point. Noise is cheap and constant. A headline, a target price or a popular narrative can
+          travel around the world in minutes. Primary evidence often says something different: a filing,
+          a ratio trend, a management transcript, a shift in capital allocation, a long-run relationship
+          between the economy and a business.
+        </p>
+        <p>
+          The discipline is to go back to what the company actually reported, understand the context,
+          and reason forward from there, instead of reasoning backward from a price move or a story
+          everyone already likes. Signals is meant to make that easier. It doesn't do the thinking for
+          you.
         </p>
       </div>
       <div class="about-pillar">
         <div class="card-kicker">Writing clarity</div>
         <p>
-          If a thesis can't be written down plainly — what's known, what's calculated, and what's being
-          assumed — it isn't ready to be acted on. Writing is where a fuzzy hunch either survives contact
-          with the evidence or falls apart. That's why every answer here separates fact from inference
-          instead of blending them into one confident-sounding paragraph.
+          If you can't write a thesis down plainly, it probably isn't ready to act on. That means saying
+          what is known, what was calculated, what is assumed, and what would make it wrong. Writing
+          forces precision. It's where a fuzzy hunch either holds up against the evidence or falls apart.
+        </p>
+        <p>
+          That's why Signals keeps fact, calculation and inference separate instead of blending them into
+          one confident paragraph. Confidence should come from how strong the evidence is, not from the
+          tone of the answer.
         </p>
       </div>
     </div>
+  </div>
+
+  <div class="about-section">
+    <h2>The investor stays in control</h2>
+    <p>
+      Signals won't tell you what to buy or sell. It helps you investigate. Two investors can look at the
+      same evidence and reasonably disagree. One weighs growth, another resilience, cash generation,
+      valuation or downside protection. Where you end up, and how you get there, is your call. Signals
+      just makes the landscape easier to see.
+    </p>
+    <p class="about-close">See the evidence. Understand the reasoning. Make the decision your own.</p>
   </div>
 </div>
 
