@@ -58,15 +58,30 @@ def _get_with_retries(url: str, *, max_attempts: int = 4) -> requests.Response:
     raise SECFetchError(f"Failed to fetch {url} after {max_attempts} attempts: {last_exc}")
 
 
-def discover_10k_filings(ticker: str) -> list[dict]:
-    """Every 10-K filing on file for `ticker`, oldest and newest included --
-    walks the "recent" block plus any paginated older-filings files SEC
+def discover_10k_filings(ticker: str, *, min_year: int | None = 2009) -> list[dict]:
+    """Every 10-K filing on file for `ticker` with a filing_date year >=
+    `min_year` (default 2009 -- the user's own deliberate scope choice,
+    matching the depth sources/sec_edgar.py's XBRL ingestion already
+    reaches for most companies, and deliberately excluding the pre-2001
+    filing-index era where a filing's `primaryDocument` is frequently
+    blank/malformed -- verified live: AAPL/MSFT/BAC/COKE/TRV/F all hit a
+    404/503 on their pre-2001 "0001.txt"/bare-directory URLs during the
+    first (unfiltered) run of this backfill. Pass min_year=None for the
+    old unfiltered "everything on file" behavior.
+
+    Walks the "recent" block plus any paginated older-filings files SEC
     splits long filing histories into (verified live: AAPL's history goes
-    back to 1994 via one such paginated file). Returns
-    [{accession_number, filing_date, report_date, primary_document, doc_url}],
-    newest first, or [] if the ticker has no resolvable CIK or no 10-Ks on
-    file (never raises for "no filings" -- only for a genuine fetch
-    failure)."""
+    back to 1994 via one such paginated file) -- an older block is skipped
+    entirely, without fetching it, when its own `filingTo` metadata is
+    already before `min_year` (a real efficiency win for companies with
+    multiple older-file pages, and it also means this filter's benefit
+    isn't just "store fewer rows", it's "make fewer requests against the
+    known-malformed old URLs in the first place").
+
+    Returns [{accession_number, filing_date, report_date, primary_document,
+    doc_url}], newest first, or [] if the ticker has no resolvable CIK or
+    no 10-Ks on file at/after min_year (never raises for "no filings" --
+    only for a genuine fetch failure)."""
     cik = get_cik_for_ticker(ticker)
     if cik is None:
         logger.warning("SEC EDGAR: no CIK found for ticker %s", ticker)
@@ -78,6 +93,9 @@ def discover_10k_filings(ticker: str) -> list[dict]:
 
     blocks = [data["filings"]["recent"]]
     for older in data["filings"].get("files", []):
+        filing_to = older.get("filingTo", "")
+        if min_year is not None and filing_to and filing_to[:4].isdigit() and int(filing_to[:4]) < min_year:
+            continue
         time.sleep(_REQUEST_PACING_SECONDS)
         older_resp = _get_with_retries(f"https://data.sec.gov/submissions/{older['name']}")
         blocks.append(older_resp.json())
@@ -88,12 +106,15 @@ def discover_10k_filings(ticker: str) -> list[dict]:
         for i, form in enumerate(forms):
             if form != "10-K":
                 continue
+            filing_date = block["filingDate"][i]
+            if min_year is not None and int(filing_date[:4]) < min_year:
+                continue
             accession = block["accessionNumber"][i]
             primary_doc = block["primaryDocument"][i]
             accession_nodash = accession.replace("-", "")
             filings.append({
                 "accession_number": accession,
-                "filing_date": block["filingDate"][i],
+                "filing_date": filing_date,
                 "report_date": block.get("reportDate", [None] * len(forms))[i],
                 "primary_document": primary_doc,
                 "doc_url": f"{_ARCHIVES_BASE}/{cik}/{accession_nodash}/{primary_doc}",
