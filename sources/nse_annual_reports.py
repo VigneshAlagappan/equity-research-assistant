@@ -248,29 +248,52 @@ def download_file(session: requests.Session, url: str) -> bytes:
 
 
 def extract_annual_report_pdf(zip_bytes: bytes) -> bytes:
-    """Given a downloaded ZIP's raw bytes, return the bytes of the single
-    PDF that's the actual annual report -- never the companion FormA_/
-    BRR_SR_ files (module docstring point 2). Picks the one PDF whose
-    filename doesn't start with either companion prefix; if that leaves
-    zero or more than one candidate (an unforeseen naming variant this
-    module hasn't seen live), falls back to the largest PDF in the
-    archive, per this task's own "take the largest if ambiguous"
-    instruction. Raises AnnualReportZipError if the archive contains no
-    PDF at all, OR if `zip_bytes` isn't a valid ZIP archive at all --
-    verified live (real full-Nifty-500 run): NSE occasionally serves a
-    corrupted/truncated response for a file whose URL is completely valid
-    (a re-fetch of the identical URL minutes later succeeded cleanly), and
-    Python's own zipfile.BadZipFile is a totally different exception
-    class from this module's own AnnualReportZipError -- left
-    uncaught here, it escaped scripts/backfill_nse_annual_reports.py's
-    `except AnnualReportZipError` entirely, which (via
-    ingestion/batch_log.py's BatchRun.item(), which swallows ANY
-    exception from a company's own processing without printing it)
-    silently aborted that entire company's remaining fiscal years with
-    no visible error at all -- only a "File is not a zip file" string
-    buried in the batch_job_items DB table's own `detail` column. Treating
-    a bad archive the same as a valid-but-PDF-less one fixes that: it's
-    now just one more counted, logged, skippable per-year failure."""
+    """Given a downloaded file's raw bytes for a row whose fileName ends
+    in .zip, return the bytes of the single PDF that's the actual annual
+    report -- never the companion FormA_/BRR_SR_ files (module docstring
+    point 2). Picks the one PDF whose filename doesn't start with either
+    companion prefix; if that leaves zero or more than one candidate (an
+    unforeseen naming variant this module hasn't seen live), falls back
+    to the largest PDF in the archive, per this task's own "take the
+    largest if ambiguous" instruction.
+
+    Two real, DIFFERENT failure modes found live during the full
+    Nifty 500 real run, both surfacing as zipfile.BadZipFile
+    ("File is not a zip file") if handled naively:
+
+    1. The bytes are actually a plain PDF, not a ZIP at all, despite the
+       row's own fileName ending in .zip and the response's own
+       Content-Type header claiming application/zip -- verified live for
+       KPRMILL/LALPATHLAB/LEMONTREE's respective FY2023 rows: the response
+       starts with the literal bytes b"%PDF", not the ZIP signature b"PK",
+       and is consistently reproducible across repeated fetches (not a
+       one-off network blip) -- a genuine NSE-side mislabeling of this
+       specific archived file, not corruption. Detected up front via the
+       leading-bytes check below and returned AS the annual report PDF
+       directly, rather than ever attempting to unzip it.
+    2. A genuinely corrupted/truncated response for an otherwise-valid
+       ZIP URL -- verified live (KPIL's own FY2022 row): the identical
+       URL failed this exact same way once, then downloaded a perfectly
+       valid ZIP the very next attempt minutes later. Real transient
+       NSE-side flakiness, not a permanent mislabeling -- there's no
+       usable content to fall back to here, so this still raises
+       AnnualReportZipError (a caller can retry the whole company later;
+       store_raw_object()'s hash-based dedup makes that safe).
+
+    Raises AnnualReportZipError for a genuinely unusable archive (no PDF
+    inside a real ZIP, or neither a ZIP nor a PDF at all, or case 2
+    above). This exception type matters beyond documentation:
+    zipfile.BadZipFile left uncaught here previously escaped scripts/
+    backfill_nse_annual_reports.py's `except AnnualReportZipError`
+    entirely, which (via ingestion/batch_log.py's BatchRun.item(), which
+    swallows ANY exception from a company's own processing without
+    printing it) silently aborted that entire company's remaining fiscal
+    years with no visible error at all -- only a "File is not a zip
+    file" string buried in the batch_job_items DB table's own `detail`
+    column. Every failure mode here is now a counted, logged, skippable
+    per-year failure instead."""
+    if zip_bytes.startswith(b"%PDF"):
+        return zip_bytes
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             pdf_infos = [info for info in zf.infolist() if info.filename.lower().endswith(".pdf")]

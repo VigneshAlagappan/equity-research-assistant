@@ -154,6 +154,18 @@ def test_extract_annual_report_pdf_raises_when_no_pdf_present() -> None:
         extract_annual_report_pdf(zip_bytes)
 
 
+def test_extract_annual_report_pdf_handles_raw_pdf_mislabeled_as_zip() -> None:
+    """Real finding from the full Nifty 500 real run: KPRMILL/LALPATHLAB/
+    LEMONTREE's respective FY2023 rows all have a fileName ending in
+    .zip and a response Content-Type of application/zip, but the actual
+    bytes are a plain PDF (b"%PDF..." not b"PK..."), reproducibly across
+    repeated fetches -- a genuine NSE-side mislabeling, not corruption.
+    Must be returned directly as the annual report PDF, not treated as a
+    ZIP-extraction failure."""
+    fake_pdf = b"%PDF-1.7\r%\xe2\xe3\xcf\xd3\r...rest of a real pdf..."
+    assert extract_annual_report_pdf(fake_pdf) == fake_pdf
+
+
 def test_extract_annual_report_pdf_raises_annual_report_zip_error_on_corrupted_bytes() -> None:
     """Real bug found during the full Nifty 500 real run: NSE occasionally
     serves a corrupted/truncated response for a completely valid ZIP URL
