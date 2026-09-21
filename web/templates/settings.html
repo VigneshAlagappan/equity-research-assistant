@@ -1868,7 +1868,7 @@
 
       <div class="admin-audit-subpanel" id="admin-audit-subpanel-raw-documents" {{ 'hidden' if audit_active_tab != 'raw_documents' }}>
       <p class="muted">
-        Per-company coverage of every "pull and store, don't process yet" NSE backfill (the
+        Per-company coverage of every "pull and store, don't process yet" backfill, across every source (the
         <code>raw_objects</code> catalog — see ADR-022).
         <strong>Processed</strong> counts objects whose state has advanced past <code>stored</code> — always 0
         today, since every backfill built so far deliberately stops at <code>stored</code>; this column starts
@@ -1894,8 +1894,9 @@
         <thead>
           <tr>
             <th>Company</th>
+            <th>Source</th>
             {% for doc_type in audit_raw_doc_types %}
-            <th>{{ doc_type.replace('_', ' ')|title }}</th>
+            <th>{{ audit_raw_doc_type_labels.get(doc_type, doc_type) }}</th>
             {% endfor %}
             <th>Total</th>
             <th>Processed</th>
@@ -1906,6 +1907,7 @@
           {% for row in audit_raw_rows %}
           <tr>
             <td><a href="{{ url_for('company_report', company_id=row['company_id']) }}">{{ row['display_name'] }}</a></td>
+            <td>{{ row['source_label'] }}</td>
             {% for doc_type in audit_raw_doc_types %}
             <td>{{ row['by_type'].get(doc_type, 0) }}</td>
             {% endfor %}

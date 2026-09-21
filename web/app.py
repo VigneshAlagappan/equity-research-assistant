@@ -1274,9 +1274,12 @@ def create_app() -> Flask:
         for row in usa_migration_rows:
             row["recent_log"] = usa_recent_log_by_company.get(row["company_id"], [])
 
-        # Raw Documents tab -- per-company coverage of the "pull and store,
-        # don't process yet" NSE backfills (raw_objects catalog, ADR-022:
-        # docs/ADR/022-s3-raw-processed-object-store-with-lineage-catalog.md).
+        # Raw Documents tab -- per-company coverage of every "pull and
+        # store, don't process yet" backfill, across every source (NSE's
+        # quarterly filings/presentations/transcripts/annual reports, SEC
+        # EDGAR's 10-Ks, and whatever else lands in this same raw_objects
+        # catalog later) -- ADR-022:
+        # docs/ADR/022-s3-raw-processed-object-store-with-lineage-catalog.md.
         # Aggregated here in Python, not a new SQL GROUP BY per backend --
         # matches list_all_raw_objects()'s own "cheap at this app's scale"
         # reasoning (hundreds of companies × a handful of doc types each).
@@ -1286,19 +1289,33 @@ def create_app() -> Flask:
         # moment a future processing step advances any row's state, with
         # no template change needed then.
         _RAW_DOC_TYPE_ORDER = (
-            "quarterly_result_filing", "investor_presentation", "concall_transcript", "annual_report",
+            "quarterly_result_filing", "investor_presentation", "concall_transcript",
+            "annual_report", "annual_report_10k",
         )
         raw_query = (request.args.get("al_raw_q") or "").strip().lower()
-        raw_objects_all = list_raw_objects(db, source="nse", limit=50000)
+        # Filtered by object_type, not source -- raw_objects is the shared
+        # ADR-022 catalog every external-fetch job in this app uses for its
+        # own audit trail (corporate actions, shareholding snapshots,
+        # yfinance prices, ...), not something exclusive to the document
+        # backfills this tab exists to surface. object_type is the
+        # source-agnostic signal that actually distinguishes "one of our
+        # pull-and-store document backfills" (whichever source produced
+        # it) from every other job's own unrelated raw_objects rows -- a
+        # future object type in this same family just needs adding to
+        # _RAW_DOC_TYPE_ORDER above, no further filtering logic here.
+        raw_objects_all = [
+            obj for obj in list_raw_objects(db, limit=50000) if obj["object_type"] in _RAW_DOC_TYPE_ORDER
+        ]
         raw_by_company: dict[str, dict] = {}
         for obj in raw_objects_all:
             company_id = obj["entity"] or "—"
             bucket = raw_by_company.setdefault(company_id, {
                 "company_id": company_id, "by_type": {}, "total": 0,
-                "processed": 0, "latest_fetched_at": None,
+                "processed": 0, "latest_fetched_at": None, "sources": set(),
             })
             bucket["by_type"][obj["object_type"]] = bucket["by_type"].get(obj["object_type"], 0) + 1
             bucket["total"] += 1
+            bucket["sources"].add(obj["source"])
             if obj["state"] not in ("fetched", "stored"):
                 bucket["processed"] += 1
             if bucket["latest_fetched_at"] is None or obj["fetched_at"] > bucket["latest_fetched_at"]:
@@ -1308,6 +1325,7 @@ def create_app() -> Flask:
         raw_rows = list(raw_by_company.values())
         for row in raw_rows:
             row["display_name"] = raw_company_names.get(row["company_id"], row["company_id"])
+            row["source_label"] = " + ".join(sorted(row["sources"])) if row["sources"] else "—"
         if raw_query:
             raw_rows = [
                 r for r in raw_rows
@@ -1315,6 +1333,19 @@ def create_app() -> Flask:
             ]
         raw_rows.sort(key=lambda r: r["display_name"] or r["company_id"])
         raw_doc_types_present = [t for t in _RAW_DOC_TYPE_ORDER if any(t in r["by_type"] for r in raw_rows)]
+        # Explicit labels rather than a generic .replace('_', ' ')|title in
+        # the template -- that mangles "annual_report_10k" into "Annual
+        # Report 10k" (Jinja's title filter doesn't know "10k" should stay
+        # "10-K"), the same way it would mangle any future acronym-bearing
+        # object_type.
+        _RAW_DOC_TYPE_LABELS = {
+            "quarterly_result_filing": "Quarterly Result Filing",
+            "investor_presentation": "Investor Presentation",
+            "concall_transcript": "Concall Transcript",
+            "annual_report": "Annual Report (NSE)",
+            "annual_report_10k": "10-K (SEC)",
+        }
+        raw_doc_type_labels = {t: _RAW_DOC_TYPE_LABELS.get(t, t.replace("_", " ").title()) for t in raw_doc_types_present}
 
         return {
             "audit_rows": page["rows"],
@@ -1344,7 +1375,8 @@ def create_app() -> Flask:
             "audit_raw_rows": raw_rows,
             "audit_raw_query": request.args.get("al_raw_q", ""),
             "audit_raw_doc_types": raw_doc_types_present,
-            "audit_raw_total_objects": len(raw_objects_all),
+            "audit_raw_doc_type_labels": raw_doc_type_labels,
+            "audit_raw_total_objects": sum(r["total"] for r in raw_rows),
         }
 
     @app.route("/admin")
