@@ -154,6 +154,21 @@ def test_extract_annual_report_pdf_raises_when_no_pdf_present() -> None:
         extract_annual_report_pdf(zip_bytes)
 
 
+def test_extract_annual_report_pdf_raises_annual_report_zip_error_on_corrupted_bytes() -> None:
+    """Real bug found during the full Nifty 500 real run: NSE occasionally
+    serves a corrupted/truncated response for a completely valid ZIP URL
+    (re-fetching the identical URL minutes later succeeded). The raw
+    zipfile.BadZipFile that raises must be translated into this module's
+    own AnnualReportZipError -- left as zipfile.BadZipFile, it escaped
+    scripts/backfill_nse_annual_reports.py's `except AnnualReportZipError`
+    entirely and (via BatchRun.item()'s silent exception-swallowing)
+    aborted that company's ENTIRE remaining fiscal-year loop with no
+    visible error at all, only a "File is not a zip file" string buried
+    in the batch_job_items table."""
+    with pytest.raises(AnnualReportZipError):
+        extract_annual_report_pdf(b"this is not zip data at all, just plain bytes")
+
+
 def test_extract_annual_report_pdf_single_pdf_no_companions() -> None:
     """The common recent-year shape once ZIPs stop appearing isn't relevant
     here (those are plain .pdf fileNames, no ZIP at all) -- but an older

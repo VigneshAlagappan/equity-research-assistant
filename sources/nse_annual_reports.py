@@ -256,23 +256,45 @@ def extract_annual_report_pdf(zip_bytes: bytes) -> bytes:
     module hasn't seen live), falls back to the largest PDF in the
     archive, per this task's own "take the largest if ambiguous"
     instruction. Raises AnnualReportZipError if the archive contains no
-    PDF at all."""
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        pdf_infos = [info for info in zf.infolist() if info.filename.lower().endswith(".pdf")]
-        if not pdf_infos:
-            raise AnnualReportZipError("ZIP archive contains no PDF file")
+    PDF at all, OR if `zip_bytes` isn't a valid ZIP archive at all --
+    verified live (real full-Nifty-500 run): NSE occasionally serves a
+    corrupted/truncated response for a file whose URL is completely valid
+    (a re-fetch of the identical URL minutes later succeeded cleanly), and
+    Python's own zipfile.BadZipFile is a totally different exception
+    class from this module's own AnnualReportZipError -- left
+    uncaught here, it escaped scripts/backfill_nse_annual_reports.py's
+    `except AnnualReportZipError` entirely, which (via
+    ingestion/batch_log.py's BatchRun.item(), which swallows ANY
+    exception from a company's own processing without printing it)
+    silently aborted that entire company's remaining fiscal years with
+    no visible error at all -- only a "File is not a zip file" string
+    buried in the batch_job_items DB table's own `detail` column. Treating
+    a bad archive the same as a valid-but-PDF-less one fixes that: it's
+    now just one more counted, logged, skippable per-year failure."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            pdf_infos = [info for info in zf.infolist() if info.filename.lower().endswith(".pdf")]
+            if not pdf_infos:
+                raise AnnualReportZipError("ZIP archive contains no PDF file")
 
-        candidates = [
-            info for info in pdf_infos
-            if not info.filename.lower().rsplit("/", 1)[-1].startswith(_COMPANION_FILE_PREFIXES)
-        ]
-        if len(candidates) != 1:
-            # Zero (every PDF matched a companion prefix -- shouldn't
-            # happen live, but not impossible) or more than one (a naming
-            # variant this module hasn't seen) -- take the largest PDF
-            # in the archive either way, per this task's explicit
-            # fallback instruction.
-            chosen = max(pdf_infos, key=lambda info: info.file_size)
-        else:
-            chosen = candidates[0]
-        return zf.read(chosen)
+            candidates = [
+                info for info in pdf_infos
+                if not info.filename.lower().rsplit("/", 1)[-1].startswith(_COMPANION_FILE_PREFIXES)
+            ]
+            if len(candidates) != 1:
+                # Zero (every PDF matched a companion prefix -- shouldn't
+                # happen live, but not impossible) or more than one (a
+                # naming variant this module hasn't seen) -- take the
+                # largest PDF in the archive either way, per this task's
+                # explicit fallback instruction.
+                chosen = max(pdf_infos, key=lambda info: info.file_size)
+            else:
+                chosen = candidates[0]
+            return zf.read(chosen)
+    except zipfile.BadZipFile as exc:
+        # Can be raised by ZipFile(...) itself (bad header) or by
+        # infolist()/read() (a truncated body behind an otherwise-valid
+        # header) -- both are the same "unusable archive" condition from
+        # this function's caller's point of view, so both are folded into
+        # one exception type here.
+        raise AnnualReportZipError(f"not a valid/complete ZIP archive: {exc}") from exc
