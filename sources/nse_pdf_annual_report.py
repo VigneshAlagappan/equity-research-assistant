@@ -131,9 +131,12 @@ _PL_LINES = [
 _CASH_FLOW_LINES = [
     ("Net Profit Before Taxes", "PDF_ProfitBeforeTax"),
     ("Net Cash Flow from Operating Activities", "PDF_NetCashFromOperatingActivities"),
+    ("Net Cash Flow from / (used in) Operating Activities", "PDF_NetCashFromOperatingActivities"),
     ("Net cash flow (used) in Investing Activities", "PDF_NetCashFromInvestingActivities"),
+    ("Net cash flow from / (used in) Investing Activities", "PDF_NetCashFromInvestingActivities"),
     ("Net cash flow (used in)/ from Financing Activities", "PDF_NetCashFromFinancingActivities"),
     ("Net cash flow from/(used in) Financing Activities", "PDF_NetCashFromFinancingActivities"),
+    ("Net cash flow from / (used in) Financing Activities", "PDF_NetCashFromFinancingActivities"),
     ("Cash and Cash Equivalents at the end of the year", "PDF_CashAndBank"),
 ]
 
