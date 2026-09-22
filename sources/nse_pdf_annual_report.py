@@ -147,28 +147,49 @@ _ALL_LINE_DEFS = _BALANCE_SHEET_LINES + _PL_LINES + _CASH_FLOW_LINES
 
 
 def _find_statement_pages(reader: "pypdf.PdfReader") -> dict[str, int]:
-    """First page (0-indexed) whose text starts the Balance Sheet / Profit
-    and Loss Account / Cash Flow Statement -- located by content, not a
-    fixed page number, since that varies year to year. Verified live
-    across all 10 already-downloaded AU SFB annual reports: each of these
-    three headings appears verbatim near the top of its own face-statement
-    page, immediately followed by "as at"/"for the Year ended"/"for the
-    year ended". Uses pypdf (not pdfplumber) deliberately -- pdfplumber's
-    own layout analysis took 90+ seconds to scan a 334-page report (long
-    enough to trip the same Neon idle-connection-drop this app has hit
-    repeatedly elsewhere this session), pypdf does the full document in
-    under 25 seconds with equivalent plain-text output for this kind of
-    simple-layout financial-statement page."""
+    """First page (0-indexed) whose text contains a LINE that starts the
+    Balance Sheet / Profit and Loss Account / Cash Flow Statement --
+    located by content, not a fixed page number, since that varies year
+    to year. Searches each page's FULL text (every line, via re.MULTILINE
+    ^-anchoring), not just the first few lines -- verified live this was
+    a real bug, not overcautious: some years' running headers push the
+    real heading down several lines (a multi-line "Report title / page
+    numbers / ANNUAL REPORT yyyy-yy" block ahead of it), and some pages'
+    two-column text extraction order isn't strictly top-to-bottom, so a
+    fixed line-count window missed the real heading for 4 of AU SFB's 10
+    already-downloaded reports (FY2020-2022, FY2024) before this was
+    widened to the whole page. Still safe against a schedule page's own
+    running header ("Schedules\\nforming part of the Balance Sheet as at
+    ...") -- that text never starts a line with "Balance Sheet" (it starts
+    with "forming"), so the ^-anchor doesn't false-positive on it even
+    scanning the complete page. Uses pypdf (not pdfplumber) deliberately --
+    pdfplumber's own layout analysis took 90+ seconds to scan a 334-page
+    report (long enough to trip the same Neon idle-connection-drop this
+    app has hit repeatedly elsewhere this session), pypdf does the full
+    document in under 25 seconds with equivalent plain-text output for
+    this kind of simple-layout financial-statement page."""
+    # Each pattern requires the heading AND the very next line's own
+    # opening words -- "Balance Sheet" alone (or "Profit and Loss
+    # Account"/"Cash Flow Statement") also appears as a bare Table of
+    # Contents entry on an early page (verified live: widening the search
+    # to a whole page without this second line matched TOC pages 2/4/8
+    # instead of the real statement pages 220+ for every one of AU SFB's
+    # later reports). The real statement page always follows its heading
+    # immediately with "as at <date>" (Balance Sheet) or "for the Year
+    # ended"/"for the year ended" (P&L/Cash Flow, case varies by year) --
+    # a TOC entry never does, so this two-line anchor discriminates them
+    # without needing a page-number allowlist that would vary every year.
+    _PAGE_PATTERNS = {
+        "balance_sheet": re.compile(r"^Balance Sheet\s*\n\s*as at\b", re.MULTILINE | re.IGNORECASE),
+        "profit_and_loss": re.compile(r"^Profit and Loss Account\s*\n\s*for the year ended\b", re.MULTILINE | re.IGNORECASE),
+        "cash_flow": re.compile(r"^Cash Flow Statement\s*\n\s*for the year ended\b", re.MULTILINE | re.IGNORECASE),
+    }
     found: dict[str, int] = {}
     for i, page in enumerate(reader.pages):
         text = page.extract_text() or ""
-        first_lines = "\n".join(text.splitlines()[:3])
-        if "balance_sheet" not in found and re.search(r"^Balance Sheet\b", first_lines, re.MULTILINE):
-            found["balance_sheet"] = i
-        if "profit_and_loss" not in found and re.search(r"^Profit and Loss Account\b", first_lines, re.MULTILINE):
-            found["profit_and_loss"] = i
-        if "cash_flow" not in found and re.search(r"^Cash Flow Statement\b", first_lines, re.MULTILINE):
-            found["cash_flow"] = i
+        for key, pattern in _PAGE_PATTERNS.items():
+            if key not in found and pattern.search(text):
+                found[key] = i
         if len(found) == 3:
             break
     return found
@@ -314,48 +335,52 @@ class NSEPdfAnnualReportAdapter(SourceAdapter):
                 or "terminat" in text.lower()
             )
 
+        # Reconnects on EVERY stale-connection error encountered, not just
+        # once per file -- verified live this was necessary: a file with
+        # ~15-20 metrics makes 30-40+ round trips (resolve_metric_key +
+        # default-unit lookup per metric), enough opportunity for Neon to
+        # drop the connection more than once across one file's own
+        # processing, and a single-retry backstop still crashed on the
+        # second drop. Bounded by _MAX_ATTEMPTS per label (not unbounded),
+        # so a genuinely broken connection still fails loudly rather than
+        # looping forever.
+        _MAX_ATTEMPTS = 4
+
+        def _build_with_retry(row_label: str, keyed_values: dict) -> list[NormalizedObservation]:
+            for attempt in range(1, _MAX_ATTEMPTS + 1):
+                try:
+                    return build_observations_from_periods(
+                        self._conn,
+                        company_id=company_id,
+                        source=_SOURCE,
+                        source_file=str(file_path),
+                        parser_version=PARSER_VERSION,
+                        period_type="annual",
+                        statement_type=statement_type,
+                        row_label=row_label,
+                        period_values=keyed_values,
+                    )
+                except Exception as exc:  # noqa: BLE001 -- reconnect-and-retry backstop
+                    if attempt == _MAX_ATTEMPTS or not _is_stale_connection_error(exc):
+                        raise
+                    logger.warning(
+                        "%s: DB connection went stale during PDF parsing (%s) -- reopening and retrying (attempt %d/%d)",
+                        file_path, exc, attempt + 1, _MAX_ATTEMPTS,
+                    )
+                    from storage.backend_bootstrap import open_db
+                    try:
+                        self._conn.close()
+                    except Exception:  # noqa: BLE001 -- best-effort close of an already-broken connection
+                        pass
+                    self._conn = open_db()
+            return []  # unreachable -- the loop above always returns or raises
+
         observations: list[NormalizedObservation] = []
-        reconnected = False
         for label, period_values in values_by_label.items():
             if label in _INTERMEDIATE_ONLY_LABELS:
                 continue
             if label not in _NO_RESCALE_LABELS:
                 period_values = {fy: v * _THOUSANDS_TO_CRORE for fy, v in period_values.items()}
             keyed_values = {(fy, None): v for fy, v in period_values.items()}
-            try:
-                new_obs = build_observations_from_periods(
-                    self._conn,
-                    company_id=company_id,
-                    source=_SOURCE,
-                    source_file=str(file_path),
-                    parser_version=PARSER_VERSION,
-                    period_type="annual",
-                    statement_type=statement_type,
-                    row_label=label,
-                    period_values=keyed_values,
-                )
-            except Exception as exc:  # noqa: BLE001 -- reconnect-and-retry-once backstop
-                if reconnected or not _is_stale_connection_error(exc):
-                    raise
-                logger.warning("%s: DB connection went stale during PDF parsing (%s) -- reopening and retrying once",
-                                file_path, exc)
-                from storage.backend_bootstrap import open_db
-                try:
-                    self._conn.close()
-                except Exception:  # noqa: BLE001 -- best-effort close of an already-broken connection
-                    pass
-                self._conn = open_db()
-                reconnected = True
-                new_obs = build_observations_from_periods(
-                    self._conn,
-                    company_id=company_id,
-                    source=_SOURCE,
-                    source_file=str(file_path),
-                    parser_version=PARSER_VERSION,
-                    period_type="annual",
-                    statement_type=statement_type,
-                    row_label=label,
-                    period_values=keyed_values,
-                )
-            observations.extend(new_obs)
+            observations.extend(_build_with_retry(label, keyed_values))
         return observations
