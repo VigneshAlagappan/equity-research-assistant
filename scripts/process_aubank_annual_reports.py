@@ -53,7 +53,7 @@ def _already_extracted_fiscal_years(conn) -> set[str]:
             "WHERE company_id = %s AND parser_version = %s",
             (COMPANY_ID, PARSER_VERSION),
         )
-        return {row[0] for row in cur.fetchall()}
+        return {row["fiscal_year"] for row in cur.fetchall()}
 
 
 def _is_stale_connection_error(exc: BaseException) -> bool:
