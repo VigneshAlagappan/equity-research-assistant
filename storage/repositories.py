@@ -341,6 +341,66 @@ def get_canonical_series(
     ).fetchall()
 
 
+def get_canonical_series_provenance(
+    conn: sqlite3.Connection,
+    company_id: str,
+    metric_key: str,
+    period_type: str = "annual",
+    statement_type: str | None = "consolidated",
+) -> list[sqlite3.Row]:
+    """Per-period (fiscal_year, quarter, source, parser_version) for one
+    metric/company/period_type/statement_type series -- the raw ingredients
+    web/charts_feed.py needs to classify each value as XBRL-sourced vs. an
+    NSE filing PDF (see its _classify_provenance()), without duplicating the
+    join logic in two backends' worth of SQL. `source`/`parser_version` are
+    both NULL when chosen_observation_id itself is NULL (a canonical value
+    with no traceable observation -- shouldn't normally happen, but the
+    LEFT JOINs degrade gracefully rather than dropping the row) or when the
+    chosen observation has no source_document_id (never came from a
+    documents-tracked file, e.g. a Screener/Proprietary spreadsheet row)."""
+    return conn.execute(
+        """
+        SELECT cf.fiscal_year, cf.quarter, fo.source AS source, d.parser_version AS parser_version
+        FROM canonical_financials cf
+        LEFT JOIN financial_observations fo ON fo.observation_id = cf.chosen_observation_id
+        LEFT JOIN documents d ON d.document_id = fo.source_document_id
+        WHERE cf.company_id = ? AND cf.metric_key = ? AND cf.period_type = ? AND cf.statement_type IS ?
+        ORDER BY cf.fiscal_year ASC, cf.quarter ASC
+        """,
+        (company_id, metric_key, period_type, statement_type),
+    ).fetchall()
+
+
+def company_has_canonical_financials(conn: sqlite3.Connection, company_id: str) -> bool:
+    """True if `company_id` has at least one canonical_financials row of any
+    metric/period/statement_type -- used by web/app.py's company_report()
+    to decide whether a company with a ported, static valuation_model_file
+    (web/static/data/*.json, see scripts/import_equity_analysis_workbooks.py)
+    can safely be switched to the live charts_feed instead: a company with
+    zero canonical_financials rows would otherwise render a completely
+    empty Financials tab, a real regression versus the static file it
+    replaces -- see the migration's coverage-comparison writeup. A company
+    that switches gets whatever the live data actually has, no per-metric
+    gate beyond "not entirely empty" -- genuine per-row gaps still render
+    as "-", same as every non-ported company already does."""
+    row = conn.execute("SELECT 1 FROM canonical_financials WHERE company_id = ? LIMIT 1", (company_id,)).fetchone()
+    return row is not None
+
+
+def get_available_statement_types(conn: sqlite3.Connection, company_id: str) -> set[str]:
+    """Which of "standalone"/"consolidated" this company actually has at
+    least one canonical_financials row for -- used by web/app.py's
+    company_report() to only offer a Standalone/Consolidated toggle link
+    for statement types that exist, instead of always showing both (a
+    company like AU Small Finance Bank whose annual reports are standalone-
+    only would otherwise show a clickable "Consolidated" link that always
+    renders empty)."""
+    rows = conn.execute(
+        "SELECT DISTINCT statement_type FROM canonical_financials WHERE company_id = ?", (company_id,),
+    ).fetchall()
+    return {row["statement_type"] for row in rows if row["statement_type"]}
+
+
 def list_canonical_financials_for_companies(conn: sqlite3.Connection, company_ids: list[str]) -> list[sqlite3.Row]:
     """Every canonical_financials row for the given companies in one query,
     joined with metrics_dictionary for a human-readable display_name/

@@ -1,0 +1,12 @@
+{#
+  Follow-up research: questions the investigation left unanswered
+  (report.follow_up_questions). Renders nothing when empty.
+#}
+{% macro follow_up_research(questions) %}
+{% if questions %}
+<p class="signal-section-label">Follow-up Research</p>
+<div class="signal-pill-row">
+  {% for q in questions %}<span class="signal-pill">{{ q }}</span>{% endfor %}
+</div>
+{% endif %}
+{% endmacro %}

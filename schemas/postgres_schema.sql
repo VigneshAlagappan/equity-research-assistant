@@ -1240,3 +1240,38 @@ CREATE TABLE IF NOT EXISTS ingestion_queue_items (
   error_message TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ingestion_queue_status ON ingestion_queue_items(status, item_kind);
+
+-- ============================================================
+-- NSE filing discovery log (docs/nse-pdf-feasibility/FEASIBILITY_REPORT.md)
+--
+-- Tracks, per company/quarter, whether an official NSE-filed quarterly
+-- financial-result document was discovered and whether its PDF text was
+-- extractable ('extracted') or needs OCR ('needs_ocr') -- a discovery/
+-- tagging log for a future real ingestion pipeline, NOT wired into
+-- canonical_financials/financial_observations or any research/reporting
+-- code path today. Populated manually from the feasibility spike's
+-- verified output (192 rows: HDFCBANK/RELIANCE/ICICIBANK/TCS, 2015-2026),
+-- not by any scheduled job -- see the report for methodology and the
+-- 'needs_ocr' backlog this table exists to make visible.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS nse_filing_discovery_log (
+  discovery_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  nse_symbol TEXT NOT NULL,
+  fiscal_year TEXT NOT NULL,
+  quarter TEXT NOT NULL,
+  period_end TEXT,
+  filing_date TEXT,
+  source_url TEXT,
+  match_confidence TEXT,        -- text_marker | date_window_only | ...
+  attachment_format TEXT,       -- pdf | zip | html | none
+  extraction_status TEXT NOT NULL,
+  extracted_char_count INTEGER,
+  xbrl_available BOOLEAN,
+  notes TEXT,
+  discovered_at TEXT NOT NULL,
+  CHECK (extraction_status IN ('extracted', 'needs_ocr', 'not_found', 'not_attempted')),
+  UNIQUE(company_id, fiscal_year, quarter)
+);
+CREATE INDEX IF NOT EXISTS idx_nse_filing_discovery_status ON nse_filing_discovery_log(extraction_status);

@@ -1,0 +1,18 @@
+{#
+  Trend snapshot strip. Data-driven off report.trend_snapshot
+  (list[reports.schema.TrendPoint]) — see metric_cards.html's docstring for
+  why this is empty under today's pipeline and renders nothing then.
+#}
+{% macro trend_snapshot(points) %}
+{% if points %}
+<p class="signal-section-label">Trend Snapshot</p>
+<div class="signal-trend-row">
+  {% for p in points %}
+  <div class="signal-trend-item">
+    <div class="signal-trend-item-label">{{ p.label }}</div>
+    <div class="signal-trend-item-value">{{ p.value }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}

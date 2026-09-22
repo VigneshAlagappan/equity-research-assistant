@@ -408,6 +408,48 @@ def get_canonical_series(
         return cur.fetchall()
 
 
+def get_canonical_series_provenance(
+    conn: DBConnection,
+    company_id: str,
+    metric_key: str,
+    period_type: str = "annual",
+    statement_type: str | None = "consolidated",
+) -> list[Row]:
+    """Postgres port of storage.repositories.get_canonical_series_provenance
+    -- see that docstring for the full rationale (web/charts_feed.py's
+    XBRL-vs-NSE-PDF provenance tag)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT cf.fiscal_year, cf.quarter, fo.source AS source, d.parser_version AS parser_version
+            FROM canonical_financials cf
+            LEFT JOIN financial_observations fo ON fo.observation_id = cf.chosen_observation_id
+            LEFT JOIN documents d ON d.document_id = fo.source_document_id
+            WHERE cf.company_id = %s AND cf.metric_key = %s AND cf.period_type = %s
+              AND cf.statement_type IS NOT DISTINCT FROM %s
+            ORDER BY cf.fiscal_year ASC, cf.quarter ASC
+            """,
+            (company_id, metric_key, period_type, statement_type),
+        )
+        return cur.fetchall()
+
+
+def company_has_canonical_financials(conn: DBConnection, company_id: str) -> bool:
+    """Postgres port of storage.repositories.company_has_canonical_financials
+    -- see that docstring."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM canonical_financials WHERE company_id = %s LIMIT 1", (company_id,))
+        return cur.fetchone() is not None
+
+
+def get_available_statement_types(conn: DBConnection, company_id: str) -> set[str]:
+    """Postgres port of storage.repositories.get_available_statement_types
+    -- see that docstring."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT statement_type FROM canonical_financials WHERE company_id = %s", (company_id,))
+        return {row["statement_type"] for row in cur.fetchall() if row["statement_type"]}
+
+
 def list_canonical_financials_for_companies(conn: DBConnection, company_ids: list[str]) -> list[Row]:
     """LEFT JOIN pattern, verified against real Neon."""
     if not company_ids:

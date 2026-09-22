@@ -1484,6 +1484,8 @@
            href="{{ url_for('settings', panel='admin-audit', al_tab='job_runs') }}">Job Runs ({{ audit_job_runs|length }})</a>
         <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab == 'cases' }}"
            href="{{ url_for('settings', panel='admin-audit', al_tab='cases') }}">Cases ({{ audit_case_rows|length }})</a>
+        <a class="admin-audit-subnav-btn {{ 'active' if audit_active_tab == 'raw_documents' }}"
+           href="{{ url_for('settings', panel='admin-audit', al_tab='raw_documents') }}">Raw Documents ({{ audit_raw_rows|length }})</a>
       </div>
 
       <div class="admin-audit-subpanel" id="admin-audit-subpanel-reconciliation" {{ 'hidden' if audit_active_tab != 'reconciliation' }}>
@@ -1861,6 +1863,69 @@
       </table>
       {% else %}
       <div class="empty-state">No cases match this filter.</div>
+      {% endif %}
+      </div>
+
+      <div class="admin-audit-subpanel" id="admin-audit-subpanel-raw-documents" {{ 'hidden' if audit_active_tab != 'raw_documents' }}>
+      <p class="muted">
+        Per-company coverage of every "pull and store, don't process yet" backfill, across every source (the
+        <code>raw_objects</code> catalog — see ADR-022).
+        <strong>Processed</strong> counts objects whose state has advanced past <code>stored</code> — always 0
+        today, since every backfill built so far deliberately stops at <code>stored</code>; this column starts
+        moving the moment a future processing step runs, with no template change needed then.
+        {{ audit_raw_total_objects }} raw object(s) on file across {{ audit_raw_rows|length }} compan{{ 'y' if audit_raw_rows|length == 1 else 'ies' }}.
+      </p>
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-audit">
+        <input type="hidden" name="al_tab" value="raw_documents">
+        <div class="field">
+          <label for="raw-doc-q">Company</label>
+          <input class="input" id="raw-doc-q" type="text" name="al_raw_q" value="{{ audit_raw_query }}" placeholder="Search by name or company_id&hellip;">
+        </div>
+        <button type="submit" class="btn btn-primary">Apply</button>
+        {% if audit_raw_query %}
+        <a class="btn btn-ghost" href="{{ url_for('settings', panel='admin-audit', al_tab='raw_documents') }}">Clear</a>
+        {% endif %}
+      </form>
+
+      {% if audit_raw_rows %}
+      <table class="table admin-audit-table">
+        <thead>
+          <tr>
+            <th>Company</th>
+            <th>Source</th>
+            {% for doc_type in audit_raw_doc_types %}
+            <th>{{ audit_raw_doc_type_labels.get(doc_type, doc_type) }}</th>
+            {% endfor %}
+            <th>Total</th>
+            <th>Processed</th>
+            <th>Latest fetch</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in audit_raw_rows %}
+          <tr>
+            <td><a href="{{ url_for('company_report', company_id=row['company_id']) }}">{{ row['display_name'] }}</a></td>
+            <td>{{ row['source_label'] }}</td>
+            {% for doc_type in audit_raw_doc_types %}
+            <td>{{ row['by_type'].get(doc_type, 0) }}</td>
+            {% endfor %}
+            <td>{{ row['total'] }}</td>
+            <td>
+              {% if row['processed'] > 0 %}
+              <span class="tag tag-success">{{ row['processed'] }}</span>
+              {% else %}
+              <span class="muted">0</span>
+              {% endif %}
+            </td>
+            <td><span class="local-time" data-utc="{{ row['latest_fetched_at'] }}">{{ row['latest_fetched_at'] }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">No raw documents stored yet{{ ' matching this filter' if audit_raw_query }}.</div>
       {% endif %}
       </div>
     </div>

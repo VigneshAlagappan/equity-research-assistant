@@ -262,3 +262,10 @@ data/.flask_secret_key
 # BASE_DIR, so a clean test run shouldn't recreate this locally at all;
 # if you see it repopulate, something regressed that isolation.
 threads/
+
+# Deploy-time artifacts generated from `aws lightsail get-container-services`
+# output -- always contains real secrets (API keys, DB URL) pulled from the
+# live service's current env vars, so must never be committed. Regenerated
+# fresh each deploy per docs/USER_GUIDE.md's Lightsail deploy steps.
+containers.json
+public-endpoint.json
