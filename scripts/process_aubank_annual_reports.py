@@ -26,6 +26,7 @@ import storage.backend_bootstrap
 storage.backend_bootstrap.install()
 
 from ingestion.pipeline import ingest_file
+from sources.nse_pdf_annual_report import PARSER_VERSION
 from storage.backend_bootstrap import open_db
 from storage.document_store import default_document_store
 from storage.raw_object_repository import list_raw_objects
@@ -35,6 +36,24 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("process_aubank_annual_reports")
 
 COMPANY_ID = "AUBANK"
+
+
+def _already_extracted_fiscal_years(conn) -> set[str]:
+    """Fiscal years this exact parser has already written observations for
+    -- an earlier partial run of this script (before two real page-
+    detection bugs were found and fixed) already processed FY2023
+    successfully with correct output; financial_observations has no
+    uniqueness constraint beyond its own identity column, so re-running an
+    already-correct year would just insert duplicate rows, not fix or
+    change anything. Skipped, not deleted-and-redone -- the existing
+    FY2023 rows are already right."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT fiscal_year FROM financial_observations "
+            "WHERE company_id = %s AND parser_version = %s",
+            (COMPANY_ID, PARSER_VERSION),
+        )
+        return {row[0] for row in cur.fetchall()}
 
 
 def _is_stale_connection_error(exc: BaseException) -> bool:
@@ -58,6 +77,10 @@ def main() -> None:
     already_registered = {
         row["source_url"] for row in list_company_documents(conn, COMPANY_ID) if row["source_url"]
     }
+    already_extracted = _already_extracted_fiscal_years(conn)
+    if already_extracted:
+        logger.info("Already has extracted facts for: %s -- will skip financial extraction for these "
+                    "(Docs tab registration still runs)", sorted(already_extracted))
 
     total_reconciled = 0
     for row in raw_rows:
@@ -68,41 +91,44 @@ def main() -> None:
 
         logger.info("=== %s (%s) ===", period, s3_key)
 
-        # 1. Extract facts -> financial_observations -> reconcile(), via
-        #    the standard ingest_file() pipeline (this app's normal path
-        #    for every other source too). Downloads the PDF bytes from S3
-        #    to a local temp file first -- ingest_file()'s adapter
-        #    interface takes a real file path, not raw bytes.
-        content = store.retrieve(s3_key)
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
-        try:
+        if period in already_extracted:
+            logger.info("%s: already has extracted facts from a previous run -- skipping extraction", period)
+        else:
+            # 1. Extract facts -> financial_observations -> reconcile(), via
+            #    the standard ingest_file() pipeline (this app's normal path
+            #    for every other source too). Downloads the PDF bytes from S3
+            #    to a local temp file first -- ingest_file()'s adapter
+            #    interface takes a real file path, not raw bytes.
+            content = store.retrieve(s3_key)
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp.write(content)
+                tmp_path = Path(tmp.name)
             try:
-                result = ingest_file(
-                    conn, tmp_path, company_id=COMPANY_ID, source_id="nse_pdf_annual_report",
-                    statement_type="standalone",
+                try:
+                    result = ingest_file(
+                        conn, tmp_path, company_id=COMPANY_ID, source_id="nse_pdf_annual_report",
+                        statement_type="standalone",
+                    )
+                except Exception as exc:  # noqa: BLE001 -- reconnect-and-retry-once, same as every other script this session
+                    if not _is_stale_connection_error(exc):
+                        raise
+                    logger.warning("%s: DB connection went stale -- reopening and retrying once", period)
+                    conn.close()
+                    conn = open_db()
+                    result = ingest_file(
+                        conn, tmp_path, company_id=COMPANY_ID, source_id="nse_pdf_annual_report",
+                        statement_type="standalone",
+                    )
+                logger.info(
+                    "%s: parsed=%d inserted=%d skipped=%d reconciled=%d",
+                    period, result.parsed_count, result.inserted_count, result.skipped_count, result.reconciled_count,
                 )
-            except Exception as exc:  # noqa: BLE001 -- reconnect-and-retry-once, same as every other script this session
-                if not _is_stale_connection_error(exc):
-                    raise
-                logger.warning("%s: DB connection went stale -- reopening and retrying once", period)
-                conn.close()
-                conn = open_db()
-                result = ingest_file(
-                    conn, tmp_path, company_id=COMPANY_ID, source_id="nse_pdf_annual_report",
-                    statement_type="standalone",
-                )
-            logger.info(
-                "%s: parsed=%d inserted=%d skipped=%d reconciled=%d",
-                period, result.parsed_count, result.inserted_count, result.skipped_count, result.reconciled_count,
-            )
-            if result.skip_reasons:
-                for reason in result.skip_reasons:
-                    logger.warning("  skipped: %s", reason)
-            total_reconciled += result.reconciled_count
-        finally:
-            tmp_path.unlink(missing_ok=True)
+                if result.skip_reasons:
+                    for reason in result.skip_reasons:
+                        logger.warning("  skipped: %s", reason)
+                total_reconciled += result.reconciled_count
+            finally:
+                tmp_path.unlink(missing_ok=True)
 
         # 2. Register the document for the Docs tab -- reuses the SAME S3
         #    key/content_hash already on file (no re-upload), skipped if
