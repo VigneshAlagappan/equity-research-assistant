@@ -157,6 +157,7 @@ from storage.repositories import (
     add_sector,
     add_watchlist_item,
     company_has_canonical_financials,
+    get_available_statement_types,
     count_companies_by_index_tag,
     count_companies_by_industry,
     count_companies_by_sector,
@@ -2102,6 +2103,21 @@ def create_app() -> Flask:
         if company is None:
             abort(404, f"No company registered with company_id={company_id!r}")
 
+        # Which of "standalone"/"consolidated" this company's own
+        # canonical_financials actually has -- a company like AU Small
+        # Finance Bank (RBI-regulated, standalone-only annual reports, no
+        # subsidiaries requiring consolidation) has ONLY "standalone" rows,
+        # so the default statement_type below and the toggle links in
+        # company.html both need to skip "consolidated" for it rather than
+        # rendering a Consolidated option/default that's always empty.
+        # Empty means either a brand-new company with no financials at all
+        # yet, or a ported-only company that never reaches the live feed
+        # (has_live_financials below) -- in either case there's nothing to
+        # gate on, so both options stay offered (unchanged legacy behavior).
+        available_statement_types = get_available_statement_types(db, company_id)
+        if available_statement_types and statement_type not in available_statement_types:
+            statement_type = "consolidated" if "consolidated" in available_statement_types else "standalone"
+
         valuation_model_file = company["valuation_model_file"]
         has_ported_dataset = bool(valuation_model_file) and _valuation_model_data_path(valuation_model_file).exists()
         # canonical_financials is this app's one source of truth for
@@ -2336,6 +2352,7 @@ def create_app() -> Flask:
             is_watchlisted=is_watchlisted(db, "company", company_id),
             has_ported_dataset=has_ported_dataset,
             has_live_financials=has_live_financials,
+            available_statement_types=available_statement_types,
             valuation_data_url=valuation_data_url,
             financials_data_url=financials_data_url,
             docs_data_url=url_for("company_docs_feed", company_id=company_id),

@@ -387,6 +387,20 @@ def company_has_canonical_financials(conn: sqlite3.Connection, company_id: str) 
     return row is not None
 
 
+def get_available_statement_types(conn: sqlite3.Connection, company_id: str) -> set[str]:
+    """Which of "standalone"/"consolidated" this company actually has at
+    least one canonical_financials row for -- used by web/app.py's
+    company_report() to only offer a Standalone/Consolidated toggle link
+    for statement types that exist, instead of always showing both (a
+    company like AU Small Finance Bank whose annual reports are standalone-
+    only would otherwise show a clickable "Consolidated" link that always
+    renders empty)."""
+    rows = conn.execute(
+        "SELECT DISTINCT statement_type FROM canonical_financials WHERE company_id = ?", (company_id,),
+    ).fetchall()
+    return {row["statement_type"] for row in rows if row["statement_type"]}
+
+
 def list_canonical_financials_for_companies(conn: sqlite3.Connection, company_ids: list[str]) -> list[sqlite3.Row]:
     """Every canonical_financials row for the given companies in one query,
     joined with metrics_dictionary for a human-readable display_name/

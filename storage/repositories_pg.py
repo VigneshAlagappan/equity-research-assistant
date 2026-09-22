@@ -442,6 +442,14 @@ def company_has_canonical_financials(conn: DBConnection, company_id: str) -> boo
         return cur.fetchone() is not None
 
 
+def get_available_statement_types(conn: DBConnection, company_id: str) -> set[str]:
+    """Postgres port of storage.repositories.get_available_statement_types
+    -- see that docstring."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT statement_type FROM canonical_financials WHERE company_id = %s", (company_id,))
+        return {row["statement_type"] for row in cur.fetchall() if row["statement_type"]}
+
+
 def list_canonical_financials_for_companies(conn: DBConnection, company_ids: list[str]) -> list[Row]:
     """LEFT JOIN pattern, verified against real Neon."""
     if not company_ids:

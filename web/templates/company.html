@@ -951,13 +951,24 @@
        (canonical_financials has at least some data for it), so it gets
        the same toggle row as every non-ported company. #}
     {% if not has_ported_dataset or has_live_financials %}
+    {# Only offer a statement-type link for what this company's own
+       canonical_financials actually has (available_statement_types) --
+       an empty set means no live data at all yet, so both stay offered
+       (nothing to gate on). A single available type hides the toggle
+       entirely rather than showing one link with nothing to switch to. #}
     <div class="vm-toggle-row">
+      {% if not available_statement_types or available_statement_types|length > 1 %}
       <div class="statement-toggle">
+        {% if not available_statement_types or 'consolidated' in available_statement_types %}
         <a class="{{ 'active' if statement_type == 'consolidated' else '' }}"
            href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='consolidated') }}#sec-financials">Consolidated</a>
+        {% endif %}
+        {% if not available_statement_types or 'standalone' in available_statement_types %}
         <a class="{{ 'active' if statement_type == 'standalone' else '' }}"
            href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='standalone') }}#sec-financials">Standalone</a>
+        {% endif %}
       </div>
+      {% endif %}
       <div class="vm-period-toggle" data-vm-period-toggle>
         <button type="button" class="vm-period-btn is-active" data-period-type="annual">Annual</button>
         <button type="button" class="vm-period-btn" data-period-type="quarterly">Quarterly</button>
@@ -988,12 +999,16 @@
 
   <section class="merged-section" id="sec-valuation-model">
     <h2>Valuation Model</h2>
-    {% if not has_ported_dataset %}
+    {% if not has_ported_dataset and (not available_statement_types or available_statement_types|length > 1) %}
     <div class="statement-toggle">
+      {% if not available_statement_types or 'consolidated' in available_statement_types %}
       <a class="{{ 'active' if statement_type == 'consolidated' else '' }}"
          href="{{ url_for('company_report', company_id=company_id, tab='valuation_model', statement_type='consolidated') }}#sec-valuation-model">Consolidated</a>
+      {% endif %}
+      {% if not available_statement_types or 'standalone' in available_statement_types %}
       <a class="{{ 'active' if statement_type == 'standalone' else '' }}"
          href="{{ url_for('company_report', company_id=company_id, tab='valuation_model', statement_type='standalone') }}#sec-valuation-model">Standalone</a>
+      {% endif %}
     </div>
     {% endif %}
 
