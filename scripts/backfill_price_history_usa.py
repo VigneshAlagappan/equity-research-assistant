@@ -45,7 +45,8 @@ def main() -> None:
     main_conn = init_db()
     rows = select_active_companies_by_country(main_conn, "US")
     main_conn.close()
-    company_ids = [r["company_id"] for r in rows]
+    tickers_by_company_id = {r["company_id"]: (r["fetch_symbol"] or r["company_id"]) for r in rows}
+    company_ids = list(tickers_by_company_id)
     if args.company_id:
         company_ids = [c for c in company_ids if c == args.company_id.upper()]
 
@@ -61,7 +62,10 @@ def main() -> None:
             # BRKB->BRK-B override (sources/yfinance_prices.py's
             # US_TICKER_OVERRIDES) go through the same resolve_yfinance_
             # ticker() this hits internally, same as the daily job.
-            bars = fetch_daily_bars(company_id, period=args.period, country="US")
+            # tickers_by_company_id resolves fetch_symbol first for the
+            # handful of company_ids disambiguated from a pre-existing
+            # Indian one (e.g. "PNC_US" vs the real ticker "PNC").
+            bars = fetch_daily_bars(tickers_by_company_id[company_id], period=args.period, country="US")
         except Exception as exc:
             errors += 1
             print(f"[{i}/{total}] {company_id:24s} ERROR {exc}", flush=True)

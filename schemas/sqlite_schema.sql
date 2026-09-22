@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS companies (
   nse_symbol TEXT,
   bse_code TEXT,
   isin TEXT,
+  fetch_symbol TEXT,                       -- the real market ticker used to fetch from yfinance/SEC EDGAR, when it differs from company_id (e.g. company_id "PNC_US" disambiguated from an existing Indian company_id "PNC", fetch_symbol "PNC" is the real one) -- company_id is a purely internal, guaranteed-unique key; this column (falls back to nse_symbol for India or company_id itself for US when NULL) is what every yfinance/SEC data-fetch call site should resolve against instead of assuming company_id doubles as the ticker
   country TEXT NOT NULL DEFAULT 'IN',      -- ISO 3166-1 alpha-2, e.g. "IN", "US" -- drives currency/exchange defaults, the Companies list filter, and live_quote.py's ticker-suffix logic
   currency TEXT NOT NULL DEFAULT 'INR',    -- ISO 4217, e.g. "INR", "USD" -- drives unit localization (normalization/financials.py) and price/financials display formatting
   fiscal_year_end_month INTEGER NOT NULL DEFAULT 3, -- 1-12, the calendar month this company's fiscal year closes in (3 = March, India's default; 12 = December, the common US default) -- drives normalization/periods.py's fiscal-year/quarter parsing

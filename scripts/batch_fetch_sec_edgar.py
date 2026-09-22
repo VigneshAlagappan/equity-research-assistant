@@ -65,9 +65,10 @@ def _run_financials(conn, company_id: str) -> str:
     if company is None:
         raise ValueError(f"no company registered as {company_id!r}")
 
-    cik = get_cik_for_ticker(company_id)
+    ticker = company["fetch_symbol"] or company_id
+    cik = get_cik_for_ticker(ticker)
     if cik is None:
-        raise SECFetchError(f"could not resolve a SEC CIK for ticker {company_id!r}")
+        raise SECFetchError(f"could not resolve a SEC CIK for ticker {ticker!r}")
 
     result = ingest_sec_edgar_company(conn, company_id, cik, currency=company["currency"])
     detail = (

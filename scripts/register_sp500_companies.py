@@ -59,10 +59,43 @@ def _is_stale_connection_error(exc: BaseException) -> bool:
     )
 
 
-def _existing_company_ids(conn) -> set[str]:
+def _existing_companies(conn) -> dict[str, str]:
+    """company_id -> country for every company already on file."""
     with conn.cursor() as cur:
-        cur.execute("SELECT company_id FROM companies")
-        return {row["company_id"] for row in cur.fetchall()}
+        cur.execute("SELECT company_id, country FROM companies")
+        return {row["company_id"]: row["country"] for row in cur.fetchall()}
+
+
+def _resolve_company_id(ticker: str, existing: dict[str, str]) -> tuple[str, str | None] | None:
+    """(company_id, fetch_symbol) for one S&P 500 ticker, or None if this
+    ticker is already correctly registered as a US company under its own
+    name (nothing to do). company_id is a purely internal, guaranteed-
+    unique key; fetch_symbol carries the real ticker whenever it differs
+    from company_id.
+
+    Three cases:
+    - Not registered at all: (ticker, None) -- company_id IS the ticker,
+      same as every existing non-colliding US company.
+    - Already registered as a US company under this exact id (the common
+      re-run case: this ticker was registered in an earlier pass of this
+      script): None -- already done, nothing to register.
+    - Registered under this id but as a DIFFERENT country (a genuine
+      collision -- e.g. "PNC" is both PNC Financial's ticker and an
+      existing Indian company_id, "Pritish Nandy Communications"):
+      disambiguates with a "-US" suffix (hyphen, not underscore --
+      normalization.companies' company_id regex allows [A-Z0-9&.-], not
+      "_") and carries the real ticker in fetch_symbol instead -- every
+      US-data call site (price fetch, website backfill, SEC EDGAR)
+      resolves `fetch_symbol or company_id`, never company_id alone."""
+    country = existing.get(ticker)
+    if country is None:
+        return ticker, None
+    if country == "US":
+        return None
+    disambiguated = f"{ticker}-US"
+    if disambiguated in existing:
+        return None
+    return disambiguated, ticker
 
 
 def _fiscal_year_end_month(info: dict) -> int:
@@ -89,14 +122,16 @@ def main() -> None:
         rows = list(csv.DictReader(f))
 
     conn = open_db()
-    existing = _existing_company_ids(conn)
+    existing = _existing_companies(conn)
 
     to_register = []
     for row in rows:
-        company_id = _normalize_ticker(row["Symbol"])
-        if company_id in existing:
+        ticker = _normalize_ticker(row["Symbol"])
+        resolved = _resolve_company_id(ticker, existing)
+        if resolved is None:
             continue
-        to_register.append((company_id, row))
+        company_id, fetch_symbol = resolved
+        to_register.append((company_id, fetch_symbol, row))
     if args.limit:
         to_register = to_register[: args.limit]
 
@@ -105,10 +140,11 @@ def main() -> None:
           f"{total} to register", flush=True)
 
     registered = errors = 0
-    for i, (company_id, row) in enumerate(to_register, 1):
+    for i, (company_id, fetch_symbol, row) in enumerate(to_register, 1):
         legal_name = row["Security"]
+        ticker = fetch_symbol or company_id
         try:
-            info = yf.Ticker(company_id).info
+            info = yf.Ticker(ticker).info
         except Exception as exc:  # noqa: BLE001 -- one ticker's Yahoo lookup failing must not abort the batch
             info = {}
             print(f"[{i}/{total}] {company_id}: yfinance lookup failed ({exc}) -- registering with CSV data only", flush=True)
@@ -119,6 +155,7 @@ def main() -> None:
             display_name=legal_name,
             country="US",
             currency="USD",
+            fetch_symbol=fetch_symbol,
             fiscal_year_end_month=_fiscal_year_end_month(info),
             website=info.get("website"),
             sector=info.get("sector") or row["GICS Sector"],

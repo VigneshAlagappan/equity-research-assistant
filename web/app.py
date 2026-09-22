@@ -786,7 +786,7 @@ def create_app() -> Flask:
                 # already cached from someone having visited this company's
                 # own page (get_live_quote there). Never fetches here: with
                 # ~2,500 rows a live call per row isn't viable on a list page.
-                ticker = row["nse_symbol"] or (row["company_id"] if row["country"] != "IN" else None)
+                ticker = row["nse_symbol"] or row["fetch_symbol"] or (row["company_id"] if row["country"] != "IN" else None)
                 cached_quote = peek_cached_quote(ticker, row["country"])
                 if cached_quote is not None:
                     row["latest_price"] = cached_quote["price"]
@@ -2278,10 +2278,12 @@ def create_app() -> Flask:
         latest_price = _latest_price(valuation_model_file) if valuation_model_file else None
         live_quote = get_live_quote(
             # nse_symbol only exists for Indian companies; a non-Indian
-            # company (no NSE/BSE identifiers at all) uses its own
-            # company_id as the yfinance ticker instead — see
-            # web/live_quote.py and cmd_ingest_yfinance's own convention.
-            company["nse_symbol"] or (company_id if company["country"] != "IN" else None),
+            # company falls back to fetch_symbol (the real ticker when it
+            # differs from company_id, e.g. a US company_id disambiguated
+            # from an Indian one) and finally to its own company_id as the
+            # yfinance ticker -- see web/live_quote.py and
+            # cmd_ingest_yfinance's own convention.
+            company["nse_symbol"] or company["fetch_symbol"] or (company_id if company["country"] != "IN" else None),
             company["country"],
         )
         # Same resolved price the page header already shows (live_quote,
@@ -2602,7 +2604,7 @@ def create_app() -> Flask:
 
         latest_price = _latest_price(company["valuation_model_file"]) if company["valuation_model_file"] else None
         live_quote = get_live_quote(
-            company["nse_symbol"] or (company_id if company["country"] != "IN" else None),
+            company["nse_symbol"] or company["fetch_symbol"] or (company_id if company["country"] != "IN" else None),
             company["country"],
         )
         price = live_quote["price"] if live_quote else latest_price

@@ -40,9 +40,9 @@ def main() -> None:
     print(f"{total} companies missing a website", flush=True)
 
     updated = no_data = errors = 0
-    for i, (company_id,) in enumerate(rows, 1):
+    for i, (company_id, fetch_symbol) in enumerate(rows, 1):
         try:
-            website = yf.Ticker(company_id).info.get("website")
+            website = yf.Ticker(fetch_symbol or company_id).info.get("website")
         except Exception as exc:
             errors += 1
             print(f"[{i}/{total}] {company_id}: error ({exc})", flush=True)

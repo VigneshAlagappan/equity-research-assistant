@@ -85,23 +85,27 @@ def _is_stale_connection_error(exc: BaseException) -> bool:
 
 
 def _resolve_symbol_map(conn, companies: list[str]) -> dict[str, str]:
-    """company_id -> ticker (this app's US company_id IS the ticker, e.g.
-    "AAPL", but resolved through get_company() rather than assumed, so a
-    typo'd/unregistered ticker is skipped with a clear log line instead of
-    silently hitting SEC's ticker map with something never checked against
-    this app's own company registry)."""
+    """company_id -> ticker (usually this app's US company_id IS the
+    ticker, e.g. "AAPL", but a handful are disambiguated from a
+    pre-existing Indian company_id -- e.g. "PNC_US" vs the real ticker
+    "PNC" -- so the real ticker is read from companies.fetch_symbol,
+    falling back to company_id, rather than assumed. Resolved through
+    get_company() rather than a bare lookup, so a typo'd/unregistered
+    ticker is skipped with a clear log line instead of silently hitting
+    SEC's ticker map with something never checked against this app's own
+    company registry)."""
     symbols: dict[str, str] = {}
     for company_id in companies:
         company = get_company(conn, company_id)
         if company is None:
             logger.warning("%s: no company registered under this id -- skipping", company_id)
             continue
-        symbols[company_id] = company_id
+        symbols[company_id] = company["fetch_symbol"] or company_id
     return symbols
 
 
 def _resolve_us_companies(conn) -> dict[str, str]:
-    return {c["company_id"]: c["company_id"] for c in list_companies(conn) if c["country"] == "US"}
+    return {c["company_id"]: (c["fetch_symbol"] or c["company_id"]) for c in list_companies(conn) if c["country"] == "US"}
 
 
 class CompanyResult:

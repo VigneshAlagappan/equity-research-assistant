@@ -12,10 +12,12 @@ covers US tickers fine without it). Only the universe query and the
 missing `country="US"` argument were ever missing -- this script is that,
 not a new fetch capability.
 
-For a US company, `company_id` *is* the yfinance ticker (no separate
-"us_ticker" column exists -- see companies.country/currency and
-web/live_quote.py's own `company['nse_symbol'] or company_id` convention),
-so there's no NSE-symbol-style join needed here, just companies WHERE
+For a US company, `company_id` is usually the yfinance ticker too, except
+where it's been disambiguated from a pre-existing Indian company_id (e.g.
+"PNC_US" vs the real ticker "PNC") -- companies.fetch_symbol carries the
+real ticker for those, so every fetch below resolves
+`row["fetch_symbol"] or row["company_id"]`, never company_id alone. No
+NSE-symbol-style join needed here beyond that, just companies WHERE
 country = 'US'.
 
 Usage: python -m scripts.fetch_daily_prices_usa
@@ -87,9 +89,10 @@ def run_price_history_update_usa(main_conn=None, price_conn=None) -> int:
         with BatchRun(main_conn, "price_history_usa", scope_label=f"US companies ({total})") as run:
             for i, row in enumerate(rows, 1):
                 company_id = row["company_id"]
+                ticker = row["fetch_symbol"] or company_id
                 with run.item(company_id) as item:
                     try:
-                        bars = fetch_daily_bars(company_id, period=FETCH_PERIOD, country="US")
+                        bars = fetch_daily_bars(ticker, period=FETCH_PERIOD, country="US")
                     except Exception as exc:
                         errors += 1
                         print(f"[{i}/{total}] {company_id:24s} ERROR {exc}", flush=True)

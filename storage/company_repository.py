@@ -30,18 +30,18 @@ def insert_company(
     conn: DBConnection, *, company_id: str, legal_name: str, display_name: str, nse_symbol: str | None,
     bse_code: str | None, isin: str | None, country: str, currency: str, fiscal_year_end_month: int,
     website: str | None, macro_economic_sector: str | None, sector: str | None, industry: str | None,
-    basic_industry: str | None, listed_date: str | None, now: str,
+    basic_industry: str | None, listed_date: str | None, now: str, fetch_symbol: str | None = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO companies (
-            company_id, legal_name, display_name, nse_symbol, bse_code, isin, country, currency,
+            company_id, legal_name, display_name, nse_symbol, bse_code, isin, fetch_symbol, country, currency,
             fiscal_year_end_month, website,
             macro_economic_sector, sector, industry, basic_industry,
             status, listed_date, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
         """,
-        (company_id, legal_name, display_name, nse_symbol, bse_code, isin, country, currency,
+        (company_id, legal_name, display_name, nse_symbol, bse_code, isin, fetch_symbol, country, currency,
          fiscal_year_end_month, website,
          macro_economic_sector, sector, industry, basic_industry, listed_date, now, now),
     )
@@ -52,18 +52,18 @@ def update_company(
     conn: DBConnection, *, company_id: str, legal_name: str, display_name: str, nse_symbol: str | None,
     bse_code: str | None, isin: str | None, country: str, currency: str, fiscal_year_end_month: int,
     website: str | None, macro_economic_sector: str | None, sector: str | None, industry: str | None,
-    basic_industry: str | None, listed_date: str | None, now: str,
+    basic_industry: str | None, listed_date: str | None, now: str, fetch_symbol: str | None = None,
 ) -> None:
     conn.execute(
         """
         UPDATE companies SET
-            legal_name = ?, display_name = ?, nse_symbol = ?, bse_code = ?, isin = ?,
+            legal_name = ?, display_name = ?, nse_symbol = ?, bse_code = ?, isin = ?, fetch_symbol = ?,
             country = ?, currency = ?, fiscal_year_end_month = ?, website = ?,
             macro_economic_sector = ?, sector = ?, industry = ?, basic_industry = ?,
             listed_date = ?, updated_at = ?
         WHERE company_id = ?
         """,
-        (legal_name, display_name, nse_symbol, bse_code, isin, country, currency, fiscal_year_end_month,
+        (legal_name, display_name, nse_symbol, bse_code, isin, fetch_symbol, country, currency, fiscal_year_end_month,
          website, macro_economic_sector, sector, industry, basic_industry, listed_date, now, company_id),
     )
     conn.commit()
@@ -300,7 +300,7 @@ def select_corporate_actions(conn: DBConnection, company_id: str) -> list[Row]:
 
 
 def select_companies_missing_website(conn: DBConnection, *, company_id: str | None = None) -> list[Row]:
-    query = "SELECT company_id FROM companies WHERE country != 'IN' AND website IS NULL"
+    query = "SELECT company_id, fetch_symbol FROM companies WHERE country != 'IN' AND website IS NULL"
     params: tuple = ()
     if company_id is not None:
         query += " AND company_id = ?"
@@ -397,9 +397,15 @@ def select_active_companies_by_country(conn: DBConnection, country: str) -> list
     company on file" is the whole ticker list, not just an index subset,
     and a couple of them (e.g. Lyft) aren't in any of the US indices
     already tagged in company_index_membership (S&P 500/Nasdaq 100/Dow)
-    anyway -- filtering by one of those would silently drop them."""
+    anyway -- filtering by one of those would silently drop them.
+
+    fetch_symbol is included alongside company_id since the two aren't
+    always the same anymore (a handful of US company_ids are disambiguated
+    from a pre-existing Indian company_id, e.g. "PNC_US" vs the real
+    ticker "PNC") -- callers should resolve the real ticker as
+    `row["fetch_symbol"] or row["company_id"]`, never company_id alone."""
     return conn.execute(
-        "SELECT company_id FROM companies WHERE country = ? AND status = 'active' ORDER BY company_id",
+        "SELECT company_id, fetch_symbol FROM companies WHERE country = ? AND status = 'active' ORDER BY company_id",
         (country,),
     ).fetchall()
 
