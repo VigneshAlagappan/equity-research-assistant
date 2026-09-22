@@ -127,6 +127,9 @@ def main() -> None:
                     for reason in result.skip_reasons:
                         logger.warning("  skipped: %s", reason)
                 total_reconciled += result.reconciled_count
+            except Exception as exc:  # noqa: BLE001 -- one corrupted PDF must not abort the other 9 companies' years
+                logger.error("%s: extraction failed with an unexpected error (%s: %s) -- skipping this "
+                            "year's financial extraction, continuing to the rest", period, type(exc).__name__, exc)
             finally:
                 tmp_path.unlink(missing_ok=True)
 
