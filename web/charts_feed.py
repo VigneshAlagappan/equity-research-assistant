@@ -72,7 +72,7 @@ _RAW_METRIC_KEYS = (
     "tax", "profit_before_tax", "operating_expenses", "depreciation",
     "equity_share_capital", "reserves", "borrowings", "investments",
     "deposits", "advances", "eps", "book_value", "dividend_per_share", "sales_per_share",
-    "shares_outstanding", "total_shareholders_funds",
+    "shares_outstanding", "total_shareholders_funds", "interest_earned",
 )
 
 
@@ -300,6 +300,19 @@ def build_charts_feed(
     def fill_missing(primary: dict[tuple[int, int], float], fallback: dict[tuple[int, int], float]) -> dict[tuple[int, int], float]:
         return {**fallback, **primary}
 
+    # Banks/NBFCs generally don't report a "total_revenue"/"Revenue" figure
+    # at all (see normalization/financials.py's own comment on this: bank
+    # holding company filings skip the generic Revenues concept because
+    # interest income/expense nets differently in a bank's income
+    # statement) -- their income statement's actual top line is Interest
+    # Earned + Other Income, conventionally called "Total Income" in every
+    # Indian bank's own annual report. Filling total_revenue from that sum
+    # wherever the source didn't report it directly means "Earnings (Total
+    # Income)" and everything derived from it below (margins, per-share
+    # sales, interest coverage) render real figures for a bank instead of
+    # "—" throughout, rather than requiring a second, bank-only row.
+    raw["total_revenue"] = fill_missing(raw["total_revenue"], add("interest_earned", "other_income"))
+
     networth = raw["reserves"]
     she = fill_missing(raw["total_shareholders_funds"], add("equity_share_capital", "reserves"))
     eps_series = fill_missing(raw["eps"], divide("net_profit", "shares_outstanding"))
@@ -440,7 +453,7 @@ def build_charts_feed(
             _row("totalAssets", "Total Assets / Liabilities", "big", period_keys, raw["total_assets"], provenance=prov("total_assets")),
         ],
         "incomeStatement": [
-            _row("earnings", "Earnings (Total Income)", "big", period_keys, raw["total_revenue"], provenance=prov("total_revenue")),
+            _row("earnings", "Earnings (Total Income)", "big", period_keys, raw["total_revenue"], row_type="calc"),
             _row("expenses", "Expenses", "big", period_keys, raw["operating_expenses"], provenance=prov("operating_expenses")),
             _row("interestOutgo", "Interest Out-go", "big", period_keys, raw["interest_expended"], provenance=prov("interest_expended")),
             _row("otherIncome", "Other Income", "big", period_keys, raw["other_income"], provenance=prov("other_income")),
