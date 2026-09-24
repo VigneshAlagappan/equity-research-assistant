@@ -1259,3 +1259,132 @@ CREATE TABLE IF NOT EXISTS indicator_evaluations (
 );
 CREATE INDEX IF NOT EXISTS idx_indicator_evaluations_company
   ON indicator_evaluations(company_id, evaluated_at);
+
+-- ============================================================
+-- Economic graph (Phase 1 of "India Economic Graph + Economic Data
+-- Ingestion Foundation" -- registry schema + canonical observation model
+-- only; the causal graph (CausalAssertion/Mechanism), Neo4j sync, and
+-- scheduler safety fields are Phase 2, a separate later task).
+--
+-- Indicator vs Series are deliberately distinct: economic_indicator_
+-- registry is a CONCEPT (e.g. "Consumer Price Inflation") with no
+-- series_key of its own -- just semantic/reporting metadata. economic_
+-- series is a measurable STREAM (e.g. "CPI Combined YoY -- India") and
+-- owns series_key; one indicator maps to many series (by geography/
+-- frequency/source). Not to be confused with this repo's existing
+-- indicators/ package (indicators/framework.py, RULE_REGISTRY,
+-- IndicatorRule / indicator_rule_config / indicator_evaluations above) --
+-- that's company-level rule-triggered indicators (e.g. "promoter holding
+-- fell 2.1pp"), an unrelated concept. New code for this graph lives under
+-- economic_graph/ (Python) and infrastructure/economic_graph/ (repo-file
+-- config), never under indicators/.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS source_organizations (
+  source_org_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,          -- e.g. "Reserve Bank of India", "MoSPI"
+  authority_level TEXT,               -- official_primary | official_secondary | aggregator
+  description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS source_datasets (
+  dataset_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_org_id INTEGER NOT NULL REFERENCES source_organizations(source_org_id),
+  authority_level TEXT,               -- may override/refine the org's own level for this dataset
+  priority INTEGER,                   -- lower = preferred, same convention as sources.trust_rank
+  access_method TEXT,                 -- csv_download | api | manual_entry | scrape | NULL (unresearched)
+  cadence TEXT,                       -- daily | weekly | monthly | quarterly | annual
+  historical_start TEXT,              -- earliest period this dataset covers, ISO-8601
+  backfill_supported INTEGER,         -- 0/1, NULL = unknown
+  license_notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_source_datasets_org ON source_datasets(source_org_id);
+
+-- Deliberately no html_source_url/machine_source_url columns here -- a
+-- dataset may have 0, 1, or many endpoints of different formats/access
+-- methods; each is its own source_endpoints row instead of forcing a
+-- dataset to declare exactly one HTML and one machine URL.
+CREATE TABLE IF NOT EXISTS source_endpoints (
+  endpoint_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  dataset_id INTEGER NOT NULL REFERENCES source_datasets(dataset_id),
+  url TEXT,                           -- NULL when not yet verified (see economic_graph loader/docs)
+  access_method TEXT,                 -- csv_download | api | html_table | manual_entry | scrape
+  priority INTEGER,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  authentication_type TEXT,           -- none | api_key | login | NULL
+  parser_config TEXT,                 -- JSON, parser-specific hints; NULL until a real parser exists
+  availability_status TEXT,           -- unverified | verified | broken
+  last_verified_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_source_endpoints_dataset ON source_endpoints(dataset_id);
+
+CREATE TABLE IF NOT EXISTS economic_indicator_registry (
+  indicator_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,          -- e.g. "CPI Combined", "Repo Rate"
+  category TEXT NOT NULL,             -- growth | inflation | industry | monetary | banking | external
+                                       -- | fiscal | labour | agriculture | energy | logistics | auto
+                                       -- | digital_economy | markets | sentiment
+  economic_meaning TEXT,              -- one-paragraph plain-English explanation of what this measures
+  higher_is TEXT,                     -- good | bad | neutral -- direction of a higher reading
+  leading_lagging TEXT,               -- leading | lagging | coincident
+  report_section TEXT,                -- which Deep Dive report section this feeds
+  headline_weight REAL,               -- relative prominence in a headline economic summary, 0-1
+  preferred_chart_window TEXT,        -- e.g. "5y", "10y", "1y" -- default chart lookback
+  material_change_mom REAL,           -- threshold beyond which a month-on-month move is "material"
+  material_change_yoy REAL,           -- same, year-on-year
+  material_change_ytd REAL,           -- same, year-to-date
+  -- Explicit coverage-honesty field: never let a row imply live coverage
+  -- it doesn't have. 'registered_only' = metadata exists, no ingestion.
+  -- 'ingesting' = a pipeline runs but the series isn't yet trusted live.
+  -- 'live' = actively ingested and served. Every one of the 94 Phase-1
+  -- rows is 'registered_only' -- ingestion is out of scope for this task.
+  status TEXT NOT NULL DEFAULT 'registered_only',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (status IN ('registered_only', 'ingesting', 'live')),
+  CHECK (higher_is IS NULL OR higher_is IN ('good', 'bad', 'neutral')),
+  CHECK (leading_lagging IS NULL OR leading_lagging IN ('leading', 'lagging', 'coincident'))
+);
+CREATE INDEX IF NOT EXISTS idx_economic_indicator_registry_category ON economic_indicator_registry(category);
+
+CREATE TABLE IF NOT EXISTS economic_series (
+  series_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  indicator_id INTEGER NOT NULL REFERENCES economic_indicator_registry(indicator_id),
+  dataset_id INTEGER REFERENCES source_datasets(dataset_id),   -- NULL until a real dataset is linked
+  series_key TEXT NOT NULL UNIQUE,    -- e.g. "cpi_combined_yoy_in"
+  geography TEXT,                     -- e.g. "IN", "IN-MH" (state), NULL = unspecified/national
+  unit TEXT,
+  frequency TEXT,                     -- daily | weekly | monthly | quarterly | annual
+  seasonal_adjustment TEXT,           -- sa | nsa | NULL
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_economic_series_indicator ON economic_series(indicator_id);
+CREATE INDEX IF NOT EXISTS idx_economic_series_dataset ON economic_series(dataset_id);
+
+-- Canonical fact/vintage table for economic series -- ONE table for every
+-- revision of every observation (never overwritten, same append-only
+-- discipline as financial_observations/macro_observations). A single
+-- period (e.g. "2026-07" CPI) accumulates one row per vintage as RBI/MoSPI
+-- revise it (provisional -> revised -> final); storage/repositories.py's
+-- economic_observation_latest/as_of/history/vintages query this shape.
+CREATE TABLE IF NOT EXISTS economic_observations (
+  observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  series_id INTEGER NOT NULL REFERENCES economic_series(series_id),
+  period TEXT NOT NULL,               -- "2026" | "2026-07" | "2026-07-15", matches series' frequency
+  period_type TEXT NOT NULL,          -- annual | quarterly | monthly | weekly | daily
+  release_date TEXT NOT NULL,         -- ISO-8601 date this vintage was published
+  vintage TEXT NOT NULL,              -- ISO-8601 date identifying this specific revision/vintage
+  revision_status TEXT NOT NULL,      -- provisional | revised | final
+  value REAL NOT NULL,
+  unit TEXT NOT NULL,
+  raw_object_id INTEGER REFERENCES raw_objects(object_id),
+  ingested_at TEXT NOT NULL,
+  CHECK (revision_status IN ('provisional', 'revised', 'final')),
+  UNIQUE(series_id, period, vintage)
+);
+CREATE INDEX IF NOT EXISTS idx_economic_observations_series_period ON economic_observations(series_id, period);
+CREATE INDEX IF NOT EXISTS idx_economic_observations_release ON economic_observations(series_id, release_date);

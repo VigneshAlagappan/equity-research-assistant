@@ -1,0 +1,117 @@
+category: banking
+indicators:
+- key: bank_credit_growth
+  name: Bank Credit Growth
+  economic_meaning: Year-on-year growth in scheduled commercial banks' outstanding credit -- the primary
+    transmission channel of monetary policy into real activity.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Banking & Credit
+  headline_weight: 0.9
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 1.0
+  material_change_ytd: 1.0
+  status: registered_only
+  source:
+    organization:
+      name: Reserve Bank of India (RBI)
+      authority_level: official_primary
+      description: Publishes weekly/fortnightly banking-sector statistics (deposits, credit, aggregates)
+        via DBIE and the Weekly Statistical Supplement.
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: html_table
+      cadence: fortnightly
+      historical_start: 2000-01
+      backfill_supported: true
+      license_notes: Public data, RBI terms of use
+    endpoints:
+    - url: https://dbie.rbi.org.in
+      access_method: html_table
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: bank_credit_growth_yoy_in
+      geography: IN
+      unit: percent_yoy
+      frequency: fortnightly
+      seasonal_adjustment: nsa
+- key: deposit_growth
+  name: Deposit Growth
+  economic_meaning: Year-on-year growth in scheduled commercial banks' aggregate deposits.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Banking & Credit
+  headline_weight: 0.6
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 1.0
+  material_change_ytd: 1.0
+  status: registered_only
+- key: gross_npa_ratio
+  name: Gross NPA Ratio
+  economic_meaning: Gross non-performing assets as a share of gross advances across scheduled commercial
+    banks -- the headline banking-sector asset-quality metric.
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Banking & Credit
+  headline_weight: 0.8
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 0.3
+  material_change_ytd: 0.5
+  status: registered_only
+- key: net_npa_ratio
+  name: Net NPA Ratio
+  economic_meaning: Net non-performing assets (after provisioning) as a share of net advances.
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Banking & Credit
+  headline_weight: 0.6
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 0.3
+  material_change_ytd: 0.5
+  status: registered_only
+- key: credit_deposit_ratio
+  name: Credit-Deposit Ratio
+  economic_meaning: Outstanding credit as a share of deposits -- a gauge of how much of deposit funding
+    is being deployed as loans.
+  higher_is: neutral
+  leading_lagging: coincident
+  report_section: Banking & Credit
+  headline_weight: 0.4
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 1.0
+  material_change_ytd: 1.0
+  status: registered_only
+- key: capital_adequacy_ratio
+  name: Capital Adequacy Ratio
+  economic_meaning: Banks' regulatory capital as a share of risk-weighted assets -- a solvency buffer
+    metric (Basel III).
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Banking & Credit
+  headline_weight: 0.4
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 0.3
+  material_change_ytd: 0.5
+  status: registered_only
+- key: provision_coverage_ratio
+  name: Provision Coverage Ratio
+  economic_meaning: Provisions held against NPAs as a share of gross NPAs -- how well-cushioned the banking
+    system is against recognized bad loans.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Banking & Credit
+  headline_weight: 0.3
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 1.0
+  material_change_ytd: 2.0
+  status: registered_only

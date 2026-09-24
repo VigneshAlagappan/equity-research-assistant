@@ -1,0 +1,68 @@
+category: sentiment
+indicators:
+- key: rbi_consumer_confidence
+  name: RBI Consumer Confidence Survey
+  economic_meaning: RBI's bi-monthly survey of household sentiment on the general economic situation,
+    income, spending, and employment.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Sentiment
+  headline_weight: 0.5
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+- key: pmi_manufacturing
+  name: PMI Manufacturing
+  economic_meaning: S&P Global's Purchasing Managers' Index for manufacturing -- a diffusion index (>50
+    = expansion) built from a monthly survey of purchasing managers, watched as an early read on factory-sector
+    momentum.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Sentiment
+  headline_weight: 0.7
+  preferred_chart_window: 3y
+  material_change_mom: 1.0
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+- key: pmi_services
+  name: PMI Services
+  economic_meaning: S&P Global's Purchasing Managers' Index for services -- the services-sector counterpart
+    to PMI Manufacturing.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Sentiment
+  headline_weight: 0.7
+  preferred_chart_window: 3y
+  material_change_mom: 1.0
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+- key: rbi_industrial_outlook
+  name: RBI Industrial Outlook Survey
+  economic_meaning: RBI's quarterly survey of manufacturing-sector business sentiment (the Industrial
+    Outlook Survey's Business Expectations Index component).
+  higher_is: good
+  leading_lagging: leading
+  report_section: Sentiment
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+- key: business_expectations_index
+  name: Business Expectations Index
+  economic_meaning: A composite forward-looking index of firms' expectations on production, orders, and
+    employment.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Sentiment
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only

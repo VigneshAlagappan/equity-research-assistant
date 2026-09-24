@@ -1,0 +1,92 @@
+category: external
+indicators:
+- key: trade_balance
+  name: Trade Balance
+  economic_meaning: Monthly merchandise exports minus imports -- a persistent deficit is India's structural
+    external-sector weak point.
+  higher_is: neutral
+  leading_lagging: coincident
+  report_section: External Sector
+  headline_weight: 0.7
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+- key: forex_reserves
+  name: Forex Reserves
+  economic_meaning: RBI's stock of foreign-currency assets, gold, SDRs, and reserve tranche position --
+    the buffer against external shocks/currency volatility.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: External Sector
+  headline_weight: 0.7
+  preferred_chart_window: 5y
+  material_change_mom: 1.0
+  material_change_yoy: 3.0
+  material_change_ytd: 5.0
+  status: registered_only
+- key: current_account_balance
+  name: Current Account Balance
+  economic_meaning: Trade balance plus net services, income, and transfers -- as a share of GDP, the broadest
+    external-sector health gauge.
+  higher_is: neutral
+  leading_lagging: lagging
+  report_section: External Sector
+  headline_weight: 0.7
+  preferred_chart_window: 10y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: 0.5
+  status: registered_only
+- key: exports_growth
+  name: Exports Growth
+  economic_meaning: Year-on-year growth in merchandise exports.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: External Sector
+  headline_weight: 0.5
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+- key: imports_growth
+  name: Imports Growth
+  economic_meaning: Year-on-year growth in merchandise imports -- often tracks domestic demand and crude-oil
+    prices.
+  higher_is: neutral
+  leading_lagging: coincident
+  report_section: External Sector
+  headline_weight: 0.5
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+- key: fdi_inflows
+  name: FDI Inflows
+  economic_meaning: Gross foreign direct investment inflows -- a longer-horizon confidence signal in the
+    economy.
+  higher_is: good
+  leading_lagging: leading
+  report_section: External Sector
+  headline_weight: 0.5
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 5.0
+  material_change_ytd: 5.0
+  status: registered_only
+- key: fpi_flows
+  name: FPI Flows
+  economic_meaning: Net foreign portfolio (equity + debt) investment flows -- volatile, sentiment-driven,
+    and a key INR/market driver.
+  higher_is: good
+  leading_lagging: leading
+  report_section: External Sector
+  headline_weight: 0.5
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only

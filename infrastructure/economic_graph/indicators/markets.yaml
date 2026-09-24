@@ -1,0 +1,104 @@
+category: markets
+indicators:
+- key: gsec_10y_yield
+  name: 10Y G-Sec Yield
+  economic_meaning: Yield on the benchmark 10-year Government of India security -- the reference rate
+    for domestic borrowing costs and a real-time fiscal/monetary-stance gauge.
+  higher_is: neutral
+  leading_lagging: leading
+  report_section: Markets
+  headline_weight: 0.7
+  preferred_chart_window: 5y
+  material_change_mom: 0.1
+  material_change_yoy: 0.3
+  material_change_ytd: 0.3
+  status: registered_only
+  source:
+    organization:
+      name: Reserve Bank of India (RBI)
+      authority_level: official_primary
+      description: Publishes government securities yield data via DBIE.
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: html_table
+      cadence: daily
+      historical_start: 2000-01
+      backfill_supported: true
+      license_notes: Public data, RBI terms of use
+    endpoints:
+    - url: https://dbie.rbi.org.in
+      access_method: html_table
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: gsec_10y_yield_in
+      geography: IN
+      unit: percent
+      frequency: daily
+      seasonal_adjustment: nsa
+- key: nifty_50
+  name: Nifty 50
+  economic_meaning: NSE's flagship broad-market equity index -- the most-watched proxy for Indian equity-market
+    sentiment.
+  higher_is: neutral
+  leading_lagging: leading
+  report_section: Markets
+  headline_weight: 0.6
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+- key: sensex
+  name: Sensex
+  economic_meaning: BSE's flagship broad-market equity index -- India's oldest and second most-watched
+    equity benchmark.
+  higher_is: neutral
+  leading_lagging: leading
+  report_section: Markets
+  headline_weight: 0.4
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+- key: market_cap_to_gdp
+  name: Market Capitalization to GDP Ratio
+  economic_meaning: Total listed equity market capitalization as a share of GDP (the "Buffett Indicator")
+    -- a broad equity-valuation gauge.
+  higher_is: neutral
+  leading_lagging: lagging
+  report_section: Markets
+  headline_weight: 0.4
+  preferred_chart_window: 10y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+- key: corporate_bond_spread
+  name: Corporate Bond Spread
+  economic_meaning: Spread of AAA corporate bond yields over the equivalent-maturity G-Sec yield -- a
+    credit-risk-premium/liquidity gauge.
+  higher_is: bad
+  leading_lagging: leading
+  report_section: Markets
+  headline_weight: 0.4
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+- key: inr_usd_rate
+  name: INR/USD Exchange Rate
+  economic_meaning: The rupee's exchange rate against the US dollar -- India's primary currency-risk reference.
+  higher_is: neutral
+  leading_lagging: coincident
+  report_section: Markets
+  headline_weight: 0.6
+  preferred_chart_window: 5y
+  material_change_mom: 0.5
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only

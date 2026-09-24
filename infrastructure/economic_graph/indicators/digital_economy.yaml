@@ -1,0 +1,103 @@
+category: digital_economy
+indicators:
+- key: upi_transaction_volume
+  name: UPI Transaction Volume
+  economic_meaning: Monthly count of Unified Payments Interface transactions -- India's dominant retail
+    digital-payments rail.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Digital Economy
+  headline_weight: 0.6
+  preferred_chart_window: 3y
+  material_change_mom: 3.0
+  material_change_yoy: 10.0
+  material_change_ytd: 10.0
+  status: registered_only
+  source:
+    organization:
+      name: National Payments Corporation of India (NPCI)
+      authority_level: official_primary
+      description: Operates UPI and publishes monthly transaction volume/value statistics.
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: html_table
+      cadence: monthly
+      historical_start: 2016-04
+      backfill_supported: true
+      license_notes: Public data, NPCI terms of use
+    endpoints:
+    - url: https://www.npci.org.in
+      access_method: html_table
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: upi_transaction_volume_in
+      geography: IN
+      unit: count_millions
+      frequency: monthly
+      seasonal_adjustment: nsa
+- key: upi_transaction_value
+  name: UPI Transaction Value
+  economic_meaning: Monthly rupee value of UPI transactions.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Digital Economy
+  headline_weight: 0.6
+  preferred_chart_window: 3y
+  material_change_mom: 3.0
+  material_change_yoy: 10.0
+  material_change_ytd: 10.0
+  status: registered_only
+- key: digital_payments_growth
+  name: Digital Payments Growth
+  economic_meaning: Aggregate growth across all digital payment rails (UPI, cards, wallets, NEFT/RTGS).
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Digital Economy
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 5.0
+  material_change_ytd: 5.0
+  status: registered_only
+- key: internet_subscriber_growth
+  name: Internet Subscriber Growth
+  economic_meaning: Year-on-year growth in total internet subscribers -- a digital-adoption base-rate
+    metric.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Digital Economy
+  headline_weight: 0.3
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+- key: smartphone_shipment_growth
+  name: Smartphone Shipment Growth
+  economic_meaning: Year-on-year growth in smartphone shipments -- a leading indicator of digital-services
+    adoption capacity.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Digital Economy
+  headline_weight: 0.3
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 5.0
+  material_change_ytd: 5.0
+  status: registered_only
+- key: ecommerce_gmv_growth
+  name: E-commerce GMV Growth
+  economic_meaning: Year-on-year growth in e-commerce gross merchandise value -- an online-retail activity
+    proxy.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Digital Economy
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 10.0
+  material_change_ytd: 10.0
+  status: registered_only
