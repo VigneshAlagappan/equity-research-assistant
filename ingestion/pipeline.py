@@ -187,6 +187,82 @@ def ingest_file(
     return result
 
 
+def ingest_nse_pdf_observations(
+    conn: DBConnection,
+    company_id: str,
+    observations: list[NormalizedObservation],
+    *,
+    source_file: str,
+) -> IngestionResult:
+    """Store already-extracted (sources/nse_pdf_extractor.py) PDF-sourced
+    observations through the same validate -> store -> reconcile flow every
+    other adapter's parse() output goes through — this function starts
+    after parsing, not before it, since a PDF's document registration
+    (storage/repositories.save_company_document(), done by the caller) has
+    to happen first to get the source_document_id every observation here
+    already carries.
+
+    "Check what's already in canonical_financials before writing" (the
+    production task's own scope note — XBRL keeps trust-rank priority
+    regardless of period_type) is enforced HERE, one observation at a
+    time, rather than left to reconcile()'s own trust_rank tie-break:
+    every PDF observation is stamped source="nse" (same convention as
+    XBRL — see sources/nse_pdf_extractor.py's module docstring), so it
+    would otherwise tie with a real XBRL "nse" observation for the same
+    (metric, period) key and the outcome would depend on retrieved_at
+    ordering, not on which one is actually more trustworthy. Skipping
+    outright whenever a canonical value already exists for that exact key
+    is simpler and matches the task's own stated intent more directly than
+    teaching reconcile() a second "nse" sub-tier.
+
+    Caveat worth being explicit about (not novel to this function — it's
+    an existing, already-shipped side effect of the 2026-08 NSE XBRL
+    directive, see reconcile()'s own docstring): inserting ANY "nse"-
+    sourced observation for a period "migrates" that whole (period_type,
+    fiscal_year, quarter, statement_type) scope, so a real-XBRL-absent
+    (pre-2019) period this backfill adds a PDF-sourced P&L fact to will
+    also stop honoring any legacy proprietary/screener value for OTHER
+    metrics in that same period that PDF/XBRL didn't report — same
+    behavior a genuinely new XBRL filing for that period would already
+    cause today, not something this function introduces.
+    """
+    from storage.repositories import get_canonical_value
+
+    result = IngestionResult(company_id=company_id, source_id="nse", file_path=source_file)
+    result.parsed_count = len(observations)
+
+    to_insert: list[NormalizedObservation] = []
+    for obs in observations:
+        problems = validate_observation(obs)
+        if problems:
+            result.skipped_count += 1
+            result.skip_reasons.append(f"{obs.metric_key} {obs.fiscal_year}{obs.quarter or ''}: {'; '.join(problems)}")
+            continue
+        existing = get_canonical_value(
+            conn, company_id, obs.metric_key, obs.period_type, obs.fiscal_year,
+            quarter=obs.quarter, statement_type=obs.statement_type,
+        )
+        if existing is not None:
+            result.skipped_count += 1
+            result.skip_reasons.append(
+                f"{obs.metric_key} {obs.fiscal_year}{obs.quarter or ''} ({obs.statement_type}): "
+                f"already has a canonical value from an earlier source — not overwritten"
+            )
+            continue
+        to_insert.append(obs)
+
+    insert_financial_observations(conn, to_insert)
+    result.inserted_count = len(to_insert)
+    result.reconciled_count = _publish_financial_ingestion(
+        conn, company_id=company_id, source_id="nse", statement_type="consolidated", valid=to_insert,
+    )
+    logger.info(
+        "PDF-ingested %s: parsed=%d inserted=%d skipped=%d reconciled=%d",
+        source_file, result.parsed_count, result.inserted_count, result.skipped_count, result.reconciled_count,
+    )
+    return result
+
+
 def ingest_yfinance_company(
     conn: DBConnection,
     company_id: str,

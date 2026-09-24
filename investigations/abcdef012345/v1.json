@@ -23,8 +23,8 @@
       "rationale": "A common driver of margin decline.",
       "unknowns": [],
       "generation_order": 0,
-      "verdict": "INSUFFICIENT_EVIDENCE",
-      "confidence_basis": "Not enough evidence yet.",
+      "verdict": "SUPPORTED",
+      "confidence_basis": "Consistent with the limited evidence available.",
       "confidence_score": null,
       "synthesis_rank": 1,
       "supporting_evidence": [],
@@ -33,7 +33,7 @@
         {
           "stance": "missing",
           "kind": "INFERENCE",
-          "label": "quarterly cost breakdown",
+          "label": "More granular cost data",
           "value": null,
           "citation": null
         }
@@ -48,8 +48,8 @@
       "rationale": "Plausible given the sector.",
       "unknowns": [],
       "generation_order": 1,
-      "verdict": "INSUFFICIENT_EVIDENCE",
-      "confidence_basis": "Not enough evidence yet.",
+      "verdict": "SUPPORTED",
+      "confidence_basis": "Consistent with the limited evidence available.",
       "confidence_score": null,
       "synthesis_rank": 2,
       "supporting_evidence": [],
@@ -58,7 +58,7 @@
         {
           "stance": "missing",
           "kind": "INFERENCE",
-          "label": "quarterly cost breakdown",
+          "label": "More granular cost data",
           "value": null,
           "citation": null
         }

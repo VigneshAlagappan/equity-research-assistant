@@ -56,11 +56,12 @@ def insert_financial_observations(
                 company_id, metric_key, period_type, fiscal_year, quarter, statement_type,
                 value, unit, currency, source, source_document_id, source_file, source_url,
                 retrieved_at, parser_version, normalization_version, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 obs.company_id, obs.metric_key, obs.period_type, obs.fiscal_year, obs.quarter,
-                obs.statement_type, obs.value, obs.unit, obs.currency, obs.source, _normalize_source_file(obs.source_file),
+                obs.statement_type, obs.value, obs.unit, obs.currency, obs.source, obs.source_document_id,
+                _normalize_source_file(obs.source_file),
                 obs.source_url, obs.retrieved_at or now, obs.parser_version, NORMALIZATION_VERSION, now,
             ),
         )
@@ -1168,6 +1169,90 @@ def get_company_document(conn: sqlite3.Connection, company_id: str, document_id:
         "SELECT * FROM documents WHERE document_id = ? AND company_id = ?",
         (document_id, company_id),
     ).fetchone()
+
+
+def upsert_nse_filing_discovery_log(
+    conn: sqlite3.Connection,
+    *,
+    company_id: str,
+    nse_symbol: str,
+    fiscal_year: str,
+    quarter: str,
+    period_end: str,
+    extraction_status: str,
+    filing_date: str | None = None,
+    source_url: str | None = None,
+    document_id: str | None = None,
+    match_confidence: str | None = None,
+    attachment_format: str = "none",
+    extracted_char_count: int | None = None,
+    registered_document_id: int | None = None,
+    notes: str | None = None,
+) -> sqlite3.Row:
+    """One row per (company_id, fiscal_year, quarter) — re-running discovery
+    for a period already logged updates that row in place (sources/
+    nse_pdf_filings.py + the ingest script are safe to re-run without
+    creating duplicate log entries), same NULL-safe upsert-by-natural-key
+    shape storage/repositories.py's own reconcile() uses for
+    canonical_financials."""
+    now = utcnow_iso()
+    existing = conn.execute(
+        "SELECT log_id FROM nse_filing_discovery_log WHERE company_id = ? AND fiscal_year = ? AND quarter = ?",
+        (company_id, fiscal_year, quarter),
+    ).fetchone()
+    if existing is None:
+        cursor = conn.execute(
+            """
+            INSERT INTO nse_filing_discovery_log (
+                company_id, nse_symbol, fiscal_year, quarter, period_end, filing_date, source_url,
+                document_id, match_confidence, attachment_format, extraction_status,
+                extracted_char_count, registered_document_id, notes, discovered_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                company_id, nse_symbol, fiscal_year, quarter, period_end, filing_date, source_url,
+                document_id, match_confidence, attachment_format, extraction_status,
+                extracted_char_count, registered_document_id, notes, now, now,
+            ),
+        )
+        log_id = cursor.lastrowid
+    else:
+        log_id = existing["log_id"]
+        conn.execute(
+            """
+            UPDATE nse_filing_discovery_log SET
+                nse_symbol = ?, period_end = ?, filing_date = ?, source_url = ?, document_id = ?,
+                match_confidence = ?, attachment_format = ?, extraction_status = ?,
+                extracted_char_count = ?, registered_document_id = ?, notes = ?, updated_at = ?
+            WHERE log_id = ?
+            """,
+            (
+                nse_symbol, period_end, filing_date, source_url, document_id, match_confidence,
+                attachment_format, extraction_status, extracted_char_count, registered_document_id,
+                notes, now, log_id,
+            ),
+        )
+    conn.commit()
+    return conn.execute("SELECT * FROM nse_filing_discovery_log WHERE log_id = ?", (log_id,)).fetchone()
+
+
+def list_nse_filing_discovery_log(
+    conn: sqlite3.Connection, *, company_id: str | None = None, extraction_status: str | None = None,
+) -> list[sqlite3.Row]:
+    """Every logged (company, fiscal_year, quarter) row, optionally filtered
+    by company and/or extraction_status — extraction_status='needs_ocr' is
+    the future-OCR-work queue the feasibility report's Section 14 appendix
+    calls for."""
+    query = "SELECT * FROM nse_filing_discovery_log WHERE 1=1"
+    params: list[object] = []
+    if company_id is not None:
+        query += " AND company_id = ?"
+        params.append(company_id)
+    if extraction_status is not None:
+        query += " AND extraction_status = ?"
+        params.append(extraction_status)
+    query += " ORDER BY company_id, fiscal_year, quarter"
+    return conn.execute(query, params).fetchall()
 
 
 def save_company_document(
