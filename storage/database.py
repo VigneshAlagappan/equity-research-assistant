@@ -115,7 +115,22 @@ def init_postgres_db(connection_string: str | None = None, schema_path: Path | N
     )
     schema_sql = schema_path.read_text()
 
-    conn = psycopg2.connect(connection_string, cursor_factory=psycopg2.extras.RealDictCursor)
+    # TCP keepalives: without these, a connection Neon's pooler drops
+    # silently (no FIN/RST reaching this host -- observed in practice on a
+    # long-running batch script, e.g. scripts/batch_fetch_sec_edgar.py's
+    # sequential 510-company run) leaves the client blocked forever inside
+    # cur.execute()'s socket read, since there's nothing to raise: the
+    # query bytes never even reach a server to hit its own statement_
+    # timeout. keepalives_idle=30 probes an idle connection after 30s;
+    # keepalives_interval/count=10s x3 gives a dead peer ~60s total to be
+    # detected before psycopg2 raises OperationalError -- long enough to
+    # never fire on a live connection, short enough that a caller's own
+    # reconnect-on-stale-connection retry (several scripts already have
+    # one) actually gets a chance to run instead of hanging indefinitely.
+    conn = psycopg2.connect(
+        connection_string, cursor_factory=psycopg2.extras.RealDictCursor,
+        keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3,
+    )
     with conn.cursor() as cur:
         # psycopg2's cursor.execute() happily runs a full script of
         # semicolon-separated statements in one call (verified against real

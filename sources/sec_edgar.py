@@ -121,7 +121,7 @@ def _load_ticker_cik_map() -> dict[str, int]:
 # ~10,400-ticker file, only the hyphenated forms do). Extend this table if
 # another US company_id/ticker mismatch turns up, same as that module's
 # own comment says for its list.
-_TICKER_OVERRIDES = {"BRKA": "BRK-A", "BRKB": "BRK-B"}
+_TICKER_OVERRIDES = {"BRKA": "BRK-A", "BRKB": "BRK-B", "BFB": "BF-B"}
 
 
 def get_cik_for_ticker(ticker: str) -> int | None:

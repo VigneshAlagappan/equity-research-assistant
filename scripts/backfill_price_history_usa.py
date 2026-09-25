@@ -53,12 +53,27 @@ _thread_local = threading.local()
 _print_lock = threading.Lock()
 
 
-def _thread_price_conn():
+def _thread_price_conn(*, fresh: bool = False):
+    """Lazily opens (and caches) this thread's own connection. `fresh=True`
+    discards a stale one and opens a replacement -- Neon's pooler closes
+    idle-too-long connections out from under a long-running thread pool,
+    same reconnect-once pattern scripts/register_sp500_companies.py already
+    uses for its single connection."""
     conn = getattr(_thread_local, "conn", None)
-    if conn is None:
+    if conn is None or fresh:
         conn = open_price_db()
         _thread_local.conn = conn
     return conn
+
+
+def _is_stale_connection_error(exc: BaseException) -> bool:
+    name = type(exc).__name__
+    text = str(exc)
+    return name in ("OperationalError", "InterfaceError") and (
+        "server closed the connection" in text
+        or "connection already closed" in text
+        or "terminat" in text.lower()
+    )
 
 
 def _process_company(company_id: str, ticker: str, *, period: str | None, start: str | None) -> str:
@@ -85,21 +100,36 @@ def _process_company(company_id: str, ticker: str, *, period: str | None, start:
         time.sleep(REQUEST_DELAY_SECONDS)
         return "no_data"
 
-    upsert_daily_bars(
-        _thread_price_conn(),
-        (
-            {
-                "company_id": company_id,
-                "trade_date": bar.trade_date,
-                "open_": bar.open,
-                "high": bar.high,
-                "low": bar.low,
-                "close": bar.close,
-                "volume": bar.volume,
-            }
-            for bar in bars
-        ),
-    )
+    rows = [
+        {
+            "company_id": company_id,
+            "trade_date": bar.trade_date,
+            "open_": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+        }
+        for bar in bars
+    ]
+    try:
+        upsert_daily_bars(_thread_price_conn(), rows)
+    except Exception as exc:  # noqa: BLE001 -- one bad/stale connection must not abort the rest of the pool
+        if not _is_stale_connection_error(exc):
+            with _print_lock:
+                print(f"{company_id:24s} ERROR (upsert) {exc}", flush=True)
+            time.sleep(REQUEST_DELAY_SECONDS)
+            return "error"
+        with _print_lock:
+            print(f"{company_id:24s} DB connection went stale -- reopening and retrying once", flush=True)
+        try:
+            upsert_daily_bars(_thread_price_conn(fresh=True), rows)
+        except Exception as exc2:  # noqa: BLE001
+            with _print_lock:
+                print(f"{company_id:24s} ERROR (upsert retry) {exc2}", flush=True)
+            time.sleep(REQUEST_DELAY_SECONDS)
+            return "error"
+
     with _print_lock:
         print(f"{company_id:24s} rows={len(bars)} {bars[0].trade_date}..{bars[-1].trade_date}", flush=True)
     time.sleep(REQUEST_DELAY_SECONDS)
@@ -158,7 +188,14 @@ def main() -> None:
                 for company_id in company_ids
             }
             for future in as_completed(futures):
-                outcome = future.result()
+                company_id = futures[future]
+                try:
+                    outcome = future.result()
+                except Exception as exc:  # noqa: BLE001 -- belt-and-suspenders: _process_company already catches
+                    # its own errors, but no exception escaping here may ever kill the whole pool
+                    with _print_lock:
+                        print(f"{company_id:24s} UNEXPECTED ERROR {exc}", flush=True)
+                    outcome = "error"
                 done += 1
                 if outcome == "updated":
                     updated += 1

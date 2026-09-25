@@ -263,6 +263,12 @@ data/.flask_secret_key
 # if you see it repopulate, something regressed that isolation.
 threads/
 
+# ADR-022 raw object storage (ingestion/pipeline.py's store_raw_object) --
+# lands here instead of S3 whenever DOCUMENT_STORE_BACKEND isn't 's3' (e.g.
+# a local dev run against the real Neon DB). Same "runtime-generated,
+# never committed" reasoning as data/raw/ above.
+/raw/
+
 # Deploy-time artifacts generated from `aws lightsail get-container-services`
 # output -- always contains real secrets (API keys, DB URL) pulled from the
 # live service's current env vars, so must never be committed. Regenerated

@@ -336,6 +336,8 @@ def ingest_sec_edgar_company(
     cik: int,
     *,
     currency: str = "USD",
+    period_types: set[str] | None = None,
+    min_fiscal_year: int | None = None,
 ) -> IngestionResult:
     """Fetch a US company's quarterly + annual financials live from SEC
     EDGAR's own XBRL data and run them through the same validate -> store
@@ -344,6 +346,20 @@ def ingest_sec_edgar_company(
     as ingest_yfinance_company() just above. No statement_type parameter
     (unlike that one): US public companies file consolidated financials
     only, there's no separate standalone statement to choose between.
+
+    period_types, when given (e.g. {"annual"}), filters SECEdgarAdapter's
+    parsed observations down to just those period types before validate/
+    insert/reconcile -- the adapter itself always computes both (annual's
+    Q4 = FY - (Q1+Q2+Q3) derivation needs quarterly data internally, so
+    this filters the *output*, not the extraction), for a caller like
+    scripts/batch_fetch_sec_edgar.py's --annual-only that wants only
+    annual rows persisted. None (default) keeps everything, unchanged
+    behavior for every existing caller.
+
+    min_fiscal_year, when given, drops any observation whose fiscal_year
+    (e.g. "FY2025" -> 2025) is older than this -- scripts/batch_fetch_
+    sec_edgar.py's --years N computes this as this_year - N + 1. Same
+    output-side filter as period_types, not an extraction-time one.
     """
     company_id = normalize_company_id(company_id)
     assert_active(conn, company_id)  # same ingestion gate as ingest_file()
@@ -366,6 +382,10 @@ def ingest_sec_edgar_company(
 
     adapter = SECEdgarAdapter(conn)
     parsed = adapter.fetch(company_id, cik, currency=currency, facts=facts)
+    if period_types is not None:
+        parsed = [obs for obs in parsed if obs.period_type in period_types]
+    if min_fiscal_year is not None:
+        parsed = [obs for obs in parsed if int(obs.fiscal_year[2:]) >= min_fiscal_year]
 
     result = IngestionResult(company_id=company_id, source_id=adapter.source_id, file_path=f"sec_edgar:CIK{cik:010d}")
     result.parsed_count = len(parsed)
