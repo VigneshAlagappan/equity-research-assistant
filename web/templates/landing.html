@@ -152,7 +152,7 @@ a:hover{color:color-mix(in srgb, var(--color-link) 75%, black)}
 </header>
 
 <section class="stats">
-  <div class="stat"><div class="stat-value">{{ '{:,}'.format(stat_companies) }}+</div><div class="stat-label">Indian market-listed companies tracked</div></div>
+  <div class="stat"><div class="stat-value">{{ '{:,}'.format((stat_companies // 100) * 100) }}+</div><div class="stat-label">Indian market-listed companies tracked</div></div>
   <div class="stat"><div class="stat-value">{{ '{:,}'.format((stat_us_companies // 100) * 100) }}+</div><div class="stat-label">US-listed companies tracked</div></div>
   <div class="stat"><div class="stat-value">{{ stat_sectors }}</div><div class="stat-label">Sectors covered</div></div>
   <div class="stat"><div class="stat-value">{{ stat_documents }}</div><div class="stat-label">Filings analyzed</div></div>
