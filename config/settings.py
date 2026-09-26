@@ -235,6 +235,9 @@ INDEX_NAMES: list[str] = [
     "S&P 500",
     "Nasdaq 100",
     "Dow Jones Industrial Average",
+    "Russell 3000",
+    "Russell 1000",
+    "Russell 2000",
 ]
 
 # ------------------------------------------------------------------

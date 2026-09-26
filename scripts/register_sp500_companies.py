@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import csv
 import time
-from datetime import datetime, timezone
 
 import yfinance as yf
 
@@ -36,17 +35,15 @@ import storage.backend_bootstrap
 storage.backend_bootstrap.install()
 
 from companies.registry import register_company
+from companies.us_universe import (
+    fiscal_year_end_month_from_yfinance_info,
+    normalize_us_ticker,
+    resolve_us_company_id,
+)
 from storage.backend_bootstrap import open_db
 
 REQUEST_DELAY_SECONDS = 0.5
 DEFAULT_CSV = "/tmp/sp500.csv"
-
-
-def _normalize_ticker(raw_symbol: str) -> str:
-    """"BRK.B" -> "BRKB", matching this app's existing convention for the
-    two Berkshire share classes already on file (verified: company_id
-    'BRKA'/'BRKB', not 'BRK.A'/'BRK.B')."""
-    return raw_symbol.strip().upper().replace(".", "")
 
 
 def _is_stale_connection_error(exc: BaseException) -> bool:
@@ -66,52 +63,6 @@ def _existing_companies(conn) -> dict[str, str]:
         return {row["company_id"]: row["country"] for row in cur.fetchall()}
 
 
-def _resolve_company_id(ticker: str, existing: dict[str, str]) -> tuple[str, str | None] | None:
-    """(company_id, fetch_symbol) for one S&P 500 ticker, or None if this
-    ticker is already correctly registered as a US company under its own
-    name (nothing to do). company_id is a purely internal, guaranteed-
-    unique key; fetch_symbol carries the real ticker whenever it differs
-    from company_id.
-
-    Three cases:
-    - Not registered at all: (ticker, None) -- company_id IS the ticker,
-      same as every existing non-colliding US company.
-    - Already registered as a US company under this exact id (the common
-      re-run case: this ticker was registered in an earlier pass of this
-      script): None -- already done, nothing to register.
-    - Registered under this id but as a DIFFERENT country (a genuine
-      collision -- e.g. "PNC" is both PNC Financial's ticker and an
-      existing Indian company_id, "Pritish Nandy Communications"):
-      disambiguates with a "-US" suffix (hyphen, not underscore --
-      normalization.companies' company_id regex allows [A-Z0-9&.-], not
-      "_") and carries the real ticker in fetch_symbol instead -- every
-      US-data call site (price fetch, website backfill, SEC EDGAR)
-      resolves `fetch_symbol or company_id`, never company_id alone."""
-    country = existing.get(ticker)
-    if country is None:
-        return ticker, None
-    if country == "US":
-        return None
-    disambiguated = f"{ticker}-US"
-    if disambiguated in existing:
-        return None
-    return disambiguated, ticker
-
-
-def _fiscal_year_end_month(info: dict) -> int:
-    """yfinance's lastFiscalYearEnd is a Unix timestamp; most S&P 500
-    companies are December-close, so that's the safe default when Yahoo
-    doesn't have it rather than guessing March (this app's India-only
-    default, meaningless for a US company)."""
-    ts = info.get("lastFiscalYearEnd")
-    if not ts:
-        return 12
-    try:
-        return datetime.fromtimestamp(ts, tz=timezone.utc).month
-    except (ValueError, OSError, OverflowError):
-        return 12
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--csv", default=DEFAULT_CSV)
@@ -126,8 +77,8 @@ def main() -> None:
 
     to_register = []
     for row in rows:
-        ticker = _normalize_ticker(row["Symbol"])
-        resolved = _resolve_company_id(ticker, existing)
+        ticker = normalize_us_ticker(row["Symbol"])
+        resolved = resolve_us_company_id(ticker, existing)
         if resolved is None:
             continue
         company_id, fetch_symbol = resolved
@@ -156,7 +107,7 @@ def main() -> None:
             country="US",
             currency="USD",
             fetch_symbol=fetch_symbol,
-            fiscal_year_end_month=_fiscal_year_end_month(info),
+            fiscal_year_end_month=fiscal_year_end_month_from_yfinance_info(info),
             website=info.get("website"),
             sector=info.get("sector") or row["GICS Sector"],
             industry=info.get("industry") or row["GICS Sub-Industry"],

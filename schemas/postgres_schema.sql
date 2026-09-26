@@ -619,8 +619,23 @@ CREATE INDEX IF NOT EXISTS idx_company_note_attachments_note_id
 CREATE TABLE IF NOT EXISTS company_index_membership (
   company_id TEXT NOT NULL REFERENCES companies(company_id),
   index_name TEXT NOT NULL,
+  source TEXT,
+  retrieved_at TIMESTAMPTZ,
+  effective_from DATE,
+  effective_to DATE,
+  status TEXT NOT NULL DEFAULT 'current',
   PRIMARY KEY (company_id, index_name)
 );
+
+-- Self-migrating for the already-live Neon database: init_postgres_db()
+-- re-executes this whole file (all statements are idempotent) on every
+-- process boot, so these ADD COLUMN IF NOT EXISTS lines apply the new
+-- provenance columns without a separate one-off migration script.
+ALTER TABLE company_index_membership ADD COLUMN IF NOT EXISTS source TEXT;
+ALTER TABLE company_index_membership ADD COLUMN IF NOT EXISTS retrieved_at TIMESTAMPTZ;
+ALTER TABLE company_index_membership ADD COLUMN IF NOT EXISTS effective_from DATE;
+ALTER TABLE company_index_membership ADD COLUMN IF NOT EXISTS effective_to DATE;
+ALTER TABLE company_index_membership ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'current';
 
 -- ============================================================
 -- Sector / Industry / Index-tag vocabularies (Admin tab: "Sectors,

@@ -648,6 +648,11 @@ CREATE INDEX IF NOT EXISTS idx_company_note_attachments_note_id
 CREATE TABLE IF NOT EXISTS company_index_membership (
   company_id TEXT NOT NULL REFERENCES companies(company_id),
   index_name TEXT NOT NULL,
+  source TEXT,
+  retrieved_at TEXT,
+  effective_from TEXT,
+  effective_to TEXT,
+  status TEXT NOT NULL DEFAULT 'current',
   PRIMARY KEY (company_id, index_name)
 );
 

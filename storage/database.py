@@ -62,6 +62,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_document_chunks_embedding_columns(conn)
     _migrate_generated_reports_question_embedding_columns(conn)
     _migrate_knowledge_relationships_target_index(conn)
+    _migrate_company_index_membership_provenance_columns(conn)
     _seed_sources(conn)
     _migrate_source_trust_ranks(conn)
     _seed_sectors_and_industries(conn)
@@ -153,6 +154,27 @@ def _migrate_companies_website_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE companies ADD COLUMN macro_economic_sector TEXT")
     if "basic_industry" not in columns:
         conn.execute("ALTER TABLE companies ADD COLUMN basic_industry TEXT")
+
+
+def _migrate_company_index_membership_provenance_columns(conn: sqlite3.Connection) -> None:
+    """Same reasoning as _migrate_companies_website_column — backfills the
+    provenance/point-in-time columns (source, retrieved_at, effective_from/
+    to, status) needed for a Russell-3000-style multi-source index universe
+    onto a company_index_membership table that predates them. Existing rows
+    (Nifty/BSE tags with no provenance) get NULLs plus status='current' via
+    the column DEFAULT — a strictly additive backfill, not a behavior
+    change for any existing reader/writer of this table."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(company_index_membership)")}
+    if "source" not in columns:
+        conn.execute("ALTER TABLE company_index_membership ADD COLUMN source TEXT")
+    if "retrieved_at" not in columns:
+        conn.execute("ALTER TABLE company_index_membership ADD COLUMN retrieved_at TEXT")
+    if "effective_from" not in columns:
+        conn.execute("ALTER TABLE company_index_membership ADD COLUMN effective_from TEXT")
+    if "effective_to" not in columns:
+        conn.execute("ALTER TABLE company_index_membership ADD COLUMN effective_to TEXT")
+    if "status" not in columns:
+        conn.execute("ALTER TABLE company_index_membership ADD COLUMN status TEXT NOT NULL DEFAULT 'current'")
 
 
 def _migrate_companies_country_currency_columns(conn: sqlite3.Connection) -> None:

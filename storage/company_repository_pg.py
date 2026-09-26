@@ -522,7 +522,10 @@ def select_india_companies_not_in_index(conn: DBConnection, exclude_index_name: 
         return cur.fetchall()
 
 
-def tag_companies_index(conn: DBConnection, company_ids: list[str], index_name: str) -> int:
+def tag_companies_index(
+    conn: DBConnection, company_ids: list[str], index_name: str, *,
+    source: str | None = None, retrieved_at: str | None = None, effective_from: str | None = None,
+) -> int:
     """Additive tag, not set_company_index_tags()'s "replace this company's
     whole tag set" -- that function DELETEs a company's existing
     company_index_membership rows first, which would silently drop any
@@ -533,22 +536,82 @@ def tag_companies_index(conn: DBConnection, company_ids: list[str], index_name: 
     SQLite's `INSERT OR IGNORE`. Returns how many rows were newly tagged (0
     if every company was already tagged).
 
+    `source`/`retrieved_at`/`effective_from` are optional provenance fields
+    (Russell/S&P-style index membership sourced from a dated external file,
+    e.g. scripts/register_russell3000_companies.py) -- when `source` is
+    omitted (every pre-existing caller, e.g. scripts/tag_nifty_microcap.py),
+    this runs the exact plain DO NOTHING path above, unchanged. When
+    `source` is supplied, this instead upserts: a currently-tagged company
+    gets its provenance refreshed and any prior `status='historical'`/
+    `effective_to` cleared back to current (a reconstitution re-entry), via
+    ON CONFLICT DO UPDATE rather than DO NOTHING -- so the "count newly
+    tagged" return value only reflects the plain-tag path; the provenance
+    path returns the count of rows touched by the upsert instead (RETURNING
+    company_id fires for both inserted and updated rows).
+
     Same `execute_values()` + `RETURNING ... ` + count-the-returned-rows
     rewrite as insert_corporate_actions_raw() above, for the same reason
     (no Postgres equivalent of SQLite's conn.total_changes, and
     executemany()'s rowcount is unreliable for ON CONFLICT DO NOTHING)."""
     if not company_ids:
         return 0
+    if source is None:
+        with conn.cursor() as cur:
+            inserted = execute_values(
+                cur,
+                "INSERT INTO company_index_membership (company_id, index_name) VALUES %s "
+                "ON CONFLICT (company_id, index_name) DO NOTHING RETURNING company_id",
+                [(company_id, index_name) for company_id in company_ids],
+                fetch=True,
+            )
+        conn.commit()
+        return len(inserted)
     with conn.cursor() as cur:
-        inserted = execute_values(
+        touched = execute_values(
             cur,
-            "INSERT INTO company_index_membership (company_id, index_name) VALUES %s "
-            "ON CONFLICT (company_id, index_name) DO NOTHING RETURNING company_id",
-            [(company_id, index_name) for company_id in company_ids],
+            """
+            INSERT INTO company_index_membership (company_id, index_name, source, retrieved_at, effective_from, status)
+            VALUES %s
+            ON CONFLICT (company_id, index_name) DO UPDATE SET
+                source = EXCLUDED.source,
+                retrieved_at = EXCLUDED.retrieved_at,
+                effective_from = COALESCE(company_index_membership.effective_from, EXCLUDED.effective_from),
+                effective_to = NULL,
+                status = 'current'
+            RETURNING company_id
+            """,
+            [(company_id, index_name, source, retrieved_at, effective_from, "current") for company_id in company_ids],
             fetch=True,
         )
     conn.commit()
-    return len(inserted)
+    return len(touched)
+
+
+def mark_index_membership_historical(
+    conn: DBConnection, company_ids: list[str], index_name: str, effective_to: str,
+) -> int:
+    """Closes out membership rows for companies that dropped out of
+    `index_name` on reconstitution, WITHOUT deleting the row -- flips
+    status to 'historical' and stamps effective_to, so a later re-entry
+    (tag_companies_index() with source= set again) can flip it back to
+    'current' rather than losing when the company was last tagged. Only
+    touches rows currently marked 'current' for this index; returns the
+    number of rows closed out."""
+    if not company_ids:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE company_index_membership
+            SET status = 'historical', effective_to = %s
+            WHERE index_name = %s AND status = 'current' AND company_id = ANY(%s)
+            RETURNING company_id
+            """,
+            (effective_to, index_name, company_ids),
+        )
+        touched = cur.fetchall()
+    conn.commit()
+    return len(touched)
 
 
 def update_company_valuation_model_file(conn: DBConnection, company_id: str, valuation_model_file: str) -> None:

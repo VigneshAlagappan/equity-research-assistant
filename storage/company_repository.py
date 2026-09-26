@@ -427,7 +427,10 @@ def select_india_companies_not_in_index(conn: DBConnection, exclude_index_name: 
     ).fetchall()
 
 
-def tag_companies_index(conn: DBConnection, company_ids: list[str], index_name: str) -> int:
+def tag_companies_index(
+    conn: DBConnection, company_ids: list[str], index_name: str, *,
+    source: str | None = None, retrieved_at: str | None = None, effective_from: str | None = None,
+) -> int:
     """Additive tag, not set_company_index_tags()'s "replace this company's
     whole tag set" -- that function DELETEs a company's existing
     company_index_membership rows first, which would silently drop any
@@ -435,11 +438,64 @@ def tag_companies_index(conn: DBConnection, company_ids: list[str], index_name: 
     already carry. INSERT OR IGNORE keyed on the table's own (company_id,
     index_name) uniqueness makes re-running this against an overlapping
     company_ids list free. Returns how many rows were newly tagged (0 if
-    every company was already tagged)."""
+    every company was already tagged).
+
+    `source`/`retrieved_at`/`effective_from` are optional provenance fields
+    (Russell/S&P-style index membership sourced from a dated external file,
+    e.g. scripts/register_russell3000_companies.py) -- when `source` is
+    omitted (every pre-existing caller, e.g. scripts/tag_nifty_microcap.py),
+    this runs the exact plain INSERT OR IGNORE above, unchanged. When
+    `source` is supplied, this instead upserts: a currently-tagged company
+    gets its provenance refreshed and any prior `status='historical'`/
+    `effective_to` cleared back to current (a reconstitution re-entry), via
+    ON CONFLICT DO UPDATE rather than DO NOTHING."""
+    if source is None:
+        changes_before = conn.total_changes
+        conn.executemany(
+            "INSERT OR IGNORE INTO company_index_membership (company_id, index_name) VALUES (?, ?)",
+            [(company_id, index_name) for company_id in company_ids],
+        )
+        conn.commit()
+        return conn.total_changes - changes_before
     changes_before = conn.total_changes
     conn.executemany(
-        "INSERT OR IGNORE INTO company_index_membership (company_id, index_name) VALUES (?, ?)",
-        [(company_id, index_name) for company_id in company_ids],
+        """
+        INSERT INTO company_index_membership (company_id, index_name, source, retrieved_at, effective_from, status)
+        VALUES (?, ?, ?, ?, ?, 'current')
+        ON CONFLICT (company_id, index_name) DO UPDATE SET
+            source = excluded.source,
+            retrieved_at = excluded.retrieved_at,
+            effective_from = COALESCE(company_index_membership.effective_from, excluded.effective_from),
+            effective_to = NULL,
+            status = 'current'
+        """,
+        [(company_id, index_name, source, retrieved_at, effective_from) for company_id in company_ids],
+    )
+    conn.commit()
+    return conn.total_changes - changes_before
+
+
+def mark_index_membership_historical(
+    conn: DBConnection, company_ids: list[str], index_name: str, effective_to: str,
+) -> int:
+    """Closes out membership rows for companies that dropped out of
+    `index_name` on reconstitution, WITHOUT deleting the row -- flips
+    status to 'historical' and stamps effective_to, so a later re-entry
+    (tag_companies_index() with source= set again) can flip it back to
+    'current' rather than losing when the company was last tagged. Only
+    touches rows currently marked 'current' for this index; returns the
+    number of rows closed out."""
+    if not company_ids:
+        return 0
+    changes_before = conn.total_changes
+    placeholders = ",".join("?" for _ in company_ids)
+    conn.execute(
+        f"""
+        UPDATE company_index_membership
+        SET status = 'historical', effective_to = ?
+        WHERE index_name = ? AND status = 'current' AND company_id IN ({placeholders})
+        """,
+        [effective_to, index_name, *company_ids],
     )
     conn.commit()
     return conn.total_changes - changes_before
