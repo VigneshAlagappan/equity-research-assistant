@@ -19,6 +19,21 @@
     --accent: var(--color-accent);
     --accent-ink: #fffaf0;
     --border: var(--color-divider);
+    /* Watchlist activity workspace (web/templates/watchlist.html) tokens --
+       derived from the same --color-* primitives above rather than new
+       hardcoded hex, so the screen stays theme-portable across every
+       data-theme variant (including the existing "signals" theme) instead
+       of importing the design mockup's own literal navy/blue palette. */
+    --surface2: color-mix(in srgb, var(--color-surface) 85%, var(--color-text) 15%);
+    --text-strong: var(--color-text);
+    --text-secondary: color-mix(in srgb, var(--color-text) 78%, transparent);
+    --text-dim: var(--ink-muted);
+    --text-faint: color-mix(in srgb, var(--color-text) 40%, transparent);
+    --accent-bright: var(--color-accent);
+    --accent-hover: color-mix(in srgb, var(--color-accent) 85%, white);
+    --border-soft: color-mix(in srgb, var(--color-text) 5%, transparent);
+    --border-mid: var(--border);
+    --border-heavy: color-mix(in srgb, var(--color-text) 20%, transparent);
     --fact: #3a5f7d;
     --fact-bg: #e6edf2;
     --calc: var(--color-accent-800);

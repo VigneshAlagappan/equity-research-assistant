@@ -107,6 +107,47 @@ detected → classification → materiality assessment → Important Now
 candidate); Important Now concerns *intelligence/prioritization*. Do not
 couple their implementation prematurely.
 
+### Watchlist Announcements & Financial-filing ingestion pipeline
+
+Status: Future Roadmap — implementation spec ready, deferred by explicit
+user decision (2026-09-26)
+
+The Watchlist tab (`web/templates/watchlist.html`) was restructured
+2026-09-26 into a Grid/Feed activity workspace (company rail, News/
+Announcements/Financial/Investigations panels — see `docs/FeatureList.md`).
+That pass shipped News (from `company_news`) and Investigations (from
+`research_cases`) with real data; the Announcements and Financial &
+filing-updates panels render their honest empty state ("not yet
+available"), since no ingestion pipeline exists yet to populate them.
+
+A full design/implementation spec for that pipeline already exists —
+`design_handoff_watchlist/README.md` (repo root) — covering:
+- An `AnnouncementSource` adapter interface + country registry (NSE for
+  IN now, SEC EDGAR for US and BSE later), wrapping
+  `sources/nse_filing_documents.py::fetch_announcements_raw()` (module-
+  qualified — a second, differently-typed function of the same name
+  exists in `sources/nse_pdf_filings.py`, a real naming collision to
+  avoid).
+- A new classifier (category: `financial`/`announcement`, subtype:
+  `corporate_action`/`m_and_a`/`governance`/`regulatory`/`other`) — reuses
+  `nse_filing_documents.py::classify_announcement_row()`'s desc/
+  `attchmntText`-pattern-matching style, not its literal output vocabulary
+  (that function's `DOCUMENT_TYPES` don't map to this feature's taxonomy).
+- 3 new tables: `announcements_raw`, `announcements`,
+  `announcement_fetch_log` (the last backs a 15-minute on-demand-refresh
+  throttle), following the `raw_objects`/`documents` provenance
+  conventions already established elsewhere in this codebase.
+- `ingest_announcements(conn, company_id, trigger='on_demand')` in
+  `ingestion/pipeline.py`, using `storage/raw_object_store.py::
+  store_raw_object()` for hash-deduped raw storage and publishing a
+  `DatasetIngestedEvent`, mirroring `ingest_sec_edgar_company()`'s shape.
+
+Do not build this until a separate, explicit implementation request is
+made. When picked up: extend `web/watchlist_feed.py::
+list_watchlist_activity()` to source real announcement/financial rows
+instead of the current always-empty lists, and update
+`docs/FeatureList.md`'s Watchlist row accordingly.
+
 ## Status
 
 Git is clean — all work described above (and everything that produced this

@@ -1118,7 +1118,11 @@ def test_watchlist_shows_empty_state_when_nothing_pinned(client) -> None:
     assert b"Nothing pinned yet" in response.data
 
 
-def test_watchlist_add_company_then_appears_on_watchlist(client) -> None:
+def test_watchlist_add_company_then_appears_on_watchlist(client, monkeypatch) -> None:
+    # watchlist() live-fetches news for every watchlisted company on each
+    # page load (see web/app.py) -- stub it out so this test never makes a
+    # real network call.
+    monkeypatch.setattr("web.app.fetch_company_news", lambda *a, **kw: None)
     response = client.post(
         "/watchlist/add", data={"item_type": "company", "item_ref": "HDFCBANK", "next": "/watchlist"}
     )
@@ -1369,8 +1373,10 @@ def test_watchlisted_generated_report_appears_in_watchlist(tmp_path: Path, monke
 
     assert watchlist_page.status_code == 200
     body = watchlist_page.data.decode()
+    # The redesigned Watchlist rail's "Pinned threads" group (web/templates/
+    # watchlist.html) shows only each thread's title, no confidence
+    # subtitle -- that line lived in the old flat-list layout this replaced.
     assert "Is HDFC Bank still growing profit?" in body
-    assert "High confidence" in body
 
 
 def test_add_note_sanitizes_html_and_renders_on_company_page(client) -> None:

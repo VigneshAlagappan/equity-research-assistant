@@ -262,6 +262,8 @@ from web.news import fetch_company_news, google_news_last_24h_url
 from web.rich_text import sanitize_note_html
 from web.charts_feed import build_charts_feed
 from web.valuation_feed import build_valuation_feed
+import web.watchlist_feed as watchlist_feed
+from web.watchlist_feed import build_watchlist_view, list_watchlist_activity
 
 logger = logging.getLogger(__name__)
 
@@ -4004,7 +4006,6 @@ def create_app() -> Flask:
         return render_template("deep_dive/report.html", report=report)
 
     INVESTIGATIONS_PAGE_SIZE = 20
-    WATCHLIST_PAGE_SIZE = 25
 
     @app.route("/investigations")
     def investigations():
@@ -4270,65 +4271,48 @@ def create_app() -> Flask:
     @app.route("/watchlist")
     def watchlist():
         db = get_db()
-        entries = []
+        companies: dict[str, str] = {}
+        threads = []
         for item in list_watchlist_items(db):
             if item["item_type"] == "company":
                 company = get_company(db, item["item_ref"])
                 if company is None:
                     continue  # pinned company was later archived/removed from the registry
-                entries.append(
-                    {
-                        "item_type": "company",
-                        "item_ref": item["item_ref"],
-                        "pinned_at": item["pinned_at"],
-                        "title": company["display_name"],
-                        "subtitle": f"{company['sector'] or 'n/a'} · {company['company_id']}",
-                        "href": url_for("company_report", company_id=item["item_ref"]),
-                    }
-                )
+                companies[item["item_ref"]] = company["display_name"]
             elif item["item_type"] == "thread":
                 thread = THREADS.get(item["item_ref"])
                 if thread is not None:
-                    entries.append(
-                        {
-                            "item_type": "thread",
-                            "item_ref": item["item_ref"],
-                            "pinned_at": item["pinned_at"],
-                            "title": thread["title"],
-                            "subtitle": f"{thread['confidence']} confidence",
-                            "href": url_for("research_thread", thread_id=item["item_ref"]),
-                        }
-                    )
+                    threads.append({"title": thread["title"], "href": url_for("research_thread", thread_id=item["item_ref"])})
                     continue
                 generated = get_generated_report(db, item["item_ref"])
                 if generated is None:
                     continue  # watchlisted thread no longer exists (fixture removed, or the
                     # generated report it pointed to was deleted)
                 meta = extract_report_meta(generated["report_markdown"])
-                entries.append(
-                    {
-                        "item_type": "thread",
-                        "item_ref": item["item_ref"],
-                        "pinned_at": item["pinned_at"],
-                        "title": meta["title"] or generated["question"],
-                        "subtitle": f"{meta['confidence'] or 'Unknown'} confidence",
-                        "href": url_for("research_thread", thread_id=item["item_ref"]),
-                    }
-                )
+                threads.append({
+                    "title": meta["title"] or generated["question"],
+                    "href": url_for("research_thread", thread_id=item["item_ref"]),
+                })
 
-        wl_query = (request.args.get("wl_q") or "").strip()
-        wl_type_filter = request.args.get("wl_type") or ""
-        wl = _paginate(
-            [e for e in entries if not wl_type_filter or e["item_type"] == wl_type_filter],
-            query=wl_query,
-            haystack_fn=lambda r: " ".join(filter(None, [r["title"], r["subtitle"]])).lower(),
-            page_arg="wl_page", page_size=WATCHLIST_PAGE_SIZE,
-        )
+        # Live-fetch + write-through news for every watchlisted company, same
+        # pattern news_feed()'s no-company_id branch already uses -- so the
+        # News panel actually has data rather than only showing whatever a
+        # past /watchlist/news click happened to cache.
+        for company_id, display_name in companies.items():
+            fresh = fetch_company_news(display_name, window_days=watchlist_feed.NEWS_WINDOW_DAYS)
+            if fresh:
+                save_company_news(db, company_id, fresh)
+
+        selected_company = request.args.get("company") or None
+        if selected_company is not None and selected_company not in companies:
+            selected_company = None  # unknown/stale ?company= falls back to All, not a 404
+
+        activity = list_watchlist_activity(db, companies)
+        view = build_watchlist_view(activity, companies, selected_company=selected_company)
         return render_template(
-            "watchlist.html",
-            entries=wl["rows"], entries_total=wl["total"],
-            entries_page=wl["page"], entries_total_pages=wl["total_pages"],
-            entries_query=wl_query, entries_type_filter=wl_type_filter,
+            "watchlist.html", wl=view, threads=threads,
+            checked_at=datetime.now(timezone.utc).strftime("%H:%M"),
+            news_window_days=watchlist_feed.NEWS_WINDOW_DAYS,
         )
 
     def _safe_next() -> str:
@@ -4364,13 +4348,15 @@ def create_app() -> Flask:
 
     @app.route("/watchlist/news/<company_id>")
     def watchlist_news(company_id: str):
-        """Lazily-fetched, on the collapsible's first expand — not loaded for every
-        watchlist row up front, so a long watchlist never fires a burst of outbound
-        requests just from opening the page. Shared by the Watchlist row's 24h
-        teaser (default) and the Overview tab's news section (?days=2). Write-through:
-        whatever this call fetches also lands in company_news (storage/repositories.py)
-        so the News page's merged feed builds up real history over time instead of
-        starting from zero — this endpoint's own response is unaffected."""
+        """Company page's Overview tab news section (?days=2) — lazily
+        fetched on the section's first expand, not loaded for every company
+        page view. The Watchlist page itself no longer calls this (it now
+        live-fetches news for every watchlisted company up front, see
+        watchlist() above) but this endpoint stays for the Overview tab's
+        own use. Write-through: whatever this call fetches also lands in
+        company_news (storage/repositories.py) so the News page's merged
+        feed builds up real history over time instead of starting from
+        zero — this endpoint's own response is unaffected."""
         window_days = request.args.get("days", 1, type=int)
         db = get_db()
         company = get_company(db, company_id)

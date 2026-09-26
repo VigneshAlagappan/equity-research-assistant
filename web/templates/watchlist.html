@@ -2,232 +2,277 @@
 
 {% block title %}Watchlist — Signals{% endblock %}
 
-{% block page_class %}page-wide{% endblock %}
+{% block page_class %}page-watchlist{% endblock %}
 
 {% block extra_style %}
-  /* Same filter/pagination pattern as the Admin Ingest panel (web/templates/admin.html) */
-  .admin-companies-filters {
-    display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;
-    margin-top: var(--space-3);
-  }
-  .admin-companies-filters .field { width: auto; flex: 1 1 180px; max-width: 280px; }
-  .admin-companies-filters .field label {
-    display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
-    color: var(--ink-muted); margin-bottom: 4px;
-  }
-  .admin-companies-filters select.input, .admin-companies-filters input.input { min-height: 36px; }
-  .admin-pagination {
-    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
-    gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-3);
-    border-top: 1px solid var(--color-divider); font-size: 13px;
-  }
-  .admin-pagination-links { display: flex; align-items: center; gap: var(--space-2); }
-  .watchlist-list { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-4); }
-  .watchlist-row {
-    border: 1px solid var(--color-divider); border-radius: var(--radius-md);
-  }
-  .watchlist-row-main {
-    display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
-    flex-wrap: wrap;
-    padding: var(--space-3);
-  }
-  .watchlist-link { text-decoration: none; color: inherit; flex: 1; min-width: 180px; }
-  .watchlist-link:hover .card-title { color: var(--color-accent); }
-  .watchlist-meta { display: flex; flex-direction: column; gap: 2px; }
-  .watchlist-subtitle { font-size: 13px; opacity: 0.65; }
-  .watchlist-pinned-at { font-size: 12px; opacity: 0.5; white-space: nowrap; }
-  .watchlist-actions {
-    display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; flex-shrink: 0;
-  }
+  /* Watchlist activity workspace. Inline styles below (matching the source
+     mockup's own approach) handle layout; these rules only cover states
+     inline style="" can't express (hover, localStorage-driven toggles). */
+  /* Tighter top gap than the site default (.page's 2.5rem) -- the rail's
+     "Companies" kicker is the first thing on this page and reads better
+     closer to the header than the default page padding gives it. Also
+     drops .page's normal width:85%/margin:0-auto centering -- that leaves
+     a wide empty strip between the site's icon sidebar and this page's own
+     company rail (an activity workspace wants the room, not the extra
+     margin page-wide's 92% still leaves at narrower viewports). */
+  .page.page-watchlist { width: auto; max-width: none; margin: 0; padding: 1rem 1.5rem 4rem; }
+  .wl-grid { display: grid; grid-template-columns: minmax(170px,220px) minmax(0,1fr); gap: 32px; align-items: start; }
+  .wl-grid.wl-rail-closed { grid-template-columns: 32px minmax(0,1fr); gap: 20px; }
 
-  /* Collapsible news feed — closed by default, one clean disclosure per
-     company row. Deliberately capped (server sends at most 5 items) and
-     text-only: no thumbnails, no per-item chrome, so opening it adds one
-     compact block rather than a wall of cards. */
-  .watchlist-news { border-top: 1px solid var(--color-divider); }
-  .watchlist-news summary {
-    cursor: pointer;
-    list-style: none;
-    padding: var(--space-2) var(--space-3);
-    font-size: 12px;
-    color: var(--ink-muted);
-    display: flex; align-items: center; gap: 6px;
-    user-select: none;
-  }
-  .watchlist-news summary::-webkit-details-marker { display: none; }
-  .watchlist-news summary::before {
-    content: "▸";
-    font-size: 10px;
-    transition: transform 0.15s ease;
-  }
-  .watchlist-news[open] summary::before { transform: rotate(90deg); }
-  .watchlist-news summary:hover { color: var(--ink); }
+  .wl-rail-row:hover { background: var(--surface2); }
+  .wl-rail-toggle:hover { border-color: var(--accent-bright); color: var(--text); }
+  .wl-thread-row:hover { background: var(--surface2); color: var(--text); }
+  .wl-view-btn { background: transparent; color: var(--text-dim); }
+  .wl-view-btn.active { background: var(--surface2); color: var(--text); }
+  .wl-filter-chip { background: transparent; border-color: var(--border-mid); color: var(--text-dim); }
+  .wl-filter-chip.active { border-color: var(--accent-bright); color: var(--text); }
+  .wl-filter-chip:hover { color: var(--text); }
+  .wl-refresh-btn:hover { border-color: var(--accent-bright); color: var(--text); }
+  .wl-panel-item:hover, .wl-feed-row:hover { background: var(--surface2); }
+  .wl-more-link { color: var(--accent-bright); }
+  .wl-more-link:hover { color: var(--accent-hover); }
 
-  .watchlist-news-body { padding: 0 var(--space-3) var(--space-3); }
-  .watchlist-news-status { font-size: 13px; color: var(--ink-muted); margin: 0; }
+  /* Grid is the default view; #wl-root gets .wl-view-feed added by JS when
+     Feed is active, which swaps which of the two sections is visible. */
+  .wl-view-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(340px,1fr)); gap: 18px; }
+  .wl-view-feed-inner { display: none; flex-direction: column; }
+  #wl-root.wl-view-feed .wl-view-grid { display: none; }
+  #wl-root.wl-view-feed .wl-view-feed-inner { display: flex; }
 
-  .watchlist-news-items { display: flex; flex-direction: column; }
-  .watchlist-news-item {
-    display: block;
-    text-decoration: none;
-    color: inherit;
-    padding: var(--space-2) 0;
-    border-top: 1px solid var(--color-divider);
-  }
-  .watchlist-news-item:first-child { border-top: none; }
-  .watchlist-news-item:hover .watchlist-news-title { color: var(--color-accent); }
-  .watchlist-news-title {
-    font-size: 13px;
-    line-height: 1.35;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  .watchlist-news-source { font-size: 11px; color: var(--ink-muted); margin-top: 2px; }
-
-  .empty-state {
-    padding: var(--space-6);
-    text-align: center;
-    color: var(--ink-muted);
-    background: var(--surface);
-    border: 1px dashed var(--color-divider);
-    border-radius: var(--radius-md);
-  }
-  .empty-state code {
-    background: var(--bg);
-    padding: 0.1rem 0.35rem;
-    border-radius: 4px;
-  }
+  [data-wl-type-panel].wl-filtered-out { display: none; }
+  [data-wl-type-row].wl-filtered-out { display: none; }
 {% endblock %}
 
 {% block content %}
-  <p class="muted">One shared watchlist — companies and research threads worth tracking, in one place. ({{ entries_total }} total)</p>
+<div class="wl-grid" id="wl-root" data-view="grid" data-filter="all">
 
-  <form class="admin-companies-filters" method="get" action="{{ url_for('watchlist') }}">
-    <div class="field">
-      <label for="wl-search">Search</label>
-      <input class="input" type="text" id="wl-search" name="wl_q" value="{{ entries_query }}"
-             placeholder="Title, subtitle&hellip;" autocomplete="off">
+  <aside id="wl-rail-open" style="position:sticky;top:20px;display:flex;flex-direction:column;gap:22px">
+    <div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent-bright)">Companies</div>
+        <button type="button" id="wl-rail-collapse" title="Hide companies" class="wl-rail-toggle" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:6px;color:var(--text-faint);cursor:pointer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18"></path><path d="m16 15-3-3 3-3"></path></svg>
+        </button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <a class="wl-rail-row" href="{{ url_for('watchlist') }}"
+           style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;text-decoration:none;
+                  background:{{ 'var(--surface2)' if wl.selected_company is none else 'transparent' }};
+                  border-left:2px solid {{ 'var(--accent-bright)' if wl.selected_company is none else 'transparent' }}">
+          <div style="min-width:0">
+            <div style="font-size:13.5px;color:{{ 'var(--text-strong)' if wl.selected_company is none else 'var(--text-secondary)' }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">All</div>
+            <div style="font-size:10.5px;color:var(--text-faint);font-variant-numeric:tabular-nums">{{ wl.companies|length }} companies</div>
+          </div>
+          <span style="font-size:11px;color:var(--text-faint);font-variant-numeric:tabular-nums">{{ wl.total_count }}</span>
+        </a>
+        {% for company_id, display_name in wl.companies.items() %}
+        <a class="wl-rail-row" href="{{ url_for('watchlist', company=company_id) }}"
+           style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;text-decoration:none;
+                  background:{{ 'var(--surface2)' if wl.selected_company == company_id else 'transparent' }};
+                  border-left:2px solid {{ 'var(--accent-bright)' if wl.selected_company == company_id else 'transparent' }}">
+          <div style="min-width:0">
+            <div style="font-size:13.5px;color:{{ 'var(--text-strong)' if wl.selected_company == company_id else 'var(--text-secondary)' }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ display_name }}</div>
+            <div style="font-size:10.5px;color:var(--text-faint);font-variant-numeric:tabular-nums">{{ company_id }}</div>
+          </div>
+          <span style="font-size:11px;color:var(--text-faint);font-variant-numeric:tabular-nums">{{ wl.counts_by_company.get(company_id, 0) }}</span>
+        </a>
+        {% endfor %}
+      </div>
     </div>
-    <div class="field">
-      <label for="wl-type">Type</label>
-      <select class="input" id="wl-type" name="wl_type" onchange="this.form.requestSubmit()">
-        <option value="">All types</option>
-        <option value="company" {{ 'selected' if entries_type_filter == 'company' }}>Company</option>
-        <option value="thread" {{ 'selected' if entries_type_filter == 'thread' }}>Thread</option>
-      </select>
+    {% if threads %}
+    <div>
+      <div style="font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent-bright);margin-bottom:8px">Pinned threads</div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        {% for t in threads %}
+        <a class="wl-thread-row" href="{{ t.href }}" style="display:block;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12.5px;line-height:1.4;color:var(--text-secondary);text-decoration:none">{{ t.title }}</a>
+        {% endfor %}
+      </div>
     </div>
-    <button type="submit" class="btn btn-primary">Search</button>
-    {% if entries_query or entries_type_filter %}
-    <a class="btn btn-ghost" href="{{ url_for('watchlist') }}">Clear</a>
     {% endif %}
-  </form>
+  </aside>
 
-  {% if entries %}
-  <div class="watchlist-list">
-    {% for entry in entries %}
-    <div class="watchlist-row">
-      <div class="watchlist-row-main">
-        <a class="watchlist-link" href="{{ entry.href }}">
-          <div class="watchlist-meta">
-            <span class="card-title">{{ entry.title }}</span>
-            <span class="watchlist-subtitle">{{ entry.subtitle }}</span>
+  <aside id="wl-rail-closed" style="display:none;position:sticky;top:20px;flex-direction:column;align-items:center;gap:10px;padding-top:2px">
+    <button type="button" id="wl-rail-expand" title="Show companies" class="wl-rail-toggle" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border-heavy);border-radius:8px;color:var(--text-secondary);cursor:pointer">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18"></path><path d="m14 9 3 3-3 3"></path></svg>
+    </button>
+    <div style="writing-mode:vertical-rl;transform:rotate(180deg);font-size:11px;letter-spacing:0.06em;color:var(--text-dim);white-space:nowrap">{{ wl.company_name or 'All companies' }}</div>
+  </aside>
+
+  <section style="min-width:0">
+    <h1 style="font-family:var(--font-heading),sans-serif;font-weight:600;font-size:24px;margin:0;color:var(--text-strong)">Watchlist</h1>
+    <div style="font-size:13px;color:var(--text-dim);margin-top:4px">{{ wl.context_label }}</div>
+
+    {% if not wl.companies and not threads %}
+    <div style="margin-top:24px;padding:28px 24px;text-align:center;color:var(--text-faint);background:var(--surface);border:1px dashed var(--border);border-radius:12px">
+      Nothing pinned yet. Use the "Add to watchlist" button on a Company page
+      or a Research-thread page — or from the CLI:
+      <code style="background:var(--bg);padding:0.1rem 0.35rem;border-radius:4px">python main.py watchlist-add company HDFCBANK</code>.
+    </div>
+    {% else %}
+    <div style="position:sticky;top:0;z-index:5;background:var(--bg);padding:14px 0 8px">
+      <div style="display:flex;align-items:flex-start;gap:12px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
+        <div style="display:flex;border:1px solid var(--border-heavy);border-radius:7px;overflow:hidden;flex-shrink:0">
+          <button type="button" id="wl-view-grid-btn" class="wl-view-btn active" title="Grid view" style="display:flex;align-items:center;gap:6px;border:none;font-family:var(--font-heading),sans-serif;font-size:12px;padding:6px 11px;cursor:pointer">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+            <span>Grid</span>
+          </button>
+          <button type="button" id="wl-view-feed-btn" class="wl-view-btn" title="Feed view" style="display:flex;align-items:center;gap:6px;border:none;border-left:1px solid var(--border-heavy);font-family:var(--font-heading),sans-serif;font-size:12px;padding:6px 11px;cursor:pointer">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+            <span>Feed</span>
+          </button>
+        </div>
+        <div style="flex:1;min-width:0;display:flex;gap:6px;flex-wrap:wrap;padding:2px 0 2px 12px;border-left:1px solid var(--border-mid)">
+          {% for f in wl.filters %}
+          <button type="button" class="wl-filter-chip{{ ' active' if f.key == 'all' }}" data-wl-filter="{{ f.key }}"
+                  style="font-family:var(--font-heading),sans-serif;font-size:11.5px;padding:4px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;border:1px solid">
+            {{ f.label }} <span style="color:var(--text-faint);font-variant-numeric:tabular-nums">{{ f.count }}</span>
+          </button>
+          {% endfor %}
+        </div>
+        <a href="{{ url_for('watchlist', company=wl.selected_company) if wl.selected_company else url_for('watchlist') }}" title="Check now" class="wl-refresh-btn"
+           style="width:30px;height:28px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border-heavy);border-radius:7px;color:var(--text-secondary);text-decoration:none">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>
+        </a>
+      </div>
+    </div>
+
+    <div style="font-size:11.5px;color:var(--text-faint);padding:2px 0 16px;line-height:1.5;border-bottom:1px solid var(--border);margin-bottom:18px">
+      News: last {{ news_window_days }} days · Google News, checked {{ checked_at }}. Announcements & financial filing updates: not yet available.
+    </div>
+
+    <div class="wl-view-grid" id="wl-view-grid">
+      {% for p in wl.panels %}
+      <div data-wl-type-panel="{{ p.key }}" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;min-width:0">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:14px 16px 10px;border-bottom:1px solid var(--border-soft)">
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <span style="font-family:var(--font-heading),sans-serif;font-weight:600;font-size:14.5px;color:var(--text-strong)">{{ p.label }}</span>
+            <span style="font-size:11px;color:var(--text-faint);font-variant-numeric:tabular-nums">{{ p.count }}</span>
+          </div>
+          <span style="font-size:10.5px;color:var(--text-faint)">{{ p.scope }}</span>
+        </div>
+        <div style="display:flex;flex-direction:column;flex:1">
+          {% for it in p.entries %}
+          <a class="wl-panel-item" href="{{ it.url }}" target="{{ '_blank' if p.key == 'news' else '_self' }}" rel="noopener noreferrer"
+             style="padding:11px 16px;border-bottom:1px solid var(--border-soft);cursor:pointer;display:flex;flex-direction:column;gap:3px;text-decoration:none;color:inherit">
+            <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-faint)">
+              <span style="color:var(--text-secondary)">{{ it.company }}</span>
+              <span>·</span>
+              <span style="font-variant-numeric:tabular-nums">{{ it.when }}</span>
+              {% if it.has_status %}
+              <span style="margin-left:auto;font-size:10px;letter-spacing:0.04em;padding:1px 7px;border-radius:4px;
+                           border:1px solid {{ 'var(--accent-bright)' if it.status in ('In progress',) else 'var(--border-heavy)' }};
+                           color:{{ 'var(--accent-bright)' if it.status in ('In progress',) else 'var(--text-secondary)' }}">{{ it.status }}</span>
+              {% endif %}
+            </div>
+            <div style="font-size:13.5px;line-height:1.4;color:var(--text);text-wrap:pretty">{{ it.title }}</div>
+            {% if it.context %}<div style="font-size:12px;line-height:1.45;color:var(--text-dim);text-wrap:pretty">{{ it.context }}</div>{% endif %}
+            <div style="font-size:10.5px;color:var(--text-faint)">{{ it.source }}</div>
+          </a>
+          {% endfor %}
+          {% if p.is_empty %}
+          <div style="padding:22px 16px;font-size:12.5px;color:var(--text-faint);line-height:1.5">{{ p.empty }}</div>
+          {% endif %}
+        </div>
+        {% if p.has_more %}
+        <a class="wl-more-link" href="#" data-wl-show-feed="{{ p.key }}" style="padding:10px 16px;font-size:12px;text-decoration:none">View all {{ p.count }} in feed →</a>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="wl-view-feed-inner" id="wl-view-feed">
+      {% for g in wl.feed_groups %}
+      <div style="margin-bottom:10px">
+        <div style="font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);padding:10px 0 6px;border-bottom:1px solid var(--border)">{{ g.label }}</div>
+        {% for it in g.entries %}
+        <a class="wl-feed-row" data-wl-type-row="{{ it.type }}" href="{{ it.url }}" target="{{ '_blank' if it.type == 'news' else '_self' }}" rel="noopener noreferrer"
+           style="display:grid;grid-template-columns:64px 118px minmax(0,1fr);gap:14px;padding:12px 0;border-bottom:1px solid var(--border-soft);cursor:pointer;text-decoration:none;color:inherit">
+          <div style="font-size:12px;color:var(--text-faint);font-variant-numeric:tabular-nums;padding-left:4px">{{ it.time }}</div>
+          <div><span style="display:inline-block;font-size:9.5px;letter-spacing:0.07em;padding:2px 7px;border-radius:4px;
+                             border:1px solid {{ 'var(--accent-bright)' if it.is_investigation else 'var(--border-heavy)' }};
+                             color:{{ 'var(--accent-bright)' if it.is_investigation else 'var(--text-secondary)' }}">{{ it.type_label }}</span></div>
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-faint)">
+              <span style="color:var(--text-secondary)">{{ it.company }}</span>
+              <span>·</span>
+              <span>{{ it.source }}</span>
+              {% if it.has_status %}
+              <span style="font-size:10px;letter-spacing:0.04em;padding:1px 7px;border-radius:4px;
+                           border:1px solid {{ 'var(--accent-bright)' if it.status in ('In progress',) else 'var(--border-heavy)' }};
+                           color:{{ 'var(--accent-bright)' if it.status in ('In progress',) else 'var(--text-secondary)' }}">{{ it.status }}</span>
+              {% endif %}
+            </div>
+            <div style="font-size:14px;line-height:1.4;color:var(--text);text-wrap:pretty">{{ it.title }}</div>
+            {% if it.context %}<div style="font-size:12.5px;line-height:1.45;color:var(--text-dim);text-wrap:pretty">{{ it.context }}</div>{% endif %}
           </div>
         </a>
-        <div class="watchlist-actions">
-          <span class="tag {{ 'tag-neutral' if entry.item_type == 'company' else 'tag-outline' }}">{{ entry.item_type }}</span>
-          <span class="watchlist-pinned-at">Pinned <span class="local-time" data-utc="{{ entry.pinned_at }}" data-utc-format="date">{{ entry.pinned_at[:10] }}</span></span>
-          <form method="post" action="{{ url_for('watchlist_remove') }}">
-            <input type="hidden" name="item_type" value="{{ entry.item_type }}">
-            <input type="hidden" name="item_ref" value="{{ entry.item_ref }}">
-            <button type="submit" class="btn btn-ghost">Remove</button>
-          </form>
-        </div>
+        {% endfor %}
       </div>
-
-      {% if entry.item_type == 'company' %}
-      <details class="watchlist-news" data-company-id="{{ entry.item_ref }}">
-        <summary>Latest news (24h)</summary>
-        <div class="watchlist-news-body">
-          <p class="watchlist-news-status">Loading&hellip;</p>
-        </div>
-      </details>
+      {% endfor %}
+      {% if wl.feed_empty %}
+      <div style="padding:28px 0;font-size:13px;color:var(--text-faint)">Nothing in this view for the current window.</div>
       {% endif %}
     </div>
-    {% endfor %}
-  </div>
-  {% if entries_total_pages > 1 %}
-  <div class="admin-pagination">
-    <span class="muted">Page {{ entries_page }} of {{ entries_total_pages }}</span>
-    <div class="admin-pagination-links">
-      {% set wl_pagination_args = {'wl_q': entries_query, 'wl_type': entries_type_filter} %}
-      {% if entries_page > 1 %}
-      <a class="btn btn-ghost" href="{{ url_for('watchlist', wl_page=entries_page - 1, **wl_pagination_args) }}">&larr; Previous</a>
-      {% endif %}
-      {% if entries_page < entries_total_pages %}
-      <a class="btn btn-ghost" href="{{ url_for('watchlist', wl_page=entries_page + 1, **wl_pagination_args) }}">Next &rarr;</a>
-      {% endif %}
-    </div>
-  </div>
-  {% endif %}
-  {% elif entries_query or entries_type_filter %}
-  <div class="empty-state">No watchlist items match the current filters.</div>
-  {% else %}
-  <div class="empty-state">
-    Nothing pinned yet. Use the "Add to watchlist" button on a Company page
-    or a Research-thread page — or from the CLI:
-    <code>python main.py watchlist-add company HDFCBANK</code>.
-  </div>
-  {% endif %}
+    {% endif %}
+  </section>
+</div>
 
-  <script>
-    // Fetched only on first expand (not for every row up front) and cached
-    // in-memory per page load, so re-collapsing/re-opening never re-fetches.
-    const newsCache = new Map();
+<script>
+(function () {
+  var root = document.getElementById('wl-root');
+  var railOpen = document.getElementById('wl-rail-open');
+  var railClosed = document.getElementById('wl-rail-closed');
+  var gridBtn = document.getElementById('wl-view-grid-btn');
+  var feedBtn = document.getElementById('wl-view-feed-btn');
 
-    document.querySelectorAll('.watchlist-news').forEach((details) => {
-      details.addEventListener('toggle', async () => {
-        if (!details.open || newsCache.has(details)) return;
-        newsCache.set(details, true);
+  function setRail(open) {
+    railOpen.style.display = open ? 'flex' : 'none';
+    railClosed.style.display = open ? 'none' : 'flex';
+    root.classList.toggle('wl-rail-closed', !open);
+    try { localStorage.setItem('signals.watchlist.rail', open ? 'open' : 'closed'); } catch (e) {}
+  }
+  document.getElementById('wl-rail-collapse').addEventListener('click', function () { setRail(false); });
+  document.getElementById('wl-rail-expand').addEventListener('click', function () { setRail(true); });
+  try { if (localStorage.getItem('signals.watchlist.rail') === 'closed') setRail(false); } catch (e) {}
 
-        const companyId = details.dataset.companyId;
-        const body = details.querySelector('.watchlist-news-body');
-        try {
-          const response = await fetch(`/watchlist/news/${encodeURIComponent(companyId)}`);
-          const data = await response.json();
-
-          if (!data.ok || data.items.length === 0) {
-            body.innerHTML = `<p class="watchlist-news-status">No recent headlines found. <a href="${data.news_url}" target="_blank" rel="noopener noreferrer">Search Google News&nbsp;&#8599;</a></p>`;
-            return;
-          }
-
-          const list = document.createElement('div');
-          list.className = 'watchlist-news-items';
-          for (const item of data.items) {
-            const a = document.createElement('a');
-            a.className = 'watchlist-news-item';
-            a.href = item.link;
-            a.target = '_blank';
-            a.rel = 'noopener noreferrer';
-
-            const title = document.createElement('div');
-            title.className = 'watchlist-news-title';
-            title.textContent = item.title;
-            a.appendChild(title);
-
-            const meta = document.createElement('div');
-            meta.className = 'watchlist-news-source';
-            meta.textContent = [item.source, item.published].filter(Boolean).join(' · ');
-            a.appendChild(meta);
-
-            list.appendChild(a);
-          }
-          body.replaceChildren(list);
-        } catch (err) {
-          body.innerHTML = '<p class="watchlist-news-status">Couldn\'t load news right now.</p>';
-        }
-      });
+  function setView(view) {
+    root.dataset.view = view;
+    root.classList.toggle('wl-view-feed', view === 'feed');
+    gridBtn.classList.toggle('active', view === 'grid');
+    feedBtn.classList.toggle('active', view === 'feed');
+    try { localStorage.setItem('signals.watchlist.view', view); } catch (e) {}
+  }
+  gridBtn.addEventListener('click', function () { setView('grid'); });
+  feedBtn.addEventListener('click', function () { setView('feed'); });
+  document.querySelectorAll('[data-wl-show-feed]').forEach(function (link) {
+    link.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      setView('feed');
+      setFilter(link.dataset.wlShowFeed);
     });
-  </script>
+  });
+  try {
+    var savedView = localStorage.getItem('signals.watchlist.view');
+    if (savedView === 'grid' || savedView === 'feed') setView(savedView);
+  } catch (e) {}
+
+  function setFilter(key) {
+    root.dataset.filter = key;
+    document.querySelectorAll('[data-wl-filter]').forEach(function (btn) {
+      btn.classList.toggle('active', btn.dataset.wlFilter === key);
+    });
+    document.querySelectorAll('[data-wl-type-panel]').forEach(function (panel) {
+      panel.classList.toggle('wl-filtered-out', key !== 'all' && panel.dataset.wlTypePanel !== key);
+    });
+    document.querySelectorAll('[data-wl-type-row]').forEach(function (row) {
+      row.classList.toggle('wl-filtered-out', key !== 'all' && row.dataset.wlTypeRow !== key);
+    });
+  }
+  document.querySelectorAll('[data-wl-filter]').forEach(function (btn) {
+    btn.addEventListener('click', function () { setFilter(btn.dataset.wlFilter); });
+  });
+
+  window.scrollTo(0, 0);
+})();
+</script>
 {% endblock %}
