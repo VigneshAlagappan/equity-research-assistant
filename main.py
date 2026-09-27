@@ -697,7 +697,13 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     through the company-less macro pipeline; everything else through the
     normal detect -> parse -> validate -> store -> reconcile flow."""
     setup_logging()
-    conn = init_db()
+    # storage.backend_bootstrap.open_db(), not init_db() -- same "wrong
+    # connection type for a Postgres-swapped repository function" bug class
+    # documented on that module's open_db(); ingest_macro_file()/ingest_file()
+    # call storage.repositories functions that resolve to repositories_pg.py
+    # once DATABASE_BACKEND=postgres, which need a real Postgres connection,
+    # not a hardcoded sqlite3 one.
+    conn = storage.backend_bootstrap.open_db()
     ensure_metric_vocabulary(conn)
     file_path = Path(args.file)
 

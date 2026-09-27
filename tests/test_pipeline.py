@@ -463,6 +463,50 @@ def test_ingest_macro_file_routes_xlsx_to_the_rbi_indicator_workbook_parser(
     assert any(row["period"] == "2026-08-07" for row in series)
 
 
+def test_ingest_macro_file_skips_periods_already_stored_on_reingest(
+    tmp_path: Path, db_conn: sqlite3.Connection
+) -> None:
+    """A refreshed RBI workbook re-ingested over an already-populated table
+    must only add its new tail, not duplicate every already-stored period
+    -- insert_macro_observations() has no unique constraint of its own, so
+    ingest_macro_file() is the only place this dedup can happen."""
+    import openpyxl
+    from datetime import datetime
+
+    from ingestion.pipeline import ingest_macro_file
+
+    def make_workbook(path: Path, weekly_dates: list) -> None:
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+        for sheet_name in ("Weekly", "Fortnightly", "Monthly", "Quarterly"):
+            ws = wb.create_sheet(sheet_name)
+            ws.append([None] * 2)
+            ws.append([None, f"Macro-economic Indicators - {sheet_name}"])
+            ws.append([None])
+            ws.append([None, "Period", "Policy Repo Rate (%)"])
+        for d in weekly_dates:
+            wb["Weekly"].append([None, d, 5.25])
+        wb.save(path)
+
+    first_path = tmp_path / "first.xlsx"
+    make_workbook(first_path, [datetime(2026, 7, 31), datetime(2026, 8, 7)])
+    first_result = ingest_macro_file(db_conn, first_path, source_id="rbi")
+    assert first_result.inserted_count == 2
+
+    refreshed_path = tmp_path / "refreshed.xlsx"
+    make_workbook(refreshed_path, [datetime(2026, 7, 31), datetime(2026, 8, 7), datetime(2026, 8, 14)])
+    second_result = ingest_macro_file(db_conn, refreshed_path, source_id="rbi")
+
+    assert second_result.parsed_count == 3
+    assert second_result.inserted_count == 1  # only 2026-08-14 is new
+
+    series = get_macro_series(db_conn, "policy_repo_rate")
+    periods = [row["period"] for row in series]
+    assert periods.count("2026-07-31") == 1
+    assert periods.count("2026-08-07") == 1
+    assert periods.count("2026-08-14") == 1
+
+
 def test_ingest_macro_file_routes_other_xlsx_to_the_dbie_table_parser(
     tmp_path: Path, db_conn: sqlite3.Connection
 ) -> None:
