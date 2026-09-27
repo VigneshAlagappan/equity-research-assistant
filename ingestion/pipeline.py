@@ -40,6 +40,7 @@ from storage import raw_object_repository as ror
 from storage.raw_object_store import store_raw_object
 from sources.iitm_rainfall import parse_iitm_file
 from sources.rbi_indicators import looks_like_rbi_indicator_workbook, parse_rbi_indicator_workbook
+from sources.rbi_reference_rate import looks_like_rbi_reference_rate_workbook, parse_rbi_reference_rate
 from sources.sec_edgar import SECEdgarAdapter, company_facts_url, fetch_company_facts_raw
 from sources.yfinance_financials import YFinanceAdapter
 from storage.repositories import (
@@ -446,11 +447,13 @@ def ingest_macro_file(
     MacroDataAdapter handles the CSV convention (period,value,unit — one
     file, one series); an .xlsx/.xls file instead goes through
     sources/rbi_indicators.py if it matches the "50 Macroeconomic
-    Indicators" workbook's sheet names, or sources/rbi_dbie_tables.py's
-    single-table parser otherwise; source_id "iitm" goes through
-    sources/iitm_rainfall.py's fixed-width parser. series_key is ignored
-    for the XLSX and IITM paths — they derive series_key per row/column
-    themselves, unlike the CSV convention's one-series-per-file.
+    Indicators" workbook's sheet names, sources/rbi_reference_rate.py if it
+    matches the "Other Macroeconomic Indicators" workbook's Daily-sheet
+    shape, or sources/rbi_dbie_tables.py's single-table parser otherwise;
+    source_id "iitm" goes through sources/iitm_rainfall.py's fixed-width
+    parser. series_key is ignored for the XLSX and IITM paths — they derive
+    series_key per row/column themselves, unlike the CSV convention's
+    one-series-per-file.
     """
     source_id = source_id or detect_macro_source_from_path(file_path)
     if source_id == "iitm":
@@ -458,6 +461,8 @@ def ingest_macro_file(
     elif file_path.suffix.lower() in (".xlsx", ".xls"):
         if looks_like_rbi_indicator_workbook(file_path):
             parsed = parse_rbi_indicator_workbook(file_path)
+        elif looks_like_rbi_reference_rate_workbook(file_path):
+            parsed = parse_rbi_reference_rate(file_path)
         elif looks_like_row_oriented_dbie_table(file_path):
             parsed = parse_rbi_daily_rate_table(file_path)
         else:
