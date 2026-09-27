@@ -172,6 +172,16 @@ DEFAULT_SOURCES: list[dict[str, object]] = [
             "above; live-fetched per series (sources/fred.py), not an uploaded file."
         ),
     },
+    {
+        "source_id": "alpha_vantage",
+        "name": "Alpha Vantage",
+        "trust_rank": None,
+        "description": (
+            "Gold/silver weekly spot prices (XAUUSD/XAGUSD) — live-fetched per asset "
+            "(sources/alpha_vantage_commodities.py), same live-API shape as fred above, "
+            "not an uploaded file."
+        ),
+    },
 ]
 
 # ------------------------------------------------------------------
@@ -470,6 +480,16 @@ QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY")
 DOCUMENT_STORE_BACKEND = os.environ.get("DOCUMENT_STORE_BACKEND", "local")
 S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "signals-app-documents-862938824222")
 S3_REGION_NAME = os.environ.get("AWS_REGION", "us-east-2")
+
+# api.stlouisfed.org key (distinct from sources/fred.py's unauthenticated
+# fredgraph.csv scrape) -- only needed by callers that hit FRED's official
+# JSON API directly, e.g. scripts/fred_historical_s3_pull.py, for series
+# metadata the CSV export doesn't carry.
+FRED_API_KEY = os.environ.get("FRED_API_KEY")
+
+# alphavantage.co key -- sources/alpha_vantage_commodities.py's
+# GOLD_SILVER_HISTORY calls (gold/silver weekly spot prices).
+ALPHA_VANTAGE_KEY = os.environ.get("ALPHA_VANTAGE_KEY")
 
 def _warn_if_document_store_misconfigured(
     database_backend: str, local_dev_database_url: str | None, document_store_backend: str,

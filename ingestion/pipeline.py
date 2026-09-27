@@ -29,6 +29,12 @@ from sources.rbi_dbie_tables import (
     parse_rbi_daily_rate_table,
     parse_rbi_dbie_table,
 )
+from sources.alpha_vantage_commodities import (
+    ASSET_SYMBOLS,
+    commodity_history_url,
+    fetch_commodity_series_raw,
+    parse_commodity_json,
+)
 from sources.fred import fetch_fred_series_raw, fred_csv_url, parse_fred_csv
 from storage import raw_object_repository as ror
 from storage.raw_object_store import store_raw_object
@@ -595,6 +601,89 @@ def ingest_fred_series(
     logger.info(
         "Ingested %s (macro/fred): parsed=%d inserted=%d skipped=%d",
         series_id, result.parsed_count, result.inserted_count, result.skipped_count,
+    )
+    return result
+
+
+def ingest_alpha_vantage_commodity_series(
+    conn: DBConnection, asset_id: str, *, api_key: str, unit: str, series_key: str | None = None,
+    region: str | None = None,
+) -> MacroIngestionResult:
+    """Fetch one Alpha Vantage commodity series (sources/alpha_vantage_
+    commodities.py) live and run it through the same validate -> store
+    steps ingest_fred_series() uses -- sibling function, not a branch of
+    it, same reasoning that function's own docstring gives for being
+    separate from ingest_macro_file() (the input is an asset_id, not a
+    file_path/source-detection-by-path step).
+
+    fetch_commodity_series_raw() always returns the endpoint's *entire*
+    weekly history (Alpha Vantage's GOLD_SILVER_HISTORY has no "since"
+    param either), so the same already-on-file period filter
+    ingest_fred_series() applies is repeated here to keep a repeat run
+    (e.g. this app's own scheduled refresh) from appending duplicate rows
+    for every period, every run, forever."""
+    resolved_series_key = series_key or asset_id.lower()
+    if asset_id not in ASSET_SYMBOLS:
+        raise ValueError(f"asset_id must be one of {sorted(ASSET_SYMBOLS)}, got {asset_id!r}")
+    symbol = ASSET_SYMBOLS[asset_id]
+
+    raw_bytes = fetch_commodity_series_raw(symbol, api_key=api_key)
+    raw_result = store_raw_object(
+        conn, source="alpha_vantage", entity=resolved_series_key, object_type="commodity_price_history",
+        period=None, source_url=commodity_history_url(symbol),
+        raw_prefix="macro", content=raw_bytes, extension="json",
+    )
+    parsed = parse_commodity_json(raw_bytes, asset_id, unit=unit, series_key=series_key, region=region)
+
+    result = MacroIngestionResult(series_key=resolved_series_key, source_id="alpha_vantage", file_path=f"alpha_vantage:{asset_id}")
+    result.parsed_count = len(parsed)
+
+    existing_periods = get_existing_macro_periods(conn, resolved_series_key, region, "alpha_vantage")
+    new_obs = [obs for obs in parsed if obs.period not in existing_periods]
+    already_have = len(parsed) - len(new_obs)
+    if already_have:
+        logger.info(
+            "ingest_alpha_vantage_commodity_series(%s): %d/%d period(s) already on file, skipping",
+            asset_id, already_have, len(parsed),
+        )
+
+    valid: list[MacroNormalizedObservation] = []
+    for obs in new_obs:
+        problems = validate_macro_observation(obs)
+        if problems:
+            result.skipped_count += 1
+            label = f"{obs.series_key} {obs.period}"
+            reason = f"{label}: {'; '.join(problems)}"
+            result.skip_reasons.append(reason)
+            logger.warning("Skipping invalid macro observation: %s", reason)
+            continue
+        valid.append(obs)
+
+    insert_macro_observations(conn, valid)
+    result.inserted_count = len(valid)
+    if valid:
+        _publish_dataset_ingested(
+            conn,
+            dataset_id=f"macro:alpha_vantage:{result.series_key}",
+            dataset_type="macro",
+            source="alpha_vantage",
+            storage_reference={"table": "macro_observations"},
+            scope={
+                "series_keys": sorted({obs.series_key for obs in valid}),
+                "regions": sorted({obs.region for obs in valid if obs.region}),
+            },
+            metadata={"observation_count": len(valid)},
+        )
+
+    ror.update_raw_object_state(conn, raw_result.object_id, state="ingested", mark_processed=True)
+    ror.insert_lineage(
+        conn, object_id=raw_result.object_id, derived_store="macro_observations",
+        derived_table="macro_observations", derived_record_id=resolved_series_key,
+    )
+
+    logger.info(
+        "Ingested %s (macro/alpha_vantage): parsed=%d inserted=%d skipped=%d",
+        asset_id, result.parsed_count, result.inserted_count, result.skipped_count,
     )
     return result
 
