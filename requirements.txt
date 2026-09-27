@@ -7,6 +7,7 @@ anthropic>=0.40
 python-dotenv>=1.0
 yfinance>=0.2
 pypdf>=5.0
+pdfplumber>=0.11  # table-aware extraction for NSE filing PDFs (sources/nse_pdf_extractor.py) -- pypdf's raw-text extraction doesn't reliably preserve table structure (docs/nse-pdf-feasibility/FEASIBILITY_REPORT.md, Section 9 point 4)
 requests>=2.31
 bleach>=6.4
 neo4j>=5.0

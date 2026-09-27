@@ -105,12 +105,13 @@ def insert_financial_observations(conn: DBConnection, observations: Iterable) ->
                     company_id, metric_key, period_type, fiscal_year, quarter, statement_type,
                     value, unit, currency, source, source_document_id, source_file, source_url,
                     retrieved_at, parser_version, normalization_version, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING observation_id
                 """,
                 (
                     obs.company_id, obs.metric_key, obs.period_type, obs.fiscal_year, obs.quarter,
-                    obs.statement_type, obs.value, obs.unit, obs.currency, obs.source, obs.source_file,
+                    obs.statement_type, obs.value, obs.unit, obs.currency, obs.source,
+                    getattr(obs, "source_document_id", None), obs.source_file,
                     obs.source_url, obs.retrieved_at or now, obs.parser_version, NORMALIZATION_VERSION, now,
                 ),
             )
@@ -406,6 +407,48 @@ def get_canonical_series(
             (company_id, metric_key, period_type, statement_type),
         )
         return cur.fetchall()
+
+
+def get_canonical_series_provenance(
+    conn: DBConnection,
+    company_id: str,
+    metric_key: str,
+    period_type: str = "annual",
+    statement_type: str | None = "consolidated",
+) -> list[Row]:
+    """Postgres port of storage.repositories.get_canonical_series_provenance
+    -- see that docstring for the full rationale (web/charts_feed.py's
+    XBRL-vs-NSE-PDF provenance tag)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT cf.fiscal_year, cf.quarter, fo.source AS source, d.parser_version AS parser_version
+            FROM canonical_financials cf
+            LEFT JOIN financial_observations fo ON fo.observation_id = cf.chosen_observation_id
+            LEFT JOIN documents d ON d.document_id = fo.source_document_id
+            WHERE cf.company_id = %s AND cf.metric_key = %s AND cf.period_type = %s
+              AND cf.statement_type IS NOT DISTINCT FROM %s
+            ORDER BY cf.fiscal_year ASC, cf.quarter ASC
+            """,
+            (company_id, metric_key, period_type, statement_type),
+        )
+        return cur.fetchall()
+
+
+def company_has_canonical_financials(conn: DBConnection, company_id: str) -> bool:
+    """Postgres port of storage.repositories.company_has_canonical_financials
+    -- see that docstring."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM canonical_financials WHERE company_id = %s LIMIT 1", (company_id,))
+        return cur.fetchone() is not None
+
+
+def get_available_statement_types(conn: DBConnection, company_id: str) -> set[str]:
+    """Postgres port of storage.repositories.get_available_statement_types
+    -- see that docstring."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT statement_type FROM canonical_financials WHERE company_id = %s", (company_id,))
+        return {row["statement_type"] for row in cur.fetchall() if row["statement_type"]}
 
 
 def list_canonical_financials_for_companies(conn: DBConnection, company_ids: list[str]) -> list[Row]:
@@ -968,6 +1011,76 @@ def get_company_document(conn: DBConnection, company_id: str, document_id: int) 
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM documents WHERE document_id = %s AND company_id = %s", (document_id, company_id))
         return cur.fetchone()
+
+
+def upsert_nse_filing_discovery_log(
+    conn: DBConnection,
+    *,
+    company_id: str,
+    nse_symbol: str,
+    fiscal_year: str,
+    quarter: str,
+    period_end: str,
+    extraction_status: str,
+    filing_date: str | None = None,
+    source_url: str | None = None,
+    document_id: str | None = None,
+    match_confidence: str | None = None,
+    attachment_format: str = "none",
+    extracted_char_count: int | None = None,
+    registered_document_id: int | None = None,
+    notes: str | None = None,
+) -> Row:
+    """Postgres port of repositories.upsert_nse_filing_discovery_log() — see
+    that function's own docstring. Uses a real ON CONFLICT upsert (Postgres
+    supports it natively, unlike the NULL-safe manual check-then-branch the
+    SQLite side needs elsewhere in this module) since the natural key here
+    has no nullable column."""
+    now = _utcnow_iso()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO nse_filing_discovery_log (
+                company_id, nse_symbol, fiscal_year, quarter, period_end, filing_date, source_url,
+                document_id, match_confidence, attachment_format, extraction_status,
+                extracted_char_count, registered_document_id, notes, discovered_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (company_id, fiscal_year, quarter) DO UPDATE SET
+                nse_symbol = EXCLUDED.nse_symbol, period_end = EXCLUDED.period_end,
+                filing_date = EXCLUDED.filing_date, source_url = EXCLUDED.source_url,
+                document_id = EXCLUDED.document_id, match_confidence = EXCLUDED.match_confidence,
+                attachment_format = EXCLUDED.attachment_format, extraction_status = EXCLUDED.extraction_status,
+                extracted_char_count = EXCLUDED.extracted_char_count,
+                registered_document_id = EXCLUDED.registered_document_id, notes = EXCLUDED.notes,
+                updated_at = EXCLUDED.updated_at
+            RETURNING *
+            """,
+            (
+                company_id, nse_symbol, fiscal_year, quarter, period_end, filing_date, source_url,
+                document_id, match_confidence, attachment_format, extraction_status,
+                extracted_char_count, registered_document_id, notes, now, now,
+            ),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return row
+
+
+def list_nse_filing_discovery_log(
+    conn: DBConnection, *, company_id: str | None = None, extraction_status: str | None = None,
+) -> list[Row]:
+    query = "SELECT * FROM nse_filing_discovery_log WHERE 1=1"
+    params: list[object] = []
+    if company_id is not None:
+        query += " AND company_id = %s"
+        params.append(company_id)
+    if extraction_status is not None:
+        query += " AND extraction_status = %s"
+        params.append(extraction_status)
+    query += " ORDER BY company_id, fiscal_year, quarter"
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+        return cur.fetchall()
 
 
 def save_company_document(
@@ -3062,3 +3175,334 @@ def set_ingestion_queue_item_status(conn: DBConnection, item_id: int, status: st
         cur.execute("UPDATE ingestion_queue_items SET status = %s WHERE item_id = %s", (status, item_id))
     conn.commit()
     return get_ingestion_queue_item(conn, item_id)
+
+
+# ------------------------------------------------------------------
+# Economic graph (Phase 1 -- registry + canonical observation model).
+# Postgres port of the equivalent section in storage/repositories.py --
+# see that section's docstrings for the full reasoning; only the ? -> %s /
+# ON CONFLICT / RETURNING translation differs here.
+# ------------------------------------------------------------------
+
+
+def upsert_source_organization(
+    conn: DBConnection,
+    name: str,
+    *,
+    authority_level: str | None = None,
+    description: str | None = None,
+) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO source_organizations (name, authority_level, description)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (name) DO UPDATE SET
+                authority_level = EXCLUDED.authority_level,
+                description = EXCLUDED.description
+            RETURNING source_org_id
+            """,
+            (name, authority_level, description),
+        )
+        source_org_id = cur.fetchone()["source_org_id"]
+    conn.commit()
+    return source_org_id
+
+
+def get_source_organization(conn: DBConnection, source_org_id: int) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM source_organizations WHERE source_org_id = %s", (source_org_id,))
+        return cur.fetchone()
+
+
+def insert_source_dataset(
+    conn: DBConnection,
+    source_org_id: int,
+    *,
+    authority_level: str | None = None,
+    priority: int | None = None,
+    access_method: str | None = None,
+    cadence: str | None = None,
+    historical_start: str | None = None,
+    backfill_supported: bool | None = None,
+    license_notes: str | None = None,
+) -> int:
+    now = _utcnow_iso()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO source_datasets (
+                source_org_id, authority_level, priority, access_method, cadence,
+                historical_start, backfill_supported, license_notes, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING dataset_id
+            """,
+            (
+                source_org_id, authority_level, priority, access_method, cadence,
+                historical_start, None if backfill_supported is None else int(backfill_supported),
+                license_notes, now, now,
+            ),
+        )
+        dataset_id = cur.fetchone()["dataset_id"]
+    conn.commit()
+    return dataset_id
+
+
+def get_source_dataset(conn: DBConnection, dataset_id: int) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM source_datasets WHERE dataset_id = %s", (dataset_id,))
+        return cur.fetchone()
+
+
+def insert_source_endpoint(
+    conn: DBConnection,
+    dataset_id: int,
+    *,
+    url: str | None = None,
+    access_method: str | None = None,
+    priority: int | None = None,
+    enabled: bool = True,
+    authentication_type: str | None = None,
+    parser_config: str | None = None,
+    availability_status: str | None = None,
+    last_verified_at: str | None = None,
+) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO source_endpoints (
+                dataset_id, url, access_method, priority, enabled, authentication_type,
+                parser_config, availability_status, last_verified_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING endpoint_id
+            """,
+            (
+                dataset_id, url, access_method, priority, int(enabled), authentication_type,
+                parser_config, availability_status, last_verified_at,
+            ),
+        )
+        endpoint_id = cur.fetchone()["endpoint_id"]
+    conn.commit()
+    return endpoint_id
+
+
+def list_source_endpoints_for_dataset(conn: DBConnection, dataset_id: int) -> list[Row]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM source_endpoints WHERE dataset_id = %s "
+            "ORDER BY priority IS NULL, priority ASC, endpoint_id ASC",
+            (dataset_id,),
+        )
+        return cur.fetchall()
+
+
+def upsert_economic_indicator(
+    conn: DBConnection,
+    name: str,
+    category: str,
+    *,
+    economic_meaning: str | None = None,
+    higher_is: str | None = None,
+    leading_lagging: str | None = None,
+    report_section: str | None = None,
+    headline_weight: float | None = None,
+    preferred_chart_window: str | None = None,
+    material_change_mom: float | None = None,
+    material_change_yoy: float | None = None,
+    material_change_ytd: float | None = None,
+    status: str = "registered_only",
+) -> int:
+    if status not in ("registered_only", "ingesting", "live"):
+        raise ValueError(f"invalid status: {status!r}")
+    now = _utcnow_iso()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO economic_indicator_registry (
+                name, category, economic_meaning, higher_is, leading_lagging, report_section,
+                headline_weight, preferred_chart_window, material_change_mom, material_change_yoy,
+                material_change_ytd, status, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (name) DO UPDATE SET
+                category = EXCLUDED.category,
+                economic_meaning = EXCLUDED.economic_meaning,
+                higher_is = EXCLUDED.higher_is,
+                leading_lagging = EXCLUDED.leading_lagging,
+                report_section = EXCLUDED.report_section,
+                headline_weight = EXCLUDED.headline_weight,
+                preferred_chart_window = EXCLUDED.preferred_chart_window,
+                material_change_mom = EXCLUDED.material_change_mom,
+                material_change_yoy = EXCLUDED.material_change_yoy,
+                material_change_ytd = EXCLUDED.material_change_ytd,
+                status = EXCLUDED.status,
+                updated_at = EXCLUDED.updated_at
+            RETURNING indicator_id
+            """,
+            (
+                name, category, economic_meaning, higher_is, leading_lagging, report_section,
+                headline_weight, preferred_chart_window, material_change_mom, material_change_yoy,
+                material_change_ytd, status, now, now,
+            ),
+        )
+        indicator_id = cur.fetchone()["indicator_id"]
+    conn.commit()
+    return indicator_id
+
+
+def get_economic_indicator(conn: DBConnection, indicator_id: int) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM economic_indicator_registry WHERE indicator_id = %s", (indicator_id,))
+        return cur.fetchone()
+
+
+def get_economic_indicator_by_name(conn: DBConnection, name: str) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM economic_indicator_registry WHERE name = %s", (name,))
+        return cur.fetchone()
+
+
+def list_economic_indicators(
+    conn: DBConnection, *, category: str | None = None, status: str | None = None
+) -> list[Row]:
+    clauses, params = [], []
+    if category is not None:
+        clauses.append("category = %s")
+        params.append(category)
+    if status is not None:
+        clauses.append("status = %s")
+        params.append(status)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT * FROM economic_indicator_registry {where} ORDER BY category, name", params)
+        return cur.fetchall()
+
+
+def insert_economic_series(
+    conn: DBConnection,
+    indicator_id: int,
+    series_key: str,
+    *,
+    dataset_id: int | None = None,
+    geography: str | None = None,
+    unit: str | None = None,
+    frequency: str | None = None,
+    seasonal_adjustment: str | None = None,
+    notes: str | None = None,
+) -> int:
+    now = _utcnow_iso()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO economic_series (
+                indicator_id, dataset_id, series_key, geography, unit, frequency,
+                seasonal_adjustment, notes, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING series_id
+            """,
+            (
+                indicator_id, dataset_id, series_key, geography, unit, frequency,
+                seasonal_adjustment, notes, now, now,
+            ),
+        )
+        series_id = cur.fetchone()["series_id"]
+    conn.commit()
+    return series_id
+
+
+def get_economic_series(conn: DBConnection, series_id: int) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM economic_series WHERE series_id = %s", (series_id,))
+        return cur.fetchone()
+
+
+def get_economic_series_by_key(conn: DBConnection, series_key: str) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM economic_series WHERE series_key = %s", (series_key,))
+        return cur.fetchone()
+
+
+def list_series_for_indicator(conn: DBConnection, indicator_id: int) -> list[Row]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM economic_series WHERE indicator_id = %s ORDER BY series_id", (indicator_id,))
+        return cur.fetchall()
+
+
+def insert_economic_observations(conn: DBConnection, observations: Iterable) -> list[int]:
+    now = _utcnow_iso()
+    ids: list[int] = []
+    with conn.cursor() as cur:
+        for obs in observations:
+            cur.execute(
+                """
+                INSERT INTO economic_observations (
+                    series_id, period, period_type, release_date, vintage, revision_status,
+                    value, unit, raw_object_id, ingested_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING observation_id
+                """,
+                (
+                    obs.series_id, obs.period, obs.period_type, obs.release_date, obs.vintage,
+                    obs.revision_status, obs.value, obs.unit, obs.raw_object_id, obs.ingested_at or now,
+                ),
+            )
+            ids.append(cur.fetchone()["observation_id"])
+    conn.commit()
+    return ids
+
+
+def economic_observation_latest(conn: DBConnection, series_id: int) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT * FROM economic_observations
+            WHERE series_id = %s
+            ORDER BY period DESC, vintage DESC
+            LIMIT 1
+            """,
+            (series_id,),
+        )
+        return cur.fetchone()
+
+
+def economic_observation_as_of(conn: DBConnection, series_id: int, date: str) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT * FROM economic_observations
+            WHERE series_id = %s AND release_date <= %s
+            ORDER BY period DESC, vintage DESC
+            LIMIT 1
+            """,
+            (series_id, date),
+        )
+        return cur.fetchone()
+
+
+def economic_observation_history(conn: DBConnection, series_id: int, start_date: str, end_date: str) -> list[Row]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT o.* FROM economic_observations o
+            WHERE o.series_id = %s AND o.period >= %s AND o.period <= %s
+              AND o.vintage = (
+                  SELECT MAX(o2.vintage) FROM economic_observations o2
+                  WHERE o2.series_id = o.series_id AND o2.period = o.period
+              )
+            ORDER BY o.period ASC
+            """,
+            (series_id, start_date, end_date),
+        )
+        return cur.fetchall()
+
+
+def economic_observation_vintages(conn: DBConnection, series_id: int, period: str) -> list[Row]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT * FROM economic_observations
+            WHERE series_id = %s AND period = %s
+            ORDER BY release_date ASC, vintage ASC
+            """,
+            (series_id, period),
+        )
+        return cur.fetchall()

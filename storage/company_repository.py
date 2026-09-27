@@ -30,18 +30,18 @@ def insert_company(
     conn: DBConnection, *, company_id: str, legal_name: str, display_name: str, nse_symbol: str | None,
     bse_code: str | None, isin: str | None, country: str, currency: str, fiscal_year_end_month: int,
     website: str | None, macro_economic_sector: str | None, sector: str | None, industry: str | None,
-    basic_industry: str | None, listed_date: str | None, now: str,
+    basic_industry: str | None, listed_date: str | None, now: str, fetch_symbol: str | None = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO companies (
-            company_id, legal_name, display_name, nse_symbol, bse_code, isin, country, currency,
+            company_id, legal_name, display_name, nse_symbol, bse_code, isin, fetch_symbol, country, currency,
             fiscal_year_end_month, website,
             macro_economic_sector, sector, industry, basic_industry,
             status, listed_date, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
         """,
-        (company_id, legal_name, display_name, nse_symbol, bse_code, isin, country, currency,
+        (company_id, legal_name, display_name, nse_symbol, bse_code, isin, fetch_symbol, country, currency,
          fiscal_year_end_month, website,
          macro_economic_sector, sector, industry, basic_industry, listed_date, now, now),
     )
@@ -52,18 +52,18 @@ def update_company(
     conn: DBConnection, *, company_id: str, legal_name: str, display_name: str, nse_symbol: str | None,
     bse_code: str | None, isin: str | None, country: str, currency: str, fiscal_year_end_month: int,
     website: str | None, macro_economic_sector: str | None, sector: str | None, industry: str | None,
-    basic_industry: str | None, listed_date: str | None, now: str,
+    basic_industry: str | None, listed_date: str | None, now: str, fetch_symbol: str | None = None,
 ) -> None:
     conn.execute(
         """
         UPDATE companies SET
-            legal_name = ?, display_name = ?, nse_symbol = ?, bse_code = ?, isin = ?,
+            legal_name = ?, display_name = ?, nse_symbol = ?, bse_code = ?, isin = ?, fetch_symbol = ?,
             country = ?, currency = ?, fiscal_year_end_month = ?, website = ?,
             macro_economic_sector = ?, sector = ?, industry = ?, basic_industry = ?,
             listed_date = ?, updated_at = ?
         WHERE company_id = ?
         """,
-        (legal_name, display_name, nse_symbol, bse_code, isin, country, currency, fiscal_year_end_month,
+        (legal_name, display_name, nse_symbol, bse_code, isin, fetch_symbol, country, currency, fiscal_year_end_month,
          website, macro_economic_sector, sector, industry, basic_industry, listed_date, now, company_id),
     )
     conn.commit()
@@ -300,7 +300,7 @@ def select_corporate_actions(conn: DBConnection, company_id: str) -> list[Row]:
 
 
 def select_companies_missing_website(conn: DBConnection, *, company_id: str | None = None) -> list[Row]:
-    query = "SELECT company_id FROM companies WHERE country != 'IN' AND website IS NULL"
+    query = "SELECT company_id, fetch_symbol FROM companies WHERE country != 'IN' AND website IS NULL"
     params: tuple = ()
     if company_id is not None:
         query += " AND company_id = ?"
@@ -397,9 +397,15 @@ def select_active_companies_by_country(conn: DBConnection, country: str) -> list
     company on file" is the whole ticker list, not just an index subset,
     and a couple of them (e.g. Lyft) aren't in any of the US indices
     already tagged in company_index_membership (S&P 500/Nasdaq 100/Dow)
-    anyway -- filtering by one of those would silently drop them."""
+    anyway -- filtering by one of those would silently drop them.
+
+    fetch_symbol is included alongside company_id since the two aren't
+    always the same anymore (a handful of US company_ids are disambiguated
+    from a pre-existing Indian company_id, e.g. "PNC_US" vs the real
+    ticker "PNC") -- callers should resolve the real ticker as
+    `row["fetch_symbol"] or row["company_id"]`, never company_id alone."""
     return conn.execute(
-        "SELECT company_id FROM companies WHERE country = ? AND status = 'active' ORDER BY company_id",
+        "SELECT company_id, fetch_symbol FROM companies WHERE country = ? AND status = 'active' ORDER BY company_id",
         (country,),
     ).fetchall()
 
@@ -421,7 +427,10 @@ def select_india_companies_not_in_index(conn: DBConnection, exclude_index_name: 
     ).fetchall()
 
 
-def tag_companies_index(conn: DBConnection, company_ids: list[str], index_name: str) -> int:
+def tag_companies_index(
+    conn: DBConnection, company_ids: list[str], index_name: str, *,
+    source: str | None = None, retrieved_at: str | None = None, effective_from: str | None = None,
+) -> int:
     """Additive tag, not set_company_index_tags()'s "replace this company's
     whole tag set" -- that function DELETEs a company's existing
     company_index_membership rows first, which would silently drop any
@@ -429,11 +438,64 @@ def tag_companies_index(conn: DBConnection, company_ids: list[str], index_name: 
     already carry. INSERT OR IGNORE keyed on the table's own (company_id,
     index_name) uniqueness makes re-running this against an overlapping
     company_ids list free. Returns how many rows were newly tagged (0 if
-    every company was already tagged)."""
+    every company was already tagged).
+
+    `source`/`retrieved_at`/`effective_from` are optional provenance fields
+    (Russell/S&P-style index membership sourced from a dated external file,
+    e.g. scripts/register_russell3000_companies.py) -- when `source` is
+    omitted (every pre-existing caller, e.g. scripts/tag_nifty_microcap.py),
+    this runs the exact plain INSERT OR IGNORE above, unchanged. When
+    `source` is supplied, this instead upserts: a currently-tagged company
+    gets its provenance refreshed and any prior `status='historical'`/
+    `effective_to` cleared back to current (a reconstitution re-entry), via
+    ON CONFLICT DO UPDATE rather than DO NOTHING."""
+    if source is None:
+        changes_before = conn.total_changes
+        conn.executemany(
+            "INSERT OR IGNORE INTO company_index_membership (company_id, index_name) VALUES (?, ?)",
+            [(company_id, index_name) for company_id in company_ids],
+        )
+        conn.commit()
+        return conn.total_changes - changes_before
     changes_before = conn.total_changes
     conn.executemany(
-        "INSERT OR IGNORE INTO company_index_membership (company_id, index_name) VALUES (?, ?)",
-        [(company_id, index_name) for company_id in company_ids],
+        """
+        INSERT INTO company_index_membership (company_id, index_name, source, retrieved_at, effective_from, status)
+        VALUES (?, ?, ?, ?, ?, 'current')
+        ON CONFLICT (company_id, index_name) DO UPDATE SET
+            source = excluded.source,
+            retrieved_at = excluded.retrieved_at,
+            effective_from = COALESCE(company_index_membership.effective_from, excluded.effective_from),
+            effective_to = NULL,
+            status = 'current'
+        """,
+        [(company_id, index_name, source, retrieved_at, effective_from) for company_id in company_ids],
+    )
+    conn.commit()
+    return conn.total_changes - changes_before
+
+
+def mark_index_membership_historical(
+    conn: DBConnection, company_ids: list[str], index_name: str, effective_to: str,
+) -> int:
+    """Closes out membership rows for companies that dropped out of
+    `index_name` on reconstitution, WITHOUT deleting the row -- flips
+    status to 'historical' and stamps effective_to, so a later re-entry
+    (tag_companies_index() with source= set again) can flip it back to
+    'current' rather than losing when the company was last tagged. Only
+    touches rows currently marked 'current' for this index; returns the
+    number of rows closed out."""
+    if not company_ids:
+        return 0
+    changes_before = conn.total_changes
+    placeholders = ",".join("?" for _ in company_ids)
+    conn.execute(
+        f"""
+        UPDATE company_index_membership
+        SET status = 'historical', effective_to = ?
+        WHERE index_name = ? AND status = 'current' AND company_id IN ({placeholders})
+        """,
+        [effective_to, index_name, *company_ids],
     )
     conn.commit()
     return conn.total_changes - changes_before

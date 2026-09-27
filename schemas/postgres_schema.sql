@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS companies (
   nse_symbol TEXT,
   bse_code TEXT,
   isin TEXT,
+  fetch_symbol TEXT,                       -- the real market ticker used to fetch from yfinance/SEC EDGAR, when it differs from company_id (e.g. company_id "PNC_US" disambiguated from an existing Indian company_id "PNC", fetch_symbol "PNC" is the real one) -- company_id is a purely internal, guaranteed-unique key; this column (falls back to nse_symbol for India or company_id itself for US when NULL) is what every yfinance/SEC data-fetch call site should resolve against instead of assuming company_id doubles as the ticker
   country TEXT NOT NULL DEFAULT 'IN',      -- ISO 3166-1 alpha-2, e.g. "IN", "US" -- drives currency/exchange defaults, the Companies list filter, and live_quote.py's ticker-suffix logic
   currency TEXT NOT NULL DEFAULT 'INR',    -- ISO 4217, e.g. "INR", "USD" -- drives unit localization (normalization/financials.py) and price/financials display formatting
   fiscal_year_end_month INTEGER NOT NULL DEFAULT 3, -- 1-12, the calendar month this company's fiscal year closes in (3 = March, India's default; 12 = December, the common US default) -- drives normalization/periods.py's fiscal-year/quarter parsing
@@ -262,6 +263,60 @@ CREATE TABLE IF NOT EXISTS reconciliation_log (
   was_chosen INTEGER,
   note TEXT
 );
+
+-- ============================================================
+-- NSE filing discovery log (nse-pdf-backfill, 2026-09) -- one row per
+-- (company, fiscal_year, quarter) the sources/nse_pdf_filings.py date-
+-- window discovery pass has classified, whether or not a fact was ever
+-- extracted from it. Two jobs this table does:
+--   1. Tracks what's already been attempted so a re-run doesn't
+--      re-discover/re-download unchanged history every time (same
+--      "don't repeat cheap-but-not-free work" role sources/nse_fetch.py's
+--      own listing cache plays, just persisted instead of TTL'd).
+--   2. Surfaces `extraction_status='needs_ocr'` rows (a scanned/no-text-
+--      layer PDF or ZIP -- feasibility report Sections 8/13.2/14) as a
+--      queue for future OCR work, per the report's own Section 14
+--      appendix recommendation -- this app never attempts OCR itself
+--      (see sources/nse_pdf_extractor.py's module docstring).
+-- Mirrors spikes/nse_pdf_feasibility/run_2015_discovery.py's own
+-- QuarterRecord shape (already retroactively validated against 192 real
+-- quarters, 0 not_found) -- this table is that shape promoted to
+-- production storage, not a redesign.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS nse_filing_discovery_log (
+  log_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  nse_symbol TEXT NOT NULL,
+  fiscal_year TEXT NOT NULL,
+  quarter TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  filing_date TEXT,                 -- NSE's own an_dt/sort_date for the matched announcement
+  source_url TEXT,                  -- attchmntFile -- the NSE/nsearchives URL the PDF/ZIP was fetched from
+  document_id TEXT,                 -- NSE's own announcement seq_id (external identifier -- NOT documents.document_id)
+  match_confidence TEXT,            -- text_confirmed | date_window_only (sources/nse_pdf_filings.py)
+  attachment_format TEXT NOT NULL DEFAULT 'none',  -- pdf | zip | html | other | none
+  -- extracted: real facts written to canonical_financials, source PDF
+  --   registered in `documents` (Docs tab).
+  -- needs_ocr: a real attachment exists but has no usable text layer --
+  --   queued for future OCR work, never attempted here.
+  -- not_found: no discoverable filing in the date-window (rare -- 0/192
+  --   in the feasibility report's own retroactive validation).
+  -- not_attempted: discovered but extraction not yet run (time/scope
+  --   budget) -- distinct from not_found, which means the discovery pass
+  --   itself came up empty.
+  -- failed: an attempt was made and errored (download/parse) -- notes
+  --   carries the reason; safe to retry.
+  extraction_status TEXT NOT NULL DEFAULT 'not_attempted'
+    CHECK (extraction_status IN ('extracted', 'needs_ocr', 'not_found', 'not_attempted', 'failed')),
+  extracted_char_count INTEGER,
+  registered_document_id INTEGER REFERENCES documents(document_id),  -- set once extracted -- the internal Docs-tab row
+  notes TEXT,
+  discovered_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(company_id, fiscal_year, quarter)
+);
+CREATE INDEX IF NOT EXISTS idx_nse_filing_discovery_status ON nse_filing_discovery_log(extraction_status);
 
 -- ============================================================
 -- Macro observations (non-company data: RBI, IMD, MOSPI, ...)
@@ -564,8 +619,23 @@ CREATE INDEX IF NOT EXISTS idx_company_note_attachments_note_id
 CREATE TABLE IF NOT EXISTS company_index_membership (
   company_id TEXT NOT NULL REFERENCES companies(company_id),
   index_name TEXT NOT NULL,
+  source TEXT,
+  retrieved_at TIMESTAMPTZ,
+  effective_from DATE,
+  effective_to DATE,
+  status TEXT NOT NULL DEFAULT 'current',
   PRIMARY KEY (company_id, index_name)
 );
+
+-- Self-migrating for the already-live Neon database: init_postgres_db()
+-- re-executes this whole file (all statements are idempotent) on every
+-- process boot, so these ADD COLUMN IF NOT EXISTS lines apply the new
+-- provenance columns without a separate one-off migration script.
+ALTER TABLE company_index_membership ADD COLUMN IF NOT EXISTS source TEXT;
+ALTER TABLE company_index_membership ADD COLUMN IF NOT EXISTS retrieved_at TIMESTAMPTZ;
+ALTER TABLE company_index_membership ADD COLUMN IF NOT EXISTS effective_from DATE;
+ALTER TABLE company_index_membership ADD COLUMN IF NOT EXISTS effective_to DATE;
+ALTER TABLE company_index_membership ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'current';
 
 -- ============================================================
 -- Sector / Industry / Index-tag vocabularies (Admin tab: "Sectors,
@@ -1240,3 +1310,141 @@ CREATE TABLE IF NOT EXISTS ingestion_queue_items (
   error_message TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ingestion_queue_status ON ingestion_queue_items(status, item_kind);
+
+-- ============================================================
+-- NSE filing discovery log (docs/nse-pdf-feasibility/FEASIBILITY_REPORT.md)
+--
+-- Tracks, per company/quarter, whether an official NSE-filed quarterly
+-- financial-result document was discovered and whether its PDF text was
+-- extractable ('extracted') or needs OCR ('needs_ocr') -- a discovery/
+-- tagging log for a future real ingestion pipeline, NOT wired into
+-- canonical_financials/financial_observations or any research/reporting
+-- code path today. Populated manually from the feasibility spike's
+-- verified output (192 rows: HDFCBANK/RELIANCE/ICICIBANK/TCS, 2015-2026),
+-- not by any scheduled job -- see the report for methodology and the
+-- 'needs_ocr' backlog this table exists to make visible.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS nse_filing_discovery_log (
+  discovery_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  nse_symbol TEXT NOT NULL,
+  fiscal_year TEXT NOT NULL,
+  quarter TEXT NOT NULL,
+  period_end TEXT,
+  filing_date TEXT,
+  source_url TEXT,
+  match_confidence TEXT,        -- text_marker | date_window_only | ...
+  attachment_format TEXT,       -- pdf | zip | html | none
+  extraction_status TEXT NOT NULL,
+  extracted_char_count INTEGER,
+  xbrl_available BOOLEAN,
+  notes TEXT,
+  discovered_at TEXT NOT NULL,
+  CHECK (extraction_status IN ('extracted', 'needs_ocr', 'not_found', 'not_attempted')),
+  UNIQUE(company_id, fiscal_year, quarter)
+);
+CREATE INDEX IF NOT EXISTS idx_nse_filing_discovery_status ON nse_filing_discovery_log(extraction_status);
+
+-- ============================================================
+-- Economic graph (Phase 1 of "India Economic Graph + Economic Data
+-- Ingestion Foundation" -- registry schema + canonical observation model
+-- only; the causal graph (CausalAssertion/Mechanism), Neo4j sync, and
+-- scheduler safety fields are Phase 2, a separate later task). Ported
+-- verbatim from schemas/sqlite_schema.sql's own "Economic graph" section
+-- -- see that file's header comment for the Indicator-vs-Series
+-- distinction and the deliberate non-collision with the existing
+-- indicators/ package (company-level rule-triggered indicators).
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS source_organizations (
+  source_org_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  authority_level TEXT,
+  description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS source_datasets (
+  dataset_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  source_org_id INTEGER NOT NULL REFERENCES source_organizations(source_org_id),
+  authority_level TEXT,
+  priority INTEGER,
+  access_method TEXT,
+  cadence TEXT,
+  historical_start TEXT,
+  backfill_supported INTEGER,
+  license_notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_source_datasets_org ON source_datasets(source_org_id);
+
+CREATE TABLE IF NOT EXISTS source_endpoints (
+  endpoint_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  dataset_id INTEGER NOT NULL REFERENCES source_datasets(dataset_id),
+  url TEXT,
+  access_method TEXT,
+  priority INTEGER,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  authentication_type TEXT,
+  parser_config TEXT,
+  availability_status TEXT,
+  last_verified_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_source_endpoints_dataset ON source_endpoints(dataset_id);
+
+CREATE TABLE IF NOT EXISTS economic_indicator_registry (
+  indicator_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  category TEXT NOT NULL,
+  economic_meaning TEXT,
+  higher_is TEXT,
+  leading_lagging TEXT,
+  report_section TEXT,
+  headline_weight REAL,
+  preferred_chart_window TEXT,
+  material_change_mom REAL,
+  material_change_yoy REAL,
+  material_change_ytd REAL,
+  status TEXT NOT NULL DEFAULT 'registered_only',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (status IN ('registered_only', 'ingesting', 'live')),
+  CHECK (higher_is IS NULL OR higher_is IN ('good', 'bad', 'neutral')),
+  CHECK (leading_lagging IS NULL OR leading_lagging IN ('leading', 'lagging', 'coincident'))
+);
+CREATE INDEX IF NOT EXISTS idx_economic_indicator_registry_category ON economic_indicator_registry(category);
+
+CREATE TABLE IF NOT EXISTS economic_series (
+  series_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  indicator_id INTEGER NOT NULL REFERENCES economic_indicator_registry(indicator_id),
+  dataset_id INTEGER REFERENCES source_datasets(dataset_id),
+  series_key TEXT NOT NULL UNIQUE,
+  geography TEXT,
+  unit TEXT,
+  frequency TEXT,
+  seasonal_adjustment TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_economic_series_indicator ON economic_series(indicator_id);
+CREATE INDEX IF NOT EXISTS idx_economic_series_dataset ON economic_series(dataset_id);
+
+CREATE TABLE IF NOT EXISTS economic_observations (
+  observation_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  series_id INTEGER NOT NULL REFERENCES economic_series(series_id),
+  period TEXT NOT NULL,
+  period_type TEXT NOT NULL,
+  release_date TEXT NOT NULL,
+  vintage TEXT NOT NULL,
+  revision_status TEXT NOT NULL,
+  value REAL NOT NULL,
+  unit TEXT NOT NULL,
+  raw_object_id INTEGER REFERENCES raw_objects(object_id),
+  ingested_at TEXT NOT NULL,
+  CHECK (revision_status IN ('provisional', 'revised', 'final')),
+  UNIQUE(series_id, period, vintage)
+);
+CREATE INDEX IF NOT EXISTS idx_economic_observations_series_period ON economic_observations(series_id, period);
+CREATE INDEX IF NOT EXISTS idx_economic_observations_release ON economic_observations(series_id, release_date);

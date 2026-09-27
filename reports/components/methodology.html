@@ -1,0 +1,44 @@
+{#
+  Methodology / assumptions / disclaimer. Standard explanation of the
+  hypothesis-driven pipeline, always shown (not investigation-specific,
+  so it's safe as a constant component) plus the score-band definition and,
+  when the investigation is point-in-time, the as-of caveat. `report.methodology`
+  can override the standard text entirely if a caller ever sets it (schema
+  field is currently unused by the adapter, kept for extensibility).
+#}
+{% macro methodology(report) %}
+<details class="signal-methodology">
+  <summary>Methodology &amp; Assumptions</summary>
+  {% if report.methodology %}
+  <p>{{ report.methodology }}</p>
+  {% else %}
+  <p>Signals investigations run a hypothesis-driven research pipeline, not a single-pass answer.
+    <strong>Generate</strong> — several competing, falsifiable hypotheses are proposed before any evidence is
+    gathered, spanning financial, operational, competitive, strategic, management, regulatory, macro, and industry
+    angles, each broken into a short causal chain (cause &rarr; observed effect).
+    <strong>Gather &amp; evaluate</strong> — each hypothesis is checked independently against retrieved evidence
+    (financial facts, filings, knowledge-graph relationships), with up to one additional targeted retrieval pass if
+    the first evaluation reports a specific evidence gap.
+    <strong>Synthesize</strong> — hypotheses are ranked and the strongest explanation is written up, alongside what
+    remains unanswered.</p>
+  <ul>
+    <li><strong>Supported</strong> / <strong>Partially supported</strong> / <strong>Refuted</strong> /
+      <strong>Insufficient evidence</strong> is an independent verdict per hypothesis, not one overall confidence
+      score for the investigation.</li>
+    <li>The <strong>Leading / Contested / Weak / Unscored</strong> label and percentage on each hypothesis is the
+      evidence strength the evaluator found for that hypothesis's verdict: Leading is 60% or higher, Contested is
+      30–59%, Weak is below 30%, and Unscored means no estimate was returned. <strong>It is not a probability the
+      hypothesis is true</strong>, and scores aren't comparable across different investigations, since each one's
+      evidence base differs.</li>
+    <li>The <strong>causal chain</strong> states how the hypothesis claims things would work, generated before any
+      evidence was gathered — not a verified sequence of events. Whether it actually held is what the verdict and
+      evidence assessment address.</li>
+    {% if report.metadata.as_of %}
+    <li>This investigation is point-in-time: every evidence source was restricted to what was on file as of
+      {{ report.metadata.as_of }} — no later data was retrievable, so it reflects what could genuinely have been
+      known then.</li>
+    {% endif %}
+  </ul>
+  {% endif %}
+</details>
+{% endmacro %}

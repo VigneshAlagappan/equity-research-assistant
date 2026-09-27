@@ -63,7 +63,11 @@ PARSER_VERSION = "macro-v1-csv"
 #: MacroNormalizedObservation shape and is included in this set so it
 #: validates the same way (ingestion/validation.py's validate_macro_observation
 #: doesn't branch on source_id at all).
-MACRO_SOURCE_IDS = frozenset({"rbi", "imd", "iitm", "mospi", "irda", "mfin", "fred"})
+#:
+#: "alpha_vantage" (sources/alpha_vantage_commodities.py) is the second
+#: live-fetched source — gold/silver weekly spot prices, same shape as
+#: "fred" above.
+MACRO_SOURCE_IDS = frozenset({"rbi", "imd", "iitm", "mospi", "irda", "mfin", "fred", "alpha_vantage"})
 
 _ANNUAL_RE = re.compile(r"^\d{4}$")
 _MONTHLY_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")

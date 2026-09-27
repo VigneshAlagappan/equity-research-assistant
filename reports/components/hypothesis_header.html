@@ -1,0 +1,17 @@
+{% from "badges.html" import verdict_badge, score_badge %}
+{#
+  Per-hypothesis header: CATEGORY | VERDICT | SCORE, the claim statement,
+  and the assessment/synthesis paragraph. Data-driven off one
+  reports.schema.Hypothesis `h` — never exposes internal field names
+  (hypothesis_id, confidence_basis, etc.) to the rendered page.
+#}
+{% macro hypothesis_header(h) %}
+<div class="signal-hyp-tagrow">
+  <span class="signal-hyp-rank">{{ '#' + h.rank|string if h.rank else 'Not ranked' }}</span>
+  <span class="signal-badge signal-badge-outline">{{ h.category or 'Uncategorized' }}</span>
+  {{ verdict_badge(h.verdict) }}
+  {{ score_badge(h) }}
+</div>
+<p class="signal-hyp-claim">{{ h.claim }}</p>
+{% if h.assessment %}<p class="signal-hyp-assessment">{{ h.assessment }}</p>{% endif %}
+{% endmacro %}

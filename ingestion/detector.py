@@ -16,16 +16,23 @@ from pathlib import Path
 
 from config import settings
 from sources.base import SourceAdapter
+from sources.nse_pdf_annual_report import NSEPdfAnnualReportAdapter
 from sources.nse_xbrl import NSEXbrlAdapter
 from sources.proprietary import ProprietaryAdapter
 from sources.screener import ScreenerAdapter
 
 # source_id -> adapter class. Extend this dict as new adapters land (README:
 # Implementation Sequence adds NSE/BSE in step 6, Investor Relations in step 7).
+# "nse_pdf_annual_report" is its own routing key, distinct from "nse" (which
+# already routes to the XBRL adapter) -- both adapters emit
+# NormalizedObservation.source="nse" (see sources/nse_pdf_annual_report.py's
+# own docstring for why), this dict key is purely for ingest_file()'s own
+# adapter dispatch, unrelated to trust_rank/reconciliation.
 ADAPTER_CLASSES: dict[str, type[SourceAdapter]] = {
     "screener": ScreenerAdapter,
     "proprietary": ProprietaryAdapter,
     "nse": NSEXbrlAdapter,
+    "nse_pdf_annual_report": NSEPdfAnnualReportAdapter,
 }
 
 MACRO_SENTINEL = "_macro"

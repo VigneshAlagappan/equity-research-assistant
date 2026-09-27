@@ -1,0 +1,116 @@
+category: growth
+indicators:
+- key: real_gdp_growth
+  name: Real GDP Growth YoY
+  economic_meaning: Year-on-year growth in inflation-adjusted national output; the single broadest headline
+    measure of whether the economy is expanding.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Macro Overview
+  headline_weight: 1.0
+  preferred_chart_window: 10y
+  material_change_mom: null
+  material_change_yoy: 0.5
+  material_change_ytd: 0.5
+  status: registered_only
+  source:
+    organization:
+      name: Ministry of Statistics and Programme Implementation (MoSPI)
+      authority_level: official_primary
+      description: India's official statistical agency; publishes quarterly/annual National Accounts Statistics
+        including GDP.
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: html_table
+      cadence: quarterly
+      historical_start: 2011-12
+      backfill_supported: true
+      license_notes: Public data, Government of India Open Data Licence
+    endpoints:
+    - url: https://www.mospi.gov.in
+      access_method: html_table
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: real_gdp_growth_yoy_in
+      geography: IN
+      unit: percent_yoy
+      frequency: quarterly
+      seasonal_adjustment: nsa
+- key: gva_growth
+  name: GVA Growth YoY
+  economic_meaning: Year-on-year growth in Gross Value Added -- GDP net of product taxes/subsidies, often
+    a cleaner read on underlying production activity.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Macro Overview
+  headline_weight: 0.8
+  preferred_chart_window: 10y
+  material_change_mom: null
+  material_change_yoy: 0.5
+  material_change_ytd: 0.5
+  status: registered_only
+- key: nominal_gdp_growth
+  name: Nominal GDP Growth YoY
+  economic_meaning: Year-on-year growth in GDP at current prices, unadjusted for inflation -- the denominator
+    for most debt/deficit-to-GDP ratios.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Macro Overview
+  headline_weight: 0.5
+  preferred_chart_window: 10y
+  material_change_mom: null
+  material_change_yoy: 1.0
+  material_change_ytd: 1.0
+  status: registered_only
+- key: pfce_growth
+  name: Private Final Consumption Expenditure Growth
+  economic_meaning: Growth in household consumption spending, the largest single component of GDP by expenditure.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Macro Overview
+  headline_weight: 0.6
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 0.5
+  material_change_ytd: 0.5
+  status: registered_only
+- key: gfcf_growth
+  name: Gross Fixed Capital Formation Growth
+  economic_meaning: Growth in fixed investment spending (machinery, buildings, infrastructure) -- a proxy
+    for capex cycle strength.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Macro Overview
+  headline_weight: 0.6
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 1.0
+  material_change_ytd: 1.0
+  status: registered_only
+- key: gfce_growth
+  name: Government Final Consumption Expenditure Growth
+  economic_meaning: Growth in government consumption spending, one lever of fiscal stimulus/withdrawal.
+  higher_is: neutral
+  leading_lagging: coincident
+  report_section: Macro Overview
+  headline_weight: 0.3
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 1.0
+  material_change_ytd: 1.0
+  status: registered_only
+- key: per_capita_income_growth
+  name: Per Capita Income Growth
+  economic_meaning: Growth in national income divided by population -- a rough living-standards proxy.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Macro Overview
+  headline_weight: 0.3
+  preferred_chart_window: 10y
+  material_change_mom: null
+  material_change_yoy: 0.5
+  material_change_ytd: 0.5
+  status: registered_only

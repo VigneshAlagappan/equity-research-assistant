@@ -1,0 +1,21 @@
+{#
+  Key metric strip. Data-driven off report.key_metrics
+  (list[reports.schema.KeyMetric]) — empty for every investigation produced
+  by today's pipeline (which doesn't pick a fixed "headline metrics" set),
+  so the section renders nothing when the list is empty rather than a
+  placeholder. Reusable across companies: nothing here is HDFC-specific.
+#}
+{% macro metric_cards(metrics) %}
+{% if metrics %}
+<p class="signal-section-label">Key Metrics</p>
+<div class="signal-metric-grid">
+  {% for m in metrics %}
+  <div class="signal-metric-card">
+    <div class="signal-metric-label">{{ m.label }}</div>
+    <div class="signal-metric-value">{{ m.value }}</div>
+    {% if m.delta %}<div class="signal-metric-delta tone-{{ m.tone or 'neutral' }}">{{ m.delta }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}

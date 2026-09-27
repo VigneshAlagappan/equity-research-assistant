@@ -12,7 +12,13 @@ from __future__ import annotations
 
 from storage.db_types import DBConnection
 
-from financials.calculations import CalculationError, CalculationResult, cagr_for_metric, yoy_growth_for_metric
+from financials.calculations import (
+    CalculationError,
+    CalculationResult,
+    cagr_for_metric,
+    qoq_growth_for_metric,
+    yoy_growth_for_metric,
+)
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company, vendor_reported
 from financials.report import TREND_METRICS, VENDOR_RATIO_METRICS
 from research.evidence import Evidence
@@ -67,12 +73,16 @@ def get_company_evidence(
     evidence: list[Evidence] = []
     fiscal_year_end = _company_fiscal_year_end(conn, company_id, fs) if as_of else None
 
-    def _visible(rows: list) -> list:
+    def _visible(rows: list, *, quarterly: bool = False) -> list:
         if not as_of:
             return rows
         return [
             r for r in rows
-            if fiscal_year_visible(r["fiscal_year"], as_of, fiscal_year_end=fiscal_year_end)
+            if fiscal_year_visible(
+                r["fiscal_year"], as_of,
+                quarter=r["quarter"] if quarterly else None,
+                fiscal_year_end=fiscal_year_end,
+            )
         ]
 
     net_profit_fiscal_years = [
@@ -108,6 +118,39 @@ def get_company_evidence(
                     statement_type=statement_type,
                 )
                 evidence.append(_result_to_evidence(company_id, growth))
+            except CalculationError:
+                pass
+
+    # Quarterly pass, same metric catalog as the annual loop above.
+    # canonical_financials.period_type="quarterly" is populated whenever a
+    # company files quarterly (income-statement metrics every quarter;
+    # balance-sheet metrics only in the quarters they're actually reported,
+    # typically H1/H2 for Indian filers — a metric with fewer quarterly rows
+    # than another is expected, not an error). Without this pass, "last N
+    # quarters" questions saw only the 1-4 quarters folded into the latest
+    # annual row and wrongly concluded most quarters were "missing".
+    for metric_key, title in TREND_METRICS:
+        quarterly_series = _visible(
+            fs.get_canonical_series(conn, company_id, metric_key, "quarterly", statement_type), quarterly=True
+        )
+        for row in quarterly_series:
+            evidence.append(
+                Evidence(
+                    kind="FACT",
+                    company_id=company_id,
+                    label=f"{title} {row['quarter']} {row['fiscal_year']}",
+                    value=_format_value(row["canonical_value"], row["unit"]),
+                    citation=f"reported for {row['quarter']} {row['fiscal_year']} ({row['reconciliation_reason']})",
+                )
+            )
+        if len(quarterly_series) >= 2:
+            latest = quarterly_series[-1]
+            try:
+                qoq = qoq_growth_for_metric(
+                    conn, company_id, metric_key, latest["fiscal_year"], latest["quarter"],
+                    statement_type=statement_type,
+                )
+                evidence.append(_result_to_evidence(company_id, qoq))
             except CalculationError:
                 pass
 

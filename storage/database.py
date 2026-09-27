@@ -62,6 +62,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_document_chunks_embedding_columns(conn)
     _migrate_generated_reports_question_embedding_columns(conn)
     _migrate_knowledge_relationships_target_index(conn)
+    _migrate_company_index_membership_provenance_columns(conn)
     _seed_sources(conn)
     _migrate_source_trust_ranks(conn)
     _seed_sectors_and_industries(conn)
@@ -115,7 +116,22 @@ def init_postgres_db(connection_string: str | None = None, schema_path: Path | N
     )
     schema_sql = schema_path.read_text()
 
-    conn = psycopg2.connect(connection_string, cursor_factory=psycopg2.extras.RealDictCursor)
+    # TCP keepalives: without these, a connection Neon's pooler drops
+    # silently (no FIN/RST reaching this host -- observed in practice on a
+    # long-running batch script, e.g. scripts/batch_fetch_sec_edgar.py's
+    # sequential 510-company run) leaves the client blocked forever inside
+    # cur.execute()'s socket read, since there's nothing to raise: the
+    # query bytes never even reach a server to hit its own statement_
+    # timeout. keepalives_idle=30 probes an idle connection after 30s;
+    # keepalives_interval/count=10s x3 gives a dead peer ~60s total to be
+    # detected before psycopg2 raises OperationalError -- long enough to
+    # never fire on a live connection, short enough that a caller's own
+    # reconnect-on-stale-connection retry (several scripts already have
+    # one) actually gets a chance to run instead of hanging indefinitely.
+    conn = psycopg2.connect(
+        connection_string, cursor_factory=psycopg2.extras.RealDictCursor,
+        keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3,
+    )
     with conn.cursor() as cur:
         # psycopg2's cursor.execute() happily runs a full script of
         # semicolon-separated statements in one call (verified against real
@@ -138,6 +154,27 @@ def _migrate_companies_website_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE companies ADD COLUMN macro_economic_sector TEXT")
     if "basic_industry" not in columns:
         conn.execute("ALTER TABLE companies ADD COLUMN basic_industry TEXT")
+
+
+def _migrate_company_index_membership_provenance_columns(conn: sqlite3.Connection) -> None:
+    """Same reasoning as _migrate_companies_website_column — backfills the
+    provenance/point-in-time columns (source, retrieved_at, effective_from/
+    to, status) needed for a Russell-3000-style multi-source index universe
+    onto a company_index_membership table that predates them. Existing rows
+    (Nifty/BSE tags with no provenance) get NULLs plus status='current' via
+    the column DEFAULT — a strictly additive backfill, not a behavior
+    change for any existing reader/writer of this table."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(company_index_membership)")}
+    if "source" not in columns:
+        conn.execute("ALTER TABLE company_index_membership ADD COLUMN source TEXT")
+    if "retrieved_at" not in columns:
+        conn.execute("ALTER TABLE company_index_membership ADD COLUMN retrieved_at TEXT")
+    if "effective_from" not in columns:
+        conn.execute("ALTER TABLE company_index_membership ADD COLUMN effective_from TEXT")
+    if "effective_to" not in columns:
+        conn.execute("ALTER TABLE company_index_membership ADD COLUMN effective_to TEXT")
+    if "status" not in columns:
+        conn.execute("ALTER TABLE company_index_membership ADD COLUMN status TEXT NOT NULL DEFAULT 'current'")
 
 
 def _migrate_companies_country_currency_columns(conn: sqlite3.Connection) -> None:

@@ -585,6 +585,21 @@
      carries its own data-tooltip/click target directly, no separate hit
      shape needed the way a thin line's dots require one. */
   .chart-overlay-bar { opacity: 0.35; cursor: pointer; }
+  /* Corporate-action event markers (charts_overlay.js's renderChart()) — a
+     small diamond in a reserved strip above the plot area, tied to its
+     period column by a short tick line, so an event reads as "something
+     happened at this point in time" without occupying either y-axis the
+     way a plotted attribute does. */
+  .chart-overlay-corpaction-tick { stroke: var(--color-divider); stroke-width: 1; stroke-dasharray: 2,2; }
+  .chart-overlay-corpaction-marker { cursor: pointer; stroke: var(--surface); stroke-width: 1; }
+  .chart-overlay-corpaction-count { font-size: 8px; font-weight: 700; fill: var(--ink-muted); }
+  .chart-overlay-corpaction-legend { margin-top: 2px; }
+  .chart-overlay-corpaction-legend .chart-overlay-swatch { border-radius: 1px; }
+  /* Diamond swatches in the Corporate Actions dropdown (renderCorpActionsPicker())
+     — same square .chart-overlay-swatch every other checkbox row in this
+     picker uses, just rotated 45deg to match the diamond markers it toggles
+     on the chart, so the swatch shape itself hints what's being controlled. */
+  .chart-overlay-corpaction-swatch { transform: rotate(45deg); border-radius: 1px; }
 
   /* "Run now" status badges (company_report()'s run_now_status, sourced
      from get_latest_batch_item_for_company -- the same batch_job_items rows
@@ -929,14 +944,31 @@
 
   <section class="merged-section" id="sec-financials">
     <h2>Financials</h2>
-    {% if not has_ported_dataset %}
+    {# Annual/Quarterly + Consolidated/Standalone only make sense against
+       the live feed (web/charts_feed.py) -- a ported static file (see
+       has_ported_dataset) has neither concept. has_live_financials means
+       this specific ported company was switched to the live feed anyway
+       (canonical_financials has at least some data for it), so it gets
+       the same toggle row as every non-ported company. #}
+    {% if not has_ported_dataset or has_live_financials %}
+    {# Only offer a statement-type link for what this company's own
+       canonical_financials actually has (available_statement_types) --
+       an empty set means no live data at all yet, so both stay offered
+       (nothing to gate on). A single available type hides the toggle
+       entirely rather than showing one link with nothing to switch to. #}
     <div class="vm-toggle-row">
+      {% if not available_statement_types or available_statement_types|length > 1 %}
       <div class="statement-toggle">
+        {% if not available_statement_types or 'consolidated' in available_statement_types %}
         <a class="{{ 'active' if statement_type == 'consolidated' else '' }}"
            href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='consolidated') }}#sec-financials">Consolidated</a>
+        {% endif %}
+        {% if not available_statement_types or 'standalone' in available_statement_types %}
         <a class="{{ 'active' if statement_type == 'standalone' else '' }}"
            href="{{ url_for('company_report', company_id=company_id, tab='financials', statement_type='standalone') }}#sec-financials">Standalone</a>
+        {% endif %}
       </div>
+      {% endif %}
       <div class="vm-period-toggle" data-vm-period-toggle>
         <button type="button" class="vm-period-btn is-active" data-period-type="annual">Annual</button>
         <button type="button" class="vm-period-btn" data-period-type="quarterly">Quarterly</button>
@@ -967,12 +999,16 @@
 
   <section class="merged-section" id="sec-valuation-model">
     <h2>Valuation Model</h2>
-    {% if not has_ported_dataset %}
+    {% if not has_ported_dataset and (not available_statement_types or available_statement_types|length > 1) %}
     <div class="statement-toggle">
+      {% if not available_statement_types or 'consolidated' in available_statement_types %}
       <a class="{{ 'active' if statement_type == 'consolidated' else '' }}"
          href="{{ url_for('company_report', company_id=company_id, tab='valuation_model', statement_type='consolidated') }}#sec-valuation-model">Consolidated</a>
+      {% endif %}
+      {% if not available_statement_types or 'standalone' in available_statement_types %}
       <a class="{{ 'active' if statement_type == 'standalone' else '' }}"
          href="{{ url_for('company_report', company_id=company_id, tab='valuation_model', statement_type='standalone') }}#sec-valuation-model">Standalone</a>
+      {% endif %}
     </div>
     {% endif %}
 

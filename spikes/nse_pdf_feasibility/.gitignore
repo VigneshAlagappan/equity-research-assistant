@@ -1,0 +1,7 @@
+# Downloaded PDFs are scratch artifacts for this feasibility spike, not
+# meant to live in git history (36MB+ of binary NSE filings). Re-run
+# run_spike.py to regenerate them locally.
+data/pdfs/
+data/pdfs_nifty50/
+data/zips/
+data/discovery_pdfs/

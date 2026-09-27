@@ -1,0 +1,127 @@
+{#
+  Signal Report Design System — "deep_dive" layout.
+
+  Renders a normalized reports.schema.InvestigationReport (built by
+  reports/schema/investigation_report.py's from_investigation_data() adapter
+  from data web/app.py's investigate_view already loads). Nothing here talks
+  to research/investigation.py, a database, or an LLM — pure presentation
+  over the `report` object passed in.
+
+  Section order (per the design-system spec):
+    1. Signal report header / metadata
+    2. Research question (folded into the header)
+    3. Executive summary / strongest explanation
+    4. Key metric cards
+    5. Trend snapshot
+    6. Hypothesis ranking overview
+    7. Individual hypothesis sections
+    8. Follow-up research
+    9. Additional evidence required
+   10. Methodology / assumptions / disclaimer
+
+  Extends the app's own base.html so nav/sidebar/theme/Ask AI chrome are
+  unchanged — only the report body switches to the Signal visual identity
+  (reports/theme/*.css, scoped under .signal-report).
+#}
+{% extends "base.html" %}
+{% from "report_header.html" import report_header %}
+{% from "executive_summary.html" import executive_summary %}
+{% from "metric_cards.html" import metric_cards %}
+{% from "trend_snapshot.html" import trend_snapshot %}
+{% from "hypothesis_summary_table.html" import hypothesis_summary_table %}
+{% from "hypothesis_header.html" import hypothesis_header %}
+{% from "causal_chain.html" import causal_chain %}
+{% from "evidence_matrix.html" import evidence_matrix %}
+{% from "follow_up_research.html" import follow_up_research %}
+{% from "research_gaps.html" import research_gaps %}
+{% from "methodology.html" import methodology %}
+
+{% block title %}{{ report.research_question }} — Signals{% endblock %}
+
+{% block page_class %}page-wide{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{{ reports_theme_url('signal.css') }}">
+  <link rel="stylesheet" href="{{ reports_theme_url('typography.css') }}">
+  <link rel="stylesheet" href="{{ reports_theme_url('print.css') }}">
+{% endblock %}
+
+{% block extra_style %}
+  .signal-report-shell { max-width: none; }
+{% endblock %}
+
+{% block content %}
+  <div class="signal-toolbar no-print">
+    <a class="btn btn-ghost" href="{{ url_for('research') }}">&larr; New question</a>
+    <button type="button" class="signal-print-btn" id="signal-print-btn">Print / Export PDF</button>
+  </div>
+
+  <div class="signal-report-shell">
+    <article class="signal-report">
+      <div class="signal-print-masthead">
+        <div class="signal-header-brand">Signals &middot; Deep Dive Research Report</div>
+        <div class="signal-header-meta">Generated {{ report.metadata.generated_at }} &middot; AI-assisted research, not investment advice.</div>
+      </div>
+
+      <section class="signal-section" id="signal-header-section">
+        {{ report_header(report) }}
+      </section>
+
+      {% if report.strongest_explanation %}
+      <section class="signal-section" id="section-summary">
+        {{ executive_summary(report) }}
+      </section>
+      {% endif %}
+
+      {% if report.key_metrics %}
+      <section class="signal-section">
+        {{ metric_cards(report.key_metrics) }}
+      </section>
+      {% endif %}
+
+      {% if report.trend_snapshot %}
+      <section class="signal-section">
+        {{ trend_snapshot(report.trend_snapshot) }}
+      </section>
+      {% endif %}
+
+      {% if report.hypotheses %}
+      <section class="signal-section" id="section-ranking">
+        {{ hypothesis_summary_table(report.hypotheses) }}
+      </section>
+
+      <section class="signal-section" id="section-hypotheses">
+        <p class="signal-section-label">Hypotheses Evaluated ({{ report.hypotheses|length }})</p>
+        {% for h in report.hypotheses %}
+        <div class="signal-hypothesis" id="hyp-{{ h.hypothesis_id }}">
+          {{ hypothesis_header(h) }}
+          {{ causal_chain(h) }}
+          {{ evidence_matrix(h) }}
+        </div>
+        {% endfor %}
+      </section>
+      {% endif %}
+
+      {% if report.follow_up_questions or report.additional_evidence_needed %}
+      <section class="signal-section" id="section-followups">
+        {{ follow_up_research(report.follow_up_questions) }}
+        {% if report.follow_up_questions and report.additional_evidence_needed %}<div style="height:16px;"></div>{% endif %}
+        {{ research_gaps(report.additional_evidence_needed) }}
+      </section>
+      {% endif %}
+
+      <section class="signal-section">
+        {{ methodology(report) }}
+      </section>
+    </article>
+  </div>
+
+  <script>
+    document.getElementById('signal-print-btn').addEventListener('click', () => window.print());
+    // A closed <details> prints as just its <summary> -- force the
+    // methodology disclosure open right before the print dialog opens.
+    window.addEventListener('beforeprint', () => {
+      document.querySelectorAll('.signal-methodology').forEach((d) => { d.open = true; });
+    });
+  </script>
+{% endblock %}

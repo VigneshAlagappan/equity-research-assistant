@@ -136,7 +136,10 @@ def _doc_json(company_id: str, row: Row | None) -> dict | None:
         "document_id": row["document_id"],
         "added_by_user": row["added_by_user"],
         "source_url": row["source_url"],
-        "file_url": f"/companies/{company_id}/docs/{row['document_id']}/file" if row["raw_file_path"] else None,
+        "file_url": (
+            f"/companies/{company_id}/docs/{row['document_id']}/file"
+            if row["raw_file_path"] or row["storage_object_key"] else None
+        ),
         "retrieved_at": row["retrieved_at"],
     }
 

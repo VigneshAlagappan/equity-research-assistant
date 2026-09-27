@@ -1,0 +1,4267 @@
+{
+  "summary": {
+    "quarters_in_scope": 41,
+    "quarters_with_at_least_one_fact": 29,
+    "total_facts_extracted": 211,
+    "quarters_fully_skipped_no_table_or_text": [
+      "FY2019 Q2",
+      "FY2021 Q1"
+    ],
+    "processed_quarters": [
+      "FY2016 Q3",
+      "FY2016 Q4",
+      "FY2017 Q3",
+      "FY2017 Q4",
+      "FY2018 Q1",
+      "FY2018 Q2",
+      "FY2018 Q3",
+      "FY2018 Q4",
+      "FY2019 Q1",
+      "FY2019 Q2",
+      "FY2019 Q3",
+      "FY2019 Q4",
+      "FY2020 Q1",
+      "FY2020 Q2",
+      "FY2020 Q3",
+      "FY2020 Q4",
+      "FY2021 Q1",
+      "FY2021 Q2",
+      "FY2021 Q3",
+      "FY2021 Q4",
+      "FY2022 Q1",
+      "FY2022 Q2",
+      "FY2022 Q3",
+      "FY2022 Q4",
+      "FY2023 Q1",
+      "FY2023 Q2",
+      "FY2023 Q3",
+      "FY2023 Q4",
+      "FY2024 Q1",
+      "FY2024 Q2",
+      "FY2024 Q3",
+      "FY2024 Q4",
+      "FY2025 Q1",
+      "FY2025 Q2",
+      "FY2025 Q3",
+      "FY2025 Q4",
+      "FY2026 Q1",
+      "FY2026 Q2",
+      "FY2026 Q3",
+      "FY2026 Q4",
+      "FY2027 Q1"
+    ]
+  },
+  "facts": [
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1163.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1163.0,
+      "document_id": 833,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_Doc_28012016160329.zip",
+      "period_end_matched": "2015-12-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2014-12-31",
+        "2015-03-31",
+        "2015-09-30",
+        "2015-12-31"
+      ],
+      "raw_text_excerpt": "nd Liabilities Capital 1,159 1,160 1,162 1,163 Employee stock options outstanding 7 7 7 7 Reserves and surplus 80,655 79,262 85,397 88,423"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 88423.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 88423.0,
+      "document_id": 833,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_Doc_28012016160329.zip",
+      "period_end_matched": "2015-12-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2014-12-31",
+        "2015-03-31",
+        "2015-09-30",
+        "2015-12-31"
+      ],
+      "raw_text_excerpt": "utstanding 7 7 7 7 Reserves and surplus 80,655 79,262 85,397 88,423 Deposits 355,340 361,563 384,618 407,314 Borrowings (includes subordinated debt)1 "
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 407314.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 407314.0,
+      "document_id": 833,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_Doc_28012016160329.zip",
+      "period_end_matched": "2015-12-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2014-12-31",
+        "2015-03-31",
+        "2015-09-30",
+        "2015-12-31"
+      ],
+      "raw_text_excerpt": ",262 85,397 88,423 Deposits 355,340 361,563 384,618 407,314 Borrowings (includes subordinated debt)1 152,994 172,417 156,109 177,161 Other liabi"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "borrowings",
+      "value": 177161.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 177161.0,
+      "document_id": 833,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_Doc_28012016160329.zip",
+      "period_end_matched": "2015-12-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2014-12-31",
+        "2015-03-31",
+        "2015-09-30",
+        "2015-12-31"
+      ],
+      "raw_text_excerpt": "63 384,618 407,314 Borrowings (includes subordinated debt)1 152,994 172,417 156,109 177,161 Other liabilities 26,943 31,720 29,763 28,183 Total Capi"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 28183.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 28183.0,
+      "document_id": 833,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_Doc_28012016160329.zip",
+      "period_end_matched": "2015-12-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2014-12-31",
+        "2015-03-31",
+        "2015-09-30",
+        "2015-12-31"
+      ],
+      "raw_text_excerpt": "17 156,109 177,161 Other liabilities 26,943 31,720 29,763 28,183 Total Capital and Liabilities 617,098 646,129 657,056 702,251 Assets Cash"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 22176.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 22176.0,
+      "document_id": 833,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_Doc_28012016160329.zip",
+      "period_end_matched": "2015-12-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2014-12-31",
+        "2015-03-31",
+        "2015-09-30",
+        "2015-12-31"
+      ],
+      "raw_text_excerpt": "Assets Cash and balances with Reserve Bank of India 19,080 25,653 21,977 22,176 Balances with banks and money at call and short notice 14,311 16,652 9"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 163543.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 163543.0,
+      "document_id": 833,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_Doc_28012016160329.zip",
+      "period_end_matched": "2015-12-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2014-12-31",
+        "2015-03-31",
+        "2015-09-30",
+        "2015-12-31"
+      ],
+      "raw_text_excerpt": "6,652 9,568 15,524 Investments2 149,651 158,129 154,190 163,543 Advances 375,345 387,522 409,693 434,800 Fixed assets 4,650 4,725 4,794 4,778 Other"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 434800.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 434800.0,
+      "document_id": 833,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_Doc_28012016160329.zip",
+      "period_end_matched": "2015-12-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2014-12-31",
+        "2015-03-31",
+        "2015-09-30",
+        "2015-12-31"
+      ],
+      "raw_text_excerpt": "29 154,190 163,543 Advances 375,345 387,522 409,693 434,800 Fixed assets 4,650 4,725 4,794 4,778 Other assets2 54,061 53,448 56,834 61,430 Tot"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 61430.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 61430.0,
+      "document_id": 833,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_Doc_28012016160329.zip",
+      "period_end_matched": "2015-12-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2014-12-31",
+        "2015-03-31",
+        "2015-09-30",
+        "2015-12-31"
+      ],
+      "raw_text_excerpt": "4,725 4,794 4,778 Other assets2 54,061 53,448 56,834 61,430 Total Assets 617,098 646,129 657,056 702,251 1. Borrowings include preference share capi"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 702251.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 702251.0,
+      "document_id": 833,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_Doc_28012016160329.zip",
+      "period_end_matched": "2015-12-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2014-12-31",
+        "2015-03-31",
+        "2015-09-30",
+        "2015-12-31"
+      ],
+      "raw_text_excerpt": ",720 29,763 28,183 Total Capital and Liabilities 617,098 646,129 657,056 702,251 Assets Cash and balances with Reserve Bank of India 19,080 25,653 21,"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1163.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1163.0,
+      "document_id": 834,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results-f_29042016120231.zip",
+      "period_end_matched": "2016-03-31",
+      "column_index": 2,
+      "columns_detected": [
+        "2015-03-31",
+        "2015-12-31",
+        "2016-03-31"
+      ],
+      "raw_text_excerpt": "and Liabilities Capital 1,160 1,163 1,163 Employee stock options outstanding 7 7 7 Reserves and surplus 79,262 88,423 88,566 Deposits 361,"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 88566.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 88566.0,
+      "document_id": 834,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results-f_29042016120231.zip",
+      "period_end_matched": "2016-03-31",
+      "column_index": 2,
+      "columns_detected": [
+        "2015-03-31",
+        "2015-12-31",
+        "2016-03-31"
+      ],
+      "raw_text_excerpt": "outstanding 7 7 7 Reserves and surplus 79,262 88,423 88,566 Deposits 361,563 407,314 421,426 Borrowings (includes subordinated debt)1 172,417 177,161 "
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 421426.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 421426.0,
+      "document_id": 834,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results-f_29042016120231.zip",
+      "period_end_matched": "2016-03-31",
+      "column_index": 2,
+      "columns_detected": [
+        "2015-03-31",
+        "2015-12-31",
+        "2016-03-31"
+      ],
+      "raw_text_excerpt": ",262 88,423 88,566 Deposits 361,563 407,314 421,426 Borrowings (includes subordinated debt)1 172,417 177,161 174,807 Other liabilities 31,720 28"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "borrowings",
+      "value": 174807.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 174807.0,
+      "document_id": 834,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results-f_29042016120231.zip",
+      "period_end_matched": "2016-03-31",
+      "column_index": 2,
+      "columns_detected": [
+        "2015-03-31",
+        "2015-12-31",
+        "2016-03-31"
+      ],
+      "raw_text_excerpt": "63 407,314 421,426 Borrowings (includes subordinated debt)1 172,417 177,161 174,807 Other liabilities 31,720 28,183 34,726 Total Capital and Liabil"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 34726.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 34726.0,
+      "document_id": 834,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results-f_29042016120231.zip",
+      "period_end_matched": "2016-03-31",
+      "column_index": 2,
+      "columns_detected": [
+        "2015-03-31",
+        "2015-12-31",
+        "2016-03-31"
+      ],
+      "raw_text_excerpt": "17 177,161 174,807 Other liabilities 31,720 28,183 34,726 Total Capital and Liabilities 646,129 702,251 720,695 Assets Cash and balances with"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 27106.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 27106.0,
+      "document_id": 834,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results-f_29042016120231.zip",
+      "period_end_matched": "2016-03-31",
+      "column_index": 2,
+      "columns_detected": [
+        "2015-03-31",
+        "2015-12-31",
+        "2016-03-31"
+      ],
+      "raw_text_excerpt": "5 Assets Cash and balances with Reserve Bank of India 25,653 22,176 27,106 Balances with banks and money at call and short notice 16,652 15,524 32,763"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 160412.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 160412.0,
+      "document_id": 834,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results-f_29042016120231.zip",
+      "period_end_matched": "2016-03-31",
+      "column_index": 2,
+      "columns_detected": [
+        "2015-03-31",
+        "2015-12-31",
+        "2016-03-31"
+      ],
+      "raw_text_excerpt": ",652 15,524 32,763 Investments2 158,129 163,543 160,412 Advances 387,522 434,800 435,264 Fixed assets 4,725 4,778 7,577 Other assets2 53,448 61,43"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 435264.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 435264.0,
+      "document_id": 834,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results-f_29042016120231.zip",
+      "period_end_matched": "2016-03-31",
+      "column_index": 2,
+      "columns_detected": [
+        "2015-03-31",
+        "2015-12-31",
+        "2016-03-31"
+      ],
+      "raw_text_excerpt": "29 163,543 160,412 Advances 387,522 434,800 435,264 Fixed assets 4,725 4,778 7,577 Other assets2 53,448 61,430 57,573 Total Assets 646,129 702"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 57573.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 57573.0,
+      "document_id": 834,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results-f_29042016120231.zip",
+      "period_end_matched": "2016-03-31",
+      "column_index": 2,
+      "columns_detected": [
+        "2015-03-31",
+        "2015-12-31",
+        "2016-03-31"
+      ],
+      "raw_text_excerpt": "4,725 4,778 7,577 Other assets2 53,448 61,430 57,573 Total Assets 646,129 702,251 720,695 1. Borrowings include preference share capital of ` 350 cr"
+    },
+    {
+      "fiscal_year": "FY2016",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 720695.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 720695.0,
+      "document_id": 834,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results-f_29042016120231.zip",
+      "period_end_matched": "2016-03-31",
+      "column_index": 2,
+      "columns_detected": [
+        "2015-03-31",
+        "2015-12-31",
+        "2016-03-31"
+      ],
+      "raw_text_excerpt": ",720 28,183 34,726 Total Capital and Liabilities 646,129 702,251 720,695 Assets Cash and balances with Reserve Bank of India 25,653 22,176 27,106 Bala"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1287.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1287.0,
+      "document_id": 843,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Final_Results_27072018174927.zip",
+      "period_end_matched": "2018-06-30",
+      "column_index": 1,
+      "columns_detected": [
+        "2017-06-30",
+        "2018-06-30",
+        "2018-03-31"
+      ],
+      "raw_text_excerpt": "and Liabilities Capital 1,283 1,287 1,286 Employee stock options outstanding 6 6 6 Reserves and surplus 99,335 104,0491 103,8681 Deposits 4"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 104049.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 104049.0,
+      "document_id": 843,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Final_Results_27072018174927.zip",
+      "period_end_matched": "2018-06-30",
+      "column_index": 1,
+      "columns_detected": [
+        "2017-06-30",
+        "2018-06-30",
+        "2018-03-31"
+      ],
+      "raw_text_excerpt": "outstanding 6 6 6 Reserves and surplus 99,335 104,0491 103,8681 Deposits 486,254 546,878 560,975 Borrowings (includes subordinated debt)2 141,460 161,"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 546878.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 546878.0,
+      "document_id": 843,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Final_Results_27072018174927.zip",
+      "period_end_matched": "2018-06-30",
+      "column_index": 1,
+      "columns_detected": [
+        "2017-06-30",
+        "2018-06-30",
+        "2018-03-31"
+      ],
+      "raw_text_excerpt": "104,0491 103,8681 Deposits 486,254 546,878 560,975 Borrowings (includes subordinated debt)2 141,460 161,970 182,859 Other liabilities 32,578 30"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "borrowings",
+      "value": 161970.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 161970.0,
+      "document_id": 843,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Final_Results_27072018174927.zip",
+      "period_end_matched": "2018-06-30",
+      "column_index": 1,
+      "columns_detected": [
+        "2017-06-30",
+        "2018-06-30",
+        "2018-03-31"
+      ],
+      "raw_text_excerpt": "54 546,878 560,975 Borrowings (includes subordinated debt)2 141,460 161,970 182,859 Other liabilities 32,578 30,938 30,195 Total Capital and Liabil"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 30938.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 30938.0,
+      "document_id": 843,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Final_Results_27072018174927.zip",
+      "period_end_matched": "2018-06-30",
+      "column_index": 1,
+      "columns_detected": [
+        "2017-06-30",
+        "2018-06-30",
+        "2018-03-31"
+      ],
+      "raw_text_excerpt": "60 161,970 182,859 Other liabilities 32,578 30,938 30,195 Total Capital and Liabilities 760,916 845,128 879,189 Assets Cash and balances with R"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 31059.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 31059.0,
+      "document_id": 843,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Final_Results_27072018174927.zip",
+      "period_end_matched": "2018-06-30",
+      "column_index": 1,
+      "columns_detected": [
+        "2017-06-30",
+        "2018-06-30",
+        "2018-03-31"
+      ],
+      "raw_text_excerpt": "89 Assets Cash and balances with Reserve Bank of India 28,762 31,059 33,102 Balances with banks and money at call and short notice 13,748 32,236 51,06"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 186360.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 186360.0,
+      "document_id": 843,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Final_Results_27072018174927.zip",
+      "period_end_matched": "2018-06-30",
+      "column_index": 1,
+      "columns_detected": [
+        "2017-06-30",
+        "2018-06-30",
+        "2018-03-31"
+      ],
+      "raw_text_excerpt": ",748 32,236 51,067 Investments 185,408 186,360 202,994 Advances 464,075 516,289 512,395 Fixed assets 8,023 7,817 7,904 Other assets 60,900 71,367 7"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 516289.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 516289.0,
+      "document_id": 843,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Final_Results_27072018174927.zip",
+      "period_end_matched": "2018-06-30",
+      "column_index": 1,
+      "columns_detected": [
+        "2017-06-30",
+        "2018-06-30",
+        "2018-03-31"
+      ],
+      "raw_text_excerpt": "08 186,360 202,994 Advances 464,075 516,289 512,395 Fixed assets 8,023 7,817 7,904 Other assets 60,900 71,367 71,727 Total Assets 760,916 845,12"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 71367.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 71367.0,
+      "document_id": 843,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Final_Results_27072018174927.zip",
+      "period_end_matched": "2018-06-30",
+      "column_index": 1,
+      "columns_detected": [
+        "2017-06-30",
+        "2018-06-30",
+        "2018-03-31"
+      ],
+      "raw_text_excerpt": "8,023 7,817 7,904 Other assets 60,900 71,367 71,727 Total Assets 760,916 845,128 879,189 1. The Bank had classi fied three borrower accounts in the"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 845128.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 845128.0,
+      "document_id": 843,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Final_Results_27072018174927.zip",
+      "period_end_matched": "2018-06-30",
+      "column_index": 1,
+      "columns_detected": [
+        "2017-06-30",
+        "2018-06-30",
+        "2018-03-31"
+      ],
+      "raw_text_excerpt": ",578 30,938 30,195 Total Capital and Liabilities 760,916 845,128 879,189 Assets Cash and balances with Reserve Bank of India 28,762 31,059 33,102 Bala"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 288.38,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 288.38,
+      "document_id": 845,
+      "source_url": "https://nsearchives.nseindia.com/corporate/1BSE_NSE_FR_30JAN2018_30012019173244.zip",
+      "period_end_matched": "2018-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2018-12-31",
+        "2018-09-30",
+        "2018-03-31",
+        "2017-12-31"
+      ],
+      "raw_text_excerpt": "al and Liabilities Capital (refer note no. 5) 1 288.38 1 287.24 1 285.81 1 284.67 Empl oyees stock options outstandin(l 5.42 5.49 5.57 5.66 Rese"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1289.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1289.0,
+      "document_id": 846,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FR_06052019161041.zip",
+      "period_end_matched": "2019-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-03-31",
+        "2018-09-30",
+        "2018-12-31",
+        "2019-03-31"
+      ],
+      "raw_text_excerpt": "nd Liabilities Capital 1,286 1,287 1,288 1,289 Employee stock options outstanding 6 5 5 5 Reserves and surplus 103,874 104,085 105,879 107,"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 107074.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 107074.0,
+      "document_id": 846,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FR_06052019161041.zip",
+      "period_end_matched": "2019-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-03-31",
+        "2018-09-30",
+        "2018-12-31",
+        "2019-03-31"
+      ],
+      "raw_text_excerpt": "utstanding 6 5 5 5 Reserves and surplus 103,874 104,085 105,879 107,074 Deposits 560,975 558,669 606,755 652,920 Borrowings (includes subordinated deb"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 652920.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 652920.0,
+      "document_id": 846,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FR_06052019161041.zip",
+      "period_end_matched": "2019-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-03-31",
+        "2018-09-30",
+        "2018-12-31",
+        "2019-03-31"
+      ],
+      "raw_text_excerpt": "85 105,879 107,074 Deposits 560,975 558,669 606,755 652,920 Borrowings (includes subordinated debt)1 182,859 174,686 164,293 165,320 Other liabi"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "borrowings",
+      "value": 165320.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 165320.0,
+      "document_id": 846,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FR_06052019161041.zip",
+      "period_end_matched": "2019-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-03-31",
+        "2018-09-30",
+        "2018-12-31",
+        "2019-03-31"
+      ],
+      "raw_text_excerpt": "69 606,755 652,920 Borrowings (includes subordinated debt)1 182,859 174,686 164,293 165,320 Other liabilities 30,195 35,613 34,149 37,851 Total Capi"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 37851.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 37851.0,
+      "document_id": 846,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FR_06052019161041.zip",
+      "period_end_matched": "2019-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-03-31",
+        "2018-09-30",
+        "2018-12-31",
+        "2019-03-31"
+      ],
+      "raw_text_excerpt": "86 164,293 165,320 Other liabilities 30,195 35,613 34,149 37,851 Total Capital and Liabilities 879,189 874,340 912,364 964,459 Assets Cash and"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 37858.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 37858.0,
+      "document_id": 846,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FR_06052019161041.zip",
+      "period_end_matched": "2019-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-03-31",
+        "2018-09-30",
+        "2018-12-31",
+        "2019-03-31"
+      ],
+      "raw_text_excerpt": "Assets Cash and balances with Reserve Bank of India 33,102 33,122 34,365 37,858 Balances with banks and money at call and short notice 51,067 24,490 3"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 207733.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 207733.0,
+      "document_id": 846,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FR_06052019161041.zip",
+      "period_end_matched": "2019-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-03-31",
+        "2018-09-30",
+        "2018-12-31",
+        "2019-03-31"
+      ],
+      "raw_text_excerpt": ",490 32,094 42,438 Investments 202,994 187,500 197,730 207,733 Advances 512,395 544,487 564,308 586,647 Fixed assets 7,904 7,842 7,818 7,931 Other"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 586647.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 586647.0,
+      "document_id": 846,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FR_06052019161041.zip",
+      "period_end_matched": "2019-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-03-31",
+        "2018-09-30",
+        "2018-12-31",
+        "2019-03-31"
+      ],
+      "raw_text_excerpt": "00 197,730 207,733 Advances 512,395 544,487 564,308 586,647 Fixed assets 7,904 7,842 7,818 7,931 Other assets 71,727 76,899 76,049 81,852 Total"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 81852.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 81852.0,
+      "document_id": 846,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FR_06052019161041.zip",
+      "period_end_matched": "2019-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-03-31",
+        "2018-09-30",
+        "2018-12-31",
+        "2019-03-31"
+      ],
+      "raw_text_excerpt": "7,842 7,818 7,931 Other assets 71,727 76,899 76,049 81,852 Total Assets 879,189 874,340 912,364 964,459 1. Borrowings at March 31, 2018 include pre"
+    },
+    {
+      "fiscal_year": "FY2019",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 964459.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 964459.0,
+      "document_id": 846,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FR_06052019161041.zip",
+      "period_end_matched": "2019-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-03-31",
+        "2018-09-30",
+        "2018-12-31",
+        "2019-03-31"
+      ],
+      "raw_text_excerpt": ",613 34,149 37,851 Total Capital and Liabilities 879,189 874,340 912,364 964,459 Assets Cash and balances with Reserve Bank of India 33,102 33,122 34,"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1290.73,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1290.73,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": "al and Liabilities Capital 1,290.73 1,289.46 1,286 .56 Employees stock options outstanding 4.51 4.68 5.53 Reserves and sur_])_lus 109,104.24 107"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 660731.75,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 660731.75,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": ",073.91 104,049.42 Deposits 660,731.75 652,919.67 546,878.43 Borrowinqs _(includes preference shares and subordinated debt) 156,719.96 165,319.97"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 35901.31,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 35901.31,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": ",319.97 161,970.33 Other liabilities and provisions 35,901 .31 37,851.46 30,937.26 Total Capital and Liabilities 963,752.50 964,459.15 845,127.53 Asse"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 35989.61,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 35989.61,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": "845,127.53 Assets Cash and balances with Reserve Bank of India 35,989.61 37,858.01 31,058 .57 Balances with banks and money at call and short not ice "
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 219996.18,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 219996.18,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": ",438.28 32,235 .65 Investments 219,996.18 207,732.68 186,360.47 Advances 592,415.36 586,646.58 516,288 .73 Fixed assets 7,858.04 7,931.43 7,817.05"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 592415.36,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 592415.36,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": ",732.68 186,360.47 Advances 592,415.36 586,646.58 516,288 .73 Fixed assets 7,858.04 7,931.43 7,817.05 Other assets 77,735.51 81,852 .17 71,367.06"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 77735.51,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 77735.51,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": "7,931.43 7,817.05 Other assets 77,735.51 81,852 .17 71,367.06 Total Assets 963 752.50 964,459 .15 845,127 .53 CONSOLIDATED FINANCIAL RESULTS c~ in"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 963752.5,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 963752.5,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": "7,851.46 30,937.26 Total Capital and Liabilities 963,752.50 964,459.15 845,127.53 Assets Cash and balances with Reserve Bank of India 35,989.61 37,858"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "equity_share_capital",
+      "value": 1290.73,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1290.73,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": "al and Liabilities Capital 1,290.73 1,289.46 1,286.56 Employees stock options outstanding 4.51 4.68 5.53 Reserves and surplus 115,456.99 112,959"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "reserves",
+      "value": 115456.99,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 115456.99,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": "ing 4.51 4.68 5.53 Reserves and surplus 115,456.99 112,959.27 109,468.31 Minority inte rest 6,742.65 6,580.53 6,079.63 Deposits 691,033.51 681 ,316.94"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "deposits",
+      "value": 691033.51,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 691033.51,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": "6,580.53 6,079.63 Deposits 691,033.51 681 ,316.94 573,636.29 Borrowings (includes preference shares and subordinated debt) 208,214.83 210,324.12"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "borrowings",
+      "value": 208214.83,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 208214.83,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": ",316.94 573,636.29 Borrowings (includes preference shares and subordinated debt) 208,214.83 210,324.12 209,818.97 Liabilities on policies in force 155"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "other_liabilities",
+      "value": 71983.71,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 71983.71,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": ",378.75 135,145.24 Other liabilities and provisions 71,983.71 73,940.14 63,349.78 Total Capital and Liabilities 1,250,471.59 1,238,793.89 1,098,790.31"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "cash_and_bank",
+      "value": 36061.78,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 36061.78,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": "098,790.31 Assets Cash and balances with Reserve Bank of India 36,061.78 38,066.28 31,120.59 Balances w ith banks and money at call and short notice 3"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "investments",
+      "value": 423388.95,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 423388.95,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": "9,324.62 39,012.96 Investments 423,388.95 398,200.75 362,146.74 Advances 652,917.17 646,961.68 572,238.80 Fixed assets 9,635.18 9,660.42 9,426.19 O"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "advances",
+      "value": 652917.17,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 652917.17,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": ",200.75 362,146.74 Advances 652,917.17 646,961.68 572,238.80 Fixed assets 9,635.18 9,660.42 9,426.19 Other assets 91,376.47 96,580.14 84,845.03"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 91376.47,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 91376.47,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": "9,660.42 9,426.19 Other assets 91,376.47 96,580.14 84,845.03 Total Assets 1,250,471.59 1,238,793.89 1,098,790.31 3 CONSOLIDATED SEGMENTAL RESULTS"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "total_assets",
+      "value": 1250471.59,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1250471.59,
+      "document_id": 847,
+      "source_url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+      "period_end_matched": "2019-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-06-30",
+        "2019-03-31",
+        "2018-06-30"
+      ],
+      "raw_text_excerpt": "3,940.14 63,349.78 Total Capital and Liabilities 1,250,471.59 1,238,793.89 1,098,790.31 Assets Cash and balances with Reserve Bank of India 36,061.78 "
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1292.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1292.0,
+      "document_id": 848,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_26102019142953_BSENSE_OCT2019_046.pdf",
+      "period_end_matched": "2019-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-09-30",
+        "2019-03-31",
+        "2019-06-30",
+        "2019-09-30"
+      ],
+      "raw_text_excerpt": "nd Liabilities Capital 1,287 1,289 1,291 1,292 Employee stock options outstanding 5 5 5 4 Reserves and surplus 104,080 107,074 109,104 10"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 109314.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 109314.0,
+      "document_id": 848,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_26102019142953_BSENSE_OCT2019_046.pdf",
+      "period_end_matched": "2019-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-09-30",
+        "2019-03-31",
+        "2019-06-30",
+        "2019-09-30"
+      ],
+      "raw_text_excerpt": "standing 5 5 5 4 Reserves and surplus 104,080 107,074 109,104 109,314 Deposits 558,669 652,920 660,732 696,273 Borrowings (includes subordinated debt)"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 696273.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 696273.0,
+      "document_id": 848,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_26102019142953_BSENSE_OCT2019_046.pdf",
+      "period_end_matched": "2019-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-09-30",
+        "2019-03-31",
+        "2019-06-30",
+        "2019-09-30"
+      ],
+      "raw_text_excerpt": "74 109,104 109,314 Deposits 558,669 652,920 660,732 696,273 Borrowings (includes subordinated debt) 174,686 165,320 156,720 151,033 Other liabil"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "borrowings",
+      "value": 151033.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 151033.0,
+      "document_id": 848,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_26102019142953_BSENSE_OCT2019_046.pdf",
+      "period_end_matched": "2019-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-09-30",
+        "2019-03-31",
+        "2019-06-30",
+        "2019-09-30"
+      ],
+      "raw_text_excerpt": "20 660,732 696,273 Borrowings (includes subordinated debt) 174,686 165,320 156,720 151,033 Other liabilities 35,613 37,851 35,901 39,095 Total Capit"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 39095.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 39095.0,
+      "document_id": 848,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_26102019142953_BSENSE_OCT2019_046.pdf",
+      "period_end_matched": "2019-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-09-30",
+        "2019-03-31",
+        "2019-06-30",
+        "2019-09-30"
+      ],
+      "raw_text_excerpt": "20 156,720 151,033 Other liabilities 35,613 37,851 35,901 39,095 Total Capital and Liabilities 874,340 964,459 963,753 997,011 Assets Cas"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 41495.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 41495.0,
+      "document_id": 848,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_26102019142953_BSENSE_OCT2019_046.pdf",
+      "period_end_matched": "2019-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-09-30",
+        "2019-03-31",
+        "2019-06-30",
+        "2019-09-30"
+      ],
+      "raw_text_excerpt": "Assets Cash and balances with Reserve Bank of India 33,122 37,858 35,990 414,95 Balances with banks and money at call and short notice 24,490 42,438 2"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 223376.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 223376.0,
+      "document_id": 848,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_26102019142953_BSENSE_OCT2019_046.pdf",
+      "period_end_matched": "2019-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-09-30",
+        "2019-03-31",
+        "2019-06-30",
+        "2019-09-30"
+      ],
+      "raw_text_excerpt": ",438 29,758 30,144 Investments 187,500 207,733 219,996 223,376 Advances 544,487 586,647 592,415 613,359 Fixed assets 7,842 7,931 7,858 7,936 Other"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 613359.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 613359.0,
+      "document_id": 848,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_26102019142953_BSENSE_OCT2019_046.pdf",
+      "period_end_matched": "2019-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-09-30",
+        "2019-03-31",
+        "2019-06-30",
+        "2019-09-30"
+      ],
+      "raw_text_excerpt": "33 219,996 223,376 Advances 544,487 586,647 592,415 613,359 Fixed assets 7,842 7,931 7,858 7,936 Other assets 76,899 81,852 77,736 80,701 Total"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 80701.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 80701.0,
+      "document_id": 848,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_26102019142953_BSENSE_OCT2019_046.pdf",
+      "period_end_matched": "2019-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-09-30",
+        "2019-03-31",
+        "2019-06-30",
+        "2019-09-30"
+      ],
+      "raw_text_excerpt": "7,931 7,858 7,936 Other assets 76,899 81,852 77,736 80,701 Total Assets 874,340 964,459 963,753 997,011 1. Prior period figures have been re-grouped"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 997011.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 997011.0,
+      "document_id": 848,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_26102019142953_BSENSE_OCT2019_046.pdf",
+      "period_end_matched": "2019-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2018-09-30",
+        "2019-03-31",
+        "2019-06-30",
+        "2019-09-30"
+      ],
+      "raw_text_excerpt": ",851 35,901 39,095 Total Capital and Liabilities 874,340 964,459 963,753 997,011 Assets Cash and balances with Reserve Bank of India 33,122 37,858 35,"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q3",
+      "statement_type": "consolidated",
+      "metric_key": "equity_share_capital",
+      "value": 294.08,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 294.08,
+      "document_id": 849,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSENSE_RESULTS_FR_JAN2020_25012020142536.zip",
+      "period_end_matched": "2019-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-12-31"
+      ],
+      "raw_text_excerpt": "al and Liabilities Capital 1 294.08 1 292.15 1 289 .46 1 288.38 Employees stock optio ns outstanding 3.64 4.06 4.68 5.42 Reserves and surplus 12"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q3",
+      "statement_type": "consolidated",
+      "metric_key": "other_liabilities",
+      "value": 670.15,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 670.15,
+      "document_id": 849,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSENSE_RESULTS_FR_JAN2020_25012020142536.zip",
+      "period_end_matched": "2019-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-12-31"
+      ],
+      "raw_text_excerpt": "378.75 142 357.41 Other liabilities and provisions 75 670.15 76 123.41 73 940.14 66 373.92 Total Capital and Liabilities 1 304 910.69 1 288 189.72 1 2"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q3",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 698.33,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 698.33,
+      "document_id": 849,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSENSE_RESULTS_FR_JAN2020_25012020142536.zip",
+      "period_end_matched": "2019-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2019-12-31"
+      ],
+      "raw_text_excerpt": "9 660.42 9 489.75 Other assets 79 698.33 95 013.30 96,580 .14 92 113.23 Total Assets 1,304 910.69 1,288, 189.72 1,238,793.89 1,177,498.09 3 CONSOLI"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "equity_share_capital",
+      "value": 294.76,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 294.76,
+      "document_id": 850,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FinalNSE_BSE_May92020_09052020161512.zip",
+      "period_end_matched": "2020-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2020-03-31"
+      ],
+      "raw_text_excerpt": "al and Liabilities Capital 1 294.76 1,294.08 1 289.46 Employees stock options outstanding 3.49 3.64 4.68 Reserves and surplus 121 661.81 120,937"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "borrowings",
+      "value": 213851.78,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 213851.78,
+      "document_id": 850,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FinalNSE_BSE_May92020_09052020161512.zip",
+      "period_end_matched": "2020-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2020-03-31"
+      ],
+      "raw_text_excerpt": "786.81 681 316.94 Borrowings (includes subordinated debt) 213851.78 189,302.83 210 324.12 Liabilities on policies in force 145 486.25 163,856.71 152"
+    },
+    {
+      "fiscal_year": "FY2020",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 893.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 893.0,
+      "document_id": 850,
+      "source_url": "https://nsearchives.nseindia.com/corporate/FinalNSE_BSE_May92020_09052020161512.zip",
+      "period_end_matched": "2020-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2020-03-31"
+      ],
+      "raw_text_excerpt": "10,079.90 9,660.42 Other assets 893 11.91 79 698.33 96,580.14 Total Assets 1 377 292.23 1,304 ,910.69 1,238,793.89 CONSOLIDATED CASH FLOW STATEMENTS"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1379.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1379.0,
+      "document_id": 852,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_OCT31_31102020154441.zip",
+      "period_end_matched": "2020-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2019-09-30",
+        "2020-03-31",
+        "2020-06-30",
+        "2020-09-30"
+      ],
+      "raw_text_excerpt": "nd Liabilities Capital 1,292 1,295 1,295 1,3791 Employee stock options outstanding 4 3 3 3 Reserves and surplus 109,314 115,206 117,321 136"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 136269.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 136269.0,
+      "document_id": 852,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_OCT31_31102020154441.zip",
+      "period_end_matched": "2020-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2019-09-30",
+        "2020-03-31",
+        "2020-06-30",
+        "2020-09-30"
+      ],
+      "raw_text_excerpt": "utstanding 4 3 3 3 Reserves and surplus 109,314 115,206 117,321 136,2691 Deposits 696,273 770,969 801,622 832,936 Borrowings (includes subordinated de"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 832936.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 832936.0,
+      "document_id": 852,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_OCT31_31102020154441.zip",
+      "period_end_matched": "2020-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2019-09-30",
+        "2020-03-31",
+        "2020-06-30",
+        "2020-09-30"
+      ],
+      "raw_text_excerpt": "6 117,321 136,2691 Deposits 696,273 770,969 801,622 832,936 Borrowings (includes subordinated debt) 151,033 162,897 164,918 136,427 Other liabil"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "borrowings",
+      "value": 136427.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 136427.0,
+      "document_id": 852,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_OCT31_31102020154441.zip",
+      "period_end_matched": "2020-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2019-09-30",
+        "2020-03-31",
+        "2020-06-30",
+        "2020-09-30"
+      ],
+      "raw_text_excerpt": "69 801,622 832,936 Borrowings (includes subordinated debt) 151,033 162,897 164,918 136,427 Other liabilities 39,095 47,995 53,454 55,956 Total capit"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 55956.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 55956.0,
+      "document_id": 852,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_OCT31_31102020154441.zip",
+      "period_end_matched": "2020-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2019-09-30",
+        "2020-03-31",
+        "2020-06-30",
+        "2020-09-30"
+      ],
+      "raw_text_excerpt": "97 164,918 136,427 Other liabilities 39,095 47,995 53,454 55,956 Total capital and liabilities 997,011 1,098,365 1,138,613 1,162,971 Assets Ca"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 30538.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 30538.0,
+      "document_id": 852,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_OCT31_31102020154441.zip",
+      "period_end_matched": "2020-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2019-09-30",
+        "2020-03-31",
+        "2020-06-30",
+        "2020-09-30"
+      ],
+      "raw_text_excerpt": "Assets Cash and balances with Reserve Bank of India 41,495 35,284 32,256 30,538 Balances with banks and money at call and short notice 30,144 83,872 8"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 289623.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 289623.0,
+      "document_id": 852,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_OCT31_31102020154441.zip",
+      "period_end_matched": "2020-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2019-09-30",
+        "2020-03-31",
+        "2020-06-30",
+        "2020-09-30"
+      ],
+      "raw_text_excerpt": "872 88,995 106,054 Investments 223,376 249,531 301,851 289,623 Advances 613,359 645,290 631,215 652,608 Fixed assets 7,936 8,410 8,443 8,707 Other"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 652608.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 652608.0,
+      "document_id": 852,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_OCT31_31102020154441.zip",
+      "period_end_matched": "2020-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2019-09-30",
+        "2020-03-31",
+        "2020-06-30",
+        "2020-09-30"
+      ],
+      "raw_text_excerpt": "31 301,851 289,623 Advances 613,359 645,290 631,215 652,608 Fixed assets 7,936 8,410 8,443 8,707 Other assets 80,701 75,978 75,853 75,441 Total"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 75441.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 75441.0,
+      "document_id": 852,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_OCT31_31102020154441.zip",
+      "period_end_matched": "2020-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2019-09-30",
+        "2020-03-31",
+        "2020-06-30",
+        "2020-09-30"
+      ],
+      "raw_text_excerpt": "8,410 8,443 8,707 Other assets 80,701 75,978 75,853 75,441 Total assets 997,011 1,098,365 1,138,613 1,162,971 1. During Q2-2021, the Bank issued 418"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 1162971.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1162971.0,
+      "document_id": 852,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_OCT31_31102020154441.zip",
+      "period_end_matched": "2020-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2019-09-30",
+        "2020-03-31",
+        "2020-06-30",
+        "2020-09-30"
+      ],
+      "raw_text_excerpt": ",995 53,454 55,956 Total capital and liabilities 997,011 1,098,365 1,138,613 1,162,971 Assets Cash and balances with Reserve Bank of India 41,495 35,2"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1383.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1383.0,
+      "document_id": 854,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_April24_2020_final.pdf",
+      "period_end_matched": "2021-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-03-31",
+        "2020-09-30",
+        "2020-12-31",
+        "2021-03-31"
+      ],
+      "raw_text_excerpt": "nd Liabilities Capital 1,295 1,3791 1,381 1,383 Employee stock options outstanding 3 3 3 3 Reserves and surplus 115,206 136,2691 141,384 14"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 146123.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 146123.0,
+      "document_id": 854,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_April24_2020_final.pdf",
+      "period_end_matched": "2021-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-03-31",
+        "2020-09-30",
+        "2020-12-31",
+        "2021-03-31"
+      ],
+      "raw_text_excerpt": "utstanding 3 3 3 3 Reserves and surplus 115,206 136,2691 141,384 146,123 Deposits 770,969 832,936 874,348 932,522 Borrowings (includes subordinated de"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 932522.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 932522.0,
+      "document_id": 854,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_April24_2020_final.pdf",
+      "period_end_matched": "2021-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-03-31",
+        "2020-09-30",
+        "2020-12-31",
+        "2021-03-31"
+      ],
+      "raw_text_excerpt": "91 141,384 146,123 Deposits 770,969 832,936 874,348 932,522 Borrowings (includes subordinated debt) 162,897 136,427 111,608 91,631 Other liabili"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "borrowings",
+      "value": 91631.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 91631.0,
+      "document_id": 854,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_April24_2020_final.pdf",
+      "period_end_matched": "2021-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-03-31",
+        "2020-09-30",
+        "2020-12-31",
+        "2021-03-31"
+      ],
+      "raw_text_excerpt": "36 874,348 932,522 Borrowings (includes subordinated debt) 162,897 136,427 111,608 91,631 Other liabilities 47,995 55,956 64,493 58,771 Total capita"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 58771.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 58771.0,
+      "document_id": 854,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_April24_2020_final.pdf",
+      "period_end_matched": "2021-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-03-31",
+        "2020-09-30",
+        "2020-12-31",
+        "2021-03-31"
+      ],
+      "raw_text_excerpt": "427 111,608 91,631 Other liabilities 47,995 55,956 64,493 58,771 Total capital and liabilities 1,098,365 1,162,971 1,193,217 1,230,433 Assets"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 46031.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 46031.0,
+      "document_id": 854,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_April24_2020_final.pdf",
+      "period_end_matched": "2021-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-03-31",
+        "2020-09-30",
+        "2020-12-31",
+        "2021-03-31"
+      ],
+      "raw_text_excerpt": "Assets Cash and balances with Reserve Bank of India 35,284 30,538 29,406 46,031 Balances with banks and money at call and short notice 83,872 106,054 "
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 281287.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 281287.0,
+      "document_id": 854,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_April24_2020_final.pdf",
+      "period_end_matched": "2021-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-03-31",
+        "2020-09-30",
+        "2020-12-31",
+        "2021-03-31"
+      ],
+      "raw_text_excerpt": "054 104,864 87,097 Investments 249,531 289,623 275,261 281,287 Advances 645,290 652,608 699,017 733,729 Fixed assets 8,410 8,707 8,717 8,878 Other"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 733729.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 733729.0,
+      "document_id": 854,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_April24_2020_final.pdf",
+      "period_end_matched": "2021-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-03-31",
+        "2020-09-30",
+        "2020-12-31",
+        "2021-03-31"
+      ],
+      "raw_text_excerpt": "23 275,261 281,287 Advances 645,290 652,608 699,017 733,729 Fixed assets 8,410 8,707 8,717 8,878 Other assets 75,978 75,441 75,952 73,411 Total"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 73411.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 73411.0,
+      "document_id": 854,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_April24_2020_final.pdf",
+      "period_end_matched": "2021-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-03-31",
+        "2020-09-30",
+        "2020-12-31",
+        "2021-03-31"
+      ],
+      "raw_text_excerpt": "8,707 8,717 8,878 Other assets 75,978 75,441 75,952 73,411 Total assets 1,098,365 1,162,971 1,193,217 1,230,433 1. During Q2-2021, the Bank issued 4"
+    },
+    {
+      "fiscal_year": "FY2021",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 1230433.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1230433.0,
+      "document_id": 854,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_April24_2020_final.pdf",
+      "period_end_matched": "2021-03-31",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-03-31",
+        "2020-09-30",
+        "2020-12-31",
+        "2021-03-31"
+      ],
+      "raw_text_excerpt": ",956 64,493 58,771 Total capital and liabilities 1,098,365 1,162,971 1,193,217 1,230,433 Assets Cash and balances with Reserve Bank of India 35,284 30"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1385.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1385.0,
+      "document_id": 855,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_FR_24072021162318.pdf",
+      "period_end_matched": "2021-06-30",
+      "column_index": 2,
+      "columns_detected": [
+        "2020-06-30",
+        "2021-03-31",
+        "2021-06-30"
+      ],
+      "raw_text_excerpt": "and Liabilities Capital 1,295 1,383 1,385 Employee stock options outstanding 3 3 3 Reserves and surplus 117,321 146,123 150,988 Deposits 80"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 150988.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 150988.0,
+      "document_id": 855,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_FR_24072021162318.pdf",
+      "period_end_matched": "2021-06-30",
+      "column_index": 2,
+      "columns_detected": [
+        "2020-06-30",
+        "2021-03-31",
+        "2021-06-30"
+      ],
+      "raw_text_excerpt": "outstanding 3 3 3 Reserves and surplus 117,321 146,123 150,988 Deposits 801,622 932,522 926,224 Borrowings (includes subordinated debt) 164,918 91,631"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 926224.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 926224.0,
+      "document_id": 855,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_FR_24072021162318.pdf",
+      "period_end_matched": "2021-06-30",
+      "column_index": 2,
+      "columns_detected": [
+        "2020-06-30",
+        "2021-03-31",
+        "2021-06-30"
+      ],
+      "raw_text_excerpt": "21 146,123 150,988 Deposits 801,622 932,522 926,224 Borrowings (includes subordinated debt) 164,918 91,631 89,131 Other liabilities 53,454 58,77"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "borrowings",
+      "value": 89131.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 89131.0,
+      "document_id": 855,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_FR_24072021162318.pdf",
+      "period_end_matched": "2021-06-30",
+      "column_index": 2,
+      "columns_detected": [
+        "2020-06-30",
+        "2021-03-31",
+        "2021-06-30"
+      ],
+      "raw_text_excerpt": "22 932,522 926,224 Borrowings (includes subordinated debt) 164,918 91,631 89,131 Other liabilities 53,454 58,771 52,923 Total capital and liabiliti"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 52923.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 52923.0,
+      "document_id": 855,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_FR_24072021162318.pdf",
+      "period_end_matched": "2021-06-30",
+      "column_index": 2,
+      "columns_detected": [
+        "2020-06-30",
+        "2021-03-31",
+        "2021-06-30"
+      ],
+      "raw_text_excerpt": ",918 91,631 89,131 Other liabilities 53,454 58,771 52,923 Total capital and liabilities 1,138,613 1,230,433 1,220,654 Assets Cash and balances w"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 42036.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 42036.0,
+      "document_id": 855,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_FR_24072021162318.pdf",
+      "period_end_matched": "2021-06-30",
+      "column_index": 2,
+      "columns_detected": [
+        "2020-06-30",
+        "2021-03-31",
+        "2021-06-30"
+      ],
+      "raw_text_excerpt": "54 Assets Cash and balances with Reserve Bank of India 32,256 46,031 42,036 Balances with banks and money at call and short notice 88,995 87,097 63,82"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 294849.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 294849.0,
+      "document_id": 855,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_FR_24072021162318.pdf",
+      "period_end_matched": "2021-06-30",
+      "column_index": 2,
+      "columns_detected": [
+        "2020-06-30",
+        "2021-03-31",
+        "2021-06-30"
+      ],
+      "raw_text_excerpt": ",995 87,097 63,828 Investments 301,851 281,287 294,849 Advances 631,215 733,729 738,598 Fixed assets 8,443 8,878 8,956 Other assets 75,853 73,411 7"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 738598.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 738598.0,
+      "document_id": 855,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_FR_24072021162318.pdf",
+      "period_end_matched": "2021-06-30",
+      "column_index": 2,
+      "columns_detected": [
+        "2020-06-30",
+        "2021-03-31",
+        "2021-06-30"
+      ],
+      "raw_text_excerpt": "51 281,287 294,849 Advances 631,215 733,729 738,598 Fixed assets 8,443 8,878 8,956 Other assets 75,853 73,411 72,387 Total assets 1,138,613 1,23"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 72387.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 72387.0,
+      "document_id": 855,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_FR_24072021162318.pdf",
+      "period_end_matched": "2021-06-30",
+      "column_index": 2,
+      "columns_detected": [
+        "2020-06-30",
+        "2021-03-31",
+        "2021-06-30"
+      ],
+      "raw_text_excerpt": "8,443 8,878 8,956 Other assets 75,853 73,411 72,387 Total assets 1,138,613 1,230,433 1,220,654 1. Prior period figures have been re-grouped/re-arran"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 1220654.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1220654.0,
+      "document_id": 855,
+      "source_url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_FR_24072021162318.pdf",
+      "period_end_matched": "2021-06-30",
+      "column_index": 2,
+      "columns_detected": [
+        "2020-06-30",
+        "2021-03-31",
+        "2021-06-30"
+      ],
+      "raw_text_excerpt": ",454 58,771 52,923 Total capital and liabilities 1,138,613 1,230,433 1,220,654 Assets Cash and balances with Reserve Bank of India 32,256 46,031 42,03"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1387.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1387.0,
+      "document_id": 856,
+      "source_url": "https://nsearchives.nseindia.com/corporate/nsebse_23102021160000.pdf",
+      "period_end_matched": "2021-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-09-30",
+        "2021-03-31",
+        "2021-06-30",
+        "2021-09-30"
+      ],
+      "raw_text_excerpt": "nd Liabilities Capital 1,3791 1,383 1,385 1,387 Employee stock options outstanding 3 3 3 127 Reserves and surplus 136,2691 146,123 150,988"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 155270.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 155270.0,
+      "document_id": 856,
+      "source_url": "https://nsearchives.nseindia.com/corporate/nsebse_23102021160000.pdf",
+      "period_end_matched": "2021-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-09-30",
+        "2021-03-31",
+        "2021-06-30",
+        "2021-09-30"
+      ],
+      "raw_text_excerpt": "standing 3 3 3 127 Reserves and surplus 136,2691 146,123 150,988 155,270 Deposits 832,936 932,522 926,224 977,449 Borrowings (includes subordinated de"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 977449.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 977449.0,
+      "document_id": 856,
+      "source_url": "https://nsearchives.nseindia.com/corporate/nsebse_23102021160000.pdf",
+      "period_end_matched": "2021-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-09-30",
+        "2021-03-31",
+        "2021-06-30",
+        "2021-09-30"
+      ],
+      "raw_text_excerpt": "23 150,988 155,270 Deposits 832,936 932,522 926,224 977,449 Borrowings (includes subordinated debt) 136,427 91,631 89,131 82,989 Other liabiliti"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "borrowings",
+      "value": 82989.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 82989.0,
+      "document_id": 856,
+      "source_url": "https://nsearchives.nseindia.com/corporate/nsebse_23102021160000.pdf",
+      "period_end_matched": "2021-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-09-30",
+        "2021-03-31",
+        "2021-06-30",
+        "2021-09-30"
+      ],
+      "raw_text_excerpt": "22 926,224 977,449 Borrowings (includes subordinated debt) 136,427 91,631 89,131 82,989 Other liabilities 55,956 58,771 52,923 58,780 Total capital"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 58780.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 58780.0,
+      "document_id": 856,
+      "source_url": "https://nsearchives.nseindia.com/corporate/nsebse_23102021160000.pdf",
+      "period_end_matched": "2021-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-09-30",
+        "2021-03-31",
+        "2021-06-30",
+        "2021-09-30"
+      ],
+      "raw_text_excerpt": ",631 89,131 82,989 Other liabilities 55,956 58,771 52,923 58,780 Total capital and liabilities 1,162,971 1,230,433 1,220,654 1,276,002 Assets"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 45097.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 45097.0,
+      "document_id": 856,
+      "source_url": "https://nsearchives.nseindia.com/corporate/nsebse_23102021160000.pdf",
+      "period_end_matched": "2021-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-09-30",
+        "2021-03-31",
+        "2021-06-30",
+        "2021-09-30"
+      ],
+      "raw_text_excerpt": "Assets Cash and balances with Reserve Bank of India 30,538 46,031 42,036 45,097 Balances with banks and money at call and short notice 106,054 87,097 "
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 285220.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 285220.0,
+      "document_id": 856,
+      "source_url": "https://nsearchives.nseindia.com/corporate/nsebse_23102021160000.pdf",
+      "period_end_matched": "2021-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-09-30",
+        "2021-03-31",
+        "2021-06-30",
+        "2021-09-30"
+      ],
+      "raw_text_excerpt": "097 63,828 104,947 Investments 289,623 281,287 294,849 285,220 Advances 652,608 733,729 738,598 764,937 Fixed assets 8,707 8,878 8,956 9,153 Other"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 764937.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 764937.0,
+      "document_id": 856,
+      "source_url": "https://nsearchives.nseindia.com/corporate/nsebse_23102021160000.pdf",
+      "period_end_matched": "2021-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-09-30",
+        "2021-03-31",
+        "2021-06-30",
+        "2021-09-30"
+      ],
+      "raw_text_excerpt": "87 294,849 285,220 Advances 652,608 733,729 738,598 764,937 Fixed assets 8,707 8,878 8,956 9,153 Other assets 75,441 73,411 72,387 66,648 Total"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 66648.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 66648.0,
+      "document_id": 856,
+      "source_url": "https://nsearchives.nseindia.com/corporate/nsebse_23102021160000.pdf",
+      "period_end_matched": "2021-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-09-30",
+        "2021-03-31",
+        "2021-06-30",
+        "2021-09-30"
+      ],
+      "raw_text_excerpt": "8,878 8,956 9,153 Other assets 75,441 73,411 72,387 66,648 Total assets 1,162,971 1,230,433 1,220,654 1,276,002 1. During Q2-2021, the Bank issued 4"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 1276002.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1276002.0,
+      "document_id": 856,
+      "source_url": "https://nsearchives.nseindia.com/corporate/nsebse_23102021160000.pdf",
+      "period_end_matched": "2021-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2020-09-30",
+        "2021-03-31",
+        "2021-06-30",
+        "2021-09-30"
+      ],
+      "raw_text_excerpt": ",771 52,923 58,780 Total capital and liabilities 1,162,971 1,230,433 1,220,654 1,276,002 Assets Cash and balances with Reserve Bank of India 30,538 46"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q3",
+      "statement_type": "consolidated",
+      "metric_key": "equity_share_capital",
+      "value": 388.88,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 388.88,
+      "document_id": 857,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_22012022161715.pdf",
+      "period_end_matched": "2021-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2021-12-31"
+      ],
+      "raw_text_excerpt": "al and Liabilities Capital 1 388.88 1 387.09 1 383.41 1 380.95 Employees stock options outstandino 196.57 127.22 3.10 3.26 Reserves and surpl us"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q3",
+      "statement_type": "consolidated",
+      "metric_key": "other_liabilities",
+      "value": 643.45,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 643.45,
+      "document_id": 857,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_22012022161715.pdf",
+      "period_end_matched": "2021-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2021-12-31"
+      ],
+      "raw_text_excerpt": "180.04 194 227.16 Other liabiliti es and provisions 76 643.45 70 982.57 99 616.40 104 610.98 Total Capital and Liabilities 1 682 903.84 1 604 052.92 1"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q3",
+      "statement_type": "consolidated",
+      "metric_key": "cash_and_bank",
+      "value": 694.2,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 694.2,
+      "document_id": 857,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_22012022161715.pdf",
+      "period_end_matched": "2021-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2021-12-31"
+      ],
+      "raw_text_excerpt": "519 353.22 Assets Cash and balances with Reserve Bank of India 55 694.2 5 45 449.00 46 302.20 29 839.70 Balances with banks and money at call and shor"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 389.97,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 389.97,
+      "document_id": 858,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_Final_23042022163548.pdf",
+      "period_end_matched": "2022-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "al and Liabilities Capital 1 389.97 1 388.88 1.383.41 Employees stock options outstand ing 266.41 196.57 3.10 Reserves and surplus 168 855.59 16"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 982.8,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 982.8,
+      "document_id": 858,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_Final_23042022163548.pdf",
+      "period_end_matched": "2022-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "9 585.42 91 630.96 Othe r liabiliti es and provis ions 68 982.80 64 075.37 58 770 .38 Total Capital and Liabilities 1 41 1 297 .74 1 354 195.63 1 230 "
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 64840.12,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 64840.12,
+      "document_id": 858,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_Final_23042022163548.pdf",
+      "period_end_matched": "2022-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "9 155.60 8 877.58 Other assets 64840. 12 65 315.66 73.411.22 Total Asset s 1 41 1 297.74 1 354 195.63 1 230 432 .68 2 STANDALONE CA SH FLOW STATEME"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "equity_share_capital",
+      "value": 389.97,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 389.97,
+      "document_id": 858,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_Final_23042022163548.pdf",
+      "period_end_matched": "2022-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "al and Liabilities Capital 1 389 .97 1 388 .88 1 383.4 1 Employees stock options outs tanding_ 266.41 196.57 3.10 Reserves and surplus 180396.11"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "reserves",
+      "value": 180396.11,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 180396.11,
+      "document_id": 858,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_Final_23042022163548.pdf",
+      "period_end_matched": "2022-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "266.41 196.57 3.10 Reserves and surplus 180396.11 173 528.00 156,200.99 Minority interest 5 980.89 5 801.53 9,588.34 Deposits 1 091 365.79 1 044,290.2"
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "other_liabilities",
+      "value": 808.33,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 808.33,
+      "document_id": 858,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_Final_23042022163548.pdf",
+      "period_end_matched": "2022-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "445.59 203 180.04 Other liabi lities and provis ions 82 808 .33 76 643.45 99 616.40 Total Capital and Liabilities 1 752 637.38 1 682,903.84 1 573,812."
+    },
+    {
+      "fiscal_year": "FY2022",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "cash_and_bank",
+      "value": 60228.71,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 60228.71,
+      "document_id": 858,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_Final_23042022163548.pdf",
+      "period_end_matched": "2022-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "573,812.24 Assets Cash and balances with Reserve Bank of India 60228.71 55 694.25 46 302.20 Balances with banks and money at call and short notice 122"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1395.62,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1395.62,
+      "document_id": 861,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_JAN2023_signed_21012023155857.pdf",
+      "period_end_matched": "2022-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-12-31",
+        "2022-09-30",
+        "2022-03-31",
+        "2021-12-31"
+      ],
+      "raw_text_excerpt": "al and Liabilities Capital 1,395.62 1,393.79 1,389.97 1,388.88 Employees stock options outstanding 635.49 510.09 266.41 196.57 Reserves and surp"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 189237.43,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 189237.43,
+      "document_id": 861,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_JAN2023_signed_21012023155857.pdf",
+      "period_end_matched": "2022-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-12-31",
+        "2022-09-30",
+        "2022-03-31",
+        "2021-12-31"
+      ],
+      "raw_text_excerpt": "0.09 266.41 196.57 Reserves and surplus 189,237.43 180,603.03 168.855.59 161,482.68 Deposits 1.122,049.48 1,090,007.96 1,064,571.61 1,017,466.71 Borro"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 62281.19,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 62281.19,
+      "document_id": 861,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_JAN2023_signed_21012023155857.pdf",
+      "period_end_matched": "2022-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-12-31",
+        "2022-09-30",
+        "2022-03-31",
+        "2021-12-31"
+      ],
+      "raw_text_excerpt": "354,195.63 Assets Cash and balances with Reserve Bank of India 62,281.19 67,095.05 109,522.82 141,580.55 Balances with banks and money at call and sho"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 337050.56,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 337050.56,
+      "document_id": 861,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_JAN2023_signed_21012023155857.pdf",
+      "period_end_matched": "2022-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-12-31",
+        "2022-09-30",
+        "2022-03-31",
+        "2021-12-31"
+      ],
+      "raw_text_excerpt": "8,299.54 39,328.77 Investments 337,050.56 333,030.82 310,241.00 284,823.43 Advances 974,047.50 938,562.78 859,020.44 813,991.62 Fixed assets 9,574.5"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 974047.5,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 974047.5,
+      "document_id": 861,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_JAN2023_signed_21012023155857.pdf",
+      "period_end_matched": "2022-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-12-31",
+        "2022-09-30",
+        "2022-03-31",
+        "2021-12-31"
+      ],
+      "raw_text_excerpt": ",241.00 284,823.43 Advances 974,047.50 938,562.78 859,020.44 813,991.62 Fixed assets 9,574.52 9,509.67 9,373.82 9,155.60 Other assets 78,604.71 8"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 78604.71,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 78604.71,
+      "document_id": 861,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_JAN2023_signed_21012023155857.pdf",
+      "period_end_matched": "2022-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-12-31",
+        "2022-09-30",
+        "2022-03-31",
+        "2021-12-31"
+      ],
+      "raw_text_excerpt": "9,373.82 9,155.60 Other assets 78,604.71 82,658.05 64,840.12 65,315.66 Total Assets 1,521,7-48.11 1,488,674.24 1,411,297.74 1,354,195.63 CONSOLIDATE"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 1521748.11,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1521748.11,
+      "document_id": 861,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_JAN2023_signed_21012023155857.pdf",
+      "period_end_matched": "2022-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2022-12-31",
+        "2022-09-30",
+        "2022-03-31",
+        "2021-12-31"
+      ],
+      "raw_text_excerpt": "8,982.80 64,075.37 Total Capital and Liabilities 1,521,748.11 1,488,674.24 1,411,297.74 1,354,195.63 Assets Cash and balances with Reserve Bank of Ind"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "equity_share_capital",
+      "value": 139.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 139.0,
+      "document_id": 862,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_FR_APRIL23_22042023154217.pdf",
+      "period_end_matched": "2023-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-03-31",
+        "2022-12-31",
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "Capital and Liabil ities Capita l 1,39 6.78 1.395.62 1,389.9 7 Employees stock options outstandina 760.8 9 636.11 266 .41 Re"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "deposits",
+      "value": 1210832.15,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1210832.15,
+      "document_id": 862,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_FR_APRIL23_22042023154217.pdf",
+      "period_end_matched": "2023-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-03-31",
+        "2022-12-31",
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "6,573.21 5,980 .89 Deposits 1,210,832.15 1,152,325.13 1,091,365.79 Borrowings (includes subordina ted debt ) 189,061 .81 192,496 .93 161,60 2.68"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "borrowings",
+      "value": 189061.81,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 189061.81,
+      "document_id": 862,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_FR_APRIL23_22042023154217.pdf",
+      "period_end_matched": "2023-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-03-31",
+        "2022-12-31",
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "25.13 1,091,365.79 Borrowings (includes subordina ted debt ) 189,061 .81 192,496 .93 161,60 2.68 Liabi lities on policies in f orce 238,867 .36 239, 9"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "other_liabilities",
+      "value": 98544.63,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 98544.63,
+      "document_id": 862,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_FR_APRIL23_22042023154217.pdf",
+      "period_end_matched": "2023-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-03-31",
+        "2022-12-31",
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "975.30 228,827 .20 Ot her liabilities and provisions 98,544 .63 91,245.56 82,808 .33 Total Capital and Liabilities 1,958,490.50 1,887,209.01 1,752,637"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "cash_and_bank",
+      "value": 68648.9,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 68648.9,
+      "document_id": 862,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_FR_APRIL23_22042023154217.pdf",
+      "period_end_matched": "2023-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-03-31",
+        "2022-12-31",
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": "752,637.38 Assets Cash and balances w ith Reserve Bank of India 68,648.9 4 62,32 3.30 109,630.7 1 Balances with banks and money at call and short noti"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "investments",
+      "value": 63955.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 63955.0,
+      "document_id": 862,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_FR_APRIL23_22042023154217.pdf",
+      "period_end_matched": "2023-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-03-31",
+        "2022-12-31",
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": ",556 .73 73,495.27 Investments 639,55 1.97 612,557.65 567,097.72 Advance s 1,083,8 66.32 1,038,091.18 9 20,308. 14 Fixed assets 10,969.00 10,858.87"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 87545.39,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 87545.39,
+      "document_id": 862,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_FR_APRIL23_22042023154217.pdf",
+      "period_end_matched": "2023-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-03-31",
+        "2022-12-31",
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": ",858.87 10,60 5.41 Other asset s 87,545.39 85,7 19.95 71,398 .80 Goodwil l on consolidation 101.33 101.33 101 .33 Total Assets 1,958 ,490.50 1,887 ,20"
+    },
+    {
+      "fiscal_year": "FY2023",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "total_assets",
+      "value": 1958490.5,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1958490.5,
+      "document_id": 862,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_FR_APRIL23_22042023154217.pdf",
+      "period_end_matched": "2023-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-03-31",
+        "2022-12-31",
+        "2022-03-31"
+      ],
+      "raw_text_excerpt": ",245.56 82,808 .33 Total Capital and Liabilities 1,958,490.50 1,887,209.01 1,752,637.38 Assets Cash and balances w ith Reserve Bank of India 68,648.9 "
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1399.54,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1399.54,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30",
+        "2023-03-31",
+        "2022-06-30"
+      ],
+      "raw_text_excerpt": "al and Liabilities Capita l 1,399.54 1,396.78 1,391. 48 Employees stock options outst anding 916.04 760.89 387.33 Reserves and surplus 208,650.29"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 208650.29,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 208650.29,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30",
+        "2023-03-31",
+        "2022-06-30"
+      ],
+      "raw_text_excerpt": "6.04 760.89 387.33 Reserves and surplus 208,650.29 198,557.72 176,099.56 Depos its 1,238,736.60 1,180,840.69 1,050,349. 04 Borrowing s (inclu des subo"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 1238736.6,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1238736.6,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30",
+        "2023-03-31",
+        "2022-06-30"
+      ],
+      "raw_text_excerpt": ",557.72 176,099.56 Depos its 1,238,736.60 1,180,840.69 1,050,349. 04 Borrowing s (inclu des subord inated debt) 111.252 .36 119.325.49 115,454.47"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 398139.53,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 398139.53,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30",
+        "2023-03-31",
+        "2022-06-30"
+      ],
+      "raw_text_excerpt": ",9 12.10 22.464.01 Investme nts 398,139 .53 3 62 ,329.73 321 ,252.23 Advances 1,057 ,582.60 1,019,638 .31 895,62 4.8 1 Fixed assets 9 ,731.31 9.599.8"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 75299.94,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 75299.94,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30",
+        "2023-03-31",
+        "2022-06-30"
+      ],
+      "raw_text_excerpt": "9.599.84 9 ,399.78 Othe r assets 75,299.94 73,200.50 76,080.57 Total Assets 1,647,000.34 1,584 ,206.65 1,415 ,580.82 STANDALONE SEGMENTAL RESULTS ~in"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 1647000.34,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1647000.34,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30",
+        "2023-03-31",
+        "2022-06-30"
+      ],
+      "raw_text_excerpt": "3,325.08 71.898.94 Total Capital and Liabilitie s 1,647,000.34 1,584 ,206.65 1,415 ,580.82 Assets Cash and balances with Reserve Bank of Indio 68, 79 "
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "equity_share_capital",
+      "value": 1399.54,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1399.54,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "al and Liabilities Ca pital 1,399.54 1,396.78 1,391.48 Employees sto ck optio ns outstanding 916.04 760.89 387.33 Reserves an d surplus 223,749.9"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "deposits",
+      "value": 1269343.44,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1269343.44,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "6,686.75 6,018.39 Deposits 1,269,343.44 1.210,832.15 1,077.789. 55 Borrowings (includes subord inated d ebt) 182,98 1.41 189.061.81 166,06 4.37"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "borrowings",
+      "value": 18298.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 18298.0,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "2.15 1,077.789. 55 Borrowings (includes subord inated d ebt) 182,98 1.41 189.061.81 166,06 4.37 Lia bilities on policies in force 253,673.57 238 ,867."
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "other_liabilities",
+      "value": 100836.28,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 100836.28,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": ",867.36 218,825.18 Other lia bilities a nd provisions 100,836.28 98,544.63 84.380.89 Total Capital and Liabilit ies 2,039,897.40 1.958,490.50 1,742,7n"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "cash_and_bank",
+      "value": 68839.1,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 68839.1,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": ",742,7n.18 Assets Cash a nd bala nces w ith Reserve Ban k of India 68,839.1 4 68,648.94 90,798 .15 Bala nces with bank s a nd money at call a nd short"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "total_assets",
+      "value": 2039897.4,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 2039897.4,
+      "document_id": 863,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+      "period_end_matched": "2023-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "8,544.63 84.380.89 Total Capital and Liabilit ies 2,039,897.40 1.958,490.50 1,742,7n.18 Assets Cash a nd bala nces w ith Reserve Ban k of India 68,839"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 93230.9,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 93230.9,
+      "document_id": 864,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEFR_OCT_21102023153647.pdf",
+      "period_end_matched": "2023-09-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-09-30",
+        "2023-06-30",
+        "2023-03-31",
+        "2022-09-30"
+      ],
+      "raw_text_excerpt": "5.49 129 ,933 .91 Other liabilities and provisions 93,230 .90 86,045.51 83,325.08 86,225.46 Total Capital and Liabilities 1,720,779.S6 1,647,000.34 1,"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 66221.19,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 66221.19,
+      "document_id": 864,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEFR_OCT_21102023153647.pdf",
+      "period_end_matched": "2023-09-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-09-30",
+        "2023-06-30",
+        "2023-03-31",
+        "2022-09-30"
+      ],
+      "raw_text_excerpt": "488,674.24 Assets Cash and balances with Reserve Bank of India 66,221.19 68,799 .52 68,526 .17 67,095.05 Balances with banks and money at ca ll and sh"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 77356.7,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 77356.7,
+      "document_id": 864,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEFR_OCT_21102023153647.pdf",
+      "period_end_matched": "2023-09-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-09-30",
+        "2023-06-30",
+        "2023-03-31",
+        "2022-09-30"
+      ],
+      "raw_text_excerpt": "9,599.84 9,509.67 Other assets 77,356.70 75,299.94 73,200.50 82,658.05 Total Assets 1,720,779.56 1,647,000.34 1,584,206 .65 1,488,674.24 STANDALONE"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q2",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 86616.47,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 86616.47,
+      "document_id": 864,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSEFR_OCT_21102023153647.pdf",
+      "period_end_matched": "2023-09-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2023-09-30",
+        "2023-06-30",
+        "2023-03-31",
+        "2022-09-30"
+      ],
+      "raw_text_excerpt": "0,969.00 10,787.57 Other assets 86,616.47 83,628.65 87,545.39 89,236 .17 Goodwi ll on conso lidation 101.33 101.33 101.33 101.33 Total Assets 2,124,8"
+    },
+    {
+      "fiscal_year": "FY2024",
+      "quarter": "Q4",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 97640.98,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 97640.98,
+      "document_id": 866,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27042024160815.pdf",
+      "period_end_matched": "2024-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-03-31",
+        "2023-12-31",
+        "2023-03-31"
+      ],
+      "raw_text_excerpt": ",913.77 10,969 .00 Other assets 97,640.98 90.491.08 87,545. 39 Goodwill on consolidation 2.47 4.16 101.33 101.33 Total Assets 2,364,063.03 2,208,018."
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 251070.91,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 251070.91,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "12 1,405.32 916.04 Reserves and surplus 251,070 .91 235,589.32 208,650.29 Deposits 1,426,149.46 1,412,824.95 1,238,736.60 Borrowings (includes subordi"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 1426149.46,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1426149.46,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": ",589.32 208,650.29 Deposits 1,426,149.46 1,412,824.95 1,238,736.60 Borrowings (includes subordinated debt} 120,146 .85 124,967.58 111,252 .36 Oth"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "borrowings",
+      "value": 120146.85,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 120146.85,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "24.95 1,238,736.60 Borrowings (includes subordinated debt} 120,146 .85 124,967.58 111,252 .36 Other liabilities and provisions 92,406 .30 95,322.73 86"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 92406.3,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 92406.3,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "967.58 111,252 .36 Other liabilities and provisions 92,406 .30 95,322.73 86,045.51 Total Capital and Liabilities 1,892,697.09 1,871,514.58 1,647,000.3"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 80438.97,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 80438.97,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "647,000.34 Assets Cash and balances with Reserve Bank of India 80,438 .97 89.711.70 68,799.52 Balances w ith banks and money at call and short notice "
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 475255.6,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 475255.6,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "0,214.31 37,447.44 Investments 475,255.60 461.942.27 398,139.53 Advances 1,223,154.27 1,184,406 .39 1,057,582.60 Fixed assets 11,101.40 10,859.84 9,"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 1223154.27,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1223154.27,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": ".942.27 398,139.53 Advances 1,223,154.27 1,184,406 .39 1,057,582.60 Fixed assets 11,101.40 10,859.84 9,731.31 Other assets 72,522 .78 74,380.07 7"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 72522.78,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 72522.78,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "10,859.84 9,731.31 Other assets 72,522 .78 74,380.07 75,299.94 Total Assets 1,892,697.09 1,871,514.58 1,647,000.34 2 STANDALONE SEGMENTAL RESULTS ("
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 1892697.09,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1892697.09,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "5,322.73 86,045.51 Total Capital and Liabilities 1,892,697.09 1,871,514.58 1,647,000.34 Assets Cash and balances with Reserve Bank of India 80,438 .97"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "equity_share_capital",
+      "value": 1407.45,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1407.45,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "al and Liabilities Cap ital 1,407.45 1,404.68 1,399 .54 Employees stock options/units outstanding 1,516.12 1,405 .32 916.04 Reserves and surplus"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "deposits",
+      "value": 1456732.61,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1456732.61,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "3,888.42 6,997 .14 Deposits 1,456,732.61 1,443,579.95 1.269,343 .44 Borrow ings (includes subordinated debt) 206,033.29 207,428.00 182 ,981.41 Li"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "borrowings",
+      "value": 206033.29,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 206033.29,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "9.95 1.269,343 .44 Borrow ings (includes subordinated debt) 206,033.29 207,428.00 182 ,981.41 Liabi lities on policies in force 295,381.31 281,318 .33"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "other_liabilities",
+      "value": 162140.81,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 162140.81,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "318 .33 253,673.57 Other liabilities and provisions 162,140.81 161,704.49 100,836.28 Total Capital and Liabilities 2,407,394 .82 2,364,063.03 2,039,89"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "cash_and_bank",
+      "value": 80506.78,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 80506.78,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": "039,897.40 Assets Cash and ba lances with Reserve Bank of India 80,506.78 89,943.02 68,839.14 Balances with banks and money at ca ll and short notice "
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "advances",
+      "value": 1303045.56,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1303045.56,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": ",162.51 692,709.14 Advances 1,303,045 .56 1,260 ,776.20 1,124,875 .06 Fixed assets 13,663 .27 13,240.28 11,154 .20 Other assets 95,472.48 97,640."
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 95472.48,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 95472.48,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": ",240.28 11,154 .20 Other assets 95,472.48 97,640.98 83,628 .65 Goodwill on consolidation 2,910 .18 2,474 .16 101 .33 Total Assets 2,407,394.82 2,364,"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "total_assets",
+      "value": 2407394.82,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 2407394.82,
+      "document_id": 867,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+      "period_end_matched": "2024-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-06-30",
+        "2024-03-31",
+        "2023-06-30"
+      ],
+      "raw_text_excerpt": ",704.49 100,836.28 Total Capital and Liabilities 2,407,394 .82 2,364,063.03 2,039,897.40 Assets Cash and ba lances with Reserve Bank of India 80,506.7"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 95064.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 95064.0,
+      "document_id": 868,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_26102024140016.pdf",
+      "period_end_matched": "2024-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2023-09-30",
+        "2024-03-31",
+        "2024-06-30",
+        "2024-09-30"
+      ],
+      "raw_text_excerpt": "1,20,147 1,24,493 Other liabilities and provisions 93,231 95,323 92,406 95,064 Total capital and liabilities 17,20,780 18,71,515 18,92,697 19,76,858 A"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 89102.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 89102.0,
+      "document_id": 868,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_26102024140016.pdf",
+      "period_end_matched": "2024-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2023-09-30",
+        "2024-03-31",
+        "2024-06-30",
+        "2024-09-30"
+      ],
+      "raw_text_excerpt": "Assets Cash and balances with Reserve Bank of India 66,221 89,712 80,439 89,102 Balances with banks and money at call and short notice 43,241 50,214 3"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q2",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 72175.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 72175.0,
+      "document_id": 868,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_26102024140016.pdf",
+      "period_end_matched": "2024-09-30",
+      "column_index": 3,
+      "columns_detected": [
+        "2023-09-30",
+        "2024-03-31",
+        "2024-06-30",
+        "2024-09-30"
+      ],
+      "raw_text_excerpt": ",860 11,101 11,546 Other assets 77,357 74,381 72,523 72,175 Total assets 17,20,780 18,71,515 18,92,697 19,76,858 1. Prior period figures have been re"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1412.11,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1412.11,
+      "document_id": 869,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_25012025_25012025142815.pdf",
+      "period_end_matched": "2024-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-12-31"
+      ],
+      "raw_text_excerpt": "Capital and Liabilitie s Capita l 1,412 .11 1,409 .45 1,404.68 1,403.18 Emplayees stack aption s/units outstan ding 1,801.66"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 268429.17,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 268429.17,
+      "document_id": 869,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_25012025_25012025142815.pdf",
+      "period_end_matched": "2024-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-12-31"
+      ],
+      "raw_text_excerpt": "1,405.32 1,242.55 Reserves and surplus 268,429 .17 256,479 .80 235 ,589 .32 224 ,190 .83 Deposits 1,520 ,308 .75 1,497 ,760 .67 1,412 ,824 .95 1,332,3"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "other_liabilities",
+      "value": 93659.67,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 93659.67,
+      "document_id": 869,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_25012025_25012025142815.pdf",
+      "period_end_matched": "2024-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-12-31"
+      ],
+      "raw_text_excerpt": "67 .58 126,871 .26 Other liabilities and provi sions 93,659.67 95,064 .64 95,322 .73 97,199 .72 Tota l Cap ital and Liabilities 2,013,343.13 1,976,858"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 662.21,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 662.21,
+      "document_id": 869,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_25012025_25012025142815.pdf",
+      "period_end_matched": "2024-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-12-31"
+      ],
+      "raw_text_excerpt": "859 .84 10,353 .96 Other assets 71 ,662.21 72,175.07 74 ,380. 07 83,1 19.24 Total Assets 2,013 ,343.13 1,976 ,858 .23 1,871,514 .58 1,783,222 .08 Not"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q3",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 2013343.13,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 2013343.13,
+      "document_id": 869,
+      "source_url": "https://nsearchives.nseindia.com/corporate/NSEBSE_25012025_25012025142815.pdf",
+      "period_end_matched": "2024-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2024-12-31"
+      ],
+      "raw_text_excerpt": "322 .73 97,199 .72 Tota l Cap ital and Liabilities 2,013,343.13 1,976,858.23 1,871,514 .58 1,783,222.08 Assets Cosh and balances with Reserve Bank of "
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "other_liabilities",
+      "value": 158672.36,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 158672.36,
+      "document_id": 870,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_19042025154957_NSEBSE.pdf",
+      "period_end_matched": "2025-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-03-31",
+        "2024-12-31",
+        "2024-03-31"
+      ],
+      "raw_text_excerpt": "558.26 281 ,318.33 Other liabilities and provisions 158,672.36 160,427.09 161 ,704.49 Total Capital and Liabilit ies 2,642,241 .41 2,531,487.56 2,364,"
+    },
+    {
+      "fiscal_year": "FY2025",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 96905.58,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 96905.58,
+      "document_id": 870,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_19042025154957_NSEBSE.pdf",
+      "period_end_matched": "2025-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-03-31",
+        "2024-12-31",
+        "2024-03-31"
+      ],
+      "raw_text_excerpt": "4,692.82 13.240.28 Other assets 96,905.58 94,6 89.56 97,6 40.98 Goodwill on consolidation 8.459.4 3 2,910.18 2.474 .16 Total Assets 2,642,241.41 2,53"
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "borrowings",
+      "value": 215148.97,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 215148.97,
+      "document_id": 871,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_19072025145326_NSEBSE_19072025_.pdf",
+      "period_end_matched": "2025-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-06-30",
+        "2024-06-30"
+      ],
+      "raw_text_excerpt": "40 1.456 .732.6 1 Borrowing s (includes subordi nated debt) 215,148.97 218.883 .44 206,033 .29 Policyhold ers' fund s 308, 119.60 294,30 5.56 295,38 1"
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "other_liabilities",
+      "value": 15880.0,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 15880.0,
+      "document_id": 871,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_19072025145326_NSEBSE_19072025_.pdf",
+      "period_end_matched": "2025-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-06-30",
+        "2024-06-30"
+      ],
+      "raw_text_excerpt": "5.56 295,38 1.3 1 Oth er liabiliti es and provis ions 158,80 1.65 158,672.36 162. 140.8 1 Total Capital and Liabilities 2,668,635.96 2,642,241.41 2,40"
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "advances",
+      "value": 1445593.02,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1445593.02,
+      "document_id": 871,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_19072025145326_NSEBSE_19072025_.pdf",
+      "period_end_matched": "2025-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-06-30",
+        "2024-06-30"
+      ],
+      "raw_text_excerpt": "376.8 1 857,793.87 Ad vances 1,445,593.02 1,420 ,663.71 1,303 ,045.56 Fixed asset s 16,166.85 15,8 12.42 13,663.27 Oth er assets 95, 711.1 9 96, 9"
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 711.1,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 711.1,
+      "document_id": 871,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_19072025145326_NSEBSE_19072025_.pdf",
+      "period_end_matched": "2025-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-06-30",
+        "2024-06-30"
+      ],
+      "raw_text_excerpt": ",8 12.42 13,663.27 Oth er assets 95, 711.1 9 96, 905.58 95.472. 48 Goo dw ill on co nso lidat ion 8,45 9.43 8,459.4 3 2,9 10.18 Total Assets 2,668,635"
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "total_assets",
+      "value": 2668635.96,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 2668635.96,
+      "document_id": 871,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_19072025145326_NSEBSE_19072025_.pdf",
+      "period_end_matched": "2025-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-06-30",
+        "2024-06-30"
+      ],
+      "raw_text_excerpt": "72.36 162. 140.8 1 Total Capital and Liabilities 2,668,635.96 2,642,241.41 2,407,394.82 Assets Cash and bal ances w ith Reserve Bank of Indio 96,5 12."
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q2",
+      "statement_type": "consolidated",
+      "metric_key": "other_liabilities",
+      "value": 168599.59,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 168599.59,
+      "document_id": 872,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18102025144037_BSENSE.pdf",
+      "period_end_matched": "2025-09-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-09-30",
+        "2025-06-30",
+        "2025-03-31",
+        "2024-09-30"
+      ],
+      "raw_text_excerpt": "305.56 306,679. 41 Other liabilities and provisions 168,599 .59 158,801.65 158,672.36 164,884.99 Total Capital and Liabilities 2,686,485.38 2,668,635 "
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q2",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 101936.48,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 101936.48,
+      "document_id": 872,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18102025144037_BSENSE.pdf",
+      "period_end_matched": "2025-09-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-09-30",
+        "2025-06-30",
+        "2025-03-31",
+        "2024-09-30"
+      ],
+      "raw_text_excerpt": "5,812.42 14,254.27 Other assets 101,936.48 95,711 .19 96,905 .58 100 ,15 5.51 Goodwill on consolidation 8,459 .43 8,459 .43 8,459 .43 2,910.18 Total"
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q3",
+      "statement_type": "consolidated",
+      "metric_key": "equity_share_capital",
+      "value": 1430.35,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1430.35,
+      "document_id": 873,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_17012026150619_NSEBSE_17012026.pdf",
+      "period_end_matched": "2025-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-12-31"
+      ],
+      "raw_text_excerpt": "Capital and Liabilit ies Capitol 1,430 .35 1.428.95 1,424 .60 1,412 .11 Employees stock option s/units outstond inq 2.498.82"
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q3",
+      "statement_type": "consolidated",
+      "metric_key": "reserves",
+      "value": 344816.06,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 344816.06,
+      "document_id": 873,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_17012026150619_NSEBSE_17012026.pdf",
+      "period_end_matched": "2025-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-12-31"
+      ],
+      "raw_text_excerpt": "2,069.84 1,801. 66 Reserves and surplus 344,816.06 331 ,806.80 310,411.47 289,472.72 Minority interest 16,931 .21 16,238.35 14,836.74 15,642.90 Deposi"
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q3",
+      "statement_type": "consolidated",
+      "metric_key": "investments",
+      "value": 901184.26,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 901184.26,
+      "document_id": 873,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_17012026150619_NSEBSE_17012026.pdf",
+      "period_end_matched": "2025-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-12-31"
+      ],
+      "raw_text_excerpt": ",782 .55 96,580.68 Investments 901,184.26 899, 797.88 886,376 .81 849,417.41 Advances 1,552 ,367.46 1,492 ,161.12 1,420,663 .71 1,397,265 .27 Fixed"
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q3",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 93039.78,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 93039.78,
+      "document_id": 873,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_17012026150619_NSEBSE_17012026.pdf",
+      "period_end_matched": "2025-12-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2025-12-31"
+      ],
+      "raw_text_excerpt": "812 .42 14,692 .82 Other assets 93,039 .78 101,936.48 96,905.58 94,689.56 Goodwill on Consolidation 10,486 .86 8,459 .43 8,459 .43 2,910 .18 Total As"
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "other_liabilities",
+      "value": 188143.13,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 188143.13,
+      "document_id": 874,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18042026145407_NSEBSE_18042026.pdf",
+      "period_end_matched": "2026-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-03-31"
+      ],
+      "raw_text_excerpt": "968 .68 294,305.56 Other liabilities and orovis ions 188,143.13 166,318.42 158,672.36 Total Capital and Liabilities 2,914,497.97 2,753,471.01 2,642,24"
+    },
+    {
+      "fiscal_year": "FY2026",
+      "quarter": "Q4",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 106169.01,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 106169.01,
+      "document_id": 874,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18042026145407_NSEBSE_18042026.pdf",
+      "period_end_matched": "2026-03-31",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-03-31"
+      ],
+      "raw_text_excerpt": ",0 15.31 15,812.42 Other Assets 106,169.01 93,039 .78 96,905.58 Goodwill on consoli dation 10,550.05 10,486. 86 8,459.43 Total Assets 2,914,497. 97 2"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "equity_share_capital",
+      "value": 1434.94,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1434.94,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30"
+      ],
+      "raw_text_excerpt": "AL AND LIABILITIES Capital 1,434.94 1,432.23 1,427.32 Employees stock options/units outstandinq 2,712 .72 2,682.07 2,142.54 Reserves and surplus"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "reserves",
+      "value": 349343.57,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 349343.57,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30"
+      ],
+      "raw_text_excerpt": "2,682.07 2,142.54 Reserves and surplus 349,343.57 333,257.12 302,750.67 Deposits 1,833,585 .79 1,794 ,624.98 1,608,517.32 Borrowinqs (includes subordi"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "deposits",
+      "value": 1833585.79,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1833585.79,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30"
+      ],
+      "raw_text_excerpt": ",257.12 302,750.67 Deposits 1,833,585 .79 1,794 ,624.98 1,608,517.32 Borrowinqs (includes subordinated debt) 126,291.55 124,994.11 117,095 .27 Ot"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "cash_and_bank",
+      "value": 73942.76,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 73942.76,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30"
+      ],
+      "raw_text_excerpt": "123,838.97 ASSETS Cash and balances with Reserve Bank of India 73,942.76 121,024.05 96,453.83 Balances with banks and money at call and short notice 8"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "investments",
+      "value": 538534.25,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 538534.25,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30"
+      ],
+      "raw_text_excerpt": "9,311.11 68,144.42 Investments 538,534.25 492,217.33 507,706.63 Advances 1,631,259.71 1,553,892.95 1,364,157 .06 Fixed assets 13,813.06 13,922.47 12"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "advances",
+      "value": 1631259.71,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1631259.71,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30"
+      ],
+      "raw_text_excerpt": ",217.33 507,706.63 Advances 1,631,259.71 1,553,892.95 1,364,157 .06 Fixed assets 13,813.06 13,922.47 12,878.47 Other assets 85,771.89 82,163.09 7"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "other_assets",
+      "value": 85771.89,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 85771.89,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30"
+      ],
+      "raw_text_excerpt": "3,922.47 12,878.47 Other assets 85,771.89 82,163.09 74,498.56 TOTAL ASSETS 2,432,426.04 2,372,531.00 2,123,838.97 3 Notes on standalone financial re"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "standalone",
+      "metric_key": "total_assets",
+      "value": 2432426.04,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 2432426.04,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30"
+      ],
+      "raw_text_excerpt": "5,540.49 91,905.85 TOTAL CAPITAL AND LIABILITIES 2,432,426.04 2,372,531.00 2,123,838.97 ASSETS Cash and balances with Reserve Bank of India 73,942.76 "
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "reserves",
+      "value": 376382.05,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 376382.05,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30",
+        "2026-03-31",
+        "2025-06-30"
+      ],
+      "raw_text_excerpt": "2,682.07 2,142 .54 Reserves and surplus 376,382.05 358 ,946.11 326,045.55 Minority interest 17,533.42 16,510.96 15,813.67 Deposits 1,870,362 .74 1,830"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "deposits",
+      "value": 1870362.74,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 1870362.74,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30",
+        "2026-03-31",
+        "2025-06-30"
+      ],
+      "raw_text_excerpt": "6,510.96 15,813.67 Deposits 1,870,362 .74 1,830,020.12 1,641,136.66 Borrowinqs (includes subordinated debt) 226,317.72 220,264.28 215,148.97 Poli"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "cash_and_bank",
+      "value": 74009.08,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 74009.08,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30",
+        "2026-03-31",
+        "2025-06-30"
+      ],
+      "raw_text_excerpt": "668,635.96 Assets Cash and balances with Reserve Bank of India 74,009.08 121,237.19 96,512 .74 Balances with banks and money at call and short notice "
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "investments",
+      "value": 939300.36,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 939300.36,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30",
+        "2026-03-31",
+        "2025-06-30"
+      ],
+      "raw_text_excerpt": "743.53 100 ,308.43 Investments 939,300.36 870,719.88 905,884.30 Advances 1,729 ,327.48 1,644,657 .97 1,445,593.02 Fixed assets 17,329 .29 17,420.34"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "other_assets",
+      "value": 109406.43,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 109406.43,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30",
+        "2026-03-31",
+        "2025-06-30"
+      ],
+      "raw_text_excerpt": "7,420.34 16,166.85 Other Assets 109,406.43 106,169.01 95,711 .19 Goodwill on consolidation 10,550.05 10,550.05 8,459.43 Total Assets 3,002,406.89 2,9"
+    },
+    {
+      "fiscal_year": "FY2027",
+      "quarter": "Q1",
+      "statement_type": "consolidated",
+      "metric_key": "total_assets",
+      "value": 3002406.89,
+      "unit_before_conversion": "crore",
+      "value_in_inr_crore": 3002406.89,
+      "document_id": 875,
+      "source_url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+      "period_end_matched": "2026-06-30",
+      "column_index": 0,
+      "columns_detected": [
+        "2026-06-30",
+        "2026-03-31",
+        "2025-06-30"
+      ],
+      "raw_text_excerpt": ",143.13 158,801.65 Total Capital and Liabilities 3,002,406.89 2,914,497.97 2,668,635.96 Assets Cash and balances with Reserve Bank of India 74,009.08 "
+    }
+  ],
+  "skip_log": [
+    "FY2016 Q3 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2016 Q4 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2017 Q3 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2017 Q3 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2017 Q4 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2017 Q4 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2018 Q1 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2018 Q1 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2018 Q2 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2018 Q2 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2018 Q3 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2018 Q3 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2018 Q4 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2018 Q4 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2019 Q1 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2019 Q2: no 'Capital and Liabilities' balance-sheet table found in text",
+    "FY2019 Q3 standalone reserves: extracted value 105.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2019 Q3 standalone deposits: extracted value 606.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2019 Q3 standalone borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2019 Q3 standalone other_liabilities: extracted value 148.1 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2019 Q3 standalone cash_and_bank: extracted value 364.66 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2019 Q3 standalone investments: extracted value 197.0 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2019 Q3 standalone advances: extracted value 564.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2019 Q3 standalone other_assets: extracted value 48.77 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2019 Q3 standalone total_assets: extracted value 912.0 crore is below plausibility floor 50000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2019 Q3: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2019 Q4 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2020 Q1 standalone reserves: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2020 Q1 standalone borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2020 Q1: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2020 Q2 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2020 Q3 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2020 Q3 consolidated reserves: extracted value 120.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q3 consolidated deposits: extracted value 746.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q3 consolidated borrowings: extracted value 189.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q3 consolidated cash_and_bank: extracted value 309.55 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q3 consolidated investments: extracted value 435.0 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q3 consolidated advances: extracted value 700.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q3 consolidated total_assets: extracted value 304.0 crore is below plausibility floor 50000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q3: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2020 Q4 consolidated reserves: extracted value 121.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q4 consolidated deposits: extracted value 800.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q4 consolidated other_liabilities: extracted value 414.91 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q4 consolidated cash_and_bank: extracted value 311.93 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q4 consolidated investments: extracted value 443.0 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q4 consolidated advances: extracted value 706.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q4 consolidated total_assets: extracted value 1377.0 crore is below plausibility floor 50000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2020 Q4: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2021 Q1: no 'Capital and Liabilities' balance-sheet table found in text",
+    "FY2021 Q2 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2021 Q3 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2021 Q3 consolidated: could not parse column header dates \u2014 skipped whole table",
+    "FY2021 Q3: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2021 Q4 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2022 Q1 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2022 Q2 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2022 Q3 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2022 Q3 consolidated reserves: extracted value 173.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q3 consolidated deposits: extracted value 44.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q3 consolidated borrowings: extracted value 154.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q3 consolidated investments: extracted value 531.0 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q3 consolidated advances: extracted value 874.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q3 consolidated other_assets: extracted value 490.41 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q3 consolidated total_assets: extracted value 682.0 crore is below plausibility floor 50000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q3: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2022 Q4 standalone reserves: extracted value 168.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q4 standalone deposits: extracted value 64.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q4 standalone borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2022 Q4 standalone cash_and_bank: extracted value 120.82 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q4 standalone investments: extracted value 310.0 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q4 standalone advances: extracted value 859.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q4 standalone total_assets: extracted value 297.74 crore is below plausibility floor 50000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q4 consolidated deposits: extracted value 91.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q4 consolidated borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2022 Q4 consolidated investments: extracted value 567.0 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q4 consolidated advances: extracted value 920.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q4 consolidated other_assets: extracted value 398.8 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q4 consolidated total_assets: extracted value 752.0 crore is below plausibility floor 50000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2022 Q4: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2023 Q1 standalone: could not determine unit (crore/lac) near table \u2014 skipped whole table",
+    "FY2023 Q1 consolidated: could not determine unit (crore/lac) near table \u2014 skipped whole table",
+    "FY2023 Q1: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2023 Q2 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2023 Q2: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2023 Q3 standalone deposits: extracted value 1.122 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2023 Q3 standalone borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2023 Q3 standalone other_liabilities: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2023 Q3 consolidated: could not parse column header dates \u2014 skipped whole table",
+    "FY2023 Q3: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2023 Q4 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2023 Q4 consolidated reserves: extracted value 212.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2023 Q4 consolidated advances: extracted value 1083.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q1 standalone borrowings: extracted value 111.252 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q1 standalone other_liabilities: extracted value 5.51 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q1 standalone cash_and_bank: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2024 Q1 standalone advances: extracted value 1057.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q1 consolidated reserves: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2024 Q1 consolidated investments: extracted value 692.709 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q1 consolidated advances: extracted value 1.124 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q1 consolidated other_assets: extracted value 83.628 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q1: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2024 Q2 standalone equity_share_capital: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2024 Q2 standalone reserves: extracted value 213.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q2 standalone deposits: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2024 Q2 standalone borrowings: extracted value 116.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q2 standalone investments: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2024 Q2 standalone advances: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2024 Q2 standalone total_assets: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2024 Q2 consolidated equity_share_capital: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2024 Q2 consolidated reserves: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2024 Q2 consolidated deposits: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2024 Q2 consolidated borrowings: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2024 Q2 consolidated other_liabilities: extracted value 111.0 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q2 consolidated cash_and_bank: extracted value 269.76 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q2 consolidated investments: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2024 Q2 consolidated advances: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2024 Q2 consolidated total_assets: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2024 Q2: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2024 Q3 standalone: could not parse column header dates \u2014 skipped whole table",
+    "FY2024 Q3 consolidated: could not determine unit (crore/lac) near table \u2014 skipped whole table",
+    "FY2024 Q3: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2024 Q4 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2024 Q4 standalone equity_share_capital: extracted value 1.404 crore is below plausibility floor 50 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q4 standalone reserves: extracted value 253.333 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q4 standalone deposits: extracted value 1.443 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q4 standalone borrowings: extracted value 207.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q4 standalone other_liabilities: extracted value 161.7 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q4 standalone cash_and_bank: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2024 Q4 standalone investments: extracted value 827.162 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q4 standalone advances: extracted value 1260.776 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2024 Q4 standalone total_assets: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q1 standalone equity_share_capital: extracted value 1.407 crore is below plausibility floor 50 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2025 Q1 consolidated reserves: extracted value 269.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2025 Q1 consolidated investments: extracted value 857.0 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2025 Q1: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2025 Q2 standalone: no STANDALONE/CONSOLIDATED header found; only one balance-sheet table in doc -> defaulted to standalone per filing boilerplate (proceeded)",
+    "FY2025 Q2 standalone equity_share_capital: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q2 standalone reserves: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q2 standalone deposits: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q2 standalone borrowings: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q2 standalone investments: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q2 standalone advances: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q2 standalone total_assets: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q3 standalone deposits: extracted value 1520.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2025 Q3 standalone borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2025 Q3 standalone cash_and_bank: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2025 Q3 standalone investments: extracted value 471.0 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2025 Q3 standalone advances: extracted value 1314.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2025 Q3: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2025 Q4 standalone: could not determine unit (crore/lac) near table \u2014 skipped whole table",
+    "FY2025 Q4 consolidated equity_share_capital: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q4 consolidated reserves: extracted value 310.411 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2025 Q4 consolidated deposits: extracted value 164.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2025 Q4 consolidated borrowings: extracted value 218.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2025 Q4 consolidated cash_and_bank: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2025 Q4 consolidated investments: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q4 consolidated advances: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q4 consolidated total_assets: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2025 Q4: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2026 Q1 standalone: could not determine unit (crore/lac) near table \u2014 skipped whole table",
+    "FY2026 Q1 consolidated equity_share_capital: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2026 Q1 consolidated reserves: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2026 Q1 consolidated deposits: extracted value 1641.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2026 Q1 consolidated cash_and_bank: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2026 Q1 consolidated investments: extracted value 905.88 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2026 Q1: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2026 Q2 standalone: could not determine unit (crore/lac) near table \u2014 skipped whole table",
+    "FY2026 Q2 consolidated equity_share_capital: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q2 consolidated reserves: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q2 consolidated deposits: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q2 consolidated borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2026 Q2 consolidated cash_and_bank: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2026 Q2 consolidated investments: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q2 consolidated advances: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q2 consolidated total_assets: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q2: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2026 Q3 standalone: could not determine unit (crore/lac) near table \u2014 skipped whole table",
+    "FY2026 Q3 consolidated deposits: extracted value 1693.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2026 Q3 consolidated borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2026 Q3 consolidated other_liabilities: extracted value 166.318 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2026 Q3 consolidated cash_and_bank: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2026 Q3 consolidated advances: extracted value 1552.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2026 Q3 consolidated total_assets: extracted value 2753.0 crore is below plausibility floor 50000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2026 Q3: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2026 Q4 standalone equity_share_capital: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2026 Q4 standalone reserves: extracted value 333.0 crore is below plausibility floor 1000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2026 Q4 standalone deposits: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q4 standalone borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2026 Q4 standalone other_liabilities: extracted value 115.0 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2026 Q4 standalone cash_and_bank: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q4 standalone investments: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q4 standalone advances: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q4 standalone other_assets: extracted value 163.09 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2026 Q4 standalone total_assets: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q4 consolidated equity_share_capital: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q4 consolidated reserves: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2026 Q4 consolidated deposits: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q4 consolidated borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2026 Q4 consolidated cash_and_bank: extracted value 121.0 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2026 Q4 consolidated investments: extracted value 870.719 crore is below plausibility floor 5000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2026 Q4 consolidated advances: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q4 consolidated total_assets: canonical value already exists \u2014 skipped (gap-fill only)",
+    "FY2026 Q4: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve",
+    "FY2027 Q1 standalone borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2027 Q1 standalone other_liabilities: extracted value 119.0 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2027 Q1 consolidated equity_share_capital: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2027 Q1 consolidated borrowings: line item not found or fewer numeric columns than expected \u2014 skipped",
+    "FY2027 Q1 consolidated other_liabilities: extracted value 192.0 crore is below plausibility floor 500 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2027 Q1 consolidated advances: extracted value 1729.0 crore is below plausibility floor 10000 (likely a mis-parsed footnote/column) \u2014 skipped, not guessed",
+    "FY2027 Q1: no STANDALONE/CONSOLIDATED header found and multiple tables present -> skipped, could not resolve"
+  ]
+}

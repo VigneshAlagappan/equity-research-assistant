@@ -1,0 +1,674 @@
+[
+  {
+    "symbol": "ADANIENT",
+    "sector": "Metals & Mining",
+    "industry": "Thermal Coal",
+    "total_announcements": 1519,
+    "recent_year_announcements": 213,
+    "filter_matches_last_year": 3,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "ADANIPORTS",
+    "sector": "Services",
+    "industry": "Marine Shipping",
+    "total_announcements": 1463,
+    "recent_year_announcements": 157,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "APOLLOHOSP",
+    "sector": "Healthcare",
+    "industry": "Medical Care Facilities",
+    "total_announcements": 1181,
+    "recent_year_announcements": 89,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "ASIANPAINT",
+    "sector": "Consumer Durables",
+    "industry": "Specialty Chemicals",
+    "total_announcements": 1755,
+    "recent_year_announcements": 115,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "AXISBANK",
+    "sector": "Financial Services",
+    "industry": "Banks",
+    "total_announcements": 3099,
+    "recent_year_announcements": 261,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "BAJAJ-AUTO",
+    "sector": "Automobile and Auto Components",
+    "industry": "Auto Manufacturers",
+    "total_announcements": 1182,
+    "recent_year_announcements": 143,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "BAJAJFINSV",
+    "sector": "Financial Services",
+    "industry": "Financial Conglomerates",
+    "total_announcements": 854,
+    "recent_year_announcements": 87,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "BAJFINANCE",
+    "sector": "Financial Services",
+    "industry": "Finance",
+    "total_announcements": 1305,
+    "recent_year_announcements": 101,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "BEL",
+    "sector": "Capital Goods",
+    "industry": "Aerospace & Defense",
+    "total_announcements": 1035,
+    "recent_year_announcements": 90,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "BHARTIARTL",
+    "sector": "Telecommunication",
+    "industry": "Telecom Services",
+    "total_announcements": 2589,
+    "recent_year_announcements": 235,
+    "filter_matches_last_year": 5,
+    "match_descs": [
+      "General Updates",
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-08-05 13:16:23",
+      "desc": "General Updates",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/BHARTIARTL_106726037.pdf",
+      "pages": 3,
+      "extracted_chars": 3775,
+      "extraction_quality": "sparse/scanned"
+    }
+  },
+  {
+    "symbol": "CIPLA",
+    "sector": "Healthcare",
+    "industry": "Pharmaceuticals & Biotechnology",
+    "total_announcements": 1782,
+    "recent_year_announcements": 129,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "COALINDIA",
+    "sector": "Oil, Gas & Consumable Fuels",
+    "industry": "Thermal Coal",
+    "total_announcements": 1406,
+    "recent_year_announcements": 179,
+    "filter_matches_last_year": 9,
+    "match_descs": [
+      "General Updates",
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-07-28 13:19:31",
+      "desc": "General Updates",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/COALINDIA_106713400.pdf",
+      "pages": 3,
+      "extracted_chars": 11374,
+      "extraction_quality": "clean"
+    }
+  },
+  {
+    "symbol": "DRREDDY",
+    "sector": "Healthcare",
+    "industry": "Pharmaceuticals & Biotechnology",
+    "total_announcements": 2004,
+    "recent_year_announcements": 146,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "EICHERMOT",
+    "sector": "Automobile and Auto Components",
+    "industry": "Auto Manufacturers",
+    "total_announcements": 1938,
+    "recent_year_announcements": 129,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "ETERNAL",
+    "sector": "Consumer Services",
+    "industry": "Internet Retail",
+    "total_announcements": 441,
+    "recent_year_announcements": 74,
+    "filter_matches_last_year": 0,
+    "match_descs": []
+  },
+  {
+    "symbol": "GRASIM",
+    "sector": "Construction Materials",
+    "industry": "Building Materials",
+    "total_announcements": 1947,
+    "recent_year_announcements": 139,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "HCLTECH",
+    "sector": "Technology",
+    "industry": "IT - Software",
+    "total_announcements": 2728,
+    "recent_year_announcements": 218,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "HDFCBANK",
+    "sector": "Financial Services",
+    "industry": "Banks",
+    "total_announcements": 2336,
+    "recent_year_announcements": 151,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "HDFCLIFE",
+    "sector": "Financial Services",
+    "industry": "Insurance - Life",
+    "total_announcements": 775,
+    "recent_year_announcements": 72,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "HINDALCO",
+    "sector": "Metals & Mining",
+    "industry": "Aluminum",
+    "total_announcements": 1751,
+    "recent_year_announcements": 134,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "HINDUNILVR",
+    "sector": "Fast Moving Consumer Goods",
+    "industry": "Household & Personal Products",
+    "total_announcements": 1721,
+    "recent_year_announcements": 110,
+    "filter_matches_last_year": 1,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-04-30 10:28:34",
+      "desc": "Outcome of Board Meeting",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/HINDUNILVR_106605053.pdf",
+      "pages": 47,
+      "extracted_chars": 116379,
+      "extraction_quality": "clean"
+    }
+  },
+  {
+    "symbol": "ICICIBANK",
+    "sector": "Financial Services",
+    "industry": "Banks",
+    "total_announcements": 5228,
+    "recent_year_announcements": 249,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "INDIGO",
+    "sector": "Services",
+    "industry": "Airlines",
+    "total_announcements": 790,
+    "recent_year_announcements": 158,
+    "filter_matches_last_year": 5,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "INFY",
+    "sector": "Technology",
+    "industry": "IT - Software",
+    "total_announcements": 2926,
+    "recent_year_announcements": 229,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-07-23 16:20:26",
+      "desc": "Outcome of Board Meeting",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/INFY_106708149.pdf",
+      "pages": 193,
+      "extracted_chars": 862052,
+      "extraction_quality": "clean"
+    }
+  },
+  {
+    "symbol": "ITC",
+    "sector": "Fast Moving Consumer Goods",
+    "industry": "Tobacco",
+    "total_announcements": 1730,
+    "recent_year_announcements": 88,
+    "filter_matches_last_year": 6,
+    "match_descs": [
+      "General Updates",
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-07-31 16:31:22",
+      "desc": "Outcome of Board Meeting",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/ITC_106719298.pdf",
+      "pages": 15,
+      "extracted_chars": 37109,
+      "extraction_quality": "clean"
+    }
+  },
+  {
+    "symbol": "JIOFIN",
+    "sector": "Financial Services",
+    "industry": "NBFC",
+    "total_announcements": 272,
+    "recent_year_announcements": 101,
+    "filter_matches_last_year": 2,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "JSWSTEEL",
+    "sector": "Metals & Mining",
+    "industry": "Steel",
+    "total_announcements": 2079,
+    "recent_year_announcements": 157,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "KOTAKBANK",
+    "sector": "Financial Services",
+    "industry": "Banks",
+    "total_announcements": 2320,
+    "recent_year_announcements": 176,
+    "filter_matches_last_year": 9,
+    "match_descs": [
+      "General Updates",
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-07-18 18:43:52",
+      "desc": "Outcome of Board Meeting",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/KOTAKBANK_106702746.pdf",
+      "pages": 17,
+      "extracted_chars": 55106,
+      "extraction_quality": "clean"
+    }
+  },
+  {
+    "symbol": "LT",
+    "sector": "Construction",
+    "industry": "Engineering & Construction",
+    "total_announcements": 2633,
+    "recent_year_announcements": 195,
+    "filter_matches_last_year": 3,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "M&M",
+    "sector": "Automobile and Auto Components",
+    "industry": "Auto Manufacturers",
+    "total_announcements": 3867,
+    "recent_year_announcements": 276,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "MARUTI",
+    "sector": "Automobile and Auto Components",
+    "industry": "Auto Manufacturers",
+    "total_announcements": 2002,
+    "recent_year_announcements": 150,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-07-31 16:39:44",
+      "desc": "Outcome of Board Meeting",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/MARUTI_106719319.pdf",
+      "pages": 10,
+      "extracted_chars": 24504,
+      "extraction_quality": "clean"
+    }
+  },
+  {
+    "symbol": "MAXHEALTH",
+    "sector": "Healthcare",
+    "industry": "Medical Care Facilities",
+    "total_announcements": 742,
+    "recent_year_announcements": 133,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "NESTLEIND",
+    "sector": "Fast Moving Consumer Goods",
+    "industry": "Packaged Foods",
+    "total_announcements": 382,
+    "recent_year_announcements": 122,
+    "filter_matches_last_year": 3,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "NTPC",
+    "sector": "Power",
+    "industry": "Utilities - Regulated Electric",
+    "total_announcements": 1951,
+    "recent_year_announcements": 177,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "ONGC",
+    "sector": "Oil, Gas & Consumable Fuels",
+    "industry": "Oil & Gas Integrated",
+    "total_announcements": 1454,
+    "recent_year_announcements": 142,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-08-04 20:03:37",
+      "desc": "Outcome of Board Meeting",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/ONGC_106725097.pdf",
+      "pages": 29,
+      "extracted_chars": 81811,
+      "extraction_quality": "clean"
+    }
+  },
+  {
+    "symbol": "POWERGRID",
+    "sector": "Power",
+    "industry": "Utilities - Regulated Electric",
+    "total_announcements": 1442,
+    "recent_year_announcements": 175,
+    "filter_matches_last_year": 2,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "RELIANCE",
+    "sector": "Oil, Gas & Consumable Fuels",
+    "industry": "Petroleum Products",
+    "total_announcements": 3347,
+    "recent_year_announcements": 160,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Dividend",
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "SBILIFE",
+    "sector": "Financial Services",
+    "industry": "Insurance - Life",
+    "total_announcements": 797,
+    "recent_year_announcements": 86,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "SBIN",
+    "sector": "Financial Services",
+    "industry": "Banks",
+    "total_announcements": 2747,
+    "recent_year_announcements": 205,
+    "filter_matches_last_year": 3,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-08-07 13:44:20",
+      "desc": "Outcome of Board Meeting",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/SBIN_106730855.pdf",
+      "pages": 29,
+      "extracted_chars": 64591,
+      "extraction_quality": "clean"
+    }
+  },
+  {
+    "symbol": "SHRIRAMFIN",
+    "sector": "Financial Services",
+    "industry": "Finance",
+    "total_announcements": 3923,
+    "recent_year_announcements": 306,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "SUNPHARMA",
+    "sector": "Healthcare",
+    "industry": "Pharmaceuticals & Biotechnology",
+    "total_announcements": 1792,
+    "recent_year_announcements": 118,
+    "filter_matches_last_year": 3,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-05-22 14:43:51",
+      "desc": "Outcome of Board Meeting",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/SUNPHARMA_106635883.pdf",
+      "pages": 40,
+      "extracted_chars": 87196,
+      "extraction_quality": "clean"
+    }
+  },
+  {
+    "symbol": "TATACONSUM",
+    "sector": "Fast Moving Consumer Goods",
+    "industry": "Packaged Foods",
+    "total_announcements": 1641,
+    "recent_year_announcements": 121,
+    "filter_matches_last_year": 3,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "TATASTEEL",
+    "sector": "Metals & Mining",
+    "industry": "Steel",
+    "total_announcements": 3014,
+    "recent_year_announcements": 181,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-07-30 18:49:55",
+      "desc": "Outcome of Board Meeting",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/TATASTEEL_106717820.pdf",
+      "pages": 17,
+      "extracted_chars": 50632,
+      "extraction_quality": "clean"
+    }
+  },
+  {
+    "symbol": "TCS",
+    "sector": "Technology",
+    "industry": "IT - Software",
+    "total_announcements": 3359,
+    "recent_year_announcements": 199,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "TECHM",
+    "sector": "Technology",
+    "industry": "IT - Software",
+    "total_announcements": 1684,
+    "recent_year_announcements": 128,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "TITAN",
+    "sector": "Consumer Durables",
+    "industry": "Luxury Goods",
+    "total_announcements": 1470,
+    "recent_year_announcements": 135,
+    "filter_matches_last_year": 3,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "TMPV",
+    "sector": "Automobile and Auto Components",
+    "industry": "Auto Manufacturers",
+    "total_announcements": 2793,
+    "recent_year_announcements": 148,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "TRENT",
+    "sector": "Consumer Services",
+    "industry": "Apparel Retail",
+    "total_announcements": 1223,
+    "recent_year_announcements": 110,
+    "filter_matches_last_year": 0,
+    "match_descs": []
+  },
+  {
+    "symbol": "ULTRACEMCO",
+    "sector": "Construction Materials",
+    "industry": "Building Materials",
+    "total_announcements": 1966,
+    "recent_year_announcements": 165,
+    "filter_matches_last_year": 4,
+    "match_descs": [
+      "Outcome of Board Meeting"
+    ]
+  },
+  {
+    "symbol": "WIPRO",
+    "sector": "Technology",
+    "industry": "IT - Software",
+    "total_announcements": 3236,
+    "recent_year_announcements": 206,
+    "filter_matches_last_year": 5,
+    "match_descs": [
+      "Clarification - Financial Results",
+      "Outcome of Board Meeting"
+    ],
+    "pdf_spotcheck": {
+      "attempted": true,
+      "downloaded": true,
+      "sort_date": "2026-07-16 15:49:54",
+      "desc": "Outcome of Board Meeting",
+      "local_path": "/Users/radhamurugesan/work/vicky/repo/.worktrees/nse-pdf-feasibility-spike/spikes/nse_pdf_feasibility/data/pdfs_nifty50/WIPRO_106700151.pdf",
+      "pages": 30,
+      "extracted_chars": 91213,
+      "extraction_quality": "clean"
+    }
+  }
+]

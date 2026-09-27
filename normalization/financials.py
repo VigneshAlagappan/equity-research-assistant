@@ -371,6 +371,34 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
     ("nse", "Borrowings", "borrowings"),  # banking
     ("nse", "Capital", "equity_share_capital"),  # banking
     ("nse", "ReservesAndSurplus", "reserves"),  # banking
+
+    # sources/nse_pdf_annual_report.py (PARSER_VERSION="nse_pdf_annual_report_v1")
+    # -- face-statement figures extracted from an NSE Annual Report PDF
+    # rather than an XBRL filing. Deliberately still source="nse" (both
+    # genuinely originate from an NSE filing; parser_version is what
+    # distinguishes them downstream, see that module's own docstring) with
+    # its own "PDF_*" row_label namespace so these never collide with the
+    # real XBRL tag names above, even where the underlying concept is
+    # identical (e.g. "PDF_Deposits" vs XBRL's own "Deposits").
+    ("nse", "PDF_Capital", "equity_share_capital"),
+    ("nse", "PDF_ReservesAndSurplus", "reserves"),
+    ("nse", "PDF_Deposits", "deposits"),
+    ("nse", "PDF_Borrowings", "borrowings"),
+    ("nse", "PDF_Investments", "investments"),
+    ("nse", "PDF_Advances", "advances"),
+    ("nse", "PDF_TotalAssets", "total_assets"),
+    ("nse", "PDF_InterestEarned", "interest_earned"),
+    ("nse", "PDF_OtherIncome", "other_income"),
+    ("nse", "PDF_InterestExpended", "interest_expended"),
+    ("nse", "PDF_OperatingExpenses", "operating_expenses"),
+    ("nse", "PDF_NetProfit", "net_profit"),
+    ("nse", "PDF_BasicEPS", "eps"),
+    ("nse", "PDF_ProfitBeforeTax", "profit_before_tax"),
+    ("nse", "PDF_Tax", "tax"),
+    ("nse", "PDF_NetCashFromOperatingActivities", "net_cash_from_operating_activities"),
+    ("nse", "PDF_NetCashFromInvestingActivities", "net_cash_from_investing_activities"),
+    ("nse", "PDF_NetCashFromFinancingActivities", "net_cash_from_financing_activities"),
+    ("nse", "PDF_CashAndBank", "cash_and_bank"),
 ]
 
 

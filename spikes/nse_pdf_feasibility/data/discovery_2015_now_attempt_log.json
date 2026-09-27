@@ -1,0 +1,1874 @@
+[
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.63,
+    "timestamp": "2026-09-18T11:26:02.909383"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.66,
+    "timestamp": "2026-09-18T11:26:05.569407"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporates-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.49,
+    "timestamp": "2026-09-18T11:26:07.081029"
+  },
+  {
+    "url": "https://www.nseindia.com/api/integrated-filing-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.32,
+    "timestamp": "2026-09-18T11:26:08.400135"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFC_30092014_S_LR.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.52,
+    "timestamp": "2026-09-18T11:26:09.932783"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_31Dec14_S_02142015113901_.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.81,
+    "timestamp": "2026-09-18T11:26:11.791991"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_04232015144702_.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.4,
+    "timestamp": "2026-09-18T11:26:13.212319"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFC_resut_21072015113430.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.38,
+    "timestamp": "2026-09-18T11:26:14.699251"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/hafc.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.48,
+    "timestamp": "2026-09-18T11:26:16.198208"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_25012016140955.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.6,
+    "timestamp": "2026-09-18T11:26:17.822828"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Results_22042016132331.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.45,
+    "timestamp": "2026-09-18T11:26:19.300967"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Result30062016_21072016115151.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.1,
+    "timestamp": "2026-09-18T11:26:20.413365"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResults_25102016123832.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.75,
+    "timestamp": "2026-09-18T11:26:22.176368"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Result31122016_24012017122751.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.5,
+    "timestamp": "2026-09-18T11:26:23.695819"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Results_21042017131330.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.42,
+    "timestamp": "2026-09-18T11:26:25.128019"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Result30062017_24072017122245.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.46,
+    "timestamp": "2026-09-18T11:26:26.605626"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Result_24102017123821.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.73,
+    "timestamp": "2026-09-18T11:26:28.352699"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEINTIMATION_19012018115720.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.86,
+    "timestamp": "2026-09-18T11:26:30.231164"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Result1_21042018170643.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.38,
+    "timestamp": "2026-09-18T11:26:31.625654"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ResultMRF_21072018150814.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.4,
+    "timestamp": "2026-09-18T11:26:33.042206"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Result_20102018154725.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.78,
+    "timestamp": "2026-09-18T11:26:35.086408"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_19012019161116_SEIntimationSandeepParekh_052.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.38,
+    "timestamp": "2026-09-18T11:26:36.682472"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Result31032019_20042019153147.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.46,
+    "timestamp": "2026-09-18T11:26:38.181210"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_20072019160445_SEResults_089.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.8,
+    "timestamp": "2026-09-18T11:26:40.342589"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResult_19102019162516.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.37,
+    "timestamp": "2026-09-18T11:26:41.857985"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/CombineResultMRF_18012020152715.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.37,
+    "timestamp": "2026-09-18T11:26:43.755269"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSENSEResult_18042020143153.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.81,
+    "timestamp": "2026-09-18T11:26:45.606098"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEIntimation18072020_18072020124025.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.85,
+    "timestamp": "2026-09-18T11:26:54.062791"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResultSep2020_17102020161930.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.46,
+    "timestamp": "2026-09-18T11:26:56.766332"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResultDec2020_16012021164643.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.72,
+    "timestamp": "2026-09-18T11:27:03.741723"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResults31March2021.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.58,
+    "timestamp": "2026-09-18T11:27:06.451350"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResult30June2021_17072021125337.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.78,
+    "timestamp": "2026-09-18T11:27:10.684106"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResultsSept302021_16102021145025.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.79,
+    "timestamp": "2026-09-18T11:27:12.684014"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_15012022133652_2112HDFCBankSignedResults.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.61,
+    "timestamp": "2026-09-18T11:27:14.574891"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResult31032022_16042022142746.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.4,
+    "timestamp": "2026-09-18T11:27:16.259184"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_16072022133448_SEintimationresultsjune2022.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.44,
+    "timestamp": "2026-09-18T11:27:17.726913"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_15102022134918_Results_MRF.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.45,
+    "timestamp": "2026-09-18T11:27:19.359114"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEIntimationResult31122022_signed_14012023130251.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.82,
+    "timestamp": "2026-09-18T11:27:21.405218"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEIntimationResults31032023_15042023133250.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.58,
+    "timestamp": "2026-09-18T11:27:23.499377"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_30062023221605_SEintimationOutcomeAGMdateUpdated.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.73,
+    "timestamp": "2026-09-18T11:27:25.773736"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResult30092023_16102023155041.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.51,
+    "timestamp": "2026-09-18T11:27:27.344784"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResultDec2023_16012024155302.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.34,
+    "timestamp": "2026-09-18T11:27:28.711126"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResultMarch2024_20042024143120.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.86,
+    "timestamp": "2026-09-18T11:27:30.609348"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResult30062024_20072024141517.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.9,
+    "timestamp": "2026-09-18T11:27:32.555982"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResultSept2024_19102024141247.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.63,
+    "timestamp": "2026-09-18T11:27:34.227753"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEResult31122024_22012025140725.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.77,
+    "timestamp": "2026-09-18T11:27:36.038290"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_19042025150107_SERsultMRF31032025.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.45,
+    "timestamp": "2026-09-18T11:27:37.532237"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_19072025144748_SEintimationBMFinancial_Results19jul2025_FINAL.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.59,
+    "timestamp": "2026-09-18T11:27:39.625942"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_18102025140719_SEintimationBMFinancialResults18102025.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.41,
+    "timestamp": "2026-09-18T11:27:41.603691"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_17012026143925_SEResultReg3017012026.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.76,
+    "timestamp": "2026-09-18T11:27:43.410068"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_18042026144226_SEResultOutcome18042026.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.74,
+    "timestamp": "2026-09-18T11:27:45.659001"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/HDFCBANK_18072026142204_SEIntimationResult30062026.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.34,
+    "timestamp": "2026-09-18T11:27:47.097048"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.53,
+    "timestamp": "2026-09-18T11:27:48.673743"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.59,
+    "timestamp": "2026-09-18T11:27:50.267151"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporates-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.45,
+    "timestamp": "2026-09-18T11:27:51.736300"
+  },
+  {
+    "url": "https://www.nseindia.com/api/integrated-filing-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.4,
+    "timestamp": "2026-09-18T11:27:53.143387"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/RIL_30092014_LR_10132014181902_.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.02,
+    "timestamp": "2026-09-18T11:27:55.172436"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/RELIANCE_31dec14_S_01162015182302_.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.79,
+    "timestamp": "2026-09-18T11:27:56.989881"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/RELIANCE_04172015160301_.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.89,
+    "timestamp": "2026-09-18T11:27:58.893473"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Reliance_24072015162953.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.67,
+    "timestamp": "2026-09-18T11:28:00.574622"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/RELIA_16102015162334.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.37,
+    "timestamp": "2026-09-18T11:28:02.970012"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/RELIANCE_19012016164505.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.83,
+    "timestamp": "2026-09-18T11:28:05.823542"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Results_22042016172722.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.6,
+    "timestamp": "2026-09-18T11:28:07.445031"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/4185_001_15072016170723.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.46,
+    "timestamp": "2026-09-18T11:28:08.939787"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/1234_20102016171211.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.51,
+    "timestamp": "2026-09-18T11:28:10.474669"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Q3_16012017172646.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.18,
+    "timestamp": "2026-09-18T11:28:12.676827"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/123_24042017170749.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 2.02,
+    "timestamp": "2026-09-18T11:28:15.725404"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/F18Q1FR_20072017174416.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.21,
+    "timestamp": "2026-09-18T11:28:17.969246"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/FRH1F18_13102017171647.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.03,
+    "timestamp": "2026-09-18T11:28:20.036265"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/FRQ3RIL_19012018181545.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.96,
+    "timestamp": "2026-09-18T11:28:22.016646"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/1542_001_27042018182435.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.62,
+    "timestamp": "2026-09-18T11:28:23.847639"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/RESULTSQ1201819_27072018181159.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.83,
+    "timestamp": "2026-09-18T11:28:25.988080"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/FinancialResults_17102018184713.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 6.45,
+    "timestamp": "2026-09-18T11:28:33.637795"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/FRQ3_17012019181626.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 4.7,
+    "timestamp": "2026-09-18T11:28:39.888844"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/FinancialResultsF19_18042019181531.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 8.58,
+    "timestamp": "2026-09-18T11:28:49.904767"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/UFRQ1F20_19072019182355.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 4.32,
+    "timestamp": "2026-09-18T11:28:56.422717"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/FinancialResults_18102019183540.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 6.83,
+    "timestamp": "2026-09-18T11:29:04.920661"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/FinancialResults_Dec_17012020184647.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.61,
+    "timestamp": "2026-09-18T11:29:07.367015"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/CVR_30042020183241.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.48,
+    "timestamp": "2026-09-18T11:29:10.484542"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/RILFinancialsQ1FY21_30072020191806.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.96,
+    "timestamp": "2026-09-18T11:29:13.644301"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/UFS_30102020200238.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.15,
+    "timestamp": "2026-09-18T11:29:16.348505"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/UFRQ3F21_22012021195019.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.96,
+    "timestamp": "2026-09-18T11:29:19.097453"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/FSUpload_30042021193456.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.77,
+    "timestamp": "2026-09-18T11:29:21.632510"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/UFS_23072021193756.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.07,
+    "timestamp": "2026-09-18T11:29:24.589160"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/UFR22102021_22102021201739.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.88,
+    "timestamp": "2026-09-18T11:29:27.012049"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/UFS21012022_21012022194807.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.05,
+    "timestamp": "2026-09-18T11:29:29.651876"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/RELIANCE_06052022193915_RILAuditedResults06052022.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.08,
+    "timestamp": "2026-09-18T11:29:32.219170"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/RELIANCE_22072022193537_Financials730.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.15,
+    "timestamp": "2026-09-18T11:29:35.128733"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/RELIANCE_21102022193809_UFR727.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.87,
+    "timestamp": "2026-09-18T11:29:37.368781"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/UFR31122022_20012023190753.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.63,
+    "timestamp": "2026-09-18T11:29:40.611469"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/AR31032023_21042023192425.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.76,
+    "timestamp": "2026-09-18T11:29:43.774080"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/725UFR30062023_21072023193921.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.42,
+    "timestamp": "2026-09-18T11:29:46.967029"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Financialresults_27102023192553.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.37,
+    "timestamp": "2026-09-18T11:29:49.722553"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/RILLR19012024_19012024181354.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.58,
+    "timestamp": "2026-09-18T11:29:51.560268"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SELETTER_22042024190125.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.98,
+    "timestamp": "2026-09-18T11:29:53.808150"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEFR_19072024191604.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.83,
+    "timestamp": "2026-09-18T11:29:56.442330"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BM_SE_14102024190232.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.71,
+    "timestamp": "2026-09-18T11:29:58.755153"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SE_Result_16012025192542.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.64,
+    "timestamp": "2026-09-18T11:30:01.136283"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/kavinavora_25042025200131_SE_FR.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.54,
+    "timestamp": "2026-09-18T11:30:04.269778"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/kavinavora_18072025193102_SE_FR.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.0,
+    "timestamp": "2026-09-18T11:30:06.991564"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/kavinavora_17102025190048_SE_F.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.3,
+    "timestamp": "2026-09-18T11:30:09.431073"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/kavinavora_16012026190810_FR_1.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.11,
+    "timestamp": "2026-09-18T11:30:12.268545"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/kavinavora_24042026192614_SE_24042026_FR.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.12,
+    "timestamp": "2026-09-18T11:30:15.008922"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/kavinavora_17072026190726_SE_FR_1.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.23,
+    "timestamp": "2026-09-18T11:30:17.886766"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.05,
+    "timestamp": "2026-09-18T11:30:20.443261"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.23,
+    "timestamp": "2026-09-18T11:30:22.669312"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporates-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.52,
+    "timestamp": "2026-09-18T11:30:24.218969"
+  },
+  {
+    "url": "https://www.nseindia.com/api/integrated-filing-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.53,
+    "timestamp": "2026-09-18T11:30:25.754461"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICI30092014_S_AR.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.89,
+    "timestamp": "2026-09-18T11:30:27.661589"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_31Dec14_S.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.93,
+    "timestamp": "2026-09-18T11:30:29.602694"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_results.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.12,
+    "timestamp": "2026-09-18T11:30:31.738689"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICI01.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.62,
+    "timestamp": "2026-09-18T11:30:33.439303"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_01.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.42,
+    "timestamp": "2026-09-18T11:30:34.877227"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_Doc_28012016160329.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.74,
+    "timestamp": "2026-09-18T11:30:36.680993"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results-f_29042016120231.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.94,
+    "timestamp": "2026-09-18T11:30:38.768422"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_29072016_f_29072016163907.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.79,
+    "timestamp": "2026-09-18T11:30:40.720128"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_14102016171827_270.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.44,
+    "timestamp": "2026-09-18T11:30:42.301065"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_31012017_Results_31012017155029.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.61,
+    "timestamp": "2026-09-18T11:30:43.923941"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results_2017_03052017182840.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.7,
+    "timestamp": "2026-09-18T11:30:45.783516"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results_27072017170227.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.59,
+    "timestamp": "2026-09-18T11:30:47.559473"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_27102017162141.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.42,
+    "timestamp": "2026-09-18T11:30:49.150451"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Result_31012018162615.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.59,
+    "timestamp": "2026-09-18T11:30:50.931718"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Results_07052018_07052018174855.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.49,
+    "timestamp": "2026-09-18T11:30:52.594603"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_Final_Results_27072018174927.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.8,
+    "timestamp": "2026-09-18T11:30:54.799921"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/listcontract1_04102018135659_ICICIBANK_OBM_001.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.37,
+    "timestamp": "2026-09-18T11:30:56.761019"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/1BSE_NSE_FR_30JAN2018_30012019173244.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.46,
+    "timestamp": "2026-09-18T11:30:58.303825"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/FR_06052019161041.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.45,
+    "timestamp": "2026-09-18T11:31:00.259621"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/Final_NSEBSE_27072019145818.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.63,
+    "timestamp": "2026-09-18T11:31:02.829230"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_26102019142953_BSENSE_OCT2019_046.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.87,
+    "timestamp": "2026-09-18T11:31:05.154768"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSENSE_RESULTS_FR_JAN2020_25012020142536.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.61,
+    "timestamp": "2026-09-18T11:31:07.709473"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/FinalNSE_BSE_May92020_09052020161512.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.81,
+    "timestamp": "2026-09-18T11:31:10.154495"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_08072020175045_NSEBSE_July82020.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.36,
+    "timestamp": "2026-09-18T11:31:12.552576"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSE_BSE_OCT31_31102020154441.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.57,
+    "timestamp": "2026-09-18T11:31:14.147136"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_30012021151029.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.72,
+    "timestamp": "2026-09-18T11:31:16.805895"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_April24_2020_final.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.6,
+    "timestamp": "2026-09-18T11:31:19.177546"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BSE_NSE_FR_24072021162318.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.53,
+    "timestamp": "2026-09-18T11:31:22.055316"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/nsebse_23102021160000.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.76,
+    "timestamp": "2026-09-18T11:31:24.722786"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_22012022161715.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.74,
+    "timestamp": "2026-09-18T11:31:27.762319"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_Final_23042022163548.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.11,
+    "timestamp": "2026-09-18T11:31:30.691624"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_23072022150506_NSEBSE_.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.78,
+    "timestamp": "2026-09-18T11:31:34.025518"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICIBANK_22102022153421_1NSEBSE.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.76,
+    "timestamp": "2026-09-18T11:31:36.543682"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_JAN2023_signed_21012023155857.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.69,
+    "timestamp": "2026-09-18T11:31:39.158658"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_FR_APRIL23_22042023154217.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.92,
+    "timestamp": "2026-09-18T11:31:41.800944"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSEBMJuly222023signed_22072023152133.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.73,
+    "timestamp": "2026-09-18T11:31:44.480839"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSEFR_OCT_21102023153647.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.01,
+    "timestamp": "2026-09-18T11:31:47.177033"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_20012024153519.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.63,
+    "timestamp": "2026-09-18T11:31:49.398727"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27042024160815.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.84,
+    "timestamp": "2026-09-18T11:31:51.961074"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_27072024144632.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.05,
+    "timestamp": "2026-09-18T11:31:54.936424"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_26102024140016.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.97,
+    "timestamp": "2026-09-18T11:31:57.487149"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/NSEBSE_25012025_25012025142815.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.49,
+    "timestamp": "2026-09-18T11:32:00.172993"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICI2022_19042025154957_NSEBSE.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.96,
+    "timestamp": "2026-09-18T11:32:02.757715"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICI2022_19072025145326_NSEBSE_19072025_.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.3,
+    "timestamp": "2026-09-18T11:32:05.829592"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18102025144037_BSENSE.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.04,
+    "timestamp": "2026-09-18T11:32:08.392410"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICI2022_17012026150619_NSEBSE_17012026.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.7,
+    "timestamp": "2026-09-18T11:32:10.582773"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18042026145407_NSEBSE_18042026.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.15,
+    "timestamp": "2026-09-18T11:32:13.287466"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/ICICI2022_18072026142245_NSEBSE_18072026_.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.8,
+    "timestamp": "2026-09-18T11:32:16.885409"
+  },
+  {
+    "url": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.03,
+    "timestamp": "2026-09-18T11:32:19.533131"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporate-announcements",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.4,
+    "timestamp": "2026-09-18T11:32:20.939859"
+  },
+  {
+    "url": "https://www.nseindia.com/api/corporates-financial-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.5,
+    "timestamp": "2026-09-18T11:32:22.458206"
+  },
+  {
+    "url": "https://www.nseindia.com/api/integrated-filing-results",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.35,
+    "timestamp": "2026-09-18T11:32:23.816056"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_30092014_B_AR_10162014163501_.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.52,
+    "timestamp": "2026-09-18T11:32:25.343898"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_31Dec14_S_01152015164702_.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.56,
+    "timestamp": "2026-09-18T11:32:26.918042"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_01_04162015174301_.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.61,
+    "timestamp": "2026-09-18T11:32:28.542111"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_resulst_conso_09072015163836.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.74,
+    "timestamp": "2026-09-18T11:32:30.299496"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCVS_13102015170844.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.56,
+    "timestamp": "2026-09-18T11:32:31.878741"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_result_12012016182714.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.35,
+    "timestamp": "2026-09-18T11:32:34.249113"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCSFY1516All_18042016170227.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 2.59,
+    "timestamp": "2026-09-18T11:32:37.871540"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCSQ1FY17_14072016161204.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.37,
+    "timestamp": "2026-09-18T11:32:39.276196"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCSQ2FY17_13102016163349.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 2.49,
+    "timestamp": "2026-09-18T11:32:42.793107"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCSJan122017_12012017153209.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.42,
+    "timestamp": "2026-09-18T11:32:45.247652"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_April182017_18042017170235.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 2.14,
+    "timestamp": "2026-09-18T11:32:48.407694"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_13072017163639.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.97,
+    "timestamp": "2026-09-18T11:32:50.408694"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_12102017164004.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.19,
+    "timestamp": "2026-09-18T11:32:52.622697"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_11012018172740.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.42,
+    "timestamp": "2026-09-18T11:32:55.075331"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCSFinancialResults_19042018175401.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.63,
+    "timestamp": "2026-09-18T11:32:57.733403"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEFinancialresults_10072018170455.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 4.6,
+    "timestamp": "2026-09-18T11:33:04.347212"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SELETTER_11102018164445.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.29,
+    "timestamp": "2026-09-18T11:33:07.569629"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEIntimation_10012019165827.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 4.54,
+    "timestamp": "2026-09-18T11:33:14.150925"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/PostBMLetterMarch_12042019164041.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 3.7,
+    "timestamp": "2026-09-18T11:33:19.681462"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCSFinancialResultsJune2019_09072019171729.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 4.1,
+    "timestamp": "2026-09-18T11:33:25.899886"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCSfinal_10102019164134.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 6.58,
+    "timestamp": "2026-09-18T11:33:34.407345"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SELetter_17012020160152.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 3.4,
+    "timestamp": "2026-09-18T11:33:39.947785"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEIntimation_16042020191313.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 2.31,
+    "timestamp": "2026-09-18T11:33:44.126286"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEFiling_09072020174941.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 8.33,
+    "timestamp": "2026-09-18T11:33:54.227833"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/FinancialResults_07102020183218.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 7.55,
+    "timestamp": "2026-09-18T11:34:03.412058"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEIntimation_08012021180747.zip",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.27,
+    "timestamp": "2026-09-18T11:34:06.440043"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEfilingPg1and2.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.4,
+    "timestamp": "2026-09-18T11:34:08.514400"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEFiling_08072021184157.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.42,
+    "timestamp": "2026-09-18T11:34:10.366345"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEIntimationOct8_08102021182349.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.44,
+    "timestamp": "2026-09-18T11:34:12.315488"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_12012022182958_SELetterOutcomeofBuyback.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.4,
+    "timestamp": "2026-09-18T11:34:14.326778"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_11042022173852_SEIntimation.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.05,
+    "timestamp": "2026-09-18T11:34:16.418731"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SELetter_08072022163653.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 1.08,
+    "timestamp": "2026-09-18T11:34:24.974504"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_10102022164739_SELETTERFINALsigned.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.82,
+    "timestamp": "2026-09-18T11:34:30.659831"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEINT_final_09012023171435.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.72,
+    "timestamp": "2026-09-18T11:34:37.707833"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/BMFinancialresultssignedprint_12042023171707.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.52,
+    "timestamp": "2026-09-18T11:34:41.443526"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEFinancials_12072023155453.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.27,
+    "timestamp": "2026-09-18T11:34:45.470602"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEFinsignedprinttopdf_11102023170352.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.55,
+    "timestamp": "2026-09-18T11:34:47.298623"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SELetter_signed_11012024155319.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.75,
+    "timestamp": "2026-09-18T11:34:50.786054"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SELetterFinancialResults_12042024153645.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.62,
+    "timestamp": "2026-09-18T11:34:52.558353"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SELetterFin_signed_11072024153849.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.84,
+    "timestamp": "2026-09-18T11:34:54.658658"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SEIntfinancials_10102024160639.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.41,
+    "timestamp": "2026-09-18T11:35:00.108655"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/SE_Letter-_financialssigned_09012025161053.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.57,
+    "timestamp": "2026-09-18T11:35:02.068942"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_CORPCS_10042025160349_BM_Outcome_financials_signed.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.43,
+    "timestamp": "2026-09-18T11:35:08.685064"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_CORPCS_10072025155700_SEIntfinancials.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.59,
+    "timestamp": "2026-09-18T11:35:12.413687"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_CORPCS_09102025154951_PostBMSELetter.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.7,
+    "timestamp": "2026-09-18T11:35:16.891549"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_CORPCS_12012026154849_Post_BM_SE_Letter_final.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.47,
+    "timestamp": "2026-09-18T11:35:18.727189"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_CORPCS_09042026155026_SE_Outcome_signed.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.59,
+    "timestamp": "2026-09-18T11:35:20.733141"
+  },
+  {
+    "url": "https://nsearchives.nseindia.com/corporate/TCS_CORPCS_09072026155158_Post_BM_SE_Lettersigned.pdf",
+    "method": "GET",
+    "status_code": 200,
+    "ok": true,
+    "error": null,
+    "elapsed_s": 0.42,
+    "timestamp": "2026-09-18T11:35:23.886100"
+  }
+]

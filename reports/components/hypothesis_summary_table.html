@@ -1,0 +1,35 @@
+{% from "badges.html" import verdict_badge, score_badge %}
+{#
+  Hypothesis ranking overview — one row per hypothesis, linking down to its
+  full section (#hyp-<id>, anchored by hypothesis_header.html). Data-driven
+  off report.hypotheses (list[reports.schema.Hypothesis]).
+#}
+{% macro hypothesis_summary_table(hypotheses) %}
+{% if hypotheses %}
+<p class="signal-section-label">Hypothesis Ranking Overview</p>
+<div style="overflow-x:auto;">
+<table class="signal-table">
+  <thead>
+    <tr>
+      <th>Rank</th>
+      <th>Category</th>
+      <th>Hypothesis</th>
+      <th>Verdict</th>
+      <th>Score</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for h in hypotheses %}
+    <tr>
+      <td class="num">{{ h.rank if h.rank else '—' }}</td>
+      <td>{{ h.category or '—' }}</td>
+      <td><a class="signal-table-link" href="#hyp-{{ h.hypothesis_id }}">{{ h.claim }}</a></td>
+      <td>{{ verdict_badge(h.verdict) }}</td>
+      <td>{{ score_badge(h) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endmacro %}

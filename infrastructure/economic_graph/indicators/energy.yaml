@@ -1,0 +1,130 @@
+category: energy
+indicators:
+- key: power_generation
+  name: Power Generation
+  economic_meaning: Total electricity generated (utilities) -- a high-frequency, near-real-time proxy
+    for economic activity.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Energy
+  headline_weight: 0.7
+  preferred_chart_window: 3y
+  material_change_mom: 2.0
+  material_change_yoy: 3.0
+  material_change_ytd: 3.0
+  status: registered_only
+  source:
+    organization:
+      name: Central Electricity Authority (CEA)
+      authority_level: official_primary
+      description: Statutory body under the Ministry of Power; publishes daily/monthly power generation
+        and supply statistics.
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: html_table
+      cadence: daily
+      historical_start: 2000-01
+      backfill_supported: true
+      license_notes: Public data, Government of India Open Data Licence
+    endpoints:
+    - url: https://cea.nic.in
+      access_method: html_table
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: power_generation_in
+      geography: IN
+      unit: billion_units
+      frequency: monthly
+      seasonal_adjustment: nsa
+- key: brent_crude_price
+  name: Crude Oil Price (Brent)
+  economic_meaning: The international Brent benchmark crude price -- India imports over 80% of its crude
+    requirement, so this is a direct input-cost and CAD driver.
+  higher_is: bad
+  leading_lagging: leading
+  report_section: Energy
+  headline_weight: 0.7
+  preferred_chart_window: 3y
+  material_change_mom: 3.0
+  material_change_yoy: 5.0
+  material_change_ytd: 5.0
+  status: registered_only
+  source:
+    organization:
+      name: Petroleum Planning & Analysis Cell (PPAC)
+      authority_level: official_primary
+      description: Ministry of Petroleum & Natural Gas's data/analysis unit; publishes international crude
+        price and domestic petroleum-product price series.
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: html_table
+      cadence: daily
+      historical_start: 2000-01
+      backfill_supported: true
+      license_notes: Public data, Government of India Open Data Licence
+    endpoints:
+    - url: https://ppac.gov.in
+      access_method: html_table
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: brent_crude_price_usd_bbl
+      geography: GLOBAL
+      unit: usd_per_bbl
+      frequency: daily
+      seasonal_adjustment: nsa
+- key: coal_production
+  name: Coal Production
+  economic_meaning: Total domestic raw coal output -- feeds India's still-coal-heavy power generation
+    mix.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Energy
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+- key: natural_gas_production
+  name: Natural Gas Production
+  economic_meaning: Domestic natural gas output.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Energy
+  headline_weight: 0.3
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+- key: renewable_capacity_addition
+  name: Renewable Energy Capacity Addition
+  economic_meaning: Cumulative new renewable (solar + wind + other) generation capacity commissioned.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Energy
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: 5.0
+  status: registered_only
+- key: petroleum_product_consumption
+  name: Petroleum Product Consumption
+  economic_meaning: Domestic consumption of refined petroleum products (petrol, diesel, LPG, etc.) --
+    a demand-side activity proxy.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Energy
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only

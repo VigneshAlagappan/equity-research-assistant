@@ -1,0 +1,91 @@
+category: agriculture
+indicators:
+- key: monsoon_rainfall
+  name: Rainfall (Monsoon)
+  economic_meaning: Cumulative southwest monsoon rainfall vs. the long-period average -- the single biggest
+    swing factor for rural incomes, food inflation, and reservoir levels.
+  higher_is: neutral
+  leading_lagging: leading
+  report_section: Agriculture
+  headline_weight: 0.8
+  preferred_chart_window: 1y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+  source:
+    organization:
+      name: India Meteorological Department (IMD)
+      authority_level: official_primary
+      description: India's official meteorological agency; publishes daily/weekly/seasonal rainfall monitoring
+        including monsoon progress.
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: html_table
+      cadence: seasonal
+      historical_start: 1901-01
+      backfill_supported: true
+      license_notes: Public data, Government of India Open Data Licence
+    endpoints:
+    - url: https://mausam.imd.gov.in
+      access_method: html_table
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: monsoon_rainfall_pct_lpa_in
+      geography: IN
+      unit: percent_of_lpa
+      frequency: seasonal
+      seasonal_adjustment: nsa
+- key: kharif_sowing_progress
+  name: Kharif Sowing Progress
+  economic_meaning: Cumulative area sown under kharif (monsoon-season) crops vs. the prior year -- an
+    early read on the agricultural output cycle.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Agriculture
+  headline_weight: 0.5
+  preferred_chart_window: 1y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+- key: rabi_sowing_progress
+  name: Rabi Sowing Progress
+  economic_meaning: Cumulative area sown under rabi (winter-season) crops vs. the prior year.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Agriculture
+  headline_weight: 0.5
+  preferred_chart_window: 1y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only
+- key: foodgrain_production
+  name: Foodgrain Production
+  economic_meaning: Total annual foodgrain output (cereals + pulses) -- the final-output counterpart to
+    sowing-progress indicators.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Agriculture
+  headline_weight: 0.5
+  preferred_chart_window: 10y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: 2.0
+  status: registered_only
+- key: agricultural_credit_growth
+  name: Agricultural Credit Growth
+  economic_meaning: Year-on-year growth in institutional credit disbursed to the agriculture sector.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Agriculture
+  headline_weight: 0.3
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only

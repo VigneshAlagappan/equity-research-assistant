@@ -57,7 +57,10 @@ from typing import Callable
 from urllib.parse import urlparse
 
 import anthropic
-from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Blueprint, Flask, abort, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
+from jinja2 import ChoiceLoader, FileSystemLoader
+
+from reports.schema import from_investigation_data
 from markupsafe import Markup, escape
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -72,6 +75,7 @@ from companies.lifecycle import (
     restore_company,
 )
 from companies.registry import get_company, list_companies, register_company, search_companies
+from storage.raw_object_repository import list_raw_objects
 from ingestion.onboarding import onboard_new_company
 from sources.yfinance_company_lookup import CompanyLookupError, search_companies as search_yfinance_companies
 from companies.stock_actions import (
@@ -130,7 +134,7 @@ from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
 from storage.company_repository import select_company_ids_by_index
 from storage.database import init_db, init_postgres_db
-from storage.document_store import default_document_store
+from storage.document_store import DocumentStoreError, default_document_store
 from storage.investigation_repository import (
     count_investigation_hypotheses,
     select_investigations_for_company,
@@ -152,6 +156,8 @@ from storage.repositories import (
     add_industry,
     add_sector,
     add_watchlist_item,
+    company_has_canonical_financials,
+    get_available_statement_types,
     count_companies_by_index_tag,
     count_companies_by_industry,
     count_companies_by_sector,
@@ -256,6 +262,8 @@ from web.news import fetch_company_news, google_news_last_24h_url
 from web.rich_text import sanitize_note_html
 from web.charts_feed import build_charts_feed
 from web.valuation_feed import build_valuation_feed
+import web.watchlist_feed as watchlist_feed
+from web.watchlist_feed import build_watchlist_view, list_watchlist_activity
 
 logger = logging.getLogger(__name__)
 
@@ -485,6 +493,39 @@ def _parse_docs_period_id(period_id: str, type_key: str) -> tuple[str, str | Non
 def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
+
+    # Signal Report Design System (reports/) -- registers its component/
+    # template directories onto Jinja's search path and its theme CSS as a
+    # small static blueprint, without moving those files under web/. See
+    # reports/__init__.py for the Investigation Engine -> InvestigationReport
+    # -> Signal Report Design System -> Web/Print data flow this supports.
+    _repo_root = Path(__file__).resolve().parent.parent
+    _reports_templates_dir = _repo_root / "reports" / "templates"
+    _reports_components_dir = _repo_root / "reports" / "components"
+    _reports_theme_dir = _repo_root / "reports" / "theme"
+    app.jinja_loader = ChoiceLoader(
+        [
+            app.jinja_loader,
+            FileSystemLoader(str(_reports_templates_dir)),
+            FileSystemLoader(str(_reports_components_dir)),
+        ]
+    )
+    reports_theme_bp = Blueprint(
+        "reports_theme", __name__, static_folder=str(_reports_theme_dir), static_url_path="/reports-theme"
+    )
+    app.register_blueprint(reports_theme_bp)
+
+    @app.template_global("reports_theme_url")
+    def reports_theme_url(filename: str) -> str:
+        """Same cache-busting idea as static_url() above, scoped to the
+        Signal report theme CSS served from reports/theme/ via the
+        reports_theme blueprint registered just above."""
+        url = url_for("reports_theme.static", filename=filename)
+        try:
+            mtime = int((_reports_theme_dir / filename).stat().st_mtime)
+        except OSError:
+            return url
+        return f"{url}?v={mtime}"
 
     @app.route("/health")
     def health():
@@ -747,7 +788,7 @@ def create_app() -> Flask:
                 # already cached from someone having visited this company's
                 # own page (get_live_quote there). Never fetches here: with
                 # ~2,500 rows a live call per row isn't viable on a list page.
-                ticker = row["nse_symbol"] or (row["company_id"] if row["country"] != "IN" else None)
+                ticker = row["nse_symbol"] or row["fetch_symbol"] or (row["company_id"] if row["country"] != "IN" else None)
                 cached_quote = peek_cached_quote(ticker, row["country"])
                 if cached_quote is not None:
                     row["latest_price"] = cached_quote["price"]
@@ -1108,7 +1149,7 @@ def create_app() -> Flask:
         runs at a handful of items each is small, the same "just eager-load
         it, it's cheap" call this function already makes for recent_log
         above."""
-        _AUDIT_TABS = ("reconciliation", "usa_reconciliation", "job_runs", "cases")
+        _AUDIT_TABS = ("reconciliation", "usa_reconciliation", "job_runs", "cases", "raw_documents")
         active_tab = request.args.get("al_tab") if request.args.get("al_tab") in _AUDIT_TABS else "reconciliation"
 
         # Schwab "Transfer Activity"-style filter bar: a job picker (their
@@ -1236,6 +1277,79 @@ def create_app() -> Flask:
         for row in usa_migration_rows:
             row["recent_log"] = usa_recent_log_by_company.get(row["company_id"], [])
 
+        # Raw Documents tab -- per-company coverage of every "pull and
+        # store, don't process yet" backfill, across every source (NSE's
+        # quarterly filings/presentations/transcripts/annual reports, SEC
+        # EDGAR's 10-Ks, and whatever else lands in this same raw_objects
+        # catalog later) -- ADR-022:
+        # docs/ADR/022-s3-raw-processed-object-store-with-lineage-catalog.md.
+        # Aggregated here in Python, not a new SQL GROUP BY per backend --
+        # matches list_all_raw_objects()'s own "cheap at this app's scale"
+        # reasoning (hundreds of companies × a handful of doc types each).
+        # `processed` counts any state past 'fetched'/'stored' -- always 0
+        # today (every backfill built so far deliberately stops at
+        # 'stored'), but the column is real and will start moving the
+        # moment a future processing step advances any row's state, with
+        # no template change needed then.
+        _RAW_DOC_TYPE_ORDER = (
+            "quarterly_result_filing", "investor_presentation", "concall_transcript",
+            "annual_report", "annual_report_10k",
+        )
+        raw_query = (request.args.get("al_raw_q") or "").strip().lower()
+        # Filtered by object_type, not source -- raw_objects is the shared
+        # ADR-022 catalog every external-fetch job in this app uses for its
+        # own audit trail (corporate actions, shareholding snapshots,
+        # yfinance prices, ...), not something exclusive to the document
+        # backfills this tab exists to surface. object_type is the
+        # source-agnostic signal that actually distinguishes "one of our
+        # pull-and-store document backfills" (whichever source produced
+        # it) from every other job's own unrelated raw_objects rows -- a
+        # future object type in this same family just needs adding to
+        # _RAW_DOC_TYPE_ORDER above, no further filtering logic here.
+        raw_objects_all = [
+            obj for obj in list_raw_objects(db, limit=50000) if obj["object_type"] in _RAW_DOC_TYPE_ORDER
+        ]
+        raw_by_company: dict[str, dict] = {}
+        for obj in raw_objects_all:
+            company_id = obj["entity"] or "—"
+            bucket = raw_by_company.setdefault(company_id, {
+                "company_id": company_id, "by_type": {}, "total": 0,
+                "processed": 0, "latest_fetched_at": None, "sources": set(),
+            })
+            bucket["by_type"][obj["object_type"]] = bucket["by_type"].get(obj["object_type"], 0) + 1
+            bucket["total"] += 1
+            bucket["sources"].add(obj["source"])
+            if obj["state"] not in ("fetched", "stored"):
+                bucket["processed"] += 1
+            if bucket["latest_fetched_at"] is None or obj["fetched_at"] > bucket["latest_fetched_at"]:
+                bucket["latest_fetched_at"] = obj["fetched_at"]
+
+        raw_company_names = {c["company_id"]: c["display_name"] for c in list_companies(db)}
+        raw_rows = list(raw_by_company.values())
+        for row in raw_rows:
+            row["display_name"] = raw_company_names.get(row["company_id"], row["company_id"])
+            row["source_label"] = " + ".join(sorted(row["sources"])) if row["sources"] else "—"
+        if raw_query:
+            raw_rows = [
+                r for r in raw_rows
+                if raw_query in r["company_id"].lower() or raw_query in (r["display_name"] or "").lower()
+            ]
+        raw_rows.sort(key=lambda r: r["display_name"] or r["company_id"])
+        raw_doc_types_present = [t for t in _RAW_DOC_TYPE_ORDER if any(t in r["by_type"] for r in raw_rows)]
+        # Explicit labels rather than a generic .replace('_', ' ')|title in
+        # the template -- that mangles "annual_report_10k" into "Annual
+        # Report 10k" (Jinja's title filter doesn't know "10k" should stay
+        # "10-K"), the same way it would mangle any future acronym-bearing
+        # object_type.
+        _RAW_DOC_TYPE_LABELS = {
+            "quarterly_result_filing": "Quarterly Result Filing",
+            "investor_presentation": "Investor Presentation",
+            "concall_transcript": "Concall Transcript",
+            "annual_report": "Annual Report (NSE)",
+            "annual_report_10k": "10-K (SEC)",
+        }
+        raw_doc_type_labels = {t: _RAW_DOC_TYPE_LABELS.get(t, t.replace("_", " ").title()) for t in raw_doc_types_present}
+
         return {
             "audit_rows": page["rows"],
             "audit_total": page["total"],
@@ -1261,6 +1375,11 @@ def create_app() -> Flask:
             "audit_case_rows": case_rows,
             "audit_case_status_filter": case_status_filter,
             "audit_case_kind_filter": case_kind_filter,
+            "audit_raw_rows": raw_rows,
+            "audit_raw_query": request.args.get("al_raw_q", ""),
+            "audit_raw_doc_types": raw_doc_types_present,
+            "audit_raw_doc_type_labels": raw_doc_type_labels,
+            "audit_raw_total_objects": sum(r["total"] for r in raw_rows),
         }
 
     @app.route("/admin")
@@ -1986,8 +2105,40 @@ def create_app() -> Flask:
         if company is None:
             abort(404, f"No company registered with company_id={company_id!r}")
 
+        # Which of "standalone"/"consolidated" this company's own
+        # canonical_financials actually has -- a company like AU Small
+        # Finance Bank (RBI-regulated, standalone-only annual reports, no
+        # subsidiaries requiring consolidation) has ONLY "standalone" rows,
+        # so the default statement_type below and the toggle links in
+        # company.html both need to skip "consolidated" for it rather than
+        # rendering a Consolidated option/default that's always empty.
+        # Empty means either a brand-new company with no financials at all
+        # yet, or a ported-only company that never reaches the live feed
+        # (has_live_financials below) -- in either case there's nothing to
+        # gate on, so both options stay offered (unchanged legacy behavior).
+        available_statement_types = get_available_statement_types(db, company_id)
+        if available_statement_types and statement_type not in available_statement_types:
+            statement_type = "consolidated" if "consolidated" in available_statement_types else "standalone"
+
         valuation_model_file = company["valuation_model_file"]
         has_ported_dataset = bool(valuation_model_file) and _valuation_model_data_path(valuation_model_file).exists()
+        # canonical_financials is this app's one source of truth for
+        # financial facts (see the migration writeup off web/static/data/
+        # *.json's stale, hand-ported workbook copies — those independently
+        # forked the exact same data errors canonical_financials itself has
+        # since fixed, and lack years canonical_financials already has).
+        # A "ported dataset" company only keeps reading the static file for
+        # financials_data_url when canonical_financials has genuinely
+        # nothing for it yet (verified per-company against real Neon: 1 of
+        # 21 ported companies, SRG Housing Finance, was never ingested at
+        # all) — switching an empty-live company would blank the whole
+        # Financials tab, a real regression, not a data-quality improvement.
+        # valuation_data_url (the Valuation Model tab's Growth Projection
+        # calculator) is untouched by this: still the static file for every
+        # ported company regardless, since that section is assumption-
+        # driven config this migration deliberately didn't touch — see
+        # web/valuation_feed.py's module docstring.
+        has_live_financials = has_ported_dataset and company_has_canonical_financials(db, company_id)
 
         # valuation_data_url backs only the Valuation Model tab's Growth
         # Projection / Intrinsic Value calculator (assumptions-driven,
@@ -1999,10 +2150,15 @@ def create_app() -> Flask:
         if has_ported_dataset:
             # A richer, manually-ported dataset (see the "HDFC Bank Equity
             # Dashboard" Claude Design import) — not statement_type-aware
-            # and annual-only (no period_type concept at all), so both
-            # dashboards read the same static file here.
+            # and annual-only (no period_type concept at all), so the
+            # Valuation Model tab keeps reading the static file here
+            # regardless of has_live_financials above.
             valuation_data_url = url_for("static", filename=f"data/{valuation_model_file}")
-            financials_data_url = valuation_data_url
+            financials_data_url = (
+                valuation_data_url
+                if not has_live_financials
+                else url_for("company_charts_feed", company_id=company_id, statement_type=statement_type)
+            )
         else:
             # Same dashboard template, every company — built live from
             # whatever this company's canonical_financials actually has.
@@ -2124,10 +2280,12 @@ def create_app() -> Flask:
         latest_price = _latest_price(valuation_model_file) if valuation_model_file else None
         live_quote = get_live_quote(
             # nse_symbol only exists for Indian companies; a non-Indian
-            # company (no NSE/BSE identifiers at all) uses its own
-            # company_id as the yfinance ticker instead — see
-            # web/live_quote.py and cmd_ingest_yfinance's own convention.
-            company["nse_symbol"] or (company_id if company["country"] != "IN" else None),
+            # company falls back to fetch_symbol (the real ticker when it
+            # differs from company_id, e.g. a US company_id disambiguated
+            # from an Indian one) and finally to its own company_id as the
+            # yfinance ticker -- see web/live_quote.py and
+            # cmd_ingest_yfinance's own convention.
+            company["nse_symbol"] or company["fetch_symbol"] or (company_id if company["country"] != "IN" else None),
             company["country"],
         )
         # Same resolved price the page header already shows (live_quote,
@@ -2197,6 +2355,8 @@ def create_app() -> Flask:
             enabled_ratio_keys=enabled_ratio_keys,
             is_watchlisted=is_watchlisted(db, "company", company_id),
             has_ported_dataset=has_ported_dataset,
+            has_live_financials=has_live_financials,
+            available_statement_types=available_statement_types,
             valuation_data_url=valuation_data_url,
             financials_data_url=financials_data_url,
             docs_data_url=url_for("company_docs_feed", company_id=company_id),
@@ -2446,7 +2606,7 @@ def create_app() -> Flask:
 
         latest_price = _latest_price(company["valuation_model_file"]) if company["valuation_model_file"] else None
         live_quote = get_live_quote(
-            company["nse_symbol"] or (company_id if company["country"] != "IN" else None),
+            company["nse_symbol"] or company["fetch_symbol"] or (company_id if company["country"] != "IN" else None),
             company["country"],
         )
         price = live_quote["price"] if live_quote else latest_price
@@ -2630,18 +2790,23 @@ def create_app() -> Flask:
     def company_document_file(company_id: str, document_id: int):
         db = get_db()
         row = get_company_document(db, company_id, document_id)
-        if row is None or not row["raw_file_path"]:
+        if row is None or not (row["raw_file_path"] or row["storage_object_key"]):
             abort(404)
         # Mixed-mode during migration: a presigned URL when the active
         # backend can produce one (S3), falling back to today's send_file
         # for a document still only on local disk (LocalDocumentStore's
         # presigned_url() always returns None, same as before this routed
-        # through DocumentStore).
+        # through DocumentStore). A document with only storage_object_key
+        # (no raw_file_path at all -- e.g. one uploaded straight to S3,
+        # never staged on local disk) has no local-disk fallback to send,
+        # so it depends on the active backend producing a presigned URL.
         key = row["storage_object_key"] or row["raw_file_path"]
         store = default_document_store()
         url = store.presigned_url(key)
         if url:
             return redirect(url)
+        if not row["raw_file_path"]:
+            abort(404)
         return send_file(from_repo_relative(row["raw_file_path"]))
 
     def _safe_login_next() -> str:
@@ -3474,12 +3639,26 @@ def create_app() -> Flask:
             # the two entities' render logic consistent, and proves the
             # artifact is genuinely the thing served, not just written and
             # never read.
+            #
+            # A real gap found live (2026-09-17): a handful of rows carry
+            # an s3_key whose object no longer exists in the bucket -- this
+            # used to be an unhandled DocumentStoreError -> unstyled 500,
+            # even though the Postgres columns below are the exact same
+            # "belt-and-suspenders" copy this comment already described.
+            # Fall back to them instead of crashing.
+            report_markdown = report_evidence = report_followups = None
             if generated["s3_key"]:
-                artifact = json.loads(default_document_store().retrieve(generated["s3_key"]))
-                report_markdown = artifact["report_markdown"]
-                report_evidence = artifact["evidence"]
-                report_followups = artifact["followups"]
-            else:
+                try:
+                    artifact = json.loads(default_document_store().retrieve(generated["s3_key"]))
+                    report_markdown = artifact["report_markdown"]
+                    report_evidence = artifact["evidence"]
+                    report_followups = artifact["followups"]
+                except DocumentStoreError:
+                    logger.warning(
+                        "Thread %s: s3_key=%r unreadable, falling back to Postgres copy",
+                        thread_id, generated["s3_key"],
+                    )
+            if report_markdown is None:
                 report_markdown = generated["report_markdown"]
                 report_evidence = list_report_evidence(db, thread_id)
                 report_followups = list_report_followups(db, thread_id)
@@ -3810,18 +3989,23 @@ def create_app() -> Flask:
                 "additional_evidence_needed": json.loads(investigation_row["additional_evidence_needed"] or "[]"),
             }
 
-        return render_template(
-            "investigation.html",
-            investigation=investigation,
-            hypotheses=hypotheses,
-            # llm_call_log stays SQLite-only regardless of DATABASE_BACKEND
-            # -- get_logs_db(), not db (which may be a Postgres connection
-            # here, used for the investigation/hypotheses queries above).
-            cost=get_investigation_cost_summary(get_logs_db(), investigation_id),
-        )
+        # llm_call_log stays SQLite-only regardless of DATABASE_BACKEND --
+        # get_logs_db(), not db (which may be a Postgres connection here,
+        # used for the investigation/hypotheses queries above).
+        cost = get_investigation_cost_summary(get_logs_db(), investigation_id)
+
+        # Presentation layer: reshape the same investigation/hypotheses data
+        # (whichever branch above produced it -- S3 artifact or legacy
+        # table read, both dict shapes) into the normalized
+        # reports.schema.InvestigationReport via a pure read-side adapter,
+        # then render it through the Signal Report Design System
+        # (reports/templates/deep_dive/report.html). No research logic is
+        # touched or duplicated -- see reports/schema/investigation_report.py.
+        report = from_investigation_data(investigation, hypotheses, cost)
+
+        return render_template("deep_dive/report.html", report=report)
 
     INVESTIGATIONS_PAGE_SIZE = 20
-    WATCHLIST_PAGE_SIZE = 25
 
     @app.route("/investigations")
     def investigations():
@@ -4087,65 +4271,48 @@ def create_app() -> Flask:
     @app.route("/watchlist")
     def watchlist():
         db = get_db()
-        entries = []
+        companies: dict[str, str] = {}
+        threads = []
         for item in list_watchlist_items(db):
             if item["item_type"] == "company":
                 company = get_company(db, item["item_ref"])
                 if company is None:
                     continue  # pinned company was later archived/removed from the registry
-                entries.append(
-                    {
-                        "item_type": "company",
-                        "item_ref": item["item_ref"],
-                        "pinned_at": item["pinned_at"],
-                        "title": company["display_name"],
-                        "subtitle": f"{company['sector'] or 'n/a'} · {company['company_id']}",
-                        "href": url_for("company_report", company_id=item["item_ref"]),
-                    }
-                )
+                companies[item["item_ref"]] = company["display_name"]
             elif item["item_type"] == "thread":
                 thread = THREADS.get(item["item_ref"])
                 if thread is not None:
-                    entries.append(
-                        {
-                            "item_type": "thread",
-                            "item_ref": item["item_ref"],
-                            "pinned_at": item["pinned_at"],
-                            "title": thread["title"],
-                            "subtitle": f"{thread['confidence']} confidence",
-                            "href": url_for("research_thread", thread_id=item["item_ref"]),
-                        }
-                    )
+                    threads.append({"title": thread["title"], "href": url_for("research_thread", thread_id=item["item_ref"])})
                     continue
                 generated = get_generated_report(db, item["item_ref"])
                 if generated is None:
                     continue  # watchlisted thread no longer exists (fixture removed, or the
                     # generated report it pointed to was deleted)
                 meta = extract_report_meta(generated["report_markdown"])
-                entries.append(
-                    {
-                        "item_type": "thread",
-                        "item_ref": item["item_ref"],
-                        "pinned_at": item["pinned_at"],
-                        "title": meta["title"] or generated["question"],
-                        "subtitle": f"{meta['confidence'] or 'Unknown'} confidence",
-                        "href": url_for("research_thread", thread_id=item["item_ref"]),
-                    }
-                )
+                threads.append({
+                    "title": meta["title"] or generated["question"],
+                    "href": url_for("research_thread", thread_id=item["item_ref"]),
+                })
 
-        wl_query = (request.args.get("wl_q") or "").strip()
-        wl_type_filter = request.args.get("wl_type") or ""
-        wl = _paginate(
-            [e for e in entries if not wl_type_filter or e["item_type"] == wl_type_filter],
-            query=wl_query,
-            haystack_fn=lambda r: " ".join(filter(None, [r["title"], r["subtitle"]])).lower(),
-            page_arg="wl_page", page_size=WATCHLIST_PAGE_SIZE,
-        )
+        # Live-fetch + write-through news for every watchlisted company, same
+        # pattern news_feed()'s no-company_id branch already uses -- so the
+        # News panel actually has data rather than only showing whatever a
+        # past /watchlist/news click happened to cache.
+        for company_id, display_name in companies.items():
+            fresh = fetch_company_news(display_name, window_days=watchlist_feed.NEWS_WINDOW_DAYS)
+            if fresh:
+                save_company_news(db, company_id, fresh)
+
+        selected_company = request.args.get("company") or None
+        if selected_company is not None and selected_company not in companies:
+            selected_company = None  # unknown/stale ?company= falls back to All, not a 404
+
+        activity = list_watchlist_activity(db, companies)
+        view = build_watchlist_view(activity, companies, selected_company=selected_company)
         return render_template(
-            "watchlist.html",
-            entries=wl["rows"], entries_total=wl["total"],
-            entries_page=wl["page"], entries_total_pages=wl["total_pages"],
-            entries_query=wl_query, entries_type_filter=wl_type_filter,
+            "watchlist.html", wl=view, threads=threads,
+            checked_at=datetime.now(timezone.utc).strftime("%H:%M"),
+            news_window_days=watchlist_feed.NEWS_WINDOW_DAYS,
         )
 
     def _safe_next() -> str:
@@ -4181,13 +4348,15 @@ def create_app() -> Flask:
 
     @app.route("/watchlist/news/<company_id>")
     def watchlist_news(company_id: str):
-        """Lazily-fetched, on the collapsible's first expand — not loaded for every
-        watchlist row up front, so a long watchlist never fires a burst of outbound
-        requests just from opening the page. Shared by the Watchlist row's 24h
-        teaser (default) and the Overview tab's news section (?days=2). Write-through:
-        whatever this call fetches also lands in company_news (storage/repositories.py)
-        so the News page's merged feed builds up real history over time instead of
-        starting from zero — this endpoint's own response is unaffected."""
+        """Company page's Overview tab news section (?days=2) — lazily
+        fetched on the section's first expand, not loaded for every company
+        page view. The Watchlist page itself no longer calls this (it now
+        live-fetches news for every watchlisted company up front, see
+        watchlist() above) but this endpoint stays for the Overview tab's
+        own use. Write-through: whatever this call fetches also lands in
+        company_news (storage/repositories.py) so the News page's merged
+        feed builds up real history over time instead of starting from
+        zero — this endpoint's own response is unaffected."""
         window_days = request.args.get("days", 1, type=int)
         db = get_db()
         company = get_company(db, company_id)

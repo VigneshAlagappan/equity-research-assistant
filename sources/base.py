@@ -35,6 +35,14 @@ class NormalizedObservation:
     currency: str = "INR"
     source_url: str | None = None
     retrieved_at: str = ""  # ISO-8601; filled by the caller (pipeline stamps if blank)
+    # FK into documents.document_id -- which registered document (Docs tab
+    # entry) this observation was extracted from, when the adapter has one
+    # (sources/nse_pdf_extractor.py is the first/only adapter that sets
+    # this today; every other adapter leaves it None, same as before this
+    # field existed). See storage/repositories.py's insert_financial_
+    # observations() and web/charts_feed.py's _classify_provenance() for
+    # how this is used downstream.
+    source_document_id: int | None = None
 
 
 class SourceAdapter(ABC):

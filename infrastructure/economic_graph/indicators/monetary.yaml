@@ -1,0 +1,118 @@
+category: monetary
+indicators:
+- key: repo_rate
+  name: Repo Rate
+  economic_meaning: The RBI's key policy rate -- the rate at which it lends short-term funds to banks;
+    the primary lever of Indian monetary policy.
+  higher_is: neutral
+  leading_lagging: leading
+  report_section: Monetary Policy
+  headline_weight: 1.0
+  preferred_chart_window: 10y
+  material_change_mom: 0.25
+  material_change_yoy: 0.25
+  material_change_ytd: 0.25
+  status: registered_only
+  source:
+    organization:
+      name: Reserve Bank of India (RBI)
+      authority_level: official_primary
+      description: India's central bank; publishes policy rates and monetary aggregates via the Database
+        on Indian Economy (DBIE).
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: html_table
+      cadence: event_driven
+      historical_start: 2000-01
+      backfill_supported: true
+      license_notes: Public data, RBI terms of use
+    endpoints:
+    - url: https://dbie.rbi.org.in
+      access_method: html_table
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: repo_rate_in
+      geography: IN
+      unit: percent
+      frequency: event_driven
+      seasonal_adjustment: nsa
+- key: reverse_repo_rate
+  name: Reverse Repo Rate
+  economic_meaning: The rate at which the RBI absorbs short-term liquidity from banks -- the floor of
+    the interest-rate corridor.
+  higher_is: neutral
+  leading_lagging: leading
+  report_section: Monetary Policy
+  headline_weight: 0.4
+  preferred_chart_window: 10y
+  material_change_mom: 0.25
+  material_change_yoy: 0.25
+  material_change_ytd: 0.25
+  status: registered_only
+- key: crr
+  name: Cash Reserve Ratio (CRR)
+  economic_meaning: Share of bank deposits banks must hold as reserves with the RBI -- a direct liquidity
+    lever.
+  higher_is: neutral
+  leading_lagging: leading
+  report_section: Monetary Policy
+  headline_weight: 0.4
+  preferred_chart_window: 10y
+  material_change_mom: 0.25
+  material_change_yoy: 0.5
+  material_change_ytd: 0.5
+  status: registered_only
+- key: slr
+  name: Statutory Liquidity Ratio (SLR)
+  economic_meaning: Share of bank deposits banks must hold in approved liquid assets (govt securities,
+    gold, cash).
+  higher_is: neutral
+  leading_lagging: leading
+  report_section: Monetary Policy
+  headline_weight: 0.3
+  preferred_chart_window: 10y
+  material_change_mom: 0.25
+  material_change_yoy: 0.5
+  material_change_ytd: 0.5
+  status: registered_only
+- key: msf_rate
+  name: Marginal Standing Facility (MSF) Rate
+  economic_meaning: The rate at which banks can borrow overnight from the RBI against government securities
+    -- the ceiling of the interest-rate corridor.
+  higher_is: neutral
+  leading_lagging: leading
+  report_section: Monetary Policy
+  headline_weight: 0.3
+  preferred_chart_window: 10y
+  material_change_mom: 0.25
+  material_change_yoy: 0.25
+  material_change_ytd: 0.25
+  status: registered_only
+- key: bank_rate
+  name: Bank Rate
+  economic_meaning: RBI's standard rate for rediscounting bills/advances -- now aligned with the MSF rate,
+    retained as a legacy policy-signal.
+  higher_is: neutral
+  leading_lagging: leading
+  report_section: Monetary Policy
+  headline_weight: 0.2
+  preferred_chart_window: 10y
+  material_change_mom: 0.25
+  material_change_yoy: 0.25
+  material_change_ytd: 0.25
+  status: registered_only
+- key: m3_money_supply_growth
+  name: M3 Money Supply Growth
+  economic_meaning: Year-on-year growth in broad money supply (M3) -- currency plus bank deposits.
+  higher_is: neutral
+  leading_lagging: leading
+  report_section: Monetary Policy
+  headline_weight: 0.5
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 1.0
+  material_change_ytd: 1.0
+  status: registered_only

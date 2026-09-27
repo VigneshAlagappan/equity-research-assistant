@@ -26,10 +26,26 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")  # NEON/DATABASE_BACKEND/DOCUMENT_STORE_BACKEND live there
+
+import storage.backend_bootstrap
+
+# Must run before importing ingestion.pipeline/storage.repositories below --
+# same ordering scripts/batch_fetch_sec_edgar.py follows, so DATABASE_
+# BACKEND=postgres actually routes this job's writes (macro_observations,
+# raw_objects) at Neon instead of silently staying on local SQLite. Without
+# this, main()'s open_db() call below would still connect to the right
+# database, but ingest_fred_series()'s own internal repository imports
+# (already bound to the SQLite flavor by then) would not.
+storage.backend_bootstrap.install()
 
 from ingestion.batch_log import BatchRun
 from ingestion.pipeline import ingest_fred_series
-from storage.database import init_db
+from storage.backend_bootstrap import open_db
 
 _JOB_NAME = "fred_macro_fetch"
 
@@ -42,16 +58,94 @@ class FredSeries:
     region: str | None = None  # None = national/US-wide
 
 
-# Starter set -- broad US macro indicators an equity research workflow
-# would reference regardless of which company/sector is under review.
-# Grow this list incrementally as new series are needed; each entry is
-# independent, so adding one never touches the others.
+# Broad US macro indicators an equity research workflow would reference
+# regardless of which company/sector is under review -- the same series
+# scripts/fred_historical_s3_pull.py already archives to S3 (raw/fred/
+# snapshots/.../{metadata,observations}.json, cataloged in raw_objects by
+# scripts/catalog_fred_s3_snapshots.py). Grown from an original 5-series
+# starter set to 34 ("SIGNALS U.S. MACRO LAYER"), then to 53 with a P1/P2
+# priority list (rates, credit conditions, housing/trade, S&P 500, copper)
+# -- each expansion reconciles the S3-only archival path with this
+# CSV/no-key path, which is what actually populates macro_observations
+# (queryable structured values, via ingest_fred_series() below) so
+# research/macro_evidence.py's catalog of usable series_key values covers
+# everything that's been archived, not just a subset of it. The S3/API-key
+# path stays a separate, higher-fidelity raw archival copy (adds FRED's own
+# title/frequency/seasonal-adjustment metadata the CSV export doesn't
+# carry) -- both paths now cover the same series, so nothing is archived on
+# one side but invisible to investigations on the other.
+# `unit` is FRED's own "units" string verbatim (read from that S3 metadata
+# snapshot), not a separate enum this codebase invents -- e.g. "Percent",
+# "Index 2017=100", "Billions of Dollars". Each entry is independent, so
+# adding one never touches the others.
 TRACKED_SERIES: list[FredSeries] = [
-    FredSeries("FEDFUNDS", unit="PERCENT"),
-    FredSeries("DGS10", unit="PERCENT"),
-    FredSeries("CPIAUCSL", unit="INDEX"),
-    FredSeries("UNRATE", unit="PERCENT"),
-    FredSeries("GDP", unit="USD_BILLION"),
+    # Economic Growth
+    FredSeries("GDP", unit="Billions of Dollars"),
+    FredSeries("GDPC1", unit="Billions of Chained 2017 Dollars"),
+    FredSeries("INDPRO", unit="Index 2017=100"),
+    # Monetary Policy
+    FredSeries("FEDFUNDS", unit="Percent"),
+    FredSeries("SOFR", unit="Percent"),
+    FredSeries("DGS3MO", unit="Percent"),
+    FredSeries("DGS2", unit="Percent"),
+    FredSeries("DGS10", unit="Percent"),
+    FredSeries("T10Y2Y", unit="Percent"),
+    # Inflation
+    FredSeries("CPIAUCSL", unit="Index 1982-1984=100"),
+    FredSeries("CPILFESL", unit="Index 1982-1984=100"),
+    FredSeries("PCEPI", unit="Index 2017=100"),
+    FredSeries("PCEPILFE", unit="Index 2017=100"),
+    FredSeries("T10YIE", unit="Percent"),
+    # Employment
+    FredSeries("UNRATE", unit="Percent"),
+    FredSeries("PAYEMS", unit="Thousands of Persons"),
+    FredSeries("ICSA", unit="Number"),
+    FredSeries("JTSJOL", unit="Level in Thousands"),
+    # Consumer
+    FredSeries("UMCSENT", unit="Index 1966:Q1=100"),
+    FredSeries("RSAFS", unit="Millions of Dollars"),
+    FredSeries("DSPIC96", unit="Billions of Chained 2017 Dollars"),
+    FredSeries("PSAVERT", unit="Percent"),
+    # Housing
+    FredSeries("HOUST", unit="Thousands of Units"),
+    FredSeries("PERMIT", unit="Thousands of Units"),
+    FredSeries("CSUSHPISA", unit="Index Jan 2000=100"),
+    FredSeries("MORTGAGE30US", unit="Percent"),
+    # Liquidity / Credit
+    FredSeries("M2SL", unit="Billions of Dollars"),
+    FredSeries("WALCL", unit="Millions of U.S. Dollars"),
+    FredSeries("NFCI", unit="Index"),
+    FredSeries("BAMLH0A0HYM2", unit="Percent"),
+    # Markets
+    FredSeries("VIXCLS", unit="Index"),
+    FredSeries("DTWEXBGS", unit="Index Jan 2006=100"),
+    # Commodities
+    FredSeries("DCOILWTICO", unit="Dollars per Barrel"),
+    FredSeries("DHHNGSP", unit="Dollars per Million BTU"),
+    FredSeries("PCOPPUSDM", unit="U.S. Dollars per Metric Ton"),
+    # Rates (P1 additions, raw/fred/snapshots/20260926T222730Z/)
+    FredSeries("DGS5", unit="Percent"),
+    FredSeries("DGS30", unit="Percent"),
+    # Prices / wages (P1)
+    FredSeries("PPIACO", unit="Index 1982=100"),
+    FredSeries("CES0500000003", unit="Dollars per Hour"),
+    # Credit conditions (P1)
+    FredSeries("TOTALSL", unit="Millions of U.S. Dollars"),
+    FredSeries("TOTLL", unit="Billions of U.S. Dollars"),
+    FredSeries("BUSLOANS", unit="Billions of U.S. Dollars"),
+    FredSeries("CREACBW027SBOG", unit="Billions of U.S. Dollars"),
+    FredSeries("DPSACBW027SBOG", unit="Billions of U.S. Dollars"),
+    FredSeries("DRSFRMACBS", unit="Percent"),
+    FredSeries("DRTSCILM", unit="Percent"),
+    # Housing / industry / trade (P2)
+    FredSeries("EXHOSLUSM495S", unit="Number of Units"),
+    FredSeries("HSN1F", unit="Thousands"),
+    FredSeries("TCU", unit="Percent"),
+    FredSeries("IMPGS", unit="Billions of Dollars"),
+    FredSeries("EXPGS", unit="Billions of Dollars"),
+    FredSeries("BOPGSTB", unit="Millions of Dollars"),
+    # Markets (P2)
+    FredSeries("SP500", unit="Index"),
 ]
 
 
@@ -115,7 +209,7 @@ def main() -> None:
     else:
         series_list = TRACKED_SERIES
 
-    conn = init_db()
+    conn = open_db()
     run_fred_batch(conn, series_list, scope_label=args.scope)
     conn.close()
 

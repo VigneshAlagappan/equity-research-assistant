@@ -1,0 +1,116 @@
+category: industry
+indicators:
+- key: iip_general
+  name: IIP General
+  economic_meaning: Index of Industrial Production (general index) -- month-on-month gauge of factory-sector
+    output across mining, manufacturing, and electricity.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Industry
+  headline_weight: 0.9
+  preferred_chart_window: 5y
+  material_change_mom: 1.0
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+  source:
+    organization:
+      name: Ministry of Statistics and Programme Implementation (MoSPI)
+      authority_level: official_primary
+      description: Publishes the monthly Index of Industrial Production release.
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: html_table
+      cadence: monthly
+      historical_start: 2011-12
+      backfill_supported: true
+      license_notes: Public data, Government of India Open Data Licence
+    endpoints:
+    - url: https://www.mospi.gov.in
+      access_method: html_table
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: iip_general_yoy_in
+      geography: IN
+      unit: percent_yoy
+      frequency: monthly
+      seasonal_adjustment: nsa
+- key: core_sector_output
+  name: Core Sector Output
+  economic_meaning: Combined output of 8 core infrastructure industries (coal, crude oil, natural gas,
+    refinery products, fertilizers, steel, cement, electricity) -- roughly 40% of IIP's weight, released
+    earlier than full IIP.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Industry
+  headline_weight: 0.8
+  preferred_chart_window: 5y
+  material_change_mom: 1.0
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+- key: iip_manufacturing
+  name: IIP Manufacturing
+  economic_meaning: The manufacturing sub-index of IIP, its largest single weight.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Industry
+  headline_weight: 0.6
+  preferred_chart_window: 5y
+  material_change_mom: 1.0
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+- key: iip_mining
+  name: IIP Mining
+  economic_meaning: The mining sub-index of IIP.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Industry
+  headline_weight: 0.3
+  preferred_chart_window: 5y
+  material_change_mom: 1.0
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+- key: iip_electricity
+  name: IIP Electricity
+  economic_meaning: The electricity-generation sub-index of IIP.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Industry
+  headline_weight: 0.3
+  preferred_chart_window: 5y
+  material_change_mom: 1.0
+  material_change_yoy: 2.0
+  material_change_ytd: 2.0
+  status: registered_only
+- key: iip_capital_goods
+  name: IIP Capital Goods
+  economic_meaning: The capital-goods use-based sub-index of IIP -- a proxy for investment-driven production
+    demand.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Industry
+  headline_weight: 0.5
+  preferred_chart_window: 5y
+  material_change_mom: 1.5
+  material_change_yoy: 3.0
+  material_change_ytd: 3.0
+  status: registered_only
+- key: iip_consumer_durables
+  name: IIP Consumer Durables
+  economic_meaning: The consumer-durables use-based sub-index of IIP -- a proxy for discretionary consumption
+    demand.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Industry
+  headline_weight: 0.4
+  preferred_chart_window: 5y
+  material_change_mom: 1.5
+  material_change_yoy: 3.0
+  material_change_ytd: 3.0
+  status: registered_only

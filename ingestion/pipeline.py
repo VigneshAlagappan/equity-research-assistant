@@ -29,6 +29,12 @@ from sources.rbi_dbie_tables import (
     parse_rbi_daily_rate_table,
     parse_rbi_dbie_table,
 )
+from sources.alpha_vantage_commodities import (
+    ASSET_SYMBOLS,
+    commodity_history_url,
+    fetch_commodity_series_raw,
+    parse_commodity_json,
+)
 from sources.fred import fetch_fred_series_raw, fred_csv_url, parse_fred_csv
 from storage import raw_object_repository as ror
 from storage.raw_object_store import store_raw_object
@@ -187,6 +193,82 @@ def ingest_file(
     return result
 
 
+def ingest_nse_pdf_observations(
+    conn: DBConnection,
+    company_id: str,
+    observations: list[NormalizedObservation],
+    *,
+    source_file: str,
+) -> IngestionResult:
+    """Store already-extracted (sources/nse_pdf_extractor.py) PDF-sourced
+    observations through the same validate -> store -> reconcile flow every
+    other adapter's parse() output goes through — this function starts
+    after parsing, not before it, since a PDF's document registration
+    (storage/repositories.save_company_document(), done by the caller) has
+    to happen first to get the source_document_id every observation here
+    already carries.
+
+    "Check what's already in canonical_financials before writing" (the
+    production task's own scope note — XBRL keeps trust-rank priority
+    regardless of period_type) is enforced HERE, one observation at a
+    time, rather than left to reconcile()'s own trust_rank tie-break:
+    every PDF observation is stamped source="nse" (same convention as
+    XBRL — see sources/nse_pdf_extractor.py's module docstring), so it
+    would otherwise tie with a real XBRL "nse" observation for the same
+    (metric, period) key and the outcome would depend on retrieved_at
+    ordering, not on which one is actually more trustworthy. Skipping
+    outright whenever a canonical value already exists for that exact key
+    is simpler and matches the task's own stated intent more directly than
+    teaching reconcile() a second "nse" sub-tier.
+
+    Caveat worth being explicit about (not novel to this function — it's
+    an existing, already-shipped side effect of the 2026-08 NSE XBRL
+    directive, see reconcile()'s own docstring): inserting ANY "nse"-
+    sourced observation for a period "migrates" that whole (period_type,
+    fiscal_year, quarter, statement_type) scope, so a real-XBRL-absent
+    (pre-2019) period this backfill adds a PDF-sourced P&L fact to will
+    also stop honoring any legacy proprietary/screener value for OTHER
+    metrics in that same period that PDF/XBRL didn't report — same
+    behavior a genuinely new XBRL filing for that period would already
+    cause today, not something this function introduces.
+    """
+    from storage.repositories import get_canonical_value
+
+    result = IngestionResult(company_id=company_id, source_id="nse", file_path=source_file)
+    result.parsed_count = len(observations)
+
+    to_insert: list[NormalizedObservation] = []
+    for obs in observations:
+        problems = validate_observation(obs)
+        if problems:
+            result.skipped_count += 1
+            result.skip_reasons.append(f"{obs.metric_key} {obs.fiscal_year}{obs.quarter or ''}: {'; '.join(problems)}")
+            continue
+        existing = get_canonical_value(
+            conn, company_id, obs.metric_key, obs.period_type, obs.fiscal_year,
+            quarter=obs.quarter, statement_type=obs.statement_type,
+        )
+        if existing is not None:
+            result.skipped_count += 1
+            result.skip_reasons.append(
+                f"{obs.metric_key} {obs.fiscal_year}{obs.quarter or ''} ({obs.statement_type}): "
+                f"already has a canonical value from an earlier source — not overwritten"
+            )
+            continue
+        to_insert.append(obs)
+
+    insert_financial_observations(conn, to_insert)
+    result.inserted_count = len(to_insert)
+    result.reconciled_count = _publish_financial_ingestion(
+        conn, company_id=company_id, source_id="nse", statement_type="consolidated", valid=to_insert,
+    )
+    logger.info(
+        "PDF-ingested %s: parsed=%d inserted=%d skipped=%d reconciled=%d",
+        source_file, result.parsed_count, result.inserted_count, result.skipped_count, result.reconciled_count,
+    )
+    return result
+
+
 def ingest_yfinance_company(
     conn: DBConnection,
     company_id: str,
@@ -260,6 +342,8 @@ def ingest_sec_edgar_company(
     cik: int,
     *,
     currency: str = "USD",
+    period_types: set[str] | None = None,
+    min_fiscal_year: int | None = None,
 ) -> IngestionResult:
     """Fetch a US company's quarterly + annual financials live from SEC
     EDGAR's own XBRL data and run them through the same validate -> store
@@ -268,6 +352,20 @@ def ingest_sec_edgar_company(
     as ingest_yfinance_company() just above. No statement_type parameter
     (unlike that one): US public companies file consolidated financials
     only, there's no separate standalone statement to choose between.
+
+    period_types, when given (e.g. {"annual"}), filters SECEdgarAdapter's
+    parsed observations down to just those period types before validate/
+    insert/reconcile -- the adapter itself always computes both (annual's
+    Q4 = FY - (Q1+Q2+Q3) derivation needs quarterly data internally, so
+    this filters the *output*, not the extraction), for a caller like
+    scripts/batch_fetch_sec_edgar.py's --annual-only that wants only
+    annual rows persisted. None (default) keeps everything, unchanged
+    behavior for every existing caller.
+
+    min_fiscal_year, when given, drops any observation whose fiscal_year
+    (e.g. "FY2025" -> 2025) is older than this -- scripts/batch_fetch_
+    sec_edgar.py's --years N computes this as this_year - N + 1. Same
+    output-side filter as period_types, not an extraction-time one.
     """
     company_id = normalize_company_id(company_id)
     assert_active(conn, company_id)  # same ingestion gate as ingest_file()
@@ -290,6 +388,10 @@ def ingest_sec_edgar_company(
 
     adapter = SECEdgarAdapter(conn)
     parsed = adapter.fetch(company_id, cik, currency=currency, facts=facts)
+    if period_types is not None:
+        parsed = [obs for obs in parsed if obs.period_type in period_types]
+    if min_fiscal_year is not None:
+        parsed = [obs for obs in parsed if int(obs.fiscal_year[2:]) >= min_fiscal_year]
 
     result = IngestionResult(company_id=company_id, source_id=adapter.source_id, file_path=f"sec_edgar:CIK{cik:010d}")
     result.parsed_count = len(parsed)
@@ -499,6 +601,89 @@ def ingest_fred_series(
     logger.info(
         "Ingested %s (macro/fred): parsed=%d inserted=%d skipped=%d",
         series_id, result.parsed_count, result.inserted_count, result.skipped_count,
+    )
+    return result
+
+
+def ingest_alpha_vantage_commodity_series(
+    conn: DBConnection, asset_id: str, *, api_key: str, unit: str, series_key: str | None = None,
+    region: str | None = None,
+) -> MacroIngestionResult:
+    """Fetch one Alpha Vantage commodity series (sources/alpha_vantage_
+    commodities.py) live and run it through the same validate -> store
+    steps ingest_fred_series() uses -- sibling function, not a branch of
+    it, same reasoning that function's own docstring gives for being
+    separate from ingest_macro_file() (the input is an asset_id, not a
+    file_path/source-detection-by-path step).
+
+    fetch_commodity_series_raw() always returns the endpoint's *entire*
+    weekly history (Alpha Vantage's GOLD_SILVER_HISTORY has no "since"
+    param either), so the same already-on-file period filter
+    ingest_fred_series() applies is repeated here to keep a repeat run
+    (e.g. this app's own scheduled refresh) from appending duplicate rows
+    for every period, every run, forever."""
+    resolved_series_key = series_key or asset_id.lower()
+    if asset_id not in ASSET_SYMBOLS:
+        raise ValueError(f"asset_id must be one of {sorted(ASSET_SYMBOLS)}, got {asset_id!r}")
+    symbol = ASSET_SYMBOLS[asset_id]
+
+    raw_bytes = fetch_commodity_series_raw(symbol, api_key=api_key)
+    raw_result = store_raw_object(
+        conn, source="alpha_vantage", entity=resolved_series_key, object_type="commodity_price_history",
+        period=None, source_url=commodity_history_url(symbol),
+        raw_prefix="macro", content=raw_bytes, extension="json",
+    )
+    parsed = parse_commodity_json(raw_bytes, asset_id, unit=unit, series_key=series_key, region=region)
+
+    result = MacroIngestionResult(series_key=resolved_series_key, source_id="alpha_vantage", file_path=f"alpha_vantage:{asset_id}")
+    result.parsed_count = len(parsed)
+
+    existing_periods = get_existing_macro_periods(conn, resolved_series_key, region, "alpha_vantage")
+    new_obs = [obs for obs in parsed if obs.period not in existing_periods]
+    already_have = len(parsed) - len(new_obs)
+    if already_have:
+        logger.info(
+            "ingest_alpha_vantage_commodity_series(%s): %d/%d period(s) already on file, skipping",
+            asset_id, already_have, len(parsed),
+        )
+
+    valid: list[MacroNormalizedObservation] = []
+    for obs in new_obs:
+        problems = validate_macro_observation(obs)
+        if problems:
+            result.skipped_count += 1
+            label = f"{obs.series_key} {obs.period}"
+            reason = f"{label}: {'; '.join(problems)}"
+            result.skip_reasons.append(reason)
+            logger.warning("Skipping invalid macro observation: %s", reason)
+            continue
+        valid.append(obs)
+
+    insert_macro_observations(conn, valid)
+    result.inserted_count = len(valid)
+    if valid:
+        _publish_dataset_ingested(
+            conn,
+            dataset_id=f"macro:alpha_vantage:{result.series_key}",
+            dataset_type="macro",
+            source="alpha_vantage",
+            storage_reference={"table": "macro_observations"},
+            scope={
+                "series_keys": sorted({obs.series_key for obs in valid}),
+                "regions": sorted({obs.region for obs in valid if obs.region}),
+            },
+            metadata={"observation_count": len(valid)},
+        )
+
+    ror.update_raw_object_state(conn, raw_result.object_id, state="ingested", mark_processed=True)
+    ror.insert_lineage(
+        conn, object_id=raw_result.object_id, derived_store="macro_observations",
+        derived_table="macro_observations", derived_record_id=resolved_series_key,
+    )
+
+    logger.info(
+        "Ingested %s (macro/alpha_vantage): parsed=%d inserted=%d skipped=%d",
+        asset_id, result.parsed_count, result.inserted_count, result.skipped_count,
     )
     return result
 

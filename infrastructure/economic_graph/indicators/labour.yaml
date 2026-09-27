@@ -1,0 +1,76 @@
+category: labour
+indicators:
+- key: unemployment_rate
+  name: Unemployment Rate
+  economic_meaning: Share of the labour force actively seeking but unable to find work (PLFS-based).
+  higher_is: bad
+  leading_lagging: lagging
+  report_section: Labour Market
+  headline_weight: 0.8
+  preferred_chart_window: 5y
+  material_change_mom: 0.3
+  material_change_yoy: 0.5
+  material_change_ytd: 0.5
+  status: registered_only
+- key: epfo_payroll_additions
+  name: EPFO Payroll Additions
+  economic_meaning: Net new subscriber additions to the Employees' Provident Fund -- a monthly proxy for
+    formal-sector job creation.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Labour Market
+  headline_weight: 0.6
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 5.0
+  material_change_ytd: 5.0
+  status: registered_only
+- key: labour_force_participation_rate
+  name: Labour Force Participation Rate
+  economic_meaning: Share of the working-age population that is employed or actively seeking work.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Labour Market
+  headline_weight: 0.4
+  preferred_chart_window: 5y
+  material_change_mom: 0.3
+  material_change_yoy: 0.5
+  material_change_ytd: 0.5
+  status: registered_only
+- key: rural_wage_growth
+  name: Rural Wage Growth
+  economic_meaning: Year-on-year growth in nominal rural agricultural/non-agricultural wage rates.
+  higher_is: good
+  leading_lagging: lagging
+  report_section: Labour Market
+  headline_weight: 0.4
+  preferred_chart_window: 5y
+  material_change_mom: null
+  material_change_yoy: 1.0
+  material_change_ytd: 1.0
+  status: registered_only
+- key: mgnrega_persondays
+  name: MGNREGA Person-Days Generated
+  economic_meaning: Person-days of work demanded/generated under the rural employment guarantee scheme
+    -- rises when rural distress/labour slack increases.
+  higher_is: bad
+  leading_lagging: coincident
+  report_section: Labour Market
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: 5.0
+  material_change_yoy: 10.0
+  material_change_ytd: 10.0
+  status: registered_only
+- key: formal_job_creation_index
+  name: Formal Job Creation Index
+  economic_meaning: A composite gauge of formal-sector hiring built from payroll/registration data sources.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Labour Market
+  headline_weight: 0.3
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: 5.0
+  material_change_ytd: 5.0
+  status: registered_only

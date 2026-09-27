@@ -120,4 +120,10 @@ def test_bound_indicator_capability_is_disabled_entirely_under_a_cutoff(
 def test_a_bare_year_cutoff_is_accepted_by_the_bindings(ingested_conn: sqlite3.Connection) -> None:
     restricted = default_capabilities(as_of="2023").financial_evidence(ingested_conn, "HDFCBANK")
     assert any("FY2023" in e.label for e in restricted)
-    assert not any("FY2024" in e.label for e in restricted)
+    # "2023" normalizes to 2023-12-31. The whole FY2024 (ends 2024-03-31) must not leak,
+    # but FY2024's Q1/Q2 quarters individually ended 2023-06-30/2023-09-30 -- before the
+    # cutoff -- so their quarterly evidence legitimately survives; only an annual FY2024
+    # figure would be look-ahead.
+    assert not any(e.label == "Net Profit FY2024" for e in restricted)
+    assert not any(e.label == "Total Assets FY2024" for e in restricted)
+    assert any(e.label == "Net Profit Q1 FY2024" for e in restricted)

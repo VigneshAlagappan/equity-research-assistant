@@ -49,6 +49,7 @@ def register_company(
     nse_symbol: str | None = None,
     bse_code: str | None = None,
     isin: str | None = None,
+    fetch_symbol: str | None = None,
     country: str = "IN",
     currency: str = "INR",
     fiscal_year_end_month: int = 3,
@@ -79,13 +80,22 @@ def register_company(
     created — re-registering the same id updates everything except status
     and the identifiers that would need lifecycle history (see
     companies/lifecycle.py) if they changed.
+
+    fetch_symbol is the real market ticker used to fetch from yfinance/SEC
+    EDGAR when it differs from company_id -- company_id is a purely
+    internal, guaranteed-unique key (e.g. "PNC_US", disambiguated from an
+    existing Indian company_id "PNC"); fetch_symbol carries the actual
+    ticker ("PNC") that data-fetch call sites should resolve against.
+    Left None when company_id already IS the real ticker (the common
+    case -- every existing US company, every Indian company via its own
+    nse_symbol column instead).
     """
     company_id = normalize_company_id(company_id)
     now = utcnow_iso()
 
     fields = dict(
         company_id=company_id, legal_name=legal_name, display_name=display_name, nse_symbol=nse_symbol,
-        bse_code=bse_code, isin=isin, country=country, currency=currency,
+        bse_code=bse_code, isin=isin, fetch_symbol=fetch_symbol, country=country, currency=currency,
         fiscal_year_end_month=fiscal_year_end_month, website=website,
         macro_economic_sector=macro_economic_sector, sector=sector, industry=industry,
         basic_industry=basic_industry, listed_date=listed_date, now=now,

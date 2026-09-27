@@ -1,0 +1,51 @@
+{#
+  Evidence matrix: consistently renders supporting / contradicting / missing
+  evidence as HAVE / CONTRADICTS / MISSING rows, each showing evidence type,
+  description, source/reference (when available), and status. Supporting is
+  visually positive-but-restrained (green), contradicting is amber,
+  missing is neutral gray — never the same visual weight.
+#}
+{% macro evidence_matrix(h) %}
+{% if h.supporting_evidence or h.contradicting_evidence or h.missing_evidence %}
+<div class="signal-evidence-group">
+  <div class="signal-evidence-group-title">Evidence Assessment</div>
+
+  {% for ev in h.supporting_evidence %}
+  <div class="signal-evidence-row signal-evidence-have">
+    <span class="signal-evidence-icon" aria-hidden="true">&#10003;</span>
+    {% if ev.kind %}<span class="signal-badge signal-badge-outline signal-evidence-kind">{{ ev.kind }}</span>{% endif %}
+    <span class="signal-evidence-text">{{ ev.label }}{% if ev.value %} — <span class="signal-evidence-value">{{ ev.value }}</span>{% endif %}{% if ev.citation %} <span class="signal-evidence-citation">({{ ev.citation }})</span>{% endif %}</span>
+    <span class="signal-evidence-status">Have</span>
+  </div>
+  {% endfor %}
+
+  {% for ev in h.contradicting_evidence %}
+  <div class="signal-evidence-row signal-evidence-contradicts">
+    <span class="signal-evidence-icon" aria-hidden="true">!</span>
+    {% if ev.kind %}<span class="signal-badge signal-badge-outline signal-evidence-kind">{{ ev.kind }}</span>{% endif %}
+    <span class="signal-evidence-text">{{ ev.label }}{% if ev.value %} — <span class="signal-evidence-value">{{ ev.value }}</span>{% endif %}{% if ev.citation %} <span class="signal-evidence-citation">({{ ev.citation }})</span>{% endif %}</span>
+    <span class="signal-evidence-status">Contradicts</span>
+  </div>
+  {% endfor %}
+
+  {% for ev in h.missing_evidence %}
+  <div class="signal-evidence-row signal-evidence-missing">
+    <span class="signal-evidence-icon" aria-hidden="true">&#9675;</span>
+    <span class="signal-evidence-text">{{ ev.label }}</span>
+    <span class="signal-evidence-status">Missing</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% if h.unknowns %}
+<div class="signal-evidence-group">
+  <div class="signal-evidence-group-title">Unknowns at Time of Generation</div>
+  {% for u in h.unknowns %}
+  <div class="signal-evidence-row signal-evidence-missing">
+    <span class="signal-evidence-icon" aria-hidden="true">&#9675;</span>
+    <span class="signal-evidence-text">{{ u }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}

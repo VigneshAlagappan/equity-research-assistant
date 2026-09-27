@@ -16,8 +16,12 @@
    - The live feed, web/charts_feed.py's build_charts_feed() (also what
      drives the Charts tab) — {"PERIODS": [...], "PERIOD_KEYS": [[year,
      quarter_num], ...], "CURRENCY", "METRICS": {section: [{key, label,
-     unit, values}]}}, period_type-aware (annual/quarterly, see the
-     Annual/Quarterly toggle in init()).
+     unit, values, type, sources?}]}}, period_type-aware (annual/quarterly,
+     see the Annual/Quarterly toggle in init()). "sources" (balanceSheet/
+     incomeStatement "fact" rows only) is a per-period "xbrl"|"nse_pdf"|null
+     array parallel to "values" — rendered as a small superscript marker
+     next to the value (provTag() below), absent entirely on a row with no
+     provenance data.
    - A ported valuation_model_file JSON (web/static/data/*.json) — the older
      {"YEARS": [...], "METRICS": {...}} shape, annual-only, no period_type
      concept, detected by the absence of PERIODS. */
@@ -178,6 +182,29 @@
   // Financials is facts-only by design (this file's own header comment),
   // so there's nothing to project here, just the actuals that table's own
   // "Actual" column group already shows.
+  // "xbrl" | "nse_pdf" -> the single-letter marker + tooltip text shown next
+  // to a value in the Financials table (see base.html's .prov-tag CSS and
+  // web/charts_feed.py's _classify_provenance()). Any other value (a calc
+  // row, or a fact row with no "sources" array at all — most companies
+  // don't have per-period provenance data yet) renders nothing.
+  const PROV_META = {
+    xbrl: { letter: "X", title: "Sourced from an XBRL filing" },
+    nse_pdf: { letter: "P", title: "Sourced from an NSE filing PDF" },
+  };
+
+  // Empty string when `sources` is absent (row has no provenance data) or
+  // the value at index `i` is unclassified (null — a Screener/Proprietary
+  // row, or no traceable observation) — same "just don't show it" default
+  // FACT/CALC formatting already uses for a missing figure ("—" there, but
+  // there's nothing to append there since this is an addition to an
+  // already-rendered value, not a replacement for one).
+  function provTag(sources, i) {
+    const kind = sources ? sources[i] : null;
+    const meta = kind ? PROV_META[kind] : null;
+    if (!meta) return "";
+    return ' <sup class="prov-tag prov-' + kind + '" title="' + escapeHtml(meta.title) + '">' + meta.letter + "</sup>";
+  }
+
   function buildRow(metric, periodKeys, currency) {
     const startVal = metric.values[0];
     const endVal = metric.values[metric.values.length - 1];
@@ -186,6 +213,7 @@
       label: metric.label,
       type: metric.type || "fact",
       valuesFmt: metric.values.map((v) => fmt(v, metric.unit, currency)),
+      sources: metric.sources || null,
       cagrFmt: cagrVal === null ? "—" : (cagrVal * 100).toFixed(1) + "%",
       sparkPath: sparkPath(metric.values, 100, 28, 2),
     };
@@ -406,7 +434,7 @@
           (r.type === "calc" ? "CALC" : "FACT") + "</span></td>" +
           '<td><svg viewBox="0 0 100 28" class="vm-spark"><path d="' + r.sparkPath +
           '" fill="none" stroke="var(--color-accent-700)" stroke-width="1.6"></path></svg></td>' +
-          r.valuesFmt.map((v) => '<td class="vm-num">' + v + "</td>").join("") +
+          r.valuesFmt.map((v, i) => '<td class="vm-num">' + v + provTag(r.sources, i) + "</td>").join("") +
           '<td class="vm-num">' + r.cagrFmt + "</td></tr>"
       )
       .join("");

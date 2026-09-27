@@ -1,0 +1,104 @@
+category: auto
+indicators:
+- key: vehicle_registrations
+  name: Vehicle Registrations (VAHAN)
+  economic_meaning: Total new vehicle registrations across categories -- a broad, high-frequency consumption/activity
+    proxy.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Auto & Mobility
+  headline_weight: 0.6
+  preferred_chart_window: 3y
+  material_change_mom: 2.0
+  material_change_yoy: 3.0
+  material_change_ytd: 3.0
+  status: registered_only
+  source:
+    organization:
+      name: Ministry of Road Transport and Highways (MoRTH)
+      authority_level: official_primary
+      description: Operates the VAHAN vehicle-registration database, aggregated from state RTOs nationwide.
+    dataset:
+      authority_level: official_primary
+      priority: 1
+      access_method: api
+      cadence: monthly
+      historical_start: 2019-01
+      backfill_supported: false
+      license_notes: Public data, Government of India Open Data Licence
+    endpoints:
+    - url: https://vahan.parivahan.gov.in
+      access_method: api
+      priority: 1
+      authentication_type: none
+      availability_status: unverified
+    series:
+    - series_key: vehicle_registrations_total_in
+      geography: IN
+      unit: units
+      frequency: monthly
+      seasonal_adjustment: nsa
+- key: passenger_vehicle_sales
+  name: Passenger Vehicle Sales
+  economic_meaning: Domestic passenger-vehicle wholesale/retail sales -- an urban discretionary-consumption
+    proxy.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Auto & Mobility
+  headline_weight: 0.5
+  preferred_chart_window: 3y
+  material_change_mom: 2.0
+  material_change_yoy: 3.0
+  material_change_ytd: 3.0
+  status: registered_only
+- key: two_wheeler_sales
+  name: Two-Wheeler Sales
+  economic_meaning: Domestic two-wheeler sales -- skews more rural/semi-urban and is sensitive to fuel
+    prices and rural incomes.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Auto & Mobility
+  headline_weight: 0.5
+  preferred_chart_window: 3y
+  material_change_mom: 2.0
+  material_change_yoy: 3.0
+  material_change_ytd: 3.0
+  status: registered_only
+- key: commercial_vehicle_sales
+  name: Commercial Vehicle Sales
+  economic_meaning: Domestic commercial-vehicle sales -- tracks freight demand and capex/logistics investment.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Auto & Mobility
+  headline_weight: 0.5
+  preferred_chart_window: 3y
+  material_change_mom: 2.0
+  material_change_yoy: 3.0
+  material_change_ytd: 3.0
+  status: registered_only
+- key: tractor_sales
+  name: Tractor Sales
+  economic_meaning: Domestic tractor sales -- a farm-mechanization and rural-income proxy, correlated
+    with monsoon outcomes.
+  higher_is: good
+  leading_lagging: coincident
+  report_section: Auto & Mobility
+  headline_weight: 0.4
+  preferred_chart_window: 3y
+  material_change_mom: 3.0
+  material_change_yoy: 5.0
+  material_change_ytd: 5.0
+  status: registered_only
+- key: ev_penetration_rate
+  name: EV Penetration Rate
+  economic_meaning: Electric vehicles as a share of total new vehicle registrations -- tracks the pace
+    of the electrification transition.
+  higher_is: good
+  leading_lagging: leading
+  report_section: Auto & Mobility
+  headline_weight: 0.3
+  preferred_chart_window: 3y
+  material_change_mom: null
+  material_change_yoy: null
+  material_change_ytd: null
+  status: registered_only

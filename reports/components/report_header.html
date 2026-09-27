@@ -1,0 +1,37 @@
+{#
+  Signal report header — masthead + investigation metadata line.
+  Data-driven: takes a reports.schema.InvestigationReport `report`, nothing
+  company- or investigation-specific is hardcoded here.
+#}
+{% macro report_header(report) %}
+<div class="signal-header">
+  <div class="signal-header-brand">Signals &middot; Deep Dive Research Report</div>
+  <h1 class="signal-header-title">{{ report.research_question }}</h1>
+  <div class="signal-header-meta">
+    {% if report.metadata.generated_at %}
+    <span class="signal-header-meta-item">
+      <strong>Generated</strong> <span class="local-time" data-utc="{{ report.metadata.generated_at }}">{{ report.metadata.generated_at }}</span>
+    </span>
+    {% endif %}
+    <span class="signal-header-meta-item">
+      <strong>Coverage</strong> {{ report.metadata.company_ids|join(', ') if report.metadata.company_ids else 'Macro / regulatory' }}
+    </span>
+    {% if report.metadata.statement_type %}
+    <span class="signal-header-meta-item"><strong>Basis</strong> {{ report.metadata.statement_type }}</span>
+    {% endif %}
+    <span class="signal-header-meta-item">
+      <strong>{{ report.metadata.hypothesis_count }}</strong> hypothes{{ 'is' if report.metadata.hypothesis_count == 1 else 'es' }} evaluated
+    </span>
+    {% if report.metadata.as_of %}
+    <span class="signal-header-meta-item" title="Point-in-time investigation: every evidence source was restricted to what was on file on this date. No later data was retrievable.">
+      evidence as of {{ report.metadata.as_of }}
+    </span>
+    {% endif %}
+    {% if report.metadata.cost_calls %}
+    <span class="signal-header-meta-item" title="{{ report.metadata.cost_calls }} LLM call(s) across hypothesis generation, evaluation, and synthesis.">
+      <strong>${{ '%.4f'|format(report.metadata.cost_usd or 0) }}</strong> research cost
+    </span>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}

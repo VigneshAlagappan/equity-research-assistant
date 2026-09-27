@@ -1,0 +1,31 @@
+/*
+  Signal report typography — one restrained, print-friendly type system.
+  Uses the app's own heading/body font stacks where already loaded
+  (var(--font-heading)/--font-body from classical/styles.css) so no extra
+  webfont fetch is needed; falls back to a serif/sans system stack when
+  those variables aren't defined (e.g. rendering this file standalone).
+*/
+
+.signal-report {
+  --signal-font-heading: var(--font-heading, "Georgia", "Times New Roman", serif);
+  --signal-font-body: var(--font-body, -apple-system, "Segoe UI", sans-serif);
+
+  font-family: var(--signal-font-body);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.signal-report h1, .signal-report h2, .signal-report h3, .signal-report h4 {
+  font-family: var(--signal-font-heading);
+  font-weight: 700;
+  color: var(--signal-navy);
+  margin: 0;
+}
+
+.signal-header-title { font-family: var(--signal-font-heading); font-weight: 700; }
+.signal-section-label { font-family: var(--signal-font-heading); }
+.signal-hyp-claim { font-family: var(--signal-font-heading); }
+.signal-table thead th { font-family: var(--signal-font-heading); }
+
+/* Numeric alignment — metric values, table numeric columns, scores. */
+.signal-metric-value, .signal-table td.num, .signal-badge { font-variant-numeric: tabular-nums; }
