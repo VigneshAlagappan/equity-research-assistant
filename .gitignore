@@ -269,6 +269,9 @@ threads/
 # never committed" reasoning as data/raw/ above.
 /raw/
 
+# Scratch/temp working folders (e.g. Temp-RBI/ manual downloads staging area)
+Temp*
+
 # Deploy-time artifacts generated from `aws lightsail get-container-services`
 # output -- always contains real secrets (API keys, DB URL) pulled from the
 # live service's current env vars, so must never be committed. Regenerated
