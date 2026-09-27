@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import re
 
+from companies.registry import search_companies
 from storage.company_repository import (
     select_active_companies_by_country,
     select_companies_by_sector_column,
@@ -93,6 +94,39 @@ def _dimension_hits(conn: DBConnection, text_lower: str, names: list[str], looku
     return hits
 
 
+_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+_MIN_WORD_LEN = 3
+_CANDIDATES_PER_WORD = 5
+
+
+def _mentions_a_company(conn: DBConnection, text: str, text_lower: str) -> bool:
+    """True if `text` names a specific registered company -- used only to
+    gate the country dimension below (see its own comment for why).
+
+    Two-stage, same shape as research/company_resolver.py's own
+    deterministic prefilter, but stricter at the final step: search_
+    companies() (SQL substring match, cheap and indexed) builds a bounded
+    candidate pool per word, then each candidate's FULL id/display_name/
+    nse_symbol must _mentions()-match the text as a whole word/phrase, not
+    just a substring. That last step is what a plain substring check gets
+    wrong -- the word "Technology" substring-matches dozens of registered
+    names ("AAA Technologies", "63 moons technologies", ...) without the
+    question actually naming any of them, which previously made a
+    perfectly ordinary group query like "Technology companies in India"
+    look like it named a specific company and wrongly suppressed India
+    from being applied at all."""
+    seen_ids: set[str] = set()
+    for word in {w for w in _WORD_RE.findall(text) if len(w) >= _MIN_WORD_LEN}:
+        for row in search_companies(conn, word, limit=_CANDIDATES_PER_WORD):
+            if row["company_id"] in seen_ids:
+                continue
+            seen_ids.add(row["company_id"])
+            for candidate in (row["company_id"], row["display_name"], row["legal_name"], row["nse_symbol"]):
+                if candidate and _mentions(text_lower, candidate):
+                    return True
+    return False
+
+
 def resolve_tags_in_text(conn: DBConnection, text: str) -> list[str]:
     """Every company_id matching the group(s) named in `text`, across
     indices/sectors/industries/macro-economic sectors/countries/status --
@@ -125,18 +159,47 @@ def resolve_tags_in_text(conn: DBConnection, text: str) -> list[str]:
     if macro_hits:
         dimension_sets.append(macro_hits)
 
-    country_hits: set[str] = set()
-    for code, synonyms in _COUNTRY_SYNONYMS.items():
-        if any(_mentions(text_lower, syn) for syn in synonyms):
-            country_hits.update(r["company_id"] for r in select_active_companies_by_country(conn, code))
-    if _US_TOKEN_RE.search(text):  # case-sensitive, against the ORIGINAL text -- see _US_TOKEN_RE's own comment
-        country_hits.update(r["company_id"] for r in select_active_companies_by_country(conn, "US"))
-    if country_hits:
-        dimension_sets.append(country_hits)
-
+    # "India"/"Indian" (and, more narrowly, the "US" token) are ordinary
+    # words that show up in two very different kinds of question, and only
+    # one of them means "scope to this country's whole company universe":
+    #
+    #   1. "Technology companies in India" -- a genuine group-scoping
+    #      request, but note it NAMES A GROUP TOO (a sector here); country
+    #      only ever narrows an already-named group in practice.
+    #   2. "HDFC Bank's NPA trend vs India credit growth" / "What is
+    #      India's repo rate trend?" -- India here means the MACRO concept
+    #      (a comparator, or the subject of a macro/regulatory question
+    #      research/macro_evidence.py already answers without any company
+    #      scoping at all), not a request to widen scope to ~2,500
+    #      companies. A single ambiguous word is exactly why country is
+    #      the one dimension every other one above doesn't need this extra
+    #      care for: an index/sector/industry name is a distinctive proper
+    #      noun essentially never used any other way, so its own mention
+    #      alone is already a reliable "scope to this group" signal.
+    #
+    # So country is applied ONLY as an intersecting modifier on top of
+    # another dimension that already matched on its own (case 1) -- never
+    # as a standalone trigger (case 2), and additionally skipped outright
+    # once a specific company is named directly (a real, observed bug
+    # otherwise: both of the examples above returned all ~2,500 Indian
+    # companies before this).
     status_hits = _dimension_hits(conn, text_lower, list(_STATUSES), select_company_ids_by_status)
     if status_hits:
         dimension_sets.append(status_hits)
+
+    # Computed last, after every other dimension, so its own "only as a
+    # modifier" gate (dimension_sets already non-empty) sees index/sector/
+    # industry/macro/status hits alike -- "Archived companies in India"
+    # must still narrow correctly, not just "Technology companies in India".
+    country_hits: set[str] = set()
+    if dimension_sets and not _mentions_a_company(conn, text, text_lower):
+        for code, synonyms in _COUNTRY_SYNONYMS.items():
+            if any(_mentions(text_lower, syn) for syn in synonyms):
+                country_hits.update(r["company_id"] for r in select_active_companies_by_country(conn, code))
+        if _US_TOKEN_RE.search(text):  # case-sensitive, against the ORIGINAL text -- see _US_TOKEN_RE's own comment
+            country_hits.update(r["company_id"] for r in select_active_companies_by_country(conn, "US"))
+    if country_hits:
+        dimension_sets.append(country_hits)
 
     if not dimension_sets:
         return []
