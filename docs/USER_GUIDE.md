@@ -2,95 +2,96 @@
 
 This is a guide for **using Signals**, an Equity AI Research Assistant (US + India
 focus), as an analyst — what each feature does and the exact commands to run it.
-For how the system is built internally, see [README.md](README.md).
+For how the system is built internally, see [README.md](../README.md).
 
-All commands are run from the project root, with the virtual environment active:
-
-```bash
-source .venv/bin/activate
-```
+This app runs as a single Docker image against the same cloud backends in local
+dev as in production — **Neon (Postgres)**, **Qdrant Cloud** (semantic search),
+**Neo4j Aura** (graph), and **S3** (documents). There is no SQLite mode: nothing
+in this guide falls back to a local `data/*.db` file, so every command below talks
+to the real shared cloud services. Keep that in mind — a `main.py init` or an
+`ingest` run locally lands in the same live database production reads from (see
+[Deployment](#deployment-aws-lightsail) below for how that's wired on Lightsail).
 
 ---
 
 ## One-time setup
 
-**Step 1 — after cloning this repo** (or pulling a change to `data/db_shards/`),
-reassemble the real, already-populated database from its git-tracked shard parts
-**before running `init` or anything else**:
+**Step 1 — create a `.env` file** at the project root with the cloud credentials
+below. `.env` is git-ignored and loaded automatically by every command run inside
+the container (via `--env-file`) — you don't need to `export` or `source`
+anything yourself:
 
-```bash
-python scripts/db_unshard.py
+```
+ANTHROPIC_API_KEY=sk-ant-...
+
+DATABASE_BACKEND=postgres
+NEON=postgresql://<user>:<password>@<host>.neon.tech/neondb?sslmode=require
+
+VECTOR_STORE_BACKEND=qdrant
+QDRANT_URL=https://<your-cluster>.qdrant.io
+QDRANT_API_KEY=<your-qdrant-api-key>
+
+GRAPH_BACKEND=neo4j
+NEO4J_URI=neo4j+s://<your-instance>.databases.neo4j.io
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=<your-neo4j-password>
+
+DOCUMENT_STORE_BACKEND=s3
+S3_BUCKET_NAME=signals-app-documents-862938824222
+AWS_REGION=us-east-2
+AWS_ACCESS_KEY_ID=<your-key>
+AWS_SECRET_ACCESS_KEY=<your-secret>
 ```
 
-`data/equity_research.db` is git-ignored (`*.db`) and can grow past GitHub's 100MB
-per-file limit, so it's committed as ≤50MB parts under `data/db_shards/` instead —
-the live file itself is never touched by this, only how it's stored in git. Before
-committing a change to the database, re-shard it:
+Get the actual `NEON`/`QDRANT_*`/`NEO4J_*`/`AWS_*` values from whoever manages
+this project's cloud accounts (or from your own already-working Lightsail
+deployment config) — none of these are placeholders you can invent, and there's
+no local substitute for any of them anymore.
+
+**Step 2 — build the Docker image:**
 
 ```bash
-python -m scripts.db_shard
+# --platform linux/amd64 matches the production image (Lightsail runs amd64);
+# harmless to include on Apple Silicon too, just slower to build/run under
+# emulation than a native arm64 image would be if you drop the flag for
+# purely-local use.
+docker build --platform linux/amd64 -t signals-app:local .
 ```
 
-Both scripts verify a SHA-256 checksum on reassembly and refuse to overwrite an
-existing `data/equity_research.db` unless you pass `--force` — see each script's
-`--help` for options (chunk size, etc.). **If you skip this step**, the next
-command (`init`) will happily create a new, empty database instead of failing —
-there's nothing stopping you from starting work against the wrong (empty) db, and
-`db_unshard.py` will then refuse to fix it without `--force` since a file already
-exists at that path.
-
-**Step 2 — initialize the database** (safe to re-run even against the real,
-unsharded database — it never deletes existing data, only adds anything missing):
+**Step 3 — run the container locally, pointed at those same cloud backends:**
 
 ```bash
-python main.py init
+docker run -d --name signals-app -p 8080:8080 \
+  --env-file <(grep -v '^#' .env | grep -v '^$') \
+  signals-app:local
+
+curl http://localhost:8080/health   # expect {"status": "ok"}
 ```
 
-This creates the SQLite database if step 1 was skipped, the folders under `data/`,
-and seeds the metric vocabulary (net profit, ROA/ROE inputs, GNPA %, etc.).
+**Step 4 — initialize the database** (safe to re-run — it never deletes existing
+data, only adds anything missing: seeds the metric vocabulary, e.g. net profit,
+ROA/ROE inputs, GNPA %, and the admin account):
+
+```bash
+docker exec signals-app python main.py init
+```
 
 **A ready-to-use admin account is seeded automatically** — username `admin`,
 password `admin` — so the web viewer (feature 7) is usable with zero signup.
 Log in with it to reach admin-gated features (Admin → Import Data, the Ingest
 queue, the Usage/cost page) instead of signing up for a new account. There's no
-in-app way to change this password today — worth keeping in mind if this
-instance is ever reachable by anyone else.
+in-app way to change this password today — worth keeping in mind since this
+instance now shares the same live database as production.
 
-**If you plan to use the AI research assistant** (`ask`, or the chat page in the web
-viewer — features 8 and 9 below), create a `.env` file at the project root with your
-Anthropic API key:
+Every `main.py` subcommand below (`add-company`, `ingest`, `analyze`, `ask`, ...)
+is run the same way — prefix it with `docker exec signals-app`, e.g.
+`docker exec signals-app python main.py analyze HDFCBANK`. `serve` is the one
+exception: it's already running as the container's own gunicorn process (Step 3),
+so just open the browser instead of also running `serve` inside the container.
 
-```
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-`.env` is git-ignored and loaded automatically by every `python main.py ...` command —
-you don't need to `export` or `source` anything yourself.
-
-**Optional infrastructure — Neo4j (graph) and Qdrant (semantic search):** neither is
-required. Out of the box, `GRAPH_BACKEND=sqlite` (the default) runs relationship
-traversal as pure Python over the existing SQLite tables, and semantic search degrades
-to FTS5/BM25-only if Qdrant isn't reachable. Both are local-first — this app never
-starts, stops, or manages them; you run them yourself, the same way you'd run Ollama:
-
-```bash
-# Neo4j — only needed if you set GRAPH_BACKEND=neo4j
-docker run -d --name neo4j -p 7474:7474 -p 7687:7687 \
-    -e NEO4J_AUTH=neo4j/<your-password> neo4j:5
-# then in .env: GRAPH_BACKEND=neo4j, NEO4J_PASSWORD=<your-password>
-# browse the graph at http://localhost:7474
-
-# Qdrant — only needed for semantic (vector) search; VECTOR_STORE_BACKEND
-# already defaults to "qdrant", so this is the one worth starting if you
-# want feature 9's chat and the AI assistant to use semantic retrieval
-docker run -d --name qdrant -p 6333:6333 -p 6334:6334 qdrant/qdrant
-# set VECTOR_STORE_BACKEND=none in .env to disable the vector layer entirely
-# instead (e.g. no Docker available) — everything falls back to FTS5/BM25
-```
-
-If a configured Neo4j or Qdrant instance is unreachable at request time, both
-degrade automatically rather than failing — see `config/settings.py`'s
-`GRAPH_BACKEND`/`VECTOR_STORE_BACKEND` comments for the full set of env vars.
+Stop/remove the container when you're done: `docker rm -f signals-app`. Nothing
+local-only is destroyed by this — all data lives in Neon/Qdrant/Neo4j/S3, not in
+the container.
 
 ---
 
@@ -434,17 +435,15 @@ fetched from Yahoo Finance — separate from `analyze`'s fundamentals, this is f
 price charting. Not yet a `main.py` subcommand — run the scripts directly (as
 modules, so their `storage`/`sources` imports resolve):
 
-In production (see §Deployment below), `daily_prices` lives in the same
-Postgres database as everything else, via `storage/price_repository_pg.py`
-and `storage/backend_bootstrap.py`'s `open_price_db()` (ADR-021). Local
-development (`DATABASE_BACKEND=sqlite`, the default) keeps it in its own
-file, `data/price_history.db` — the same commands below work unchanged
-against either backend.
+`daily_prices` lives in the same Neon Postgres database as everything else,
+via `storage/price_repository_pg.py` and `storage/backend_bootstrap.py`'s
+`open_price_db()` (ADR-021) — same `DATABASE_BACKEND=postgres` setup as the
+rest of this guide, no separate local file.
 
 **One-time (or occasional) backfill:**
 
 ```bash
-python -m scripts.backfill_price_history --period 1y
+docker exec signals-app python -m scripts.backfill_price_history --period 1y
 ```
 
 Loops over every company tagged `Nifty 500` (already populated by `add-company`/
@@ -483,7 +482,7 @@ uses the exact window you pass and has no time budget unless you add
 **Daily job (keeps it current):**
 
 ```bash
-python -m scripts.fetch_daily_prices
+docker exec signals-app python -m scripts.fetch_daily_prices
 ```
 
 Upserts the last 5 trading days for every company (not just "today") so a missed
@@ -492,29 +491,22 @@ next run instead of leaving a gap. Point your OS's scheduler (cron, Task
 Scheduler, ...) at this to run it once daily after market close; this guide
 doesn't set that up for you.
 
-**Where the data goes / why it's a separate file:** `data/price_history.db` is
-*not* the same database as `data/equity_research.db` and is *not* git-tracked
-(it's covered by the repo's blanket `*.db` ignore rule, and — unlike
-`equity_research.db` — never git-shard-committed either). It's cheap to
-regenerate from Yahoo Finance at any time, so after a fresh clone just run the
-backfill command above instead of expecting it to already be there.
-
 **Reading it back:** `GET /companies/<company_id>/price-feed.json?period=1y` (via
-`serve`, feature 7) returns `{"dates": [...], "open": [...], "high": [...],
-"low": [...], "close": [...], "volume": [...]}` for that company. There's no chart
-panel rendering this in the browser yet — today this is a raw JSON feed only.
+the running container, feature 7) returns `{"dates": [...], "open": [...],
+"high": [...], "low": [...], "close": [...], "volume": [...]}` for that company.
+There's no chart panel rendering this in the browser yet — today this is a raw
+JSON feed only.
 
-### 13. Database sharding (git storage)
+### 13. Database sharding (git storage) — not applicable
 
-`data/equity_research.db` is git-tracked, but GitHub hard-blocks any single
-file over 100MB — and the db is already well past even the 50MB warning
-threshold. So it's never committed directly; instead it's split into
-≤50MB parts under `data/db_shards/` and *those* are what's actually
-tracked (already the case today — `git log -- data/db_shards/` shows the
-switch in commit `8df59aa`).
+This section described sharding `data/equity_research.db` (a git-tracked SQLite
+file split into ≤50MB parts to stay under GitHub's 100MB limit) for the old
+local-SQLite dev workflow. It doesn't apply here: the database is Neon
+(Postgres), never a local file, so there's nothing to shard or commit. Kept
+below only in case an older checkout still has git-tracked `data/db_shards/`
+parts to clean up; skip it otherwise.
 
-**Reshard (after any ingestion — this is what actually needs to run
-regularly):**
+**Reshard (legacy, SQLite-only):**
 
 ```bash
 python -m scripts.db_shard
@@ -565,33 +557,30 @@ what's in git to reflect what's actually in the live db.
 ## A typical workflow, start to finish
 
 ```bash
-source .venv/bin/activate
-
-# First time only, after cloning (see One-time setup above) — reassembles the
-# real, already-populated database from its git-tracked shard parts. Skipping
-# this and running `init` first creates an empty database instead, and
-# db_unshard.py will then refuse to overwrite it without --force.
-python scripts/db_unshard.py
-
-python main.py init
+# First time only (see One-time setup above): build the image, run the
+# container against Neon/Qdrant/Neo4j/S3, then initialize the database.
+docker build --platform linux/amd64 -t signals-app:local .
+docker run -d --name signals-app -p 8080:8080 \
+  --env-file <(grep -v '^#' .env | grep -v '^$') signals-app:local
+docker exec signals-app python main.py init
 
 # 1. Register the company
-python main.py add-company HDFCBANK --legal-name "HDFC Bank Limited" \
+docker exec signals-app python main.py add-company HDFCBANK --legal-name "HDFC Bank Limited" \
   --display-name "HDFC Bank" --sector "Financial Services" --industry "Private Sector Bank"
 
-# 2. Drop the Screener export at data/raw/HDFCBANK/screener/HDFCBANK.xlsx, then:
-python main.py ingest data/raw/HDFCBANK/screener/HDFCBANK.xlsx
+# 2. Drop the Screener export at data/raw/HDFCBANK/screener/HDFCBANK.xlsx
+#    inside the container (docker cp it in, or bind-mount data/raw/), then:
+docker exec signals-app python main.py ingest data/raw/HDFCBANK/screener/HDFCBANK.xlsx
 
 # 3. Read the report
-python main.py analyze HDFCBANK --charts
+docker exec signals-app python main.py analyze HDFCBANK --charts
 
-# 4. Browse it with charts inline
-python main.py serve
-# → open http://127.0.0.1:5000/companies/HDFCBANK
-# → or http://127.0.0.1:5000/chat to ask questions in the browser instead
+# 4. Browse it with charts inline — the container is already serving on 8080
+# → open http://localhost:8080/companies/HDFCBANK
+# → or http://localhost:8080/chat to ask questions in the browser instead
 
 # 5. Ask a research question from the CLI (needs ANTHROPIC_API_KEY in .env — see One-time setup)
-python main.py ask "What stands out about HDFC Bank's last 10 years?" --company HDFCBANK
+docker exec signals-app python main.py ask "What stands out about HDFC Bank's last 10 years?" --company HDFCBANK
 ```
 
 ---
@@ -623,23 +612,18 @@ and Qdrant Cloud. Local SQLite/`data/` never ships in the image — see
 
 ### 1. Build the Docker image
 
+Same build as [One-time setup](#one-time-setup) above — if you already built
+and smoke-tested `signals-app:local` there against the real Neon/Qdrant/Neo4j/S3
+backends (same `.env`, same `DATABASE_BACKEND=postgres`/`DOCUMENT_STORE_BACKEND=s3`),
+that already is the pre-push verification; just re-tag it for the push step below:
+
 ```bash
 # --platform linux/amd64 is required even on Apple Silicon -- Lightsail
 # runs amd64, and Docker defaults to your host's architecture (arm64)
 # otherwise, producing an image that won't start there.
 docker build --platform linux/amd64 -t signals-app:pg-s3 .
-
-# Test locally against the real backends before pushing anything --
-# DATABASE_BACKEND/DOCUMENT_STORE_BACKEND aren't set in the Dockerfile
-# itself, only passed at run time (here and in the Lightsail deployment
-# below), so local `docker run` without them defaults to local
-# SQLite/disk -- add them to actually exercise Postgres/S3 locally first.
 docker run -d --name signals-test -p 8081:8080 \
   --env-file <(grep -v '^#' .env | grep -v '^$') \
-  -e DATABASE_BACKEND=postgres \
-  -e DOCUMENT_STORE_BACKEND=s3 \
-  -e S3_BUCKET_NAME=signals-app-documents-862938824222 \
-  -e AWS_REGION=us-east-2 \
   signals-app:pg-s3
 
 curl http://localhost:8081/health   # expect {"status": "ok"}
@@ -761,7 +745,7 @@ checking for overlap.
 
 ## Related documentation
 
-- **[README.md](README.md)** — the original design proposal and scoping
+- **[README.md](../README.md)** — the original design proposal and scoping
   rationale: why the system is shaped the way it is.
 - **[architecture.md](architecture.md)** — the current, accurate technical
   picture of what's actually built.

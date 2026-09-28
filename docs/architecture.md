@@ -10,7 +10,7 @@ Either way, it's still self-use in scope today — one seeded admin account, no
 multi-tenant data isolation — not a SaaS deployment (see FeatureList.md's
 Deployment model section).
 
-For product/feature scope, see [README.md](README.md) and
+For product/feature scope, see [README.md](../README.md) and
 [FeatureList.md](FeatureList.md). For running the app, see
 [USER_GUIDE.md](USER_GUIDE.md).
 

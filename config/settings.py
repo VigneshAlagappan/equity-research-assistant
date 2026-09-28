@@ -312,14 +312,13 @@ LOCAL_MODEL_ENABLED = os.environ.get("LOCAL_MODEL_ENABLED", "true").lower() != "
 LOCAL_MODEL_ID = os.environ.get("LOCAL_MODEL_ID", "llama3.1:8b")
 
 # ------------------------------------------------------------------
-# OpenRouter (llm/providers/openrouter_provider.py). First-choice model for
-# every tier as of 2026-09-27 (operator request) — TIER_PREFERRED_MODEL
-# below prefers it for standard/deep, and "quick"'s own hand-specified
-# chain (TIER_FALLBACK_CHAIN_OVERRIDE below) now tries it first too, ahead
-# of Anthropic Haiku, then the local Ollama model last. Also, as of
-# 2026-09-27, research/signals_report.py's and research/insights.py's
-# default pinned model (no fallback there — see those files) unless
-# ANTHROPIC_MODEL is set.
+# OpenRouter (llm/providers/openrouter_provider.py) — the "quick" tier's
+# second-choice model as of 2026-09 (operator request: Anthropic Haiku
+# first, then OpenRouter's hosted Gemma, then the local Ollama model last —
+# see TIER_FALLBACK_CHAIN_OVERRIDE below for the router-side chain this
+# builds). Also, as of 2026-09-27, research/signals_report.py's and
+# research/insights.py's default pinned model (no fallback there — see
+# those files) unless ANTHROPIC_MODEL is set.
 #
 # Upgraded 2026-09-27 from google/gemma-2-27b-it (8K context,
 # reasoning_strength=1 in llm/capability_registry.py) to
@@ -355,39 +354,34 @@ DISABLED_MODELS: set[str] = {"claude-opus-5"}
 # llm/router.py's fallback chain starts here, then falls through other
 # enabled models (strongest reasoning_strength first) if this one fails.
 #
-# All three tied to OPENROUTER_MODEL_ID as of 2026-09-27 (operator request):
-# the mechanism (per-tier preferred model, falling through to other enabled
-# models) is unchanged — only which model each tier prefers moved from
-# claude-haiku-4-5 to OpenRouter's model. Note "quick"'s *actual* fallback
-# chain is still hand-specified in TIER_FALLBACK_CHAIN_OVERRIDE just below
-# (Haiku first, then this same OpenRouter model, then local Ollama) — that
-# override takes precedence over this dict's "quick" entry entirely, so
-# quick-tier questions still try Haiku first regardless of this change; this
-# entry only affects "quick" observability/consistency, same caveat the
-# prior claude-haiku-4-5 value already had.
+# "quick" prefers the same Haiku call standard/deep do (TIER_PREFERRED_MODEL
+# below still names it, for observability/consistency), but its full chain
+# is hand-specified in TIER_FALLBACK_CHAIN_OVERRIDE just below: Haiku, then
+# OpenRouter's hosted Gemma, then the local Ollama model — never Sonnet in
+# between, which the normal "preferred, then every other enabled cloud model
+# strongest-first, then local" algorithm (llm/router.py's default
+# _fallback_chain) would otherwise insert.
 TIER_PREFERRED_MODEL: dict[str, str] = {
-    "quick": OPENROUTER_MODEL_ID,
-    "standard": OPENROUTER_MODEL_ID,
-    "deep": OPENROUTER_MODEL_ID,
+    "quick": "claude-haiku-4-5",
+    "standard": "claude-haiku-4-5",
+    "deep": "claude-haiku-4-5",
 }
 
 # Tier -> an explicit, hand-ordered model_id chain, used INSTEAD OF the
 # derived "preferred, then other enabled cloud strongest-first, then local"
 # chain llm/router.py's _fallback_chain() builds by default. Only "quick"
-# has one today: OpenRouter's model first, Anthropic Haiku second, the local
-# Ollama model last — reordered 2026-09-27 (operator request) to put
-# OpenRouter first here too, consistent with TIER_PREFERRED_MODEL above now
-# doing the same for standard/deep; a model missing from this list (Sonnet,
-# here) is simply never offered to this tier, and a listed model that's
-# disabled/unconfigured (e.g. no OPENROUTER_API_KEY) is silently skipped in
-# the chain rather than raising, so a fresh checkout with only
-# ANTHROPIC_API_KEY set still falls through to Haiku, not stuck on a
-# disabled first entry. This bypasses TIER_MIN_REASONING_STRENGTH's weak-
-# model gate entirely — an explicit hand-picked chain is already an
-# operator decision that every listed model is acceptable for this tier,
-# unlike the derived chain's auto-discovered fallback candidates.
+# has one today: Anthropic Haiku first, OpenRouter's hosted Gemma second,
+# the local Ollama model last (operator request, 2026-09) — a model missing
+# from this list (Sonnet, here) is simply never offered to this tier, and a
+# listed model that's disabled/unconfigured (e.g. no OPENROUTER_API_KEY) is
+# silently skipped in the chain rather than raising, so a fresh checkout
+# with only ANTHROPIC_API_KEY set still works, it just never reaches the
+# later steps. This bypasses TIER_MIN_REASONING_STRENGTH's weak-model gate
+# entirely — an explicit hand-picked chain is already an operator decision
+# that every listed model is acceptable for this tier, unlike the derived
+# chain's auto-discovered fallback candidates.
 TIER_FALLBACK_CHAIN_OVERRIDE: dict[str, list[str]] = {
-    "quick": [OPENROUTER_MODEL_ID, "claude-haiku-4-5", LOCAL_MODEL_ID],
+    "quick": ["claude-haiku-4-5", OPENROUTER_MODEL_ID, LOCAL_MODEL_ID],
 }
 
 # Tier -> minimum ModelSpec.reasoning_strength (llm/capability_registry.py,
