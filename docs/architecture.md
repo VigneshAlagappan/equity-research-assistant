@@ -1129,6 +1129,19 @@ convention every other recurring job in this app uses — registered in
 reachable via CLI, the Schedule panel's "Run now", and the cron-triggered
 endpoint like any other scheduled job, with no new scheduling mechanism.
 
+Both audit trails feed an **Eval Analytics** admin panel (Settings →
+Administration → System), the trends/tuning layer over that raw data:
+question volume, latency, cost, and confidence by complexity level from
+`signals_routing_log` (informing model-routing tuning — e.g. which level
+could move to a cheaper model chain), and a per-level accuracy breakdown
+plus a pass-rate trend line across recent eval runs from `signals_eval`'s
+`batch_job_runs`/`batch_job_items` history (informing whether Jev's
+classifier is drifting). It aggregates rather than duplicates — the Audit
+Log → Job Runs tab already lists every raw run/item. Charts are the same
+hand-rolled SVG convention as the Charts tab, with complexity level as an
+ordinal color ramp and match/mismatch as a fixed status pair, both
+palette-validated per the project's data-viz standard.
+
 **What's actually live in the web app today** (see ADR-023's own addendum for
 the full detail): Jev decides *dispatch* — whether a question goes to the
 single-pass `research/assistant.py::answer_question()` pipeline ("ask",

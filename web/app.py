@@ -219,6 +219,7 @@ from storage.repositories import (
     list_reconciliation_log_by_company,
     list_running_batch_job_runs,
     list_sec_edgar_migration_status,
+    list_signals_routing_log,
     list_xbrl_migration_status,
     list_note_attachments_for_company,
     list_report_evidence,
@@ -1385,6 +1386,144 @@ def create_app() -> Flask:
             "audit_raw_total_objects": sum(r["total"] for r in raw_rows),
         }
 
+    _EVAL_DETAIL_RE = re.compile(r"expected=L(\d+) actual=L(\d+)")
+
+    def _eval_analytics_panel_context(db, logs_db) -> dict:
+        """Only computed when the Eval Analytics panel is actually being
+        viewed -- same reasoning _audit_panel_context()/_schedule_panel_
+        context() give for their own panels.
+
+        Two independent sources, both already used elsewhere in this app,
+        aggregated here rather than duplicated:
+          - signals_routing_log (llm/routing_audit.py's per-question audit
+            trail, docs/ADR/023) -- every real routed question, not just
+            eval traffic -- gives level distribution/latency/cost/
+            confidence: the "how is Signals actually being used and what
+            does it cost" half, informing model-routing tuning.
+          - batch_job_runs/batch_job_items for job_name='signals_eval'
+            (scripts/run_signals_eval.py) -- the periodic golden-set
+            accuracy history, parsed out of each item's stable
+            "expected=L{n} actual=L{n} confidence=... status=...
+            latency_ms=..." detail string -- the "is Jev's classifier
+            actually accurate, and is it getting better or worse over
+            time" half.
+
+        The Audit Log > Job Runs tab already lists signals_eval's raw
+        run/item history (any BatchRun-wrapped job shows up there) -- this
+        panel doesn't repeat that list, it aggregates across it (and
+        across signals_routing_log, which Job Runs never touches) into the
+        level/time breakdowns a raw list can't show at a glance."""
+        _PERIOD_DELTAS = {"7d": timedelta(days=7), "30d": timedelta(days=30), "90d": timedelta(days=90)}
+        period_filter = request.args.get("ea_period") or "30d"
+        since_iso = (
+            (datetime.now(timezone.utc) - _PERIOD_DELTAS[period_filter]).isoformat()
+            if period_filter in _PERIOD_DELTAS else None
+        )
+
+        # limit=5000, not the list_signals_routing_log() default of 200 --
+        # this panel aggregates across the whole selected window rather
+        # than showing a raw recent-first list, so it needs however many
+        # rows actually fall inside that window, not just "the last 200
+        # regardless of when they happened."
+        routing_rows = list_signals_routing_log(db, limit=5000)
+        if since_iso:
+            routing_rows = [r for r in routing_rows if r["created_at"] >= since_iso]
+
+        level_stats: dict[int, dict] = {
+            level: {
+                "count": 0, "latency_total": 0.0, "cost_total": 0.0,
+                "confidence_total": 0.0, "confidence_count": 0,
+                "answered": 0, "insufficient_data": 0, "error": 0,
+            }
+            for level in LEVEL_LABELS
+        }
+        for row in routing_rows:
+            stats = level_stats.setdefault(row["jev_level"], {
+                "count": 0, "latency_total": 0.0, "cost_total": 0.0,
+                "confidence_total": 0.0, "confidence_count": 0,
+                "answered": 0, "insufficient_data": 0, "error": 0,
+            })
+            stats["count"] += 1
+            stats["latency_total"] += row["latency_ms"] or 0
+            stats["cost_total"] += row["estimated_cost_usd"] or 0
+            if row["jev_confidence"] is not None:
+                stats["confidence_total"] += row["jev_confidence"]
+                stats["confidence_count"] += 1
+            if row["execution_status"] in stats:
+                stats[row["execution_status"]] += 1
+
+        level_breakdown = [
+            {
+                "level": level,
+                "label": LEVEL_LABELS.get(level, f"Level {level}"),
+                "count": s["count"],
+                "avg_latency_ms": round(s["latency_total"] / s["count"]) if s["count"] else None,
+                "avg_cost_usd": round(s["cost_total"] / s["count"], 4) if s["count"] else None,
+                "avg_confidence": (
+                    round(s["confidence_total"] / s["confidence_count"], 2) if s["confidence_count"] else None
+                ),
+                "answered": s["answered"], "insufficient_data": s["insufficient_data"], "error": s["error"],
+            }
+            for level, s in sorted(level_stats.items())
+        ]
+        total_routed = len(routing_rows)
+        total_cost_usd = sum(r["estimated_cost_usd"] or 0 for r in routing_rows)
+
+        # Eval accuracy history -- oldest-first (for the trend line chart)
+        # list of signals_eval runs, each with overall + per-level
+        # matched/total parsed from its items' detail strings.
+        eval_runs = list_batch_job_runs(logs_db, job_name="signals_eval", limit=30)
+        eval_history = []
+        for run in reversed(eval_runs):
+            items = list_batch_job_items(logs_db, run["run_id"])
+            by_level: dict[int, dict[str, int]] = {}
+            matched = 0
+            for item in items:
+                match = _EVAL_DETAIL_RE.search(item.get("detail") or "")
+                if not match:
+                    continue
+                expected_level = int(match.group(1))
+                bucket = by_level.setdefault(expected_level, {"matched": 0, "total": 0})
+                bucket["total"] += 1
+                if item["status"] == "ok":
+                    bucket["matched"] += 1
+                    matched += 1
+            total = len(items)
+            eval_history.append({
+                "run_id": run["run_id"],
+                "started_at": run["started_at"],
+                "status": run["status"],
+                "total": total,
+                "matched": matched,
+                "pass_rate": round(matched / total, 4) if total else None,
+                "by_level": by_level,
+            })
+
+        latest_eval = eval_history[-1] if eval_history else None
+        latest_eval_by_level = [
+            {
+                "level": level,
+                "label": LEVEL_LABELS[level],
+                "matched": (latest_eval["by_level"].get(level) or {}).get("matched", 0),
+                "total": (latest_eval["by_level"].get(level) or {}).get("total", 0),
+                "pass_rate": (
+                    round(bucket["matched"] / bucket["total"], 4)
+                    if (bucket := latest_eval["by_level"].get(level)) and bucket["total"] else None
+                ),
+            }
+            for level in sorted(LEVEL_LABELS)
+        ] if latest_eval else []
+
+        return {
+            "ea_period_filter": period_filter,
+            "ea_level_breakdown": level_breakdown,
+            "ea_total_routed": total_routed,
+            "ea_total_cost_usd": round(total_cost_usd, 2),
+            "ea_eval_history": eval_history,
+            "ea_latest_eval": latest_eval,
+            "ea_latest_eval_by_level": latest_eval_by_level,
+        }
+
     @app.route("/admin")
     def admin():
         """Retired as a standalone page — its 8 panels now live under
@@ -1540,6 +1679,7 @@ def create_app() -> Flask:
             **(_ingest_panel_context(db, get_logs_db()) if admin_sub == "ingest" else {}),
             **(_audit_panel_context(db, get_logs_db()) if admin_sub == "audit" else {}),
             **(_schedule_panel_context(get_logs_db()) if admin_sub == "schedule" else {}),
+            **(_eval_analytics_panel_context(db, get_logs_db()) if admin_sub == "eval_analytics" else {}),
         }
 
     @app.route("/admin/usage")
@@ -2890,7 +3030,7 @@ def create_app() -> Flask:
     # endpoint-name prefix (see settings() below).
     _ADMIN_SETTINGS_PANELS = (
         "companies", "taxonomy", "columns", "overview_ratios",
-        "import", "stock_actions", "ingest", "schedule", "audit",
+        "import", "stock_actions", "ingest", "schedule", "audit", "eval_analytics",
     )
 
     @app.route("/settings", methods=["GET", "POST"])

@@ -107,9 +107,21 @@ Every research item across the Cases (`/investigations`) feed — in-progress ca
 
 Registered in `scheduling/jobs.py`'s `SCHEDULED_JOBS` (`job_id="signals_eval"`, category "Evals", cadence "Weekly"), which makes it reachable identically via `python -m scripts.run_job signals_eval`, the Settings → Schedule panel's "Run now" button, and the cron-triggered endpoint — no new scheduling mechanism, reusing ADR-015's existing "scheduler owns timing, job owns logic" seam. Real recurring LLM spend (3 of the 11 cases run the full Level 5 investigation pipeline) — the weekly cadence is a starting judgment call, not a fixed requirement.
 
+## Addendum (2026-09-28) — Eval Analytics admin panel
+
+Settings → Administration → System now has an "Eval Analytics" panel (`_eval_analytics_panel_context()`, `web/app.py`; markup in `web/templates/settings.html`), the trends layer the two addenda above made possible but didn't yet surface anywhere. It aggregates the same two sources described above rather than adding a third:
+
+- `signals_routing_log` (every real routed question, not just eval traffic) — grouped by Jev level into a volume-by-level chart plus a table of avg latency/cost/confidence and answered/insufficient-data/error counts per level, over a selectable 7/30/90-day/all-time window. This is the "how is Signals actually being used, and what does it cost" half — the input a model-routing tuning decision (e.g. moving a level to a cheaper/faster model chain in `config.settings.LEVEL_MODEL_CHAIN`) needs.
+- `batch_job_runs`/`batch_job_items` for `job_name="signals_eval"` — parsed via the same stable `"expected=L{n} actual=L{n} ..."` detail-string format `scripts/run_signals_eval.py` writes, into a per-level matched/total bar chart for the latest run and a pass-rate trend line across recent runs. This is the "is Jev's classifier actually accurate, and is it getting better or worse" half.
+
+Audit Log → Job Runs already lists `signals_eval`'s raw run/item history (any `BatchRun`-wrapped job does, by construction) — this panel deliberately doesn't repeat that list, only the aggregation across it, reached via a link from the panel's own intro text rather than duplicated inline.
+
+Charts are hand-rolled SVG (`web/static/js/eval_analytics_charts.js`), following this app's existing no-charting-library convention (`web/static/js/charts_overlay.js`) and the `dataviz` skill's procedure: complexity level is an *ordinal* encoding (one hue, monotone light→dark, `--eval-level-1..5`), matched/mismatched is a *status* encoding (the skill's fixed good/critical pair, `--eval-status-good/critical`, always paired with a legend + label, never color alone) — both validated via the skill's `validate_palette.js` (`--ordinal`, light surface and this app's own `dark`/`signals` theme dark surfaces). Every chart ships a "View as table" fallback rendered server-side from the same data, not just a JS-only presentation.
+
 ## Revisit when
 
 - `run_id` could be threaded into `llm/observability.record()` so `llm_call_log` rows join back to their `signals_routing_log` row directly;
 - Level 3/4's evidence-gathering could be unified with `research/assistant.py::answer_question` if that function grows explicit-chain routing of its own;
 - Level 4's peer grounding could gain its own bounded LLM refinement step (today it's fully deterministic) if sector-field matching turns out to be too coarse for some question shapes;
-- the eval set (`research/signals_eval_cases.py`) should grow alongside real observed misclassifications, not stay frozen at its initial 11 cases — every production mismatch is a candidate new eval case.
+- the eval set (`research/signals_eval_cases.py`) should grow alongside real observed misclassifications, not stay frozen at its initial 11 cases — every production mismatch is a candidate new eval case;
+- the Eval Analytics panel's level-breakdown query reads `signals_routing_log` with `limit=5000` and filters in Python — fine at today's volume, but a real `WHERE created_at >= ?` pushed into SQL (mirroring `list_batch_job_runs`'s own `since_iso` parameter) is the natural fix once routed-question volume grows past that.

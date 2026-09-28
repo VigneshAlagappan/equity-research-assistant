@@ -364,6 +364,60 @@
   .admin-audit-detail-row td { background: color-mix(in srgb, var(--color-text) 3%, transparent); padding: var(--space-3); }
   .admin-audit-detail-table { font-size: 12px; margin: 0; }
 
+  /* Eval Analytics (web/static/js/eval_analytics_charts.js) — palette from
+     the dataviz skill's reference instance, validated via its
+     validate_palette.js: an ORDINAL ramp (one hue, monotone light->dark)
+     for the five Signals complexity levels, `--ordinal --mode light`
+     against this app's light surface and `--mode dark --surface
+     "#1a1a19"` for the dark-appropriate steps below — themed the same
+     ":root[data-theme=\"dark\"], :root[data-theme=\"signals\"]" way
+     base.html's own --indicator-* tokens already are, since those are
+     this app's two genuinely dark-surfaced themes. Status colors
+     (matched/mismatched) are the skill's fixed good/critical pair, never
+     themed, per its "status is fixed" rule. */
+  #settings-panel-admin-eval_analytics {
+    --eval-level-1: #86b6ef; --eval-level-2: #5598e7; --eval-level-3: #2a78d6;
+    --eval-level-4: #1c5cab; --eval-level-5: #104281;
+    --eval-status-good: #0ca30c; --eval-status-critical: #d03b3b;
+  }
+  :root[data-theme="dark"] #settings-panel-admin-eval_analytics,
+  :root[data-theme="signals"] #settings-panel-admin-eval_analytics {
+    --eval-level-1: #9ec5f4; --eval-level-2: #6da7ec; --eval-level-3: #3987e5;
+    --eval-level-4: #256abf; --eval-level-5: #184f95;
+  }
+  .eval-stat-tiles { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-4) 0; }
+  .eval-stat-tile {
+    flex: 1 1 160px; border: 1px solid var(--color-divider); border-radius: var(--radius-sm);
+    padding: var(--space-3) var(--space-4); background: var(--color-surface);
+  }
+  .eval-stat-value { font-size: 24px; font-weight: 700; line-height: 1.2; }
+  .eval-stat-label { font-size: 12px; color: var(--ink-muted); margin-top: 2px; }
+  .eval-chart-container { position: relative; margin: var(--space-2) 0 var(--space-5); }
+  .eval-chart-wrap { position: relative; }
+  .eval-chart-svg { width: 100%; height: auto; display: block; }
+  .eval-chart-axis { stroke: var(--color-divider); stroke-width: 1; }
+  .eval-chart-gridline { stroke: var(--color-divider); stroke-width: 1; opacity: 0.6; }
+  .eval-chart-bar { cursor: pointer; }
+  .eval-chart-bar.eval-chart-status-good { fill: var(--eval-status-good); }
+  .eval-chart-bar.eval-chart-status-critical { fill: var(--eval-status-critical); }
+  .eval-chart-bar-label { font-size: 11px; fill: var(--ink); font-weight: 600; }
+  .eval-chart-axis-label { font-size: 11px; fill: var(--ink-muted); }
+  .eval-chart-line { fill: none; stroke: var(--eval-level-3); stroke-width: 2; }
+  .eval-chart-dot { fill: var(--eval-level-3); }
+  .eval-chart-hit { fill: transparent; cursor: pointer; }
+  .eval-chart-tooltip {
+    position: absolute; transform: translate(-50%, -110%); background: var(--color-text); color: var(--color-surface);
+    font-size: 12px; padding: 4px 8px; border-radius: var(--radius-sm); pointer-events: none; white-space: nowrap; z-index: 5;
+  }
+  .eval-chart-table { margin-top: var(--space-2); font-size: 13px; }
+  .eval-chart-table summary { cursor: pointer; color: var(--ink-muted); }
+  .eval-chart-empty { color: var(--ink-muted); font-size: 13px; padding: var(--space-4) 0; }
+  .eval-chart-legend { display: flex; gap: var(--space-4); font-size: 12px; color: var(--ink-muted); margin-bottom: var(--space-2); }
+  .eval-chart-legend-item { display: flex; align-items: center; gap: 6px; }
+  .eval-chart-legend-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .eval-chart-legend-swatch.eval-chart-status-good { background: var(--eval-status-good); }
+  .eval-chart-legend-swatch.eval-chart-status-critical { background: var(--eval-status-critical); }
+
   .taxonomy-section { margin-top: var(--space-5); }
   .taxonomy-section:first-of-type { margin-top: var(--space-3); }
   .taxonomy-section-title { font-size: 15px; font-weight: 600; }
@@ -434,6 +488,7 @@
 
   <div class="settings-nav-group-label">System</div>
   <a class="settings-nav-item {{ 'active' if active_panel == 'admin-audit' }}" data-panel="admin-audit" href="{{ url_for('settings', panel='admin-audit') }}">Audit Log</a>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-eval_analytics' }}" data-panel="admin-eval_analytics" href="{{ url_for('settings', panel='admin-eval_analytics') }}">Eval Analytics</a>
   {% endif %}
 </nav>
 
@@ -1929,12 +1984,139 @@
       {% endif %}
       </div>
     </div>
+
+    <div class="settings-panel" id="settings-panel-admin-eval_analytics" {{ 'hidden' if active_admin_panel != 'eval_analytics' }}>
+      <p class="muted">
+        How Signals is actually classifying and routing questions (docs/ADR/023), and whether the periodic golden-set
+        eval (Settings &rarr; Schedule &rarr; "Signals complexity-routing golden eval set") says Jev is still getting
+        it right. Raw per-run history for that job is in
+        <a href="{{ url_for('settings', panel='admin-audit', al_tab='job_runs', al_job='signals_eval') }}">Audit Log &rarr; Job Runs</a> —
+        this page is the trends this feeds into product/model-routing tuning, not a duplicate of that list.
+      </p>
+
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-eval_analytics">
+        <div class="field">
+          <label for="ea-period">Routing traffic window</label>
+          <select class="input" id="ea-period" name="ea_period">
+            {% for value, label in [('7d', 'Last 7 days'), ('30d', 'Last 30 days'), ('90d', 'Last 90 days'), ('', 'All time')] %}
+            <option value="{{ value }}" {{ 'selected' if ea_period_filter == value }}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Apply</button>
+      </form>
+
+      <div class="eval-stat-tiles">
+        <div class="eval-stat-tile">
+          <div class="eval-stat-value">{{ ea_total_routed }}</div>
+          <div class="eval-stat-label">Routed questions</div>
+        </div>
+        <div class="eval-stat-tile">
+          <div class="eval-stat-value">${{ '%.2f'|format(ea_total_cost_usd) }}</div>
+          <div class="eval-stat-label">Estimated cost</div>
+        </div>
+        <div class="eval-stat-tile">
+          <div class="eval-stat-value">{{ ((ea_latest_eval.pass_rate * 100)|round|int ~ '%') if ea_latest_eval and ea_latest_eval.pass_rate is not none else '—' }}</div>
+          <div class="eval-stat-label">Latest golden-eval pass rate</div>
+        </div>
+        <div class="eval-stat-tile">
+          <div class="eval-stat-value">{{ ea_eval_history|length }}</div>
+          <div class="eval-stat-label">Eval runs tracked</div>
+        </div>
+      </div>
+
+      <h3>Question volume by complexity level</h3>
+      <div class="eval-chart-container" id="eval-chart-volume">
+        <div class="eval-chart-wrap"></div>
+        <details class="eval-chart-table">
+          <summary>View as table</summary>
+          <table class="table">
+            <thead><tr><th>Level</th><th>Count</th><th>Avg latency</th><th>Avg cost</th><th>Avg confidence</th><th>Answered</th><th>Insufficient data</th><th>Error</th></tr></thead>
+            <tbody>
+              {% for row in ea_level_breakdown %}
+              <tr>
+                <td>L{{ row.level }} &middot; {{ row.label }}</td>
+                <td>{{ row.count }}</td>
+                <td>{{ (row.avg_latency_ms ~ ' ms') if row.avg_latency_ms is not none else '—' }}</td>
+                <td>{{ ('$' ~ '%.4f'|format(row.avg_cost_usd)) if row.avg_cost_usd is not none else '—' }}</td>
+                <td>{{ '%.2f'|format(row.avg_confidence) if row.avg_confidence is not none else '—' }}</td>
+                <td>{{ row.answered }}</td>
+                <td>{{ row.insufficient_data }}</td>
+                <td>{{ row.error }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+      </div>
+
+      <h3>Golden-eval accuracy by level (latest run)</h3>
+      {% if ea_latest_eval %}
+      <div class="eval-chart-legend">
+        <span class="eval-chart-legend-item"><span class="eval-chart-legend-swatch eval-chart-status-good"></span>Matched expected level</span>
+        <span class="eval-chart-legend-item"><span class="eval-chart-legend-swatch eval-chart-status-critical"></span>Misclassified</span>
+      </div>
+      <div class="eval-chart-container" id="eval-chart-accuracy">
+        <div class="eval-chart-wrap"></div>
+        <details class="eval-chart-table">
+          <summary>View as table</summary>
+          <table class="table">
+            <thead><tr><th>Level</th><th>Matched</th><th>Total</th><th>Pass rate</th></tr></thead>
+            <tbody>
+              {% for row in ea_latest_eval_by_level %}
+              <tr>
+                <td>L{{ row.level }} &middot; {{ row.label }}</td>
+                <td>{{ row.matched }}</td>
+                <td>{{ row.total }}</td>
+                <td>{{ ((row.pass_rate * 100)|round|int ~ '%') if row.pass_rate is not none else '—' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+      </div>
+      {% else %}
+      <div class="empty-state">No golden-eval runs recorded yet — trigger "Signals complexity-routing golden eval set" from Settings &rarr; Schedule.</div>
+      {% endif %}
+
+      <h3>Eval pass-rate trend</h3>
+      <div class="eval-chart-container" id="eval-chart-trend">
+        <div class="eval-chart-wrap"></div>
+        <details class="eval-chart-table">
+          <summary>View as table</summary>
+          <table class="table">
+            <thead><tr><th>Run</th><th>Started</th><th>Pass rate</th><th>Matched</th><th>Total</th></tr></thead>
+            <tbody>
+              {% for run in ea_eval_history %}
+              <tr>
+                <td>#{{ run.run_id }}</td>
+                <td><span class="local-time" data-utc="{{ run.started_at }}">{{ run.started_at }}</span></td>
+                <td>{{ ((run.pass_rate * 100)|round|int ~ '%') if run.pass_rate is not none else '—' }}</td>
+                <td>{{ run.matched }}</td>
+                <td>{{ run.total }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+      </div>
+
+      <script type="application/json" id="eval-analytics-data">
+        {{ {
+          "level_breakdown": ea_level_breakdown,
+          "latest_eval_by_level": ea_latest_eval_by_level,
+          "eval_history": ea_eval_history
+        }|tojson }}
+      </script>
+    </div>
 {% endif %}
 
 </div>
 </div>
 
   <script src="{{ static_url('js/company_picker.js') }}"></script>
+  <script defer src="{{ static_url('js/eval_analytics_charts.js') }}"></script>
   <script>
     // Audit Log — each row's detail (reconciliation history for a company
     // row, per-item outcomes for a Job Runs row) is a sibling <tr> rendered

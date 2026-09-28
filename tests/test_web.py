@@ -2183,3 +2183,83 @@ def test_investigate_generate_async_reports_error_status_on_failure(client, monk
 
     assert status["status"] == "error"
     assert "every hypothesis's evaluation failed" in status["error"]
+
+
+def test_eval_analytics_panel_requires_admin(client) -> None:
+    response = client.get("/settings?panel=admin-eval_analytics")
+    assert response.status_code == 302  # redirected to login, same as every other admin-* panel
+
+
+def test_eval_analytics_panel_aggregates_routing_log_and_eval_history(client) -> None:
+    """The Eval Analytics panel (docs/ADR/023's "future eval runner"
+    observability surface) aggregates two independent sources -- every
+    routed question's own audit row (signals_routing_log) for the
+    volume/latency/cost/confidence-by-level breakdown, and the periodic
+    golden-eval job's batch_job_runs/items history (job_name='signals_eval')
+    for the accuracy trend -- into one panel context, without duplicating
+    the raw per-run list Audit Log > Job Runs already shows. Asserted
+    against the panel's own embedded JSON payload (#eval-analytics-data)
+    rather than rendered numbers in prose, so the test doesn't depend on
+    incidental digits also appearing elsewhere on the page."""
+    import json
+
+    import config.settings as settings
+    from ingestion.batch_log import BatchRun
+    from storage.repositories import insert_signals_routing_log
+
+    conn = init_db(db_path=settings.DB_PATH)
+    insert_signals_routing_log(
+        conn, run_id="routing-r1", question="What was net profit in FY2024?", company_ids="HDFCBANK",
+        jev_level=1, jev_confidence=0.9, jev_reason="retrieve a single reported figure", jev_source="jev",
+        model_selected="claude-haiku-4-5", fallback_model_used=None, data_sources_json="[]",
+        neo4j_used=False, planner_used=False, tools_executed_json="[]", calculations_performed_json="[]",
+        evidence_identifiers_json="[]", missing_data_issues_json="[]", final_confidence=None,
+        execution_status="answered", latency_ms=120.0, input_tokens=100, output_tokens=50,
+        estimated_cost_usd=0.01, answer_reference=None,
+    )
+    insert_signals_routing_log(
+        conn, run_id="routing-r2", question="Compare HDFC Bank and ICICI Bank's profitability",
+        company_ids="HDFCBANK,ICICIBANK", jev_level=4, jev_confidence=0.7, jev_reason="cross-company comparison",
+        jev_source="jev", model_selected="claude-sonnet-5", fallback_model_used=None, data_sources_json="[]",
+        neo4j_used=True, planner_used=False, tools_executed_json="[]", calculations_performed_json="[]",
+        evidence_identifiers_json="[]", missing_data_issues_json="[]", final_confidence="High",
+        execution_status="answered", latency_ms=980.0, input_tokens=500, output_tokens=300,
+        estimated_cost_usd=0.08, answer_reference=None,
+    )
+
+    with BatchRun(conn, "signals_eval", scope_label="golden eval set (2 cases)") as run:
+        with run.item("case_match") as item:
+            item.detail = "expected=L1 actual=L1 confidence=0.90 status=answered latency_ms=120"
+        with run.item("case_mismatch"):
+            raise RuntimeError("expected=L2 actual=L1 confidence=0.60 status=answered latency_ms=100 reason='wrong'")
+    conn.close()
+
+    _admin_session(client)
+    response = client.get("/settings?panel=admin-eval_analytics")
+    assert response.status_code == 200
+    body = response.data.decode()
+
+    match = re.search(
+        r'<script type="application/json" id="eval-analytics-data">(.*?)</script>', body, re.DOTALL
+    )
+    assert match, "eval-analytics-data JSON payload not found in the rendered page"
+    payload = json.loads(match.group(1))
+
+    level_counts = {row["level"]: row["count"] for row in payload["level_breakdown"]}
+    assert level_counts[1] == 1
+    assert level_counts[4] == 1
+    assert level_counts[2] == 0  # every level is present, even with zero routed questions
+
+    level1 = next(row for row in payload["level_breakdown"] if row["level"] == 1)
+    assert level1["avg_latency_ms"] == 120
+    assert level1["answered"] == 1
+
+    by_level = {row["level"]: row for row in payload["latest_eval_by_level"]}
+    assert by_level[1] == {"level": 1, "label": "Retrieve", "matched": 1, "total": 1, "pass_rate": 1.0}
+    assert by_level[2] == {"level": 2, "label": "Calculate", "matched": 0, "total": 1, "pass_rate": 0.0}
+
+    assert len(payload["eval_history"]) == 1
+    run_row = payload["eval_history"][0]
+    assert run_row["matched"] == 1
+    assert run_row["total"] == 2
+    assert run_row["pass_rate"] == 0.5
