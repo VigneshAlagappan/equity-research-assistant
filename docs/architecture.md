@@ -1119,7 +1119,15 @@ investigation pipeline described above. Every routed question is logged to
 `signals_routing_log` (`llm/routing_audit.py`) — one row per question, with
 Jev's level/confidence/reason, data sources touched, calculations performed,
 and final execution status — a separate, coarser-grained audit trail than
-`llm_call_log`'s one-row-per-model-call record.
+`llm_call_log`'s one-row-per-model-call record. A periodic eval runner
+(`scripts/run_signals_eval.py`, a small versioned golden set in
+`research/signals_eval_cases.py` spanning all 5 levels) re-runs `route_question()`
+against known questions and records whether Jev's classified level matched
+what's expected, via the same `batch_job_runs`/`batch_job_items` audit
+convention every other recurring job in this app uses — registered in
+`scheduling/jobs.py` (`signals_eval`, "Evals" category, Weekly), so it's
+reachable via CLI, the Schedule panel's "Run now", and the cron-triggered
+endpoint like any other scheduled job, with no new scheduling mechanism.
 
 **What's actually live in the web app today** (see ADR-023's own addendum for
 the full detail): Jev decides *dispatch* — whether a question goes to the

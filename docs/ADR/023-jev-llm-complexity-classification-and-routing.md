@@ -101,8 +101,15 @@ This is UI-level dispatch only — it decides which of the two EXISTING pipeline
 
 Every research item across the Cases (`/investigations`) feed — in-progress cases, completed Quick Answers, completed Deep Dive investigations — is now tagged with its Jev level (`"Level 3 · Interpret"` etc., falling back to the old generic "Quick Answer"/"Deep Dive" label for a pre-Jev row with `complexity_level=NULL`), and the feed gained a Level filter (`iv_level`) alongside the existing Type/Status filters.
 
+## Addendum (2026-09-28) — the eval runner section 5 anticipated now exists
+
+`scripts/run_signals_eval.py` is the "future eval runner" the Audit Logging section above and this document's original text pointed at: a small, versioned golden question set (`research/signals_eval_cases.py`, spanning all 5 levels, reusing the exact companies/questions already verified against real ingested data in `docs/SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md`) run periodically through the real `route_question()`, comparing Jev's classified level against each case's expected level. A mismatch is recorded as a normal `batch_job_items` failure via `ingestion/batch_log.py`'s established per-item audit convention — the same mechanism every other recurring job in this app already uses — so Jev's accuracy over time is answerable from Audit Log → Job Runs, not just a one-off manual check.
+
+Registered in `scheduling/jobs.py`'s `SCHEDULED_JOBS` (`job_id="signals_eval"`, category "Evals", cadence "Weekly"), which makes it reachable identically via `python -m scripts.run_job signals_eval`, the Settings → Schedule panel's "Run now" button, and the cron-triggered endpoint — no new scheduling mechanism, reusing ADR-015's existing "scheduler owns timing, job owns logic" seam. Real recurring LLM spend (3 of the 11 cases run the full Level 5 investigation pipeline) — the weekly cadence is a starting judgment call, not a fixed requirement.
+
 ## Revisit when
 
 - `run_id` could be threaded into `llm/observability.record()` so `llm_call_log` rows join back to their `signals_routing_log` row directly;
 - Level 3/4's evidence-gathering could be unified with `research/assistant.py::answer_question` if that function grows explicit-chain routing of its own;
-- Level 4's peer grounding could gain its own bounded LLM refinement step (today it's fully deterministic) if sector-field matching turns out to be too coarse for some question shapes.
+- Level 4's peer grounding could gain its own bounded LLM refinement step (today it's fully deterministic) if sector-field matching turns out to be too coarse for some question shapes;
+- the eval set (`research/signals_eval_cases.py`) should grow alongside real observed misclassifications, not stay frozen at its initial 11 cases — every production mismatch is a candidate new eval case.
