@@ -1994,6 +1994,13 @@
         this page is the trends this feeds into product/model-routing tuning, not a duplicate of that list.
       </p>
 
+      {# _eval_analytics_panel_context() (web/app.py) only runs when this panel is the one being viewed
+         (same "don't compute it unless it's showing" reasoning every other admin panel context function
+         gives), so every ea_* var below is genuinely undefined on every other panel's render -- this whole
+         body is gated the same way the top-level "{% if companies is defined %}" gates the entire admin
+         section, since a couple of these (the %.2f-formatted cost tile, the tojson data payload) raise on
+         Jinja's default Undefined rather than quietly rendering empty the way a bare {{ }} or |length would. #}
+      {% if ea_level_breakdown is defined %}
       <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
         <input type="hidden" name="panel" value="admin-eval_analytics">
         <div class="field">
@@ -2109,6 +2116,7 @@
           "eval_history": ea_eval_history
         }|tojson }}
       </script>
+      {% endif %}
     </div>
 {% endif %}
 
