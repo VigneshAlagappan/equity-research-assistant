@@ -103,6 +103,21 @@ class _DispatchClient:
         self.messages = _DispatchMessages(captured, evaluation_text=evaluation_text)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_document_store(monkeypatch, tmp_path) -> None:
+    """run_investigation() (research/investigation.py) persists a synthesis
+    artifact via storage.document_store.default_document_store() at
+    f"investigations/{investigation_id}/v1.json" — under the default "local"
+    backend (LocalDocumentStore), that key resolves against
+    config.settings.BASE_DIR (from_repo_relative), not tmp_path, unless
+    patched here. Every test in this file uses the same
+    _FIXED_INVESTIGATION_ID, so without this isolation they were writing
+    real fixture data into this repo's own investigations/abcdef012345/
+    directory on every run — same class of bug tests/test_web.py's
+    _build_app already guards against for threads/<id>/v1.json."""
+    monkeypatch.setattr("config.settings.BASE_DIR", tmp_path)
+
+
 @pytest.fixture
 def pinned_investigation_id(monkeypatch) -> str:
     class _FixedUUID:
