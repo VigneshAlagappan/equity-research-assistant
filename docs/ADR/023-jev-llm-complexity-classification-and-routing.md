@@ -1,0 +1,100 @@
+# ADR-023 — Jev: LLM-Based Complexity Classification and Execution Routing Policy
+
+**Status:** Accepted
+**Date:** 2026-09-28
+
+## Context
+
+Signal answers research questions that range enormously in what they actually require:
+
+- a single reported number ("What was HDFC Bank ROE in FY2025?");
+- a reported number plus one deterministic calculation ("HDFC Bank's 5-year profit CAGR?");
+- interpretation of a single company's own data ("Analyze HDFC Bank's profit growth over the last five years.");
+- a real comparison against another dataset ("Compare HDFC Bank credit growth with the Indian banking industry.");
+- hypothesis generation and causal reasoning ("Why has HDFC Bank's credit growth diverged from the banking system, and what factors are driving it?").
+
+Before this ADR, every question reaching `research/assistant.py::answer_question` went through the same evidence-gathering + single LLM call shape, with `llm/hardness.py` picking one of three MODEL tiers (quick/standard/deep) for that one call — a genuine, useful mechanism, but one that answers "how strong a model does this need," not "does this question need a calculation at all, a comparison dataset, or a full hypothesis investigation." Those latter questions already had real, separate execution paths built for other reasons — `financials/calculations.py` for deterministic math, `research/investigation.py`'s hypothesis pipeline (ADR-007) for causal research — but nothing decided, up front, which path a given question should actually take. `llm/hardness.py`'s own comments already named the five-level vocabulary this ADR formalizes (`TIER_LEVEL`'s comment: "a stand-in for the prompt's LEVEL 0-5 vocabulary — this app only ever needs three practical buckets") as a compression that a real routing policy would eventually replace.
+
+Two consequences of not having that policy:
+
+1. A simple lookup ("What was net profit in FY2024?") always cost a real LLM call, even though the answer is one row in `canonical_financials` — no reasoning is involved at all.
+2. A comparison question ("compare X to its peers/industry") had no dedicated grounding step — `research/assistant.py::gather_evidence` only ever pulls evidence for the company_ids it's given; nothing resolved "the industry" into concrete peer companies, so the LLM either had to invent a comparison or decline to make one.
+
+## Decision
+
+Signal adopts the Signals Complexity Classification and Execution Routing Policy: every research question is first assigned a Complexity Level (1–5), which determines its execution path, its data sources, and whether an LLM is used at all.
+
+```text
+Question
+   ↓
+Jev (llm/complexity.py) — classify complexity, level 1-5
+   ↓
+research/routing_policy.py::route_question() — dispatch by level
+   ↓
+Level 1   Neon (canonical_financials) -> Answer                          (no LLM)
+Level 2   Neon -> financials/calculations.py -> Answer                   (no LLM)
+Level 3   Neon/Docs/Macro/KG evidence -> configured LLM -> Answer         (single dataset only)
+Level 4   peer/macro grounding -> evidence -> configured LLM -> Answer    (comparison, capped)
+Level 5   research/investigation.py's existing hypothesis pipeline       (ADR-007, unchanged)
+   ↓
+llm/routing_audit.py — one signals_routing_log row per question
+```
+
+### Jev
+
+Jev (`llm/complexity.py::classify_complexity`) is an LLM call, not deterministic code — see the ADR-006 addendum for why classification specifically is exempted from that ADR's "prefer deterministic code" invariant. Jev does only classification: it returns `(level, confidence, reason)` and touches nothing else — no dataset selection, no retrieval, no answering. Its model chain is configured, never hard-coded (`config.settings.JEV_CLASSIFIER_MODEL_CHAIN`: the configured OpenRouter free-tier model first, a configured Anthropic model as fallback), run through `llm.router.route_explicit_chain` — a new sibling to `llm.router.route()` that tries an explicit, operator-ordered model chain instead of deriving one from a hardness tier. If every configured model is unavailable, classification falls back to a fixed Level 3 default (never Level 1 — see that function's own docstring for why erring toward *more* rigor is the safe default) rather than failing the question outright.
+
+### Levels 1–2 — deterministic, no LLM in the answer path
+
+`research/routing_policy.py::_level1_retrieve` / `_level2_calculate` match the question against the closed `metrics_dictionary` vocabulary (`storage.repositories.list_all_metrics`, widened by a small alias table for common abbreviations like "ROE"/"NIM") plus explicit fiscal-year/operation wording (`FY2025`, `CAGR`, `YoY`, `N-year`). When extraction can't confidently resolve a single metric, period, and (for Level 2) operation, the level escalates to the next one rather than guessing — never inventing missing data, per the policy's own Level 1 rule, generalized as the escalation path's safety net. Levels 1 and 2 never call an LLM to produce the answer itself.
+
+### Level 3 — interpret, single dataset
+
+Reuses `research/assistant.py`'s evidence-gathering (`gather_evidence`) and evidence-citation system prompt (`SYSTEM_PROMPT`, `[FACT]`/`[CALCULATION]`/`[MANAGEMENT_STATEMENT]`/`[INFERENCE]` tagging), with an added instruction to stay within the retrieved evidence and never introduce an external comparison. Routed through `config.settings.LEVEL_MODEL_CHAIN[3]`, not `research/assistant.py::answer_question`'s own tier auto-routing — Level 3/4 need the "configured model, explicit Anthropic fallback" chain shape this policy specifies, not the reasoning-strength-gated chain `llm/hardness.py`/`llm/router.py::route()` already provide for other call sites.
+
+### Level 4 — compare, grounded
+
+`research/peer_resolver.py::resolve_comparison_group` interprets ambiguous comparison language ("industry", "peers", "the market", "benchmark") by grounding it against the anchor company's own sector classification (`companies.basic_industry`/`macro_economic_sector` — the same columns `context/graph.py`'s existing sector-peer traversal uses, Neo4j-backed when `GRAPH_BACKEND=neo4j`, SQLite otherwise), capped at `config.settings.MAX_COMPARISON_DATASETS` (2) unless the question explicitly asks for broader scope. This grounding step is deliberately deterministic, not a second LLM call — the anchor company's sector is already a known, closed value once `company_ids` names it, so ADR-006's "prefer deterministic code" still governs the *grounding* step even though Jev already used an LLM to decide the question needed Level 4 at all. A macro benchmark (e.g. comparing growth to a repo rate) is grounded through `research/macro_evidence.py`'s existing LLM-based series planner, already invoked generically by `gather_evidence` for every level — not duplicated here. When no peer/benchmark can be grounded, Level 4 states the limitation in its answer and audit record rather than inventing one, per policy.
+
+### Level 5 — hypothesis / causal research
+
+Unchanged: `research/investigation.py::run_investigation` (ADR-007's hypothesis-generate → plan-and-gather → evaluate → synthesize loop, itself already grounded through the knowledge graph and bounded by `MAX_EVIDENCE_ITERATIONS`/`INVESTIGATION_TIMEOUT_SECONDS` — ADR-018's investigation-budget governance). `research/routing_policy.py` only renders its result into a narrative answer and folds its evidence/verdict trail into the audit record.
+
+### Audit logging
+
+Every `route_question()` call writes one row to `signals_routing_log` (`llm/routing_audit.py`, schemas in both `schemas/sqlite_schema.sql` and `schemas/postgres_schema.sql`): the question, Jev's level/confidence/reason, the model(s) used, data sources accessed, whether Neo4j/a planner ran, calculations performed, evidence identifiers, missing-data issues, final confidence, execution status, latency, and token/cost figures — everything section 5 of the policy asks for, with no chain-of-thought stored, only observable actions and outputs. This is a separate table from `llm_call_log` (`llm/observability.py`): that table logs one row per individual model call; this one logs one row per routed question end-to-end, so a future eval runner can ask "what did Signals do for this question, and did it match its complexity level's expected behavior."
+
+## Model configuration
+
+No model name is hard-coded into `llm/complexity.py` or `research/routing_policy.py` — every model choice reads from `config.settings` (`JEV_CLASSIFIER_MODEL_CHAIN`, `LEVEL_MODEL_CHAIN`), exactly like the existing `TIER_PREFERRED_MODEL`/`TIER_FALLBACK_CHAIN_OVERRIDE` (ADR-010). Level 5 is deliberately NOT given its own model-configuration surface here: it already routes through the existing tier-based system via `research/investigation.py`'s own calls, and giving the same underlying model calls two independent configuration knobs would only create drift between them.
+
+## Alternatives considered
+
+### Extend `llm/hardness.py`'s 3-tier regex classifier to 5 levels
+
+Keeps everything deterministic (no ADR-006 exception needed), but the underlying problem — free-text phrasing with no closed vocabulary — doesn't go away just by adding more regexes; it only grows the list of hand-picked trigger phrases that fail on anything phrased differently, with silent misclassification as the failure mode rather than a visible one.
+
+### Route every question through a single planner/agent loop
+
+Rejected for the same reason ADR-011 (modular monolith before microservices) and the existing "no orchestrator/planner agents" position reject it: an unbounded agent loop for a question that's really a one-row lookup is strictly worse on cost, latency, and reproducibility, and reintroduces exactly the unbounded-loop risk ADR-018's budget governance was written to avoid.
+
+## Consequences
+
+### Positive
+
+- a plain factual lookup costs zero LLM calls instead of one;
+- comparison questions get a real, grounded peer/benchmark set instead of an ungrounded or declined comparison;
+- every routed question is now audit-logged end-to-end, independent of the per-call `llm_call_log`;
+- model routing for the new levels is config-driven, consistent with ADR-010.
+
+### Negative
+
+- a second classification pass (Jev) runs before every question, adding one small LLM call plus latency to every request that isn't already deterministic;
+- two audit tables (`llm_call_log`, `signals_routing_log`) exist with no shared `run_id` linking a routed question to its individual model calls yet;
+- Level 3/4's evidence-gathering and prompt-construction duplicates a slice of `research/assistant.py::answer_question` rather than sharing it outright, since that function's own tier auto-routing and model-pinning semantics don't fit this policy's explicit-chain-with-fallback requirement.
+
+## Revisit when
+
+- `run_id` could be threaded into `llm/observability.record()` so `llm_call_log` rows join back to their `signals_routing_log` row directly;
+- Level 3/4's evidence-gathering could be unified with `research/assistant.py::answer_question` if that function grows explicit-chain routing of its own;
+- Level 4's peer grounding could gain its own bounded LLM refinement step (today it's fully deterministic) if sector-field matching turns out to be too coarse for some question shapes.

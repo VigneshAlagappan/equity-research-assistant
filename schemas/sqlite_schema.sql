@@ -523,6 +523,55 @@ CREATE INDEX IF NOT EXISTS idx_llm_call_log_created_at ON llm_call_log(created_a
 -- idx_llm_call_log_investigation_id is created by
 -- _migrate_llm_call_log_columns (storage/database.py), not here — this
 -- script runs unconditionally via executescript() before migrations patch
+
+-- ============================================================
+-- One row per research/routing_policy.py::route_question() call — the
+-- Signals Complexity Classification and Execution Routing Policy's audit
+-- trail (docs/ADR/023), distinct from llm_call_log above: llm_call_log is
+-- one row per individual model call (Jev's classification call and a
+-- level's own interpretation call each get their own llm_call_log row via
+-- llm/observability.py, task_name="jev_complexity_classifier" /
+-- "signals_level3" / "signals_level4" / "signals_level5"); this table is
+-- one row per ROUTED QUESTION end-to-end — which level Jev picked, which
+-- data sources/tools actually ran, what evidence was used, and whether
+-- anything was missing or misaligned. Loosely joinable to llm_call_log by
+-- (question, created_at) proximity only — no shared run_id between the two
+-- tables today (a follow-up, not required for either to be independently
+-- useful/queryable, see ADR-023's "Revisit when").
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS signals_routing_log (
+  run_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  question TEXT NOT NULL,
+  company_ids TEXT,                 -- comma-separated company_id list, as routed (may have grown past
+                                     -- the caller's own list — see peer_company_ids inside data_sources_json)
+  jev_level INTEGER NOT NULL,       -- 1-5, the level Jev (or the deterministic fallback) picked
+  jev_confidence REAL,
+  jev_reason TEXT,
+  jev_source TEXT NOT NULL,         -- "jev" | "deterministic_fallback"
+  model_selected TEXT,
+  fallback_model_used TEXT,
+  data_sources_json TEXT,           -- e.g. ["neon:canonical_financials", "neon:macro_observations"]
+  neo4j_used INTEGER NOT NULL DEFAULT 0,
+  planner_used INTEGER NOT NULL DEFAULT 0,
+  tools_executed_json TEXT,
+  calculations_performed_json TEXT,
+  evidence_identifiers_json TEXT,
+  missing_data_issues_json TEXT,    -- non-empty whenever a level had to "state the limitation"
+                                     -- instead of answering fully (policy, Level 4/5 rules)
+  final_confidence TEXT,            -- High / Moderate / Low, parsed from the answer's own confidence line
+                                     -- when the level's prompt requires one (Levels 3-5); NULL for 1/2
+  execution_status TEXT NOT NULL,   -- answered | insufficient_data | error
+  latency_ms REAL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost_usd REAL NOT NULL DEFAULT 0,
+  answer_reference TEXT             -- thread_id / investigation_id the full answer was persisted under, if any
+);
+
+CREATE INDEX IF NOT EXISTS idx_signals_routing_log_created_at ON signals_routing_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_signals_routing_log_jev_level ON signals_routing_log(jev_level);
 -- an existing table, so an index on a column that table doesn't have yet
 -- would fail on every pre-existing database.
 

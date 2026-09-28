@@ -1294,6 +1294,39 @@ CREATE TABLE IF NOT EXISTS llm_call_log (
 CREATE INDEX IF NOT EXISTS idx_llm_call_log_created_at ON llm_call_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_llm_call_log_investigation_id ON llm_call_log(investigation_id);
 
+-- One row per research/routing_policy.py::route_question() call — see
+-- schemas/sqlite_schema.sql's signals_routing_log for the full field-by-field
+-- rationale (docs/ADR/023); this is its Postgres/Neon port, same shape as
+-- every other table in this file.
+CREATE TABLE IF NOT EXISTS signals_routing_log (
+  run_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  question TEXT NOT NULL,
+  company_ids TEXT,
+  jev_level INTEGER NOT NULL,
+  jev_confidence REAL,
+  jev_reason TEXT,
+  jev_source TEXT NOT NULL,
+  model_selected TEXT,
+  fallback_model_used TEXT,
+  data_sources_json TEXT,
+  neo4j_used INTEGER NOT NULL DEFAULT 0,
+  planner_used INTEGER NOT NULL DEFAULT 0,
+  tools_executed_json TEXT,
+  calculations_performed_json TEXT,
+  evidence_identifiers_json TEXT,
+  missing_data_issues_json TEXT,
+  final_confidence TEXT,
+  execution_status TEXT NOT NULL,
+  latency_ms REAL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost_usd REAL NOT NULL DEFAULT 0,
+  answer_reference TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_signals_routing_log_created_at ON signals_routing_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_signals_routing_log_jev_level ON signals_routing_log(jev_level);
+
 CREATE TABLE IF NOT EXISTS ingestion_queue_items (
   item_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   item_kind TEXT NOT NULL,

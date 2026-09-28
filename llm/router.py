@@ -116,16 +116,20 @@ def _fallback_chain(
     return preferred + other_cloud + local, excluded
 
 
-def route(
+def _run_chain(
+    chain: list[capability_registry.ModelSpec],
+    excluded: list[capability_registry.ModelSpec],
     *,
     system: str,
     user_message: str,
     hardness: HardnessResult,
     max_tokens: int,
-    pinned_model: str | None = None,
-    cacheable_prefix: str | None = None,
+    cacheable_prefix: str | None,
 ) -> RouteResult:
-    chain, excluded = _fallback_chain(hardness.tier, pinned_model)
+    """Shared attempt loop behind both route() (tier-derived chain) and
+    route_explicit_chain() (an operator-configured, hand-ordered chain) —
+    the only difference between the two entry points is how `chain`/
+    `excluded` were built, never how a candidate is tried or failed over."""
     attempts = [
         Attempt(
             m.model_id, m.provider, "skipped_insufficient_reasoning",
@@ -156,3 +160,51 @@ def route(
         )
 
     raise AllProvidersUnavailableError(attempts)
+
+
+def route(
+    *,
+    system: str,
+    user_message: str,
+    hardness: HardnessResult,
+    max_tokens: int,
+    pinned_model: str | None = None,
+    cacheable_prefix: str | None = None,
+) -> RouteResult:
+    chain, excluded = _fallback_chain(hardness.tier, pinned_model)
+    return _run_chain(
+        chain, excluded, system=system, user_message=user_message, hardness=hardness,
+        max_tokens=max_tokens, cacheable_prefix=cacheable_prefix,
+    )
+
+
+def route_explicit_chain(
+    *,
+    system: str,
+    user_message: str,
+    hardness: HardnessResult,
+    model_chain: list[str],
+    max_tokens: int,
+    cacheable_prefix: str | None = None,
+) -> RouteResult:
+    """Like route(), but the candidate order comes directly from an
+    operator-configured model_chain (e.g. config.settings.
+    JEV_CLASSIFIER_MODEL_CHAIN) instead of being derived from the tier's
+    reasoning_strength gate — for call sites (research/routing_policy.py's
+    Signals complexity levels 3/4, llm/complexity.py's Jev classifier) whose
+    own routing policy hand-picks "this model, then this fallback" rather
+    than "whatever's strongest and enabled." A model_id not currently
+    enabled (e.g. no OPENROUTER_API_KEY set) is silently skipped, same as
+    TIER_FALLBACK_CHAIN_OVERRIDE's chains — never raises just because one
+    configured candidate isn't reachable in this environment. `hardness` is
+    carried through only for RouteResult/observability shape parity with
+    route() (llm/observability.py logs hardness.tier/level/reason) — it
+    never gates which candidates are offered here."""
+    chain = [
+        spec for model_id in model_chain
+        if (spec := capability_registry.get_model(model_id)) and spec.enabled
+    ]
+    return _run_chain(
+        chain, [], system=system, user_message=user_message, hardness=hardness,
+        max_tokens=max_tokens, cacheable_prefix=cacheable_prefix,
+    )

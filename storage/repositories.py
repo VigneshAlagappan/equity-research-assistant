@@ -2520,6 +2520,66 @@ def list_llm_call_log(conn: sqlite3.Connection, limit: int = 200) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def insert_signals_routing_log(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    question: str,
+    company_ids: str,
+    jev_level: int,
+    jev_confidence: float | None,
+    jev_reason: str | None,
+    jev_source: str,
+    model_selected: str | None,
+    fallback_model_used: str | None,
+    data_sources_json: str,
+    neo4j_used: bool,
+    planner_used: bool,
+    tools_executed_json: str,
+    calculations_performed_json: str,
+    evidence_identifiers_json: str,
+    missing_data_issues_json: str,
+    final_confidence: str | None,
+    execution_status: str,
+    latency_ms: float,
+    input_tokens: int,
+    output_tokens: int,
+    estimated_cost_usd: float,
+    answer_reference: str | None,
+) -> None:
+    """Persist one research/routing_policy.py::route_question() outcome —
+    llm/routing_audit.py's audit trail for the Signals Complexity
+    Classification and Execution Routing Policy (docs/ADR/023)."""
+    conn.execute(
+        "INSERT INTO signals_routing_log "
+        "(run_id, created_at, question, company_ids, jev_level, jev_confidence, jev_reason, jev_source, "
+        "model_selected, fallback_model_used, data_sources_json, neo4j_used, planner_used, "
+        "tools_executed_json, calculations_performed_json, evidence_identifiers_json, "
+        "missing_data_issues_json, final_confidence, execution_status, latency_ms, input_tokens, "
+        "output_tokens, estimated_cost_usd, answer_reference) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            run_id, utcnow_iso(), question, company_ids, jev_level, jev_confidence, jev_reason, jev_source,
+            model_selected, fallback_model_used, data_sources_json, int(neo4j_used), int(planner_used),
+            tools_executed_json, calculations_performed_json, evidence_identifiers_json,
+            missing_data_issues_json, final_confidence, execution_status, latency_ms, input_tokens,
+            output_tokens, estimated_cost_usd, answer_reference,
+        ),
+    )
+    conn.commit()
+
+
+def list_signals_routing_log(conn: sqlite3.Connection, limit: int = 200) -> list[dict]:
+    """Most recent routed questions, newest first — for a future eval runner
+    (policy section 5: "allow a future eval runner to determine what Signals
+    did, what evidence it used, whether it followed the expected behavior
+    for its complexity level, and where a failure occurred")."""
+    rows = conn.execute(
+        "SELECT * FROM signals_routing_log ORDER BY created_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_llm_usage_summary(conn: sqlite3.Connection) -> dict:
     """All-time totals plus a by-task and by-model breakdown of llm_call_log
     — backs the /admin/usage page (web/app.py). A reuse hit (context/reuse.py)
