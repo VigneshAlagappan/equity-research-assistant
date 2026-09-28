@@ -127,6 +127,8 @@ from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
 from retrieval.tag_resolver import resolve_tags_in_text
+from research.investment_advice_guard import REJECTION_MESSAGE as _INVESTMENT_ADVICE_REJECTION_MESSAGE
+from research.investment_advice_guard import is_investment_decision_question
 from research.signals_report import extract_report_meta, generate_signals_report
 from research.system_insights import SystemInsightGenerationError, generate_system_insights
 from scheduling.jobs import CATEGORY_ORDER, ScheduledJob, SCHEDULED_JOBS, get_job, open_db as scheduling_open_db
@@ -164,6 +166,7 @@ from storage.repositories import (
     create_user,
     delete_company_note,
     delete_generated_report,
+    delete_research_case,
     hide_generated_report,
     hide_investigation,
     soft_delete_generated_report,
@@ -3099,6 +3102,14 @@ def create_app() -> Flask:
         if statement_type not in ("consolidated", "standalone"):
             raise _AskRequestError("statement_type must be 'consolidated' or 'standalone'", 400)
 
+        # This product answers evidence-grounded research questions, not
+        # "should I buy/sell this now" investment-timing calls -- reject
+        # before any evidence gathering or LLM spend, same message on
+        # every ask/generate entry point (research/investment_advice_
+        # guard.py's own docstring has the full reasoning).
+        if is_investment_decision_question(question):
+            raise _AskRequestError(_INVESTMENT_ADVICE_REJECTION_MESSAGE, 400)
+
         for company_id in company_ids:
             if get_company(db, company_id) is None:
                 raise _AskRequestError(f"No company registered with company_id={company_id!r}", 404)
@@ -3321,6 +3332,8 @@ def create_app() -> Flask:
             return jsonify(error="Ask a question first."), 400
         if statement_type not in ("consolidated", "standalone"):
             return jsonify(error="statement_type must be 'consolidated' or 'standalone'"), 400
+        if is_investment_decision_question(question):
+            return jsonify(error=_INVESTMENT_ADVICE_REJECTION_MESSAGE), 400
 
         db = get_db()
         for company_id in company_ids:
@@ -3572,6 +3585,8 @@ def create_app() -> Flask:
             return jsonify(error="Select at least one company."), 400
         if statement_type not in ("consolidated", "standalone"):
             return jsonify(error="statement_type must be 'consolidated' or 'standalone'"), 400
+        if is_investment_decision_question(question):
+            return jsonify(error=_INVESTMENT_ADVICE_REJECTION_MESSAGE), 400
 
         db = get_db()
         for company_id in company_ids:
@@ -3727,12 +3742,24 @@ def create_app() -> Flask:
         row is never actually removed, and no route/button anywhere clears
         it back. Deliberately not the same as research_thread_delete's real
         DELETE above -- that pre-existing hard-delete path (the individual
-        thread page's own Delete action) is untouched."""
+        thread page's own Delete action) is untouched.
+
+        "case" (in_progress/failed/cancelled/insufficient_data research_cases
+        rows -- investigations()'s own entries.append() call is the only
+        producer of this case_type) is a hard delete instead, via
+        delete_research_case -- there's no hidden_at/deleted_at column on
+        that table, and unlike a generated report or investigation, a
+        research_cases row isn't durable content worth archiving-forever,
+        just a job record. This branch was missing entirely until now, so
+        investigations.html's unconditional Delete button on every "case"
+        entry always 400'd."""
         db = get_db()
         if case_type == "generated":
             ok = soft_delete_generated_report(db, case_id)
         elif case_type == "structured":
             ok = soft_delete_investigation(db, case_id)
+        elif case_type == "case":
+            ok = delete_research_case(db, case_id)
         else:
             abort(400, f"Unknown case_type: {case_type!r}")
         if not ok:

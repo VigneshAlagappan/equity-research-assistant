@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from storage.db_types import DBConnection
 
-from config.settings import ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL
+from config.settings import ANTHROPIC_MODEL, OPENROUTER_MODEL_ID
 from financials.report import build_analysis_report
 from llm import observability
 from llm.hardness import Tier, fixed
@@ -48,7 +48,10 @@ def generate_key_insights(
     conn: DBConnection,
     company_id: str,
     statement_type: str = "consolidated",
-    model: str = ANTHROPIC_MODEL or DEFAULT_ANTHROPIC_MODEL,
+    # Flipped 2026-09-27 (operator request, same as research/signals_report.py):
+    # OpenRouter is the default, not the fallback — ANTHROPIC_MODEL still pins
+    # back to Claude explicitly when set.
+    model: str = ANTHROPIC_MODEL or OPENROUTER_MODEL_ID,
 ) -> str:
     report = build_analysis_report(conn, company_id, statement_type=statement_type)
     if report.startswith("No data ingested yet"):

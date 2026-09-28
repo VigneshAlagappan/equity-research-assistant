@@ -60,16 +60,18 @@ MODELS: list[ModelSpec] = [
         reasoning_strength=2, cost_class="low", speed_class="fast",
         enabled="claude-haiku-4-5" not in DISABLED_MODELS,
     ),
-    # "quick" tier's second-choice model, reached only through
-    # config.settings.TIER_FALLBACK_CHAIN_OVERRIDE's explicit chain (Haiku,
-    # then this, then local Ollama) — not through the generic strongest-
-    # first "other cloud models" step every other tier uses, which bypasses
-    # reasoning_strength entirely for this model anyway. reasoning_strength=1
-    # just keeps it out of that generic step on the off chance a future tier
-    # ever stops using an explicit override.
+    # "quick" tier's second-choice model, reached through config.settings.
+    # TIER_FALLBACK_CHAIN_OVERRIDE's explicit chain (Haiku, then this, then
+    # local Ollama). Upgraded 2026-09-27 from google/gemma-2-27b-it to
+    # google/gemma-4-31b-it (262K context, vs. the old model's 8K) —
+    # reasoning_strength raised from 1 to 4 (same tier as claude-sonnet-5)
+    # to match, on operator request, so it's now also a real candidate in
+    # the generic strongest-first "other cloud models" step every other
+    # tier uses, not just "quick" via the explicit override. Unbenchmarked
+    # in this repo — a bet on the model card's claims, not measured here.
     ModelSpec(
-        OPENROUTER_MODEL_ID, provider="openrouter", local=False, context_window=8_192,
-        reasoning_strength=1, cost_class="low", speed_class="fast",
+        OPENROUTER_MODEL_ID, provider="openrouter", local=False, context_window=262_144,
+        reasoning_strength=4, cost_class="low", speed_class="fast",
         enabled=OPENROUTER_API_KEY_SET and OPENROUTER_MODEL_ID not in DISABLED_MODELS,
     ),
     # Last-resort fallback — see config.settings.LOCAL_MODEL_ENABLED/LOCAL_MODEL_ID

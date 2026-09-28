@@ -1,5 +1,8 @@
 """research/signals_report.py tests — the Anthropic client is mocked
-throughout, same pattern as tests/test_assistant.py."""
+throughout, same pattern as tests/test_assistant.py. generate_signals_report's
+default model is OpenRouter's (config.settings.OPENROUTER_MODEL_ID) as of
+2026-09-27, so every call below pins model=_CLAUDE_MODEL explicitly to
+exercise the Anthropic path these fakes mock."""
 
 from __future__ import annotations
 
@@ -13,6 +16,8 @@ from companies.registry import seed_companies
 from ingestion.pipeline import ingest_file
 from research.signals_report import generate_signals_report
 from tests.test_screener_adapter import _make_screener_workbook
+
+_CLAUDE_MODEL = "claude-sonnet-5"
 
 
 class _FakeMessages:
@@ -63,7 +68,7 @@ def ingested_conn(tmp_path: Path, db_conn: sqlite3.Connection) -> sqlite3.Connec
 def test_generate_signals_report_returns_llm_text(ingested_conn: sqlite3.Connection, monkeypatch) -> None:
     _install_fake_client(monkeypatch, text="## The Short Answer\nNet profit grew. [FACT] ...")
 
-    result = generate_signals_report(ingested_conn, "How did net profit change?", ["HDFCBANK"])
+    result = generate_signals_report(ingested_conn, "How did net profit change?", ["HDFCBANK"], model=_CLAUDE_MODEL)
 
     assert result.report_markdown == "## The Short Answer\nNet profit grew. [FACT] ..."
     assert result.evidence  # grounded in the ingested company's real evidence
@@ -76,14 +81,14 @@ def test_generate_signals_report_reuses_a_fresh_prior_report_without_calling_the
     from storage.repositories import save_generated_report, save_report_evidence
 
     captured = _install_fake_client(monkeypatch, text="## The Short Answer\nNet profit grew. [FACT] ...")
-    first = generate_signals_report(ingested_conn, "How did net profit change?", ["HDFCBANK"])
+    first = generate_signals_report(ingested_conn, "How did net profit change?", ["HDFCBANK"], model=_CLAUDE_MODEL)
     save_generated_report(ingested_conn, "t1", "How did net profit change?", ["HDFCBANK"], "consolidated", first.report_markdown)
     save_report_evidence(ingested_conn, "t1", [
         {"kind": e.kind, "company_id": e.company_id, "label": e.label, "value": e.value, "citation": e.citation}
         for e in first.evidence
     ])
 
-    second = generate_signals_report(ingested_conn, "How did net profit change", ["HDFCBANK"])
+    second = generate_signals_report(ingested_conn, "How did net profit change", ["HDFCBANK"], model=_CLAUDE_MODEL)
 
     assert len(captured) == 1  # the LLM was called exactly once, not twice
     assert second.report_markdown == first.report_markdown
@@ -100,7 +105,7 @@ def test_generate_signals_report_parses_followup_marker(ingested_conn: sqlite3.C
         ),
     )
 
-    result = generate_signals_report(ingested_conn, "How did net profit change?", ["HDFCBANK"])
+    result = generate_signals_report(ingested_conn, "How did net profit change?", ["HDFCBANK"], model=_CLAUDE_MODEL)
 
     assert "===FOLLOWUP_QUESTIONS===" not in result.report_markdown
     assert result.followups == ["How does this compare to peers?", "What drove the FY2024 jump?"]
@@ -111,7 +116,7 @@ def test_generate_signals_report_sends_evidence_and_signals_prompt(
 ) -> None:
     captured = _install_fake_client(monkeypatch)
 
-    generate_signals_report(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"])
+    generate_signals_report(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"], model=_CLAUDE_MODEL)
 
     assert len(captured) == 1
     sent = _content_text(captured[0]["messages"][0]["content"])
@@ -133,7 +138,7 @@ def test_generate_signals_report_includes_knowledge_graph_claims_for_a_single_co
     _extract_for(ingested_conn, tmp_path, "HDFCBANK", monkeypatch, filename="report.pdf")
     captured = _install_fake_client(monkeypatch)
 
-    generate_signals_report(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"])
+    generate_signals_report(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"], model=_CLAUDE_MODEL)
 
     sent = _content_text(captured[0]["messages"][0]["content"])
     assert "Knowledge graph claim" in sent
@@ -156,7 +161,7 @@ def test_generate_signals_report_without_any_data_skips_the_api_call(
 def test_generate_signals_report_handles_refusal(ingested_conn: sqlite3.Connection, monkeypatch) -> None:
     _install_fake_client(monkeypatch, text="", stop_reason="refusal")
 
-    result = generate_signals_report(ingested_conn, "test question", ["HDFCBANK"])
+    result = generate_signals_report(ingested_conn, "test question", ["HDFCBANK"], model=_CLAUDE_MODEL)
 
     assert "declined" in result.report_markdown.lower()
     assert result.evidence == []
@@ -167,7 +172,7 @@ def test_generate_signals_report_handles_empty_non_refusal_response(
 ) -> None:
     _install_fake_client(monkeypatch, text="", stop_reason="max_tokens")
 
-    result = generate_signals_report(ingested_conn, "test question", ["HDFCBANK"])
+    result = generate_signals_report(ingested_conn, "test question", ["HDFCBANK"], model=_CLAUDE_MODEL)
 
     assert "no report" in result.report_markdown.lower()
     assert result.evidence == []
@@ -192,7 +197,7 @@ def test_injected_investigation_memory_capability_is_used(ingested_conn: sqlite3
         related_investigations=lambda conn, question, company_ids: [fake_candidate],
     )
 
-    generate_signals_report(ingested_conn, "How did net profit change?", ["HDFCBANK"], investigation_memory=mem)
+    generate_signals_report(ingested_conn, "How did net profit change?", ["HDFCBANK"], investigation_memory=mem, model=_CLAUDE_MODEL)
 
     sent = _content_text(captured[0]["messages"][0]["content"])
     assert "fake injected path" in sent
@@ -208,8 +213,8 @@ def test_financial_evidence_is_sent_as_a_stable_cacheable_prefix(
     call, regardless of the marker."""
     captured = _install_fake_client(monkeypatch)
 
-    generate_signals_report(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"])
-    generate_signals_report(ingested_conn, "How did the CASA ratio trend?", ["HDFCBANK"])
+    generate_signals_report(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"], model=_CLAUDE_MODEL)
+    generate_signals_report(ingested_conn, "How did the CASA ratio trend?", ["HDFCBANK"], model=_CLAUDE_MODEL)
 
     assert len(captured) == 2
     for call in captured:

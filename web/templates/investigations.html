@@ -133,10 +133,15 @@
         {% if entry.subtitle %}<div class="investigation-question">{{ entry.subtitle }}</div>{% endif %}
       </a>
       <div class="investigation-actions">
+        {% if entry.type != 'case' %}
+        {# "case" (in_progress/failed/cancelled/insufficient_data research_cases rows) has no
+           hidden_at column -- case_hide only handles 'generated'/'structured', so this button
+           isn't offered for it; Delete (below) is a real hard delete for this entry type. #}
         <form method="post" action="{{ url_for('case_hide', case_type=entry.type, case_id=entry.id) }}">
           <input type="hidden" name="return_to" value="{{ request.full_path }}">
           <button type="submit" class="investigation-action-btn">{{ 'Unhide' if entry.hidden else 'Hide' }}</button>
         </form>
+        {% endif %}
         <form method="post" action="{{ url_for('case_delete', case_type=entry.type, case_id=entry.id) }}"
               onclick="return confirm('Delete this case? It will be permanently hidden and cannot be restored from here.');">
           <input type="hidden" name="return_to" value="{{ request.full_path }}">

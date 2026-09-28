@@ -1295,6 +1295,16 @@ def cancel_research_case(conn: DBConnection, case_id: str) -> None:
     conn.commit()
 
 
+def delete_research_case(conn: DBConnection, case_id: str) -> bool:
+    """See storage/repositories.py's sqlite counterpart for why this is a
+    hard delete, unlike soft_delete_generated_report/soft_delete_investigation."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM research_cases WHERE case_id = %s", (case_id,))
+        rowcount = cur.rowcount
+    conn.commit()
+    return rowcount > 0
+
+
 def list_research_cases_for_feed(conn: DBConnection, *, owner_id: int | None = None) -> list[Row]:
     sql = "SELECT * FROM research_cases WHERE NOT (status = 'completed' AND outcome = 'answered')"
     params: list = []

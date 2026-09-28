@@ -4,6 +4,8 @@ providers are monkeypatched at their generate() entry point (llm/providers).
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from llm import capability_registry
@@ -18,12 +20,33 @@ def _response(model: str, provider: str, text: str = "ok") -> ProviderResponse:
     )
 
 
+def _enable_openrouter(monkeypatch) -> str:
+    """Real test env has no OPENROUTER_API_KEY, so capability_registry.MODELS'
+    openrouter ModelSpec is built disabled at import time (config.settings.
+    OPENROUTER_API_KEY_SET is baked into ModelSpec.enabled once, not
+    re-read) — tests exercising it as config.settings.TIER_PREFERRED_MODEL's
+    preferred candidate (standard/deep tiers, as of 2026-09-27) must patch
+    the spec itself, the same trick tests/test_web.py's
+    _install_fake_signals_llm uses. Returns the model_id for convenience."""
+    spec = capability_registry.get_model(capability_registry.OPENROUTER_MODEL_ID)
+    enabled_spec = dataclasses.replace(spec, enabled=True)
+    monkeypatch.setattr(
+        capability_registry, "MODELS",
+        [enabled_spec if m.model_id == spec.model_id else m for m in capability_registry.MODELS],
+    )
+    return spec.model_id
+
+
 # ------------------------------------------------------------------
 # Hardness routing — simple tasks use the cheap model, hard tasks the strong one.
 # ------------------------------------------------------------------
 
 
-def test_quick_tier_prefers_haiku(monkeypatch) -> None:
+def test_quick_tier_falls_back_to_haiku_when_openrouter_unconfigured(monkeypatch) -> None:
+    """"quick"'s hand-specified chain (config.settings.
+    TIER_FALLBACK_CHAIN_OVERRIDE, as of 2026-09-27) tries OPENROUTER_MODEL_ID
+    first, but a real test env has no OPENROUTER_API_KEY, so it's silently
+    skipped (disabled) and Haiku — the next entry — is reached directly."""
     monkeypatch.setattr(
         "llm.router.anthropic_provider.generate",
         lambda **kw: _response(kw["model"], "anthropic"),
@@ -33,10 +56,33 @@ def test_quick_tier_prefers_haiku(monkeypatch) -> None:
     assert result.fallback_used is False
 
 
-def test_deep_tier_prefers_sonnet_not_opus(monkeypatch) -> None:
-    """Opus is disabled by operator policy (llm/capability_registry.py) —
-    DEEP's preferred model is Sonnet, and Opus never appears in the chain
-    at all (not even as a fallback candidate)."""
+def test_quick_tier_prefers_openrouter_when_configured(monkeypatch) -> None:
+    """With OPENROUTER_API_KEY configured (_enable_openrouter), "quick"'s
+    hand-specified chain actually reaches OpenRouter first, ahead of Haiku."""
+    model_id = _enable_openrouter(monkeypatch)
+    monkeypatch.setattr(
+        "llm.router.openrouter_provider.generate",
+        lambda **kw: _response(kw["model"], "openrouter"),
+    )
+    monkeypatch.setattr(
+        "llm.router.anthropic_provider.generate",
+        lambda **kw: _response(kw["model"], "anthropic"),
+    )
+
+    result = route(system="s", user_message="u", hardness=fixed(Tier.QUICK, "test"), max_tokens=100)
+
+    assert result.response.model == model_id
+    assert result.fallback_used is False
+
+
+def test_deep_tier_falls_back_to_sonnet_when_openrouter_unconfigured(monkeypatch) -> None:
+    """DEEP's configured preferred model is OPENROUTER_MODEL_ID
+    (config.settings.TIER_PREFERRED_MODEL, as of 2026-09-27), but a real
+    test env has no OPENROUTER_API_KEY, so capability_registry.MODELS'
+    openrouter ModelSpec is disabled and simply never enters the chain —
+    the next-strongest eligible cloud model is Sonnet (Opus is disabled by
+    operator policy and never appears at all, not even as a fallback
+    candidate)."""
     monkeypatch.setattr(
         "llm.router.anthropic_provider.generate",
         lambda **kw: _response(kw["model"], "anthropic"),
@@ -46,29 +92,53 @@ def test_deep_tier_prefers_sonnet_not_opus(monkeypatch) -> None:
     assert all(a.model != "claude-opus-5" for a in result.attempts)
 
 
+def test_deep_tier_prefers_openrouter_when_configured(monkeypatch) -> None:
+    """With OPENROUTER_API_KEY configured (_enable_openrouter), DEEP's
+    configured preferred model (config.settings.TIER_PREFERRED_MODEL) is
+    actually reached, ahead of Sonnet."""
+    model_id = _enable_openrouter(monkeypatch)
+    monkeypatch.setattr(
+        "llm.router.openrouter_provider.generate",
+        lambda **kw: _response(kw["model"], "openrouter"),
+    )
+    monkeypatch.setattr(
+        "llm.router.anthropic_provider.generate",
+        lambda **kw: _response(kw["model"], "anthropic"),
+    )
+
+    result = route(system="s", user_message="u", hardness=fixed(Tier.DEEP, "test"), max_tokens=100)
+
+    assert result.response.model == model_id
+    assert result.fallback_used is False
+
+
 # ------------------------------------------------------------------
 # Cloud failure -> automatic fallback to the next cloud model.
 # ------------------------------------------------------------------
 
 
 def test_preferred_model_unavailable_falls_back_to_next_cloud_model(monkeypatch) -> None:
-    """STANDARD, not DEEP: with Opus disabled, DEEP's only eligible cloud
-    candidate is Sonnet itself (Haiku's reasoning_strength is below what
-    DEEP requires) — there's no other cloud model left to fall back to.
-    STANDARD now prefers Haiku (config.settings.TIER_PREFERRED_MODEL), so
-    Haiku -> Sonnet is the real same-tier cloud fallback to exercise here."""
-    def fake_generate(**kw):
-        if kw["model"] == "claude-haiku-4-5":
-            raise ProviderUnavailable("rate limited")
-        return _response(kw["model"], "anthropic")
+    """STANDARD's preferred model is OPENROUTER_MODEL_ID (config.settings.
+    TIER_PREFERRED_MODEL, as of 2026-09-27, via _enable_openrouter) — when
+    it's unavailable, the next-strongest eligible cloud model (Sonnet,
+    reasoning_strength=4) is the real same-tier cloud fallback to exercise
+    here, not Haiku (reasoning_strength=2, sorts after Sonnet)."""
+    model_id = _enable_openrouter(monkeypatch)
 
-    monkeypatch.setattr("llm.router.anthropic_provider.generate", fake_generate)
+    def fake_openrouter_generate(**kw):
+        raise ProviderUnavailable("rate limited")
+
+    monkeypatch.setattr("llm.router.openrouter_provider.generate", fake_openrouter_generate)
+    monkeypatch.setattr(
+        "llm.router.anthropic_provider.generate",
+        lambda **kw: _response(kw["model"], "anthropic"),
+    )
 
     result = route(system="s", user_message="u", hardness=fixed(Tier.STANDARD, "test"), max_tokens=100)
 
     assert result.response.model == "claude-sonnet-5"
     assert result.fallback_used is True
-    assert any(a.model == "claude-haiku-4-5" and a.outcome == "unavailable" for a in result.attempts)
+    assert any(a.model == model_id and a.outcome == "unavailable" for a in result.attempts)
 
 
 def test_all_cloud_unavailable_falls_back_to_local(monkeypatch) -> None:

@@ -1546,6 +1546,19 @@ def cancel_research_case(conn: sqlite3.Connection, case_id: str) -> None:
     conn.commit()
 
 
+def delete_research_case(conn: sqlite3.Connection, case_id: str) -> bool:
+    """Hard delete, unlike soft_delete_generated_report/soft_delete_investigation
+    -- a research_cases row (in_progress/failed/cancelled, or completed with
+    outcome='insufficient_data': the only statuses that reach the Cases feed
+    as their own "case" entry, per list_research_cases_for_feed) is a job
+    record, not durable content worth archiving-forever; there's no
+    hidden_at/deleted_at column on this table at all. Returns False (web/
+    app.py's case_delete aborts 404) if case_id doesn't exist."""
+    cursor = conn.execute("DELETE FROM research_cases WHERE case_id = ?", (case_id,))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
 def list_research_cases_for_feed(conn: sqlite3.Connection, *, owner_id: int | None = None) -> list[sqlite3.Row]:
     """Every case worth showing on the Cases list page in its own right --
     excludes status='completed' outcome='answered' cases, since those

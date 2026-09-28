@@ -200,10 +200,10 @@ def evaluate_hypothesis(
     conn: DBConnection, hypothesis: Hypothesis, plan: InvestigationPlan, *, model: str | None = None
 ) -> HypothesisEvaluation:
     hardness = fixed(Tier.DEEP, "hypothesis evaluation")
-    # No DEFAULT_ANTHROPIC_MODEL fallback — see research/knowledge_builder.py's
-    # identical comment; leaving this unset lets llm/router.py respect
+    # No default pin — see research/knowledge_builder.py's identical comment;
+    # leaving this unset lets llm/router.py respect
     # TIER_PREFERRED_MODEL[hardness.tier] (the operator's actual configured
-    # policy) instead of silently pinning to sonnet on every call.
+    # policy) instead of silently overriding it on every call.
     pinned_model = model or ANTHROPIC_MODEL
     user_message = (
         f"Hypothesis: {hypothesis.statement}\n"

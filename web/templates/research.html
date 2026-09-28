@@ -73,6 +73,23 @@
     min-height: 1.2em;
   }
 
+  /* A rejected/failed request (e.g. the investment-advice guard, or a
+     real server error) reads very differently from "Thinking…" progress
+     text -- give it its own visible banner instead of leaving it as the
+     same muted single line, so the user notices it's a stop, not a
+     status update. */
+  .research-status.is-error {
+    max-width: 52ch;
+    margin: 0 auto;
+    color: var(--indicator-warning);
+    background: var(--indicator-warning-bg);
+    border: 1px solid var(--indicator-warning);
+    border-radius: var(--radius-md);
+    padding: 0.6rem var(--space-3);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
   /* Real answers get an honest, simpler treatment than the mocked example
      threads below — no confidence badge, no hypothesis chain, no evidence
      table, because none of that is actually derived for a live answer yet
@@ -250,6 +267,16 @@
   <script>
     const form = document.getElementById('research-form');
     const status = document.getElementById('research-status');
+
+    // Plain progress text ("Thinking…", "Understanding question…") vs a
+    // real stop (rejected question, server/network error) look the same
+    // otherwise -- both just replace status.textContent -- so a user could
+    // easily miss that their request didn't go through. setStatus() keeps
+    // that one call site but tags which kind of message it is.
+    function setStatus(message, { isError = false } = {}) {
+      status.textContent = message;
+      status.classList.toggle('is-error', isError);
+    }
     const query = document.getElementById('research-query');
     const investigateButton = document.getElementById('investigate-button');
     const resultEl = document.getElementById('research-result');
@@ -339,6 +366,10 @@
         understanding = null;
         caseTypeOverride = null;
         renderPicker();
+        // Clearing the question (e.g. after a rejected/erroring ask) should
+        // clear its leftover status message too, not leave a stale warning
+        // banner sitting under an now-empty box.
+        setStatus('');
         return;
       }
       const requestId = ++understandRequestId;
@@ -534,7 +565,7 @@
     // /research/thread/<id> URL, instead of the short tagged answer above.
     async function generateFullReport(question, companyIds, triggerButton) {
       triggerButton.disabled = true;
-      status.textContent = 'Generating full report…';
+      setStatus('Generating full report…');
       try {
         const response = await fetch('/research/thread/generate', {
           method: 'POST',
@@ -547,13 +578,13 @@
         });
         const data = await response.json();
         if (!response.ok) {
-          status.textContent = data.error || 'Something went wrong.';
+          setStatus(data.error || 'Something went wrong.', { isError: true });
           triggerButton.disabled = false;
           return;
         }
         window.location.href = data.url;
       } catch (err) {
-        status.textContent = 'Network error: ' + err.message;
+        setStatus('Network error: ' + err.message, { isError: true });
         triggerButton.disabled = false;
       }
     }
@@ -604,14 +635,14 @@
         // leaving the same static "Running investigation…" line up for
         // minutes at a time (the whole point being: a user watching this
         // page should be able to tell it's making progress, not stuck).
-        if (data.current_activity) status.textContent = data.current_activity + '…';
+        if (data.current_activity) setStatus(data.current_activity + '…');
       }
       throw new Error('This is taking longer than expected — check back on this page shortly, or try a narrower question.');
     }
 
     async function generateInvestigation(question, companyIds, triggerButton) {
       triggerButton.disabled = true;
-      status.textContent = 'Running investigation — generating hypotheses, gathering evidence, evaluating each one…';
+      setStatus('Running investigation — generating hypotheses, gathering evidence, evaluating each one…');
       try {
         const response = await fetch('/investigate/generate-async', {
           method: 'POST',
@@ -624,7 +655,7 @@
         });
         const data = await response.json();
         if (!response.ok) {
-          status.textContent = data.error || 'Something went wrong.';
+          setStatus(data.error || 'Something went wrong.', { isError: true });
           triggerButton.disabled = false;
           return;
         }
@@ -632,7 +663,7 @@
         const finished = await pollInvestigationStatus(data.investigation_id);
         window.location.href = finished.url;
       } catch (err) {
-        status.textContent = 'Network error: ' + err.message;
+        setStatus('Network error: ' + err.message, { isError: true });
         triggerButton.disabled = false;
       } finally {
         hideContinueInBackground();
@@ -669,7 +700,7 @@
         if (data.status === 'error') throw new Error(data.error || 'Something went wrong.');
         // status === 'running' -- same live-stage reasoning as
         // pollInvestigationStatus() above.
-        if (data.current_activity) status.textContent = data.current_activity + '…';
+        if (data.current_activity) setStatus(data.current_activity + '…');
       }
       throw new Error('This is taking longer than expected — try again in a moment, or ask something narrower.');
     }
@@ -678,11 +709,11 @@
       event.preventDefault();
       const question = query.value.trim();
       if (!question) {
-        status.textContent = 'Ask a question first.';
+        setStatus('Ask a question first.', { isError: true });
         return;
       }
 
-      status.textContent = '';
+      setStatus('');
       resultEl.classList.remove('is-visible');
       resultEl.innerHTML = '';
 
@@ -711,7 +742,7 @@
       const caseType = caseTypeOverride || (understanding && understanding.suggested_case_type) || 'quick';
 
       investigateButton.disabled = true;
-      status.textContent = detectionNote + (caseType === 'deep' ? 'Investigating…' : 'Thinking…');
+      setStatus(detectionNote + (caseType === 'deep' ? 'Investigating…' : 'Thinking…'));
 
       if (caseType === 'deep') {
         // generateInvestigation() (defined above) already owns its own
@@ -736,15 +767,15 @@
         });
         const data = await response.json();
         if (!response.ok) {
-          status.textContent = data.error || 'Something went wrong.';
+          setStatus(data.error || 'Something went wrong.', { isError: true });
           return;
         }
         showContinueInBackground(data.case_id);
         const result = await pollAskStatus(data.job_id);
-        status.textContent = '';
+        setStatus('');
         renderResult(result);
       } catch (err) {
-        status.textContent = 'Network error: ' + err.message;
+        setStatus('Network error: ' + err.message, { isError: true });
       } finally {
         investigateButton.disabled = false;
         hideContinueInBackground();

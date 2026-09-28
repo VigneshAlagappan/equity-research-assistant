@@ -127,6 +127,45 @@ def test_cancel_route_sets_the_cooperative_cancellation_flag(tmp_path: Path, mon
     conn.close()
 
 
+def test_case_delete_removes_a_failed_case(tmp_path: Path, monkeypatch) -> None:
+    """Real production bug (2026-09-27): investigations()'s "case" entries
+    (in_progress/failed/cancelled/insufficient_data research_cases rows --
+    see that route's own entries.append() call) always rendered a Delete
+    button pointing at case_delete(case_type='case', ...), but that route
+    only ever handled case_type in {'generated', 'structured'} -- clicking
+    Delete on a failed case always 400'd, "Unknown case_type: 'case'"."""
+    db_path = tmp_path / "signals_data.db"
+    init_db(db_path=db_path).close()
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    from storage.repositories import create_research_case, fail_research_case
+
+    conn = init_db(db_path=db_path)
+    create_research_case(
+        conn, "case-to-delete", kind="ask", question="q?", company_ids=[],
+        statement_type="consolidated", owner_id=None,
+    )
+    fail_research_case(conn, "case-to-delete", "boom")
+    conn.close()
+
+    with app.test_client() as test_client:
+        response = test_client.post("/cases/case/case-to-delete/delete")
+        assert response.status_code == 302
+
+    conn = init_db(db_path=db_path)
+    assert get_research_case(conn, "case-to-delete") is None
+    conn.close()
+
+
+def test_case_delete_unknown_case_is_404(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "signals_data.db"
+    init_db(db_path=db_path).close()
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        response = test_client.post("/cases/case/not-a-real-case/delete")
+    assert response.status_code == 404
+
+
 def test_cancel_unknown_case_is_404(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "signals_data.db"
     init_db(db_path=db_path).close()

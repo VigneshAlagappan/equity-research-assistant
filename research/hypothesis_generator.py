@@ -193,10 +193,10 @@ def generate_hypotheses(
     fs = fact_store or default_fact_store()
     context = _company_context(conn, company_ids, fs, capabilities)
     hardness = fixed(Tier.DEEP, "hypothesis generation")
-    # No DEFAULT_ANTHROPIC_MODEL fallback — see research/knowledge_builder.py's
-    # identical comment; leaving this unset lets llm/router.py respect
+    # No default pin — see research/knowledge_builder.py's identical comment;
+    # leaving this unset lets llm/router.py respect
     # TIER_PREFERRED_MODEL[hardness.tier] (the operator's actual configured
-    # policy) instead of silently pinning to sonnet on every call.
+    # policy) instead of silently overriding it on every call.
     pinned_model = model or ANTHROPIC_MODEL
     user_message = f"Company context:\n{context}\n\nQuestion/observation: {question}"
 

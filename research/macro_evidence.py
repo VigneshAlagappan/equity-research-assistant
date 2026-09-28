@@ -95,10 +95,10 @@ _IITM_NON_ANNUAL_SUFFIX_RE = re.compile(
 
 # Cheapest allowed model (llm/capability_registry.py's operator cap tops out
 # at Sonnet — this planning step is a simple pick-from-a-list task, not deep
-# reasoning, so it defaults to Haiku rather than research/assistant.py's
-# DEFAULT_ANTHROPIC_MODEL, which is tuned for the harder answer-writing call).
-# ANTHROPIC_MODEL (operator env override) still wins if set, same as every
-# other LLM call site in this app.
+# reasoning, so it defaults to Haiku rather than the Claude model
+# research/insights.py/signals_report.py pin to, which is tuned for the
+# harder answer-writing call). ANTHROPIC_MODEL (operator env override) still
+# wins if set, same as every other LLM call site in this app.
 _DEFAULT_PLANNER_MODEL = "claude-haiku-4-5"
 _PLANNER_MAX_TOKENS = 300
 
