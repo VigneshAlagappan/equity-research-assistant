@@ -166,6 +166,7 @@ from storage.repositories import (
     create_user,
     delete_company_note,
     delete_generated_report,
+    delete_research_case,
     hide_generated_report,
     hide_investigation,
     soft_delete_generated_report,
@@ -3741,12 +3742,24 @@ def create_app() -> Flask:
         row is never actually removed, and no route/button anywhere clears
         it back. Deliberately not the same as research_thread_delete's real
         DELETE above -- that pre-existing hard-delete path (the individual
-        thread page's own Delete action) is untouched."""
+        thread page's own Delete action) is untouched.
+
+        "case" (in_progress/failed/cancelled/insufficient_data research_cases
+        rows -- investigations()'s own entries.append() call is the only
+        producer of this case_type) is a hard delete instead, via
+        delete_research_case -- there's no hidden_at/deleted_at column on
+        that table, and unlike a generated report or investigation, a
+        research_cases row isn't durable content worth archiving-forever,
+        just a job record. This branch was missing entirely until now, so
+        investigations.html's unconditional Delete button on every "case"
+        entry always 400'd."""
         db = get_db()
         if case_type == "generated":
             ok = soft_delete_generated_report(db, case_id)
         elif case_type == "structured":
             ok = soft_delete_investigation(db, case_id)
+        elif case_type == "case":
+            ok = delete_research_case(db, case_id)
         else:
             abort(400, f"Unknown case_type: {case_type!r}")
         if not ok:
