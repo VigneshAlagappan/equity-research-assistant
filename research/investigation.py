@@ -191,6 +191,7 @@ def run_investigation(
     conn: DBConnection, question: str, company_ids: list[str], *, statement_type: str = "consolidated",
     model: str | None = None, capabilities: PlannerCapabilities | None = None, fact_store: FactStore | None = None,
     as_of: str | None = None, investigation_id: str | None = None, case_id: str | None = None,
+    complexity_level: int | None = None,
 ) -> Investigation:
     """`as_of` (ISO date) runs the whole investigation point-in-time: every
     evidence capability is bound to that cutoff (research/temporal.py via
@@ -291,11 +292,14 @@ def run_investigation(
 
         update_case_activity(conn, case_id, "Persisting result")
 
-    _persist(conn, investigation, statement_type, fs)
+    _persist(conn, investigation, statement_type, fs, complexity_level)
     return investigation
 
 
-def _persist(conn: DBConnection, investigation: Investigation, statement_type: str, fact_store: FactStore) -> None:
+def _persist(
+    conn: DBConnection, investigation: Investigation, statement_type: str, fact_store: FactStore,
+    complexity_level: int | None = None,
+) -> None:
     """Writes investigations/investigation_hypotheses/investigation_
     hypothesis_evidence exactly as before (unchanged -- nothing here
     should ever regress that pipeline), then ALSO assembles the same
@@ -315,7 +319,7 @@ def _persist(conn: DBConnection, investigation: Investigation, statement_type: s
         strongest_explanation=synthesis.strongest_explanation if synthesis else None,
         unanswered_questions=synthesis.unanswered_questions if synthesis else [],
         additional_evidence_needed=synthesis.additional_evidence_needed if synthesis else [],
-        as_of=investigation.as_of,
+        as_of=investigation.as_of, complexity_level=complexity_level,
     )
 
     rank_by_id = (

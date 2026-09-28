@@ -418,8 +418,10 @@ CREATE TABLE IF NOT EXISTS generated_reports (
                                   -- matching then falls back to word-overlap only for
                                   -- this report, same graceful-degradation spirit as
                                   -- retrieval/hybrid_search.py
-  question_embedding_model TEXT  -- which model produced it, so a later model/provider
+  question_embedding_model TEXT, -- which model produced it, so a later model/provider
                                   -- change can't silently compare incompatible vectors
+  complexity_level INTEGER       -- Jev's 1-5 Signals complexity level (docs/ADR/023) for this
+                                  -- question, NULL for a report saved before Jev-based routing existed
 );
 
 -- ============================================================
@@ -924,7 +926,11 @@ CREATE TABLE IF NOT EXISTS research_cases (
   investigation_id TEXT,            -- investigations.investigation_id this case's investigation became, if any
   started_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  completed_at TEXT
+  completed_at TEXT,
+  complexity_level INTEGER          -- Jev's 1-5 Signals complexity level (docs/ADR/023), set at case
+                                     -- creation -- what actually decided kind=ask vs kind=investigation
+                                     -- (level 5 -> investigation, everything else -> ask), replacing the
+                                     -- old client-side Quick/Deep toggle
 );
 CREATE INDEX IF NOT EXISTS idx_research_cases_owner ON research_cases(owner_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_research_cases_status ON research_cases(status);
@@ -949,7 +955,12 @@ CREATE TABLE IF NOT EXISTS investigations (
   unanswered_questions TEXT,        -- JSON array
   additional_evidence_needed TEXT,  -- JSON array
   generated_at TEXT NOT NULL,
-  as_of TEXT                        -- ISO date: point-in-time evidence cutoff, NULL = "everything known today"
+  as_of TEXT,                       -- ISO date: point-in-time evidence cutoff, NULL = "everything known today"
+  complexity_level INTEGER          -- Jev's 1-5 Signals complexity level (docs/ADR/023) -- always 5
+                                     -- ("Hypothesize") for an investigation reached through the normal
+                                     -- Jev-routed dispatch; kept as the actual classified value (not a
+                                     -- hardcoded 5) for audit fidelity, since an investigation can also
+                                     -- be started directly
 );
 
 -- One investigation <-> many companies. `investigations.company_ids` above

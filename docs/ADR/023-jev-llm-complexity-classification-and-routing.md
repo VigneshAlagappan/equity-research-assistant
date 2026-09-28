@@ -93,6 +93,14 @@ Rejected for the same reason ADR-011 (modular monolith before microservices) and
 - two audit tables (`llm_call_log`, `signals_routing_log`) exist with no shared `run_id` linking a routed question to its individual model calls yet;
 - Level 3/4's evidence-gathering and prompt-construction duplicates a slice of `research/assistant.py::answer_question` rather than sharing it outright, since that function's own tier auto-routing and model-pinning semantics don't fit this policy's explicit-chain-with-fallback requirement.
 
+## Addendum (2026-09-28) — live web app: dispatch replaces the manual Quick Answer/Deep Dive toggle
+
+`research.html`'s composer previously let the user manually pick "Quick answer" vs "Deep dive" (`/research/understand` only *suggested* one via `llm/hardness.py`'s 3-tier classifier, which the user could override before submitting). That toggle is removed. `/research/understand` now calls `research/routing_policy.py::classify_and_log` (Jev) and returns `complexity_level`/`complexity_label`/`case_type` instead of `suggested_case_type`/`suggestion_reason`; the composer shows the level as a live preview pill while typing, and re-classifies fresh, authoritatively, at submit time (`case_type` — `"ask"` for Levels 1-4, `"investigation"` for Level 5, via `case_type_for_level()`) to decide whether to POST to `/research/ask-async` or `/investigate/generate-async`. Both endpoints, and the synchronous `_answer_question_response` path they share with `/chat`/`/companies/<id>/ask`, now classify (or reuse an already-classified level) and store it as `complexity_level` on the resulting `research_cases`/`generated_reports`/`investigations` row.
+
+This is UI-level dispatch only — it decides which of the two EXISTING pipelines (`research/assistant.py::answer_question` vs `research/investigation.py::run_investigation`) runs, not a swap-in of `route_question()`'s own Level 1-4 deterministic/grounded execution paths for live traffic. `route_question()` remains available (CLI: `python main.py route-ask`) as the fuller reference implementation of the policy; wiring it in as the live execution engine for Levels 1-4 (replacing `answer_question()`'s always-LLM path with the deterministic Retrieve/Calculate short-circuits and Level 4's peer grounding) is a natural follow-up, not done here.
+
+Every research item across the Cases (`/investigations`) feed — in-progress cases, completed Quick Answers, completed Deep Dive investigations — is now tagged with its Jev level (`"Level 3 · Interpret"` etc., falling back to the old generic "Quick Answer"/"Deep Dive" label for a pre-Jev row with `complexity_level=NULL`), and the feed gained a Level filter (`iv_level`) alongside the existing Type/Status filters.
+
 ## Revisit when
 
 - `run_id` could be threaded into `llm/observability.record()` so `llm_call_log` rows join back to their `signals_routing_log` row directly;

@@ -37,6 +37,33 @@ def _install_fake_llm(monkeypatch, text: str = "The answer. [FACT] some fact. [I
     return captured
 
 
+class _SequencedFakeMessages:
+    """Returns a different fixed response per successive call, in order --
+    several routes now make more than one LLM call in sequence (Jev's
+    complexity classification, llm/complexity.py, ahead of the real
+    answer/company-resolution call), each expecting a different response
+    shape, so a single fixed _install_fake_llm() response can't serve all
+    of them the way it could before docs/ADR/023."""
+
+    def __init__(self, texts: list[str], captured: list) -> None:
+        self._texts = texts
+        self._captured = captured
+
+    def create(self, **kwargs):
+        self._captured.append(kwargs)
+        text = self._texts[min(len(self._captured) - 1, len(self._texts) - 1)]
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)], stop_reason="end_turn")
+
+
+def _install_sequenced_fake_llm(monkeypatch, texts: list[str]):
+    captured: list = []
+    monkeypatch.setattr(
+        "llm.providers.anthropic_provider.anthropic.Anthropic",
+        lambda *a, **kw: SimpleNamespace(messages=_SequencedFakeMessages(texts, captured)),
+    )
+    return captured
+
+
 def _build_app(db_path: Path, tmp_path: Path, monkeypatch):
     monkeypatch.setattr("config.settings.DB_PATH", db_path)
     # web/app.py's docs/add and note-attachment upload routes (and the raw-
@@ -564,7 +591,13 @@ def test_chat_post_returns_answer_and_charts(tmp_path: Path, monkeypatch) -> Non
 
     app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
-    captured = _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x. [INFERENCE] y.")
+    # Two LLM calls now: Jev's complexity classification (docs/ADR/023),
+    # then the real answer -- company_ids is given explicitly in the
+    # request body, so no company-resolution call happens in between.
+    captured = _install_sequenced_fake_llm(monkeypatch, [
+        '{"complexity_level": 3, "confidence": 0.8, "reason": "test"}',
+        "Net profit rose. [FACT] x. [INFERENCE] y.",
+    ])
 
     with app.test_client() as test_client:
         response = test_client.post(
@@ -577,7 +610,7 @@ def test_chat_post_returns_answer_and_charts(tmp_path: Path, monkeypatch) -> Non
     assert '<span class="tag tag-fact">[FACT]</span>' in data["answer_html"]
     assert '<span class="tag tag-inference">[INFERENCE]</span>' in data["answer_html"]
     assert "net_profit" in data["charts"]["HDFCBANK"]
-    assert len(captured) == 1
+    assert len(captured) == 2
 
 
 def test_chat_post_without_api_key_is_503(client, monkeypatch) -> None:
@@ -597,7 +630,11 @@ def test_chat_post_without_company_is_no_longer_rejected(client, monkeypatch) ->
     still be grounded in Macro evidence alone (research/macro_evidence.py).
     Nothing in this test's DB matches the generic word "test", so
     answer_question()'s own "nothing matched" message comes back as a normal
-    200 answer, without ever calling the (unmocked) LLM."""
+    200 answer, without ever calling the (unmocked) LLM for company
+    resolution or the answer itself (Jev's own complexity classification,
+    docs/ADR/023, does still make one real, harmlessly-failing/falling-back
+    attempt -- see test_chat_post_never_calls_llm_when_validation_fails for
+    that call counted against a fake client instead)."""
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
     response = client.post("/chat", json={"question": "test", "company_ids": []})
     assert response.status_code == 200
@@ -620,12 +657,26 @@ def test_chat_post_invalid_statement_type_is_400(client, monkeypatch) -> None:
 
 
 def test_chat_post_never_calls_llm_when_validation_fails(client, monkeypatch) -> None:
+    """Two of these three requests genuinely fail validation (empty
+    question, unregistered company) and must never reach any LLM call --
+    confirmed by checking `captured` right after each one, not just at the
+    end. The middle request ("test", company_ids=[]) is NOT a validation
+    failure: it's a valid request that happens to name no company and find
+    no evidence, and since docs/ADR/023 that still costs one Jev
+    classification call (research/company_resolver.py's own cheap
+    candidate pre-filter still avoids an LLM call for company resolution
+    itself, since "test" matches no candidate company at all)."""
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
-    captured = _install_fake_llm(monkeypatch)
+    captured = _install_fake_llm(monkeypatch, text='{"complexity_level": 3, "confidence": 0.5, "reason": "test"}')
+
     client.post("/chat", json={"question": "", "company_ids": ["HDFCBANK"]})
-    client.post("/chat", json={"question": "test", "company_ids": []})
-    client.post("/chat", json={"question": "test", "company_ids": ["NOPE"]})
     assert captured == []
+
+    client.post("/chat", json={"question": "test", "company_ids": []})
+    assert len(captured) == 1  # Jev's classification call, no company-resolution/answer call
+
+    client.post("/chat", json={"question": "test", "company_ids": ["NOPE"]})
+    assert len(captured) == 1  # unregistered company still 404s before Jev ever runs
 
 
 # ------------------------------------------------------------------
@@ -635,15 +686,17 @@ def test_chat_post_never_calls_llm_when_validation_fails(client, monkeypatch) ->
 
 
 def test_research_page_has_no_company_scope_picker(client) -> None:
-    """No manual "Scope to companies" chip UI any more — company scoping is
-    always auto-detected from the question text (client-side, against the
-    COMPANIES list embedded in the page)."""
+    """No manual "Scope to companies" chip UI, and (since docs/ADR/023) no
+    manual Quick Answer/Deep Dive toggle either — company scoping AND
+    pipeline routing are both always resolved server-side, fresh, via
+    /research/understand at submit time (research.html no longer embeds a
+    COMPANIES list or does its own client-side text-matching fallback)."""
     response = client.get("/research")
     body = response.data.decode()
     assert response.status_code == 200
     assert "chip-toggle" not in body
-    assert '"company_id": "HDFCBANK"' in body  # still embedded for JS auto-detection
-    assert '"company_id": "ICICIBANK"' in body
+    assert "case-type-toggle" not in body
+    assert "const COMPANIES" not in body
 
 
 def test_research_page_shows_no_key_banner_when_unset(client, monkeypatch) -> None:
@@ -670,7 +723,13 @@ def test_research_ask_returns_answer_and_charts(tmp_path: Path, monkeypatch) -> 
 
     app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
-    captured = _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x. [INFERENCE] y.")
+    # Two LLM calls now: Jev's complexity classification (docs/ADR/023),
+    # then the real answer -- company_ids is given explicitly in the
+    # request body, so no company-resolution call happens in between.
+    captured = _install_sequenced_fake_llm(monkeypatch, [
+        '{"complexity_level": 3, "confidence": 0.8, "reason": "test"}',
+        "Net profit rose. [FACT] x. [INFERENCE] y.",
+    ])
 
     with app.test_client() as test_client:
         response = test_client.post(
@@ -682,7 +741,7 @@ def test_research_ask_returns_answer_and_charts(tmp_path: Path, monkeypatch) -> 
     assert data["question"] == "How did net profit change?"
     assert '<span class="tag tag-fact">[FACT]</span>' in data["answer_html"]
     assert "net_profit" in data["charts"]["HDFCBANK"]
-    assert len(captured) == 1
+    assert len(captured) == 2
 
 
 def test_research_ask_renders_markdown_structure_in_answer(tmp_path: Path, monkeypatch) -> None:
@@ -757,9 +816,14 @@ def test_research_ask_without_company_uses_macro_evidence(client, monkeypatch) -
     conn.close()
 
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
-    # Two distinct LLM calls happen now: research/macro_evidence.py's own
-    # planner call first ("Catalog: ..." — which series/years apply), then
-    # the main answer call ("Evidence: ...") grounded in what it picked.
+    # Three distinct LLM calls happen now: Jev's complexity classification
+    # first (docs/ADR/023, falls back gracefully -- its prompt doesn't match
+    # either branch below so it just gets whichever text happens to come
+    # back and fails to parse as JSON, harmlessly), then research/
+    # macro_evidence.py's own planner call ("Catalog: ..." — which
+    # series/years apply), then the main answer call ("Evidence: ...")
+    # grounded in what it picked. Dispatched by prompt content below, not
+    # call order, so the extra call doesn't need special-casing.
     captured: list = []
 
     def fake_generate(**kwargs):
@@ -1018,14 +1082,21 @@ def test_research_ask_appears_in_investigations_and_reuses_on_repeat(tmp_path: P
 
     app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
-    captured = _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
+    # Jev's complexity classification (docs/ADR/023) runs on EVERY request,
+    # reuse hit or not -- it decides/tags the level before the reuse check
+    # even happens, so it's not itself skipped by a reuse hit. Only the
+    # real answer-generating call is skipped the second time.
+    captured = _install_sequenced_fake_llm(monkeypatch, [
+        '{"complexity_level": 3, "confidence": 0.8, "reason": "test"}',
+        "Net profit rose. [FACT] x.",
+    ])
 
     with app.test_client() as test_client:
         first = test_client.post(
             "/research/ask", json={"question": "How did net profit change?", "company_ids": ["HDFCBANK"]}
         )
         assert first.status_code == 200
-        assert len(captured) == 1  # one real LLM call
+        assert len(captured) == 2  # Jev classification + one real answer LLM call
 
         investigations_page = test_client.get("/investigations").data.decode()
         assert "How did net profit change?" in investigations_page
@@ -1034,7 +1105,7 @@ def test_research_ask_appears_in_investigations_and_reuses_on_repeat(tmp_path: P
             "/research/ask", json={"question": "How did net profit change?", "company_ids": ["HDFCBANK"]}
         )
         assert second.status_code == 200
-        assert len(captured) == 1  # still one — the second ask was served from the saved thread
+        assert len(captured) == 3  # +1 for the second request's Jev call; the answer itself was reused
         assert second.get_json()["answer_html"] == first.get_json()["answer_html"]
 
 
@@ -2050,8 +2121,15 @@ def test_investigate_generate_async_runs_in_background_and_status_reaches_done(c
     investigate_view URL — the same destination the old synchronous route
     used to hand straight back."""
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    # Jev's complexity classification (docs/ADR/023) now runs before this
+    # route even creates the case -- without a fake client installed, that
+    # call would hit the real Anthropic API.
+    _install_fake_llm(monkeypatch, text='{"complexity_level": 5, "confidence": 0.9, "reason": "test"}')
 
-    def _fake_run_investigation(conn, question, company_ids, *, statement_type="consolidated", as_of=None, investigation_id=None, case_id=None):
+    def _fake_run_investigation(
+        conn, question, company_ids, *, statement_type="consolidated", as_of=None, investigation_id=None,
+        case_id=None, complexity_level=None,
+    ):
         from research.investigation import Investigation
 
         assert investigation_id is not None, "the route must hand the pre-generated id through, not let a new one be minted"
@@ -2082,6 +2160,7 @@ def test_investigate_generate_async_reports_error_status_on_failure(client, monk
     from research.investigation import InvestigationError
 
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    _install_fake_llm(monkeypatch, text='{"complexity_level": 5, "confidence": 0.9, "reason": "test"}')
 
     def _failing_run_investigation(*args, **kwargs):
         raise InvestigationError("every hypothesis's evaluation failed")

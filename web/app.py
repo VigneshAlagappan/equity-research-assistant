@@ -122,7 +122,7 @@ from ingestion.pipeline import ingest_file
 from research.abstracts import generate_abstract
 from research.assistant import answer_question, sentry_span
 from research.company_resolver import resolve_companies
-from llm.hardness import Tier, classify as classify_hardness
+from research.routing_policy import LEVEL_LABELS, case_type_for_level, classify_and_log
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
@@ -3068,7 +3068,7 @@ def create_app() -> Flask:
 
     def _compute_answer_question(
         db, question: str, company_ids: list[str], *, statement_type: str, thread_id: str, thread_url: str,
-        owner_id: str | None, case_id: str | None = None,
+        owner_id: str | None, case_id: str | None = None, complexity_level: int | None = None,
     ) -> dict:
         """The actual "ask the LLM research assistant" work, extracted out
         of the old _answer_question_response() so it can run either
@@ -3136,6 +3136,18 @@ def create_app() -> Flask:
             with sentry_span("llm.anthropic", "Company resolution"):
                 company_ids = resolve_companies(db, question).company_ids
 
+        # Jev's complexity level (docs/ADR/023) -- computed here, after every
+        # validation check above has already passed and company_ids is at
+        # its most accurate (post LLM-fallback resolution), so an invalid
+        # request never pays for a classification call it'll just discard.
+        # `complexity_level` arrives pre-set only from the -async routes
+        # (which must classify BEFORE case creation, to tag the case row
+        # immediately -- see _answer_question_async_response/
+        # investigate_generate_async) -- the sync path (_answer_question_
+        # response) always reaches this still None and classifies fresh.
+        if complexity_level is None:
+            complexity_level = int(classify_and_log(db, question, company_ids).level)
+
         # A group question ("Nifty 50 net profit CAGR") is a sum-then-CAGR
         # arithmetic problem, not something an LLM should reason about
         # company-by-company -- a real, observed failure otherwise: handing
@@ -3156,6 +3168,7 @@ def create_app() -> Flask:
                 save_generated_report(
                     db, thread_id, question, company_ids, statement_type, answer,
                     question_embedding=question_embedding, question_embedding_model=question_embedding_model,
+                    complexity_level=complexity_level,
                 )
                 _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer, owner_id=owner_id)
                 return dict(
@@ -3227,6 +3240,7 @@ def create_app() -> Flask:
             save_generated_report(
                 db, thread_id, question, company_ids, statement_type, answer,
                 question_embedding=question_embedding, question_embedding_model=question_embedding_model,
+                complexity_level=complexity_level,
             )
         with sentry_span("s3", "_persist_generated_report_s3"):
             _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer, owner_id=owner_id)
@@ -3346,11 +3360,17 @@ def create_app() -> Flask:
         # request context and isn't available inside the background
         # thread below (same reasoning as thread_id/thread_url above).
         owner_id = g.user["user_id"] if g.user else None
+        # Jev's level (docs/ADR/023) -- this route only ever runs kind="ask"
+        # (the caller, research.html, already decided that via /research/
+        # understand's case_type before POSTing here), so the level is
+        # stored purely for the case's own tag/filter, never re-used to
+        # pick a different pipeline mid-flight.
+        complexity_level = int(classify_and_log(db, question, company_ids).level)
 
         case_id = uuid.uuid4().hex[:12]
         start_case(
             db, case_id=case_id, kind="ask", question=question, company_ids=company_ids,
-            statement_type=statement_type, owner_id=owner_id,
+            statement_type=statement_type, owner_id=owner_id, complexity_level=complexity_level,
         )
 
         def compute(conn) -> dict:
@@ -3358,7 +3378,7 @@ def create_app() -> Flask:
                 return _compute_answer_question(
                     conn, question, company_ids,
                     statement_type=statement_type, thread_id=thread_id, thread_url=thread_url,
-                    owner_id=owner_id, case_id=case_id,
+                    owner_id=owner_id, case_id=case_id, complexity_level=complexity_level,
                 )
             except _AskRequestError as exc:
                 # Reached only via a race (e.g. a company archived between
@@ -3495,23 +3515,26 @@ def create_app() -> Flask:
 
     @app.route("/research/understand", methods=["POST"])
     def research_understand():
-        """Called by research.html as soon as the user pauses typing (or
-        before Ask/Investigate, whichever fires first) -- resolves which
-        companies the question is actually about (tags first, e.g. "Nifty
-        50", cheap and deterministic; research/company_resolver.py's
-        LLM-based resolution as the fallback for an individual company
-        named informally -- "IDFC Bank" for the registered "IDFC First
-        Bank" -- neither the client's own old regex matching nor tag
-        resolution catches that), and suggests Quick Answer vs Deep Dive
-        via llm/hardness.py's classify() (unchanged, existing heuristic --
-        DEEP for a peer comparison or "why"/"compare"/"versus"-shaped
-        question, otherwise Quick).
+        """Called by research.html as soon as the user pauses typing --
+        resolves which companies the question is actually about (tags
+        first, e.g. "Nifty 50", cheap and deterministic; research/
+        company_resolver.py's LLM-based resolution as the fallback for an
+        individual company named informally -- "IDFC Bank" for the
+        registered "IDFC First Bank" -- neither the client's own old regex
+        matching nor tag resolution catches that), and classifies the
+        question into one of Jev's five Signals complexity levels
+        (llm/complexity.py, docs/ADR/023) to preview which pipeline it
+        will run through.
 
-        Returns a SUGGESTION, never a decision the caller is forced into
-        -- research.html's own toggle starts on whichever this names, but
-        the user can click the other option before submitting; nothing
-        here creates a case or spends more than this one resolution call
-        (no chart building, no full answer/investigation)."""
+        This is a live PREVIEW only -- there is no manual Quick Answer/Deep
+        Dive toggle for the user to override (removed along with the
+        client-side case-type picker); the actual submit re-classifies
+        authoritatively at dispatch time via the same
+        research.routing_policy.classify_and_log() this calls, since a
+        preview computed while the user was still typing can be stale by
+        the time they submit. Nothing here creates a case or spends more
+        than this one classification call (no chart building, no full
+        answer/investigation)."""
         payload = request.get_json(silent=True) or {}
         question = (payload.get("question") or "").strip()
         if not question:
@@ -3525,14 +3548,16 @@ def create_app() -> Flask:
         companies = [get_company(db, company_id) for company_id in company_ids]
         company_labels = [c["display_name"] for c in companies if c is not None]
 
-        hardness = classify_hardness(question, company_ids, evidence_count=0)
-        suggested_case_type = "deep" if hardness.tier == Tier.DEEP else "quick"
+        classification = classify_and_log(db, question, company_ids)
+        level = int(classification.level)
 
         return jsonify(
             company_ids=company_ids,
             company_labels=company_labels,
-            suggested_case_type=suggested_case_type,
-            suggestion_reason=hardness.reason,
+            complexity_level=level,
+            complexity_label=LEVEL_LABELS[level],
+            complexity_reason=classification.reason,
+            case_type=case_type_for_level(level),
         )
 
     @app.route("/research/ask", methods=["POST"])
@@ -3880,10 +3905,17 @@ def create_app() -> Flask:
         # the run underneath it turns out.
         result_url = url_for("investigate_view", investigation_id=investigation_id)
         owner_id = g.user["user_id"] if g.user else None
+        # Jev's level (docs/ADR/023) -- this route only ever runs
+        # kind="investigation" (the caller, research.html, already decided
+        # that via /research/understand's case_type before POSTing here),
+        # so the level is stored purely for the case/investigation's own
+        # tag/filter, normally 5 ("Hypothesize") since that's what routes a
+        # question here at all.
+        complexity_level = int(classify_and_log(db, question, company_ids).level)
 
         start_case(
             db, case_id=investigation_id, kind="investigation", question=question, company_ids=company_ids,
-            statement_type=statement_type, owner_id=owner_id,
+            statement_type=statement_type, owner_id=owner_id, complexity_level=complexity_level,
         )
 
         def compute(conn) -> dict:
@@ -3891,6 +3923,7 @@ def create_app() -> Flask:
                 run_investigation(
                     conn, question, company_ids, statement_type=statement_type, as_of=as_of,
                     investigation_id=investigation_id, case_id=investigation_id,
+                    complexity_level=complexity_level,
                 )
             except InvestigationError as exc:
                 raise RuntimeError(f"The investigation couldn't complete: {exc}") from exc
@@ -4079,6 +4112,17 @@ def create_app() -> Flask:
             ("case_cancelled", "Cancelled"), ("case_insufficient_data", "Insufficient data"),
         ]
 
+        # Jev's 1-5 Signals complexity level (docs/ADR/023) is now what tags
+        # each research item, replacing the old Quick Answer/Deep Dive-only
+        # label -- a row saved before Jev-based routing existed has
+        # complexity_level=NULL and falls back to the old generic label
+        # (still meaningful: it's still either a single-pass answer or a
+        # structured investigation, just not level-tagged).
+        def _type_label(complexity_level: int | None, fallback: str) -> str:
+            if complexity_level is None:
+                return fallback
+            return f"Level {complexity_level} · {LEVEL_LABELS.get(complexity_level, '?')}"
+
         entries = []
         for generated in list_generated_reports(get_db()):
             meta = extract_report_meta(generated["report_markdown"])
@@ -4087,7 +4131,8 @@ def create_app() -> Flask:
                 {
                     "type": "generated",
                     "id": generated["thread_id"],
-                    "type_label": "Quick Answer",
+                    "type_label": _type_label(generated["complexity_level"], "Quick Answer"),
+                    "complexity_level": generated["complexity_level"],
                     "href": url_for("research_thread", thread_id=generated["thread_id"]),
                     "title": meta["title"] or generated["question"],
                     # Only shown when it adds information beyond the title.
@@ -4126,7 +4171,8 @@ def create_app() -> Flask:
                 {
                     "type": "structured",
                     "id": inv["investigation_id"],
-                    "type_label": "Deep Dive",
+                    "type_label": _type_label(inv["complexity_level"], "Deep Dive"),
+                    "complexity_level": inv["complexity_level"],
                     "href": url_for("investigate_view", investigation_id=inv["investigation_id"]),
                     "title": inv["question"],
                     "subtitle": "",
@@ -4160,12 +4206,13 @@ def create_app() -> Flask:
             # kind already uses elsewhere in this feed ("Quick Answer" /
             # "Deep Dive") -- so the label doesn't change the moment a case
             # flips from in_progress to done, just the right_tag does.
-            kind_label = "Deep Dive" if case["kind"] == "investigation" else "Quick Answer"
+            kind_fallback = "Deep Dive" if case["kind"] == "investigation" else "Quick Answer"
             entries.append(
                 {
                     "type": "case",
                     "id": case["case_id"],
-                    "type_label": kind_label,
+                    "type_label": _type_label(case["complexity_level"], kind_fallback),
+                    "complexity_level": case["complexity_level"],
                     "href": url_for("case_detail", case_id=case["case_id"]),
                     "title": case["question"],
                     "subtitle": "",
@@ -4184,6 +4231,9 @@ def create_app() -> Flask:
         iv_status_filter = request.args.get("iv_status") or ""
         if iv_status_filter:
             entries = [r for r in entries if r["status_key"] == iv_status_filter]
+        iv_level_filter = request.args.get("iv_level") or ""
+        if iv_level_filter:
+            entries = [r for r in entries if str(r["complexity_level"]) == iv_level_filter]
         # Hidden entries tucked away by default -- "Show hidden" flips this
         # into a dedicated review mode (only hidden entries, so Unhide is
         # findable) rather than interleaving hidden/visible together, which
@@ -4203,6 +4253,7 @@ def create_app() -> Flask:
             entries_page=iv["page"], entries_total_pages=iv["total_pages"],
             entries_query=iv_query, entries_type_filter=iv_type_filter,
             entries_status_filter=iv_status_filter, status_options=_STATUS_FILTER_OPTIONS,
+            entries_level_filter=iv_level_filter, level_options=sorted(LEVEL_LABELS.items()),
             entries_show_hidden=iv_show_hidden,
         )
 

@@ -47,6 +47,41 @@ from storage.repositories import get_canonical_series, get_canonical_value, list
 
 MAX_TOKENS = 4096
 
+# Short, human-facing names for each level -- used wherever a level needs to
+# be shown to a user (web/app.py's /research/understand preview, the Cases
+# list's per-entry tag and its Level filter dropdown) rather than just the
+# bare integer.
+LEVEL_LABELS: dict[int, str] = {
+    1: "Retrieve", 2: "Calculate", 3: "Interpret", 4: "Compare", 5: "Hypothesize",
+}
+
+
+def case_type_for_level(level: int) -> str:
+    """Which research_cases `kind` a Jev level dispatches to -- Level 5
+    (Hypothesize) is the only one that needs the full hypothesis-driven
+    investigation pipeline (research/investigation.py); everything else is
+    answered through the single-pass assistant pipeline
+    (research/assistant.py). This is now what decides "ask" vs
+    "investigation" in the live app (web/app.py), replacing the old
+    client-side Quick Answer/Deep Dive toggle -- see docs/ADR/023."""
+    return "investigation" if level == ComplexityLevel.HYPOTHESIZE else "ask"
+
+
+def classify_and_log(conn: DBConnection, question: str, company_ids: list[str]) -> ComplexityClassification:
+    """Jev classification alone, logged into llm_call_log the same way
+    route_question() logs its own Jev call -- for callers (web/app.py) that
+    need just the level to decide which existing pipeline/case to run,
+    without going through route_question()'s own Level 1-4 execution
+    paths."""
+    classification, jev_route_result = classify_complexity(question, company_ids)
+    if jev_route_result is not None:
+        observability.record(
+            conn, task_name="jev_complexity_classifier", company_ids=company_ids, question=question,
+            result=jev_route_result,
+        )
+    return classification
+
+
 # ------------------------------------------------------------------
 # Level 1/2 deterministic extraction -- closed-vocabulary keyword matching
 # only, never an LLM. Anything this can't confidently resolve escalates

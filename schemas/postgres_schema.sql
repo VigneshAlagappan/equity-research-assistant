@@ -475,6 +475,8 @@ CREATE TABLE IF NOT EXISTS generated_reports (
                                   -- retrieval/hybrid_search.py
   question_embedding_model TEXT, -- which model produced it, so a later model/provider
                                   -- change can't silently compare incompatible vectors
+  complexity_level INTEGER,      -- Jev's 1-5 Signals complexity level (docs/ADR/023) for this
+                                  -- question, NULL for a report saved before Jev-based routing existed
   hidden_at TEXT,                -- reversible (Cases list "Hide"/"Unhide") -- ported from
                                   -- storage/database.py's _migrate_case_visibility_columns,
                                   -- SQLite added these via ALTER TABLE rather than in the
@@ -490,6 +492,7 @@ CREATE TABLE IF NOT EXISTS generated_reports (
   visibility TEXT NOT NULL DEFAULT 'private',
   owner_id INTEGER               -- nullable -- see _migrate_case_ownership_visibility_columns
 );
+ALTER TABLE generated_reports ADD COLUMN IF NOT EXISTS complexity_level INTEGER;
 
 -- ============================================================
 -- The deterministic Evidence (research/evidence.py) that actually grounded
@@ -819,10 +822,13 @@ CREATE TABLE IF NOT EXISTS research_cases (
   investigation_id TEXT,            -- investigations.investigation_id this case's investigation became, if any
   started_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  completed_at TEXT
+  completed_at TEXT,
+  complexity_level INTEGER          -- Jev's 1-5 Signals complexity level (docs/ADR/023), set at case
+                                     -- creation -- what actually decided kind=ask vs kind=investigation
 );
 CREATE INDEX IF NOT EXISTS idx_research_cases_owner ON research_cases(owner_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_research_cases_status ON research_cases(status);
+ALTER TABLE research_cases ADD COLUMN IF NOT EXISTS complexity_level INTEGER;
 
 -- ============================================================
 -- Hypothesis-driven investigations (Steps 2E-2H, research/investigation.py)
@@ -856,8 +862,13 @@ CREATE TABLE IF NOT EXISTS investigations (
   version INTEGER,
   strongest_verdict TEXT,           -- computed once at persist time (was a live JOIN before)
   visibility TEXT NOT NULL DEFAULT 'private',
-  owner_id INTEGER                  -- nullable -- see _migrate_case_ownership_visibility_columns
+  owner_id INTEGER,                 -- nullable -- see _migrate_case_ownership_visibility_columns
+  complexity_level INTEGER          -- Jev's 1-5 Signals complexity level (docs/ADR/023) -- always 5
+                                     -- ("Hypothesize") for an investigation reached through the normal
+                                     -- Jev-routed dispatch, kept as the actual classified value for
+                                     -- audit fidelity
 );
+ALTER TABLE investigations ADD COLUMN IF NOT EXISTS complexity_level INTEGER;
 
 -- One investigation <-> many companies. `investigations.company_ids` above
 -- stays the ordered, as-asked list (it is what the investigation view
