@@ -146,6 +146,12 @@ Highly reproducible but insufficiently flexible for open-ended user questions.
 
 > **Signal does not ask an LLM simply to answer a research question. It asks the system to conduct a bounded investigation.**
 
+## Addendum (2026-09-28) — entry point is now Jev's Level 5 classification
+
+Before ADR-023 (Signals Complexity Classification and Execution Routing Policy), this pipeline was reached whenever a user manually clicked "Deep dive" in `research.html`'s composer — `llm/hardness.py`'s 3-tier classifier only ever *suggested* that choice, never decided it. That manual toggle is removed.
+
+`research/investigation.py::run_investigation` is now reached only when Jev (`llm/complexity.py`) classifies a question as Level 5 ("Hypothesize" — the same question shape this ADR's Context section describes: multiple plausible explanations, causal reasoning, competing hypotheses), via `research/routing_policy.py::case_type_for_level()` choosing `"investigation"` over `"ask"`. The staged pipeline itself — hypothesis generation through synthesis, and ADR-008/ADR-018's evidence-sufficiency and budget governance around it — is unchanged; only how a question gets routed to it changed.
+
 ## Revisit when
 
 Stages may be consolidated or expanded when evaluation data demonstrates that doing so improves quality, cost, or latency.

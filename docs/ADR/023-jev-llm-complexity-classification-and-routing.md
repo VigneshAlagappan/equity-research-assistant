@@ -22,7 +22,7 @@ Two consequences of not having that policy:
 
 ## Decision
 
-Signal adopts the Signals Complexity Classification and Execution Routing Policy: every research question is first assigned a Complexity Level (1–5), which determines its execution path, its data sources, and whether an LLM is used at all.
+Signal adopts the Signals Complexity Classification and Execution Routing Policy: every research question is first assigned a Complexity Level (1–5), which determines its execution path, its data sources, and whether an LLM is used at all. (Not to be confused with ADR-005's "Level 1–4" evidence-provenance hierarchy — reported fact → canonical value → derived metric → interpretation. That's a classification of *evidence*; this is a classification of *questions*. Same word, deliberately unrelated numbering scheme, easy to conflate at a glance.)
 
 ```text
 Question
