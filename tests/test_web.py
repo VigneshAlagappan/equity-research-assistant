@@ -1132,10 +1132,39 @@ def test_watchlist_add_company_then_appears_on_watchlist(client, monkeypatch) ->
     assert b"Nothing pinned yet" not in listing.data
 
 
-def test_watchlist_add_thread_then_appears_on_watchlist(client) -> None:
-    client.post("/watchlist/add", data={"item_type": "thread", "item_ref": "bank-rates", "next": "/watchlist"})
-    listing = client.get("/watchlist")
-    assert b"Kalyan Bank ROA vs RBI Repo Rate" in listing.data
+def test_watchlist_add_thread_then_appears_on_watchlist(tmp_path: Path, monkeypatch) -> None:
+    """Threads pinned to the watchlist must be real generated_reports rows —
+    web/fixtures.py's THREADS mock is intentionally empty (every hand-written
+    example there was swapped for a real, already-run Deep Dive investigation
+    instead), so there's no more fixture thread id like the old "bank-rates"
+    to pin against; watchlist_add() 404s on anything that isn't a real row."""
+    db_path = tmp_path / "watchlist_thread.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    file_path = tmp_path / "HDFCBANK.xlsx"
+    _make_screener_workbook(file_path)
+    ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    _install_fake_signals_llm(monkeypatch, text="## The Short Answer\nNet profit rose. [FACT] x.")
+
+    with app.test_client() as test_client:
+        generated = test_client.post(
+            "/research/thread/generate",
+            json={"question": "How did net profit change?", "company_ids": ["HDFCBANK"]},
+        )
+        thread_id = generated.get_json()["url"].rsplit("/", 1)[-1]
+
+        add_response = test_client.post(
+            "/watchlist/add", data={"item_type": "thread", "item_ref": thread_id, "next": "/watchlist"}
+        )
+        assert add_response.status_code == 302
+        listing = test_client.get("/watchlist")
+
+    assert b"How did net profit change?" in listing.data
 
 
 def test_watchlist_add_unregistered_company_is_404(client) -> None:
@@ -1191,13 +1220,36 @@ def test_company_page_toggle_reflects_watchlist_state(client) -> None:
     assert b'class="watchlist-toggle-btn is-pinned"' in pinned.data
 
 
-def test_research_thread_toggle_reflects_watchlist_state(client) -> None:
-    not_pinned = client.get("/research/thread/bank-rates")
-    assert b"Add to watchlist" in not_pinned.data
+def test_research_thread_toggle_reflects_watchlist_state(tmp_path: Path, monkeypatch) -> None:
+    """Same fixture-removal reasoning as
+    test_watchlist_add_thread_then_appears_on_watchlist above — needs a real
+    generated_reports row instead of the old "bank-rates" THREADS fixture."""
+    db_path = tmp_path / "thread_toggle.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    file_path = tmp_path / "HDFCBANK.xlsx"
+    _make_screener_workbook(file_path)
+    ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
+    conn.close()
 
-    client.post("/watchlist/add", data={"item_type": "thread", "item_ref": "bank-rates"})
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    _install_fake_signals_llm(monkeypatch, text="## The Short Answer\nNet profit rose. [FACT] x.")
 
-    pinned = client.get("/research/thread/bank-rates")
+    with app.test_client() as test_client:
+        generated = test_client.post(
+            "/research/thread/generate",
+            json={"question": "How did net profit change?", "company_ids": ["HDFCBANK"]},
+        )
+        thread_id = generated.get_json()["url"].rsplit("/", 1)[-1]
+
+        not_pinned = test_client.get(f"/research/thread/{thread_id}")
+        assert b"Add to watchlist" in not_pinned.data
+
+        test_client.post("/watchlist/add", data={"item_type": "thread", "item_ref": thread_id})
+
+        pinned = test_client.get(f"/research/thread/{thread_id}")
     assert b"Watchlisted" in pinned.data
 
 
@@ -1206,11 +1258,51 @@ def test_watchlist_news_unregistered_company_is_404(client) -> None:
     assert response.status_code == 404
 
 
+class _FakeOpenRouterResponse:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict:
+        return {
+            "choices": [{"message": {"content": self._text}, "finish_reason": "end_turn"}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        }
+
+
 def _install_fake_signals_llm(monkeypatch, text: str = "## The Short Answer\nGrew. [FACT] x."):
+    """research/signals_report.py (and research/insights.py) default to
+    OpenRouter (config.settings.OPENROUTER_MODEL_ID), not Anthropic, as of
+    2026-09-27 — this fakes that HTTP call instead of the Anthropic client
+    _install_fake_llm above mocks for research/assistant.py's auto-routing,
+    which still prefers Claude."""
+    import dataclasses
+
+    from llm import capability_registry
+
     captured: list = []
+    monkeypatch.setattr("llm.providers.openrouter_provider.OPENROUTER_API_KEY_SET", True)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    # capability_registry.MODELS bakes ModelSpec.enabled in at import time
+    # from OPENROUTER_API_KEY_SET (False in a real test env, no key set) —
+    # monkeypatching that name doesn't reach the already-built ModelSpec, so
+    # the pinned-model path in llm/router.py's _fallback_chain would still
+    # see this candidate as disabled without patching the spec itself too.
+    spec = capability_registry.get_model(capability_registry.OPENROUTER_MODEL_ID)
+    enabled_spec = dataclasses.replace(spec, enabled=True)
     monkeypatch.setattr(
-        "llm.providers.anthropic_provider.anthropic.Anthropic", lambda *a, **kw: _FakeClient(text, captured)
+        capability_registry, "MODELS",
+        [enabled_spec if m.model_id == spec.model_id else m for m in capability_registry.MODELS],
     )
+
+    def _fake_post(url, **kwargs):
+        captured.append(kwargs)
+        return _FakeOpenRouterResponse(text)
+
+    monkeypatch.setattr("llm.providers.openrouter_provider.requests.post", _fake_post)
     return captured
 
 

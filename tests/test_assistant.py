@@ -4,6 +4,7 @@ only used for the manual live smoke test, never for committed tests."""
 
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,9 @@ import pytest
 
 from companies.registry import seed_companies
 from ingestion.pipeline import ingest_file
+from llm import capability_registry
+from llm.providers.base import ProviderResponse
+from llm.router import TIER_PREFERRED_MODEL
 from research.assistant import InsufficientEvidenceError, _select_model, answer_question
 from tests.test_screener_adapter import _make_screener_workbook
 
@@ -50,6 +54,38 @@ def _install_fake_client(monkeypatch, text: str = "answer", stop_reason: str = "
         "llm.providers.anthropic_provider.anthropic.Anthropic",
         lambda *a, **kw: _FakeClient(content, stop_reason, captured),
     )
+    return captured
+
+
+def _enable_openrouter(monkeypatch) -> str:
+    """Real test env has no OPENROUTER_API_KEY, so capability_registry.MODELS'
+    openrouter ModelSpec is built disabled at import time — same trick
+    tests/test_llm_router.py and tests/test_web.py use to actually reach it.
+    Returns the model_id for convenience."""
+    spec = capability_registry.get_model(capability_registry.OPENROUTER_MODEL_ID)
+    enabled_spec = dataclasses.replace(spec, enabled=True)
+    monkeypatch.setattr(
+        capability_registry, "MODELS",
+        [enabled_spec if m.model_id == spec.model_id else m for m in capability_registry.MODELS],
+    )
+    return spec.model_id
+
+
+def _install_fake_openrouter_client(monkeypatch, text: str = "answer"):
+    """research/assistant.py's auto-routing prefers OPENROUTER_MODEL_ID for
+    every tier (config.settings.TIER_PREFERRED_MODEL, as of 2026-09-27) —
+    this fakes that path (llm/providers/openrouter_provider.py's generate())
+    instead of the Anthropic client _install_fake_client above mocks."""
+    captured: list = []
+
+    def fake_generate(**kw):
+        captured.append(kw)
+        return ProviderResponse(
+            text=text, stop_reason="end_turn", input_tokens=0, output_tokens=0,
+            model=kw["model"], provider="openrouter",
+        )
+
+    monkeypatch.setattr("llm.router.openrouter_provider.generate", fake_generate)
     return captured
 
 
@@ -231,23 +267,24 @@ def test_financial_evidence_is_sent_as_a_stable_cacheable_prefix(
 
 
 def test_select_model_routes_quick_lookup_to_the_cheap_tier() -> None:
-    assert _select_model("What was net profit in FY2024?", ["HDFCBANK"], evidence_count=8) == "claude-haiku-4-5"
+    assert _select_model("What was net profit in FY2024?", ["HDFCBANK"], evidence_count=8) == TIER_PREFERRED_MODEL["quick"]
 
 
 def test_select_model_routes_analysis_question_to_the_top_tier() -> None:
-    # All three tiers currently prefer Haiku (config.settings.TIER_PREFERRED_MODEL
-    # — a deliberate cost policy) — _select_model is a thin wrapper around that
-    # config, not the router's actual fallback chain, which still enforces
-    # DEEP's higher TIER_MIN_REASONING_STRENGTH and would skip Haiku there.
-    assert _select_model("Why did net profit decline in FY2020?", ["HDFCBANK"], evidence_count=20) == "claude-haiku-4-5"
+    # All three tiers currently prefer the same model (config.settings.
+    # TIER_PREFERRED_MODEL — a deliberate operator policy, OpenRouter's model
+    # as of 2026-09-27) — _select_model is a thin wrapper around that config,
+    # not the router's actual fallback chain, which still enforces DEEP's
+    # higher TIER_MIN_REASONING_STRENGTH and would skip a too-weak model there.
+    assert _select_model("Why did net profit decline in FY2020?", ["HDFCBANK"], evidence_count=20) == TIER_PREFERRED_MODEL["deep"]
 
 
 def test_select_model_routes_peer_comparison_to_the_top_tier_regardless_of_wording() -> None:
-    assert _select_model("net profit", ["HDFCBANK", "ICICIBANK"], evidence_count=5) == "claude-haiku-4-5"
+    assert _select_model("net profit", ["HDFCBANK", "ICICIBANK"], evidence_count=5) == TIER_PREFERRED_MODEL["deep"]
 
 
 def test_select_model_routes_generic_question_to_the_mid_tier() -> None:
-    assert _select_model("How has net profit grown over the years?", ["HDFCBANK"], evidence_count=25) == "claude-haiku-4-5"
+    assert _select_model("How has net profit grown over the years?", ["HDFCBANK"], evidence_count=25) == TIER_PREFERRED_MODEL["standard"]
 
 
 def test_answer_question_auto_routes_without_an_explicit_model(
@@ -256,13 +293,16 @@ def test_answer_question_auto_routes_without_an_explicit_model(
     """No `model` argument and no ANTHROPIC_MODEL override means the tier
     comes from _select_model, applied to whatever evidence this question
     actually retrieves — not a hardcoded tier, since the exact evidence
-    count depends on the ingestion fixture."""
+    count depends on the ingestion fixture. _select_model's return
+    (TIER_PREFERRED_MODEL, currently OpenRouter for every tier) is only
+    actually reached when that model is enabled, hence _enable_openrouter."""
     from research.documents import get_document_evidence
     from retrieval.structured_search import get_comparison_evidence
 
     monkeypatch.setattr("config.settings.ANTHROPIC_MODEL", None)
     monkeypatch.setattr("research.assistant.ANTHROPIC_MODEL", None)
-    captured = _install_fake_client(monkeypatch)
+    _enable_openrouter(monkeypatch)
+    captured = _install_fake_openrouter_client(monkeypatch)
     question = "What was net profit in FY2024?"
 
     answer_question(ingested_conn, question, ["HDFCBANK"])

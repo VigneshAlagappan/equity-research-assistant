@@ -242,13 +242,13 @@ def extract_document_knowledge(
         return KnowledgeExtractionResult()
 
     hardness = fixed(Tier.STANDARD, "document knowledge extraction")
-    # No DEFAULT_ANTHROPIC_MODEL fallback here (unlike research/insights.py/
-    # signals_report.py's deliberate pin, kept for those two specific
-    # pre-existing features to preserve their existing quality bar) —
-    # leaving pinned_model unset when ANTHROPIC_MODEL isn't overridden lets
-    # llm/router.py fall through to TIER_PREFERRED_MODEL[hardness.tier],
-    # respecting the operator's actual configured tiering policy instead of
-    # silently overriding it to sonnet on every one of this module's calls.
+    # No default pin here (unlike research/insights.py/signals_report.py's
+    # deliberate pin to OPENROUTER_MODEL_ID, kept for those two specific
+    # pre-existing features) — leaving pinned_model unset when ANTHROPIC_MODEL
+    # isn't overridden lets llm/router.py fall through to
+    # TIER_PREFERRED_MODEL[hardness.tier], respecting the operator's actual
+    # configured tiering policy instead of silently overriding it on every
+    # one of this module's calls.
     pinned_model = model or ANTHROPIC_MODEL
     user_message = f"Document text:\n{text[:MAX_CHARS_FOR_EXTRACTION]}"
 

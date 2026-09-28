@@ -24,7 +24,7 @@ import re
 from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
-from config.settings import ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL
+from config.settings import ANTHROPIC_MODEL, OPENROUTER_MODEL_ID
 from context.graph import render_related_investigations
 from context.optimizer import OptimizedContext, optimize
 from llm import observability
@@ -155,7 +155,13 @@ def generate_signals_report(
     question: str,
     company_ids: list[str],
     statement_type: str | None = "consolidated",
-    model: str = ANTHROPIC_MODEL or DEFAULT_ANTHROPIC_MODEL,
+    # Flipped 2026-09-27 (operator request): OpenRouter is now the default,
+    # not the fallback — ANTHROPIC_MODEL still lets an operator pin back to
+    # a Claude model explicitly; unset, this pins to OPENROUTER_MODEL_ID
+    # (llm/providers/openrouter_provider.py), same pin-only-no-fallback
+    # contract this parameter always had (see llm/router.py's
+    # _fallback_chain: a pinned model is tried alone).
+    model: str = ANTHROPIC_MODEL or OPENROUTER_MODEL_ID,
     *,
     investigation_memory: InvestigationMemoryCapabilities | None = None,
 ) -> SignalsReport:
