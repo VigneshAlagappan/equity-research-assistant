@@ -2,6 +2,10 @@
 
 Newest first. Derived from git history on `feature-v3`; only the deployment marked below is confirmed against Lightsail. Earlier entries are grouped by commit date.
 
+## 2026-09-29 — Post-deploy changes (not yet deployed)
+- Level 1/2 now escalate to Level 3 on missing data, not only on unparseable questions (reconciled with the parallel Level 1–2 fast-path/ROE-ROA work)
+- Cases list: bulk select with Hide/Delete
+
 ## 2026-09-29 — Deployed to Lightsail (deployment v62, image `:signals-app.signals-app.59`, commit `6a6103a`)
 - Execution Analytics panel (Admin > Settings) for Signal Complexity Levels 1–5, reconciled with Jev/routing_policy
 - Bug fixes for Execution Analytics
