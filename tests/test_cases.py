@@ -171,6 +171,135 @@ def test_case_delete_unknown_case_is_404(tmp_path: Path, monkeypatch) -> None:
     assert response.status_code == 404
 
 
+def test_case_bulk_action_hides_selected_generated_and_structured_cases(tmp_path: Path, monkeypatch) -> None:
+    """The Cases list's select-checkbox + "Hide selected" toolbar
+    (investigations.html) posts here as one request -- each checkbox's
+    value is "<case_type>:<case_id>", joined the same way case_hide/
+    case_delete's own two path params already are."""
+    db_path = tmp_path / "signals_data.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    conn.close()
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    from storage.repositories import get_generated_report, get_investigation, save_generated_report, save_investigation
+
+    conn = init_db(db_path=db_path)
+    save_generated_report(conn, "th-bulk-hide", "q?", ["HDFCBANK"], "consolidated", "# Report")
+    save_investigation(
+        conn, investigation_id="inv-bulk-hide", question="why?", company_ids=["HDFCBANK"],
+        statement_type="consolidated", strongest_explanation="Because.",
+        unanswered_questions=[], additional_evidence_needed=[],
+    )
+    conn.close()
+
+    with app.test_client() as test_client:
+        response = test_client.post(
+            "/cases/bulk-action",
+            data={"bulk_action": "hide", "selected": ["generated:th-bulk-hide", "structured:inv-bulk-hide"]},
+        )
+        assert response.status_code == 302
+
+    conn = init_db(db_path=db_path)
+    assert get_generated_report(conn, "th-bulk-hide")["hidden_at"] is not None
+    assert get_investigation(conn, "inv-bulk-hide")["hidden_at"] is not None
+    conn.close()
+
+
+def test_case_bulk_action_deletes_selected_cases_across_all_three_types(tmp_path: Path, monkeypatch) -> None:
+    """"delete" reuses case_delete's own per-type dispatch: soft-delete
+    (deleted_at set, row kept) for generated/structured, a real hard delete
+    for a "case" (in_progress/failed/... research_cases row) -- same three
+    behaviors the per-row Delete button already has, just batched."""
+    db_path = tmp_path / "signals_data.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    conn.close()
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    from storage.repositories import (
+        create_research_case, fail_research_case, get_generated_report, get_investigation,
+        get_research_case, list_generated_reports, save_generated_report, save_investigation,
+    )
+
+    conn = init_db(db_path=db_path)
+    save_generated_report(conn, "th-bulk-del", "q?", ["HDFCBANK"], "consolidated", "# Report")
+    save_investigation(
+        conn, investigation_id="inv-bulk-del", question="why?", company_ids=["HDFCBANK"],
+        statement_type="consolidated", strongest_explanation="Because.",
+        unanswered_questions=[], additional_evidence_needed=[],
+    )
+    create_research_case(
+        conn, "case-bulk-del", kind="ask", question="q?", company_ids=[],
+        statement_type="consolidated", owner_id=None,
+    )
+    fail_research_case(conn, "case-bulk-del", "boom")
+    conn.close()
+
+    with app.test_client() as test_client:
+        response = test_client.post(
+            "/cases/bulk-action",
+            data={
+                "bulk_action": "delete",
+                "selected": ["generated:th-bulk-del", "structured:inv-bulk-del", "case:case-bulk-del"],
+            },
+        )
+        assert response.status_code == 302
+
+    conn = init_db(db_path=db_path)
+    # _row_to_generated_report() doesn't project deleted_at (get_generated_report's
+    # own dict shape) -- soft-delete is asserted the same way this codebase's
+    # own comments say to: the row is still findable by id (never erased) but
+    # no longer listed, since list_generated_reports() excludes deleted_at
+    # IS NOT NULL rows unconditionally.
+    assert get_generated_report(conn, "th-bulk-del") is not None
+    assert "th-bulk-del" not in {r["thread_id"] for r in list_generated_reports(conn)}
+    assert get_investigation(conn, "inv-bulk-del")["deleted_at"] is not None
+    assert get_research_case(conn, "case-bulk-del") is None  # hard delete, unlike the other two
+    conn.close()
+
+
+def test_case_bulk_action_skips_hide_for_case_type_entries(tmp_path: Path, monkeypatch) -> None:
+    """A "case" row has no hidden_at column -- same limitation the per-row
+    UI already has (no Hide button offered for it, investigations.html).
+    Selecting one under "Hide selected" must silently no-op it, not error
+    the whole batch out for every other selected row."""
+    db_path = tmp_path / "signals_data.db"
+    init_db(db_path=db_path).close()
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    from storage.repositories import create_research_case, fail_research_case, get_research_case
+
+    conn = init_db(db_path=db_path)
+    create_research_case(
+        conn, "case-not-hideable", kind="ask", question="q?", company_ids=[],
+        statement_type="consolidated", owner_id=None,
+    )
+    fail_research_case(conn, "case-not-hideable", "boom")
+    conn.close()
+
+    with app.test_client() as test_client:
+        response = test_client.post(
+            "/cases/bulk-action", data={"bulk_action": "hide", "selected": ["case:case-not-hideable"]},
+        )
+        assert response.status_code == 302
+
+    conn = init_db(db_path=db_path)
+    assert get_research_case(conn, "case-not-hideable") is not None  # untouched, not deleted or errored
+    conn.close()
+
+
+def test_case_bulk_action_with_nothing_selected_is_a_harmless_no_op(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "signals_data.db"
+    init_db(db_path=db_path).close()
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        response = test_client.post("/cases/bulk-action", data={"bulk_action": "delete"})
+    assert response.status_code == 302
+
+
 def test_cancel_unknown_case_is_404(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "signals_data.db"
     init_db(db_path=db_path).close()

@@ -4013,6 +4013,53 @@ def create_app() -> Flask:
             abort(404, f"No case with id={case_id!r}")
         return _redirect_to_return_or("investigations")
 
+    @app.route("/cases/bulk-action", methods=["POST"])
+    def case_bulk_action():
+        """The Cases list's per-row checkboxes (investigations.html) feed
+        this instead of a loop of individual case_hide/case_delete POSTs --
+        one request, one redirect, same "select several, act once" shape as
+        any other bulk-action toolbar in this app. Each checkbox's value is
+        "<case_type>:<case_id>" (case_hide/case_delete's own two path
+        params, joined) since the three entry types on this page don't
+        share an id space.
+
+        "hide" always sets hidden_at (hide_generated_report/hide_investigation
+        are plain idempotent SETs, not a toggle -- case_hide's own toggle
+        behavior only exists because a single-row button needs to relabel
+        itself Hide/Unhide; a bulk selection has no single "current state" to
+        toggle from, and re-hiding an already-hidden row is a harmless no-op),
+        skipping "case" entries the same way the per-row UI already doesn't
+        offer a Hide button for them (no hidden_at column on research_cases).
+        "delete" reuses case_delete's own per-type dispatch exactly (soft
+        for generated/structured, hard for case).
+
+        An unchecked-everything or missing/unknown bulk_action submission is
+        a silent no-op redirect, not a 400 -- the toolbar's own JS keeps the
+        Apply button unusable until both a valid action and at least one row
+        are selected, so reaching this branch server-side means a stale or
+        hand-crafted request, not a real user action worth erroring on."""
+        db = get_db()
+        bulk_action = request.form.get("bulk_action", "")
+        for token in request.form.getlist("selected"):
+            case_type, _, case_id = token.partition(":")
+            if not case_id:
+                continue
+            if bulk_action == "hide":
+                if case_type == "generated":
+                    hide_generated_report(db, case_id)
+                elif case_type == "structured":
+                    hide_investigation(db, case_id)
+                # "case" entries have no hidden_at column -- silently skipped,
+                # same limitation the per-row Hide button already has.
+            elif bulk_action == "delete":
+                if case_type == "generated":
+                    soft_delete_generated_report(db, case_id)
+                elif case_type == "structured":
+                    soft_delete_investigation(db, case_id)
+                elif case_type == "case":
+                    delete_research_case(db, case_id)
+        return _redirect_to_return_or("investigations")
+
     @app.route("/investigate/generate", methods=["POST"])
     def investigate_generate():
         """Run the Steps 2E-2H hypothesis-driven investigation

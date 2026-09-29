@@ -18,8 +18,22 @@
   .investigation-row:hover { border-color: var(--color-accent); }
   .investigation-row-link {
     display: flex; flex-direction: column; gap: var(--space-1);
-    text-decoration: none; color: inherit;
+    text-decoration: none; color: inherit; flex: 1; min-width: 0;
   }
+  /* The select-for-bulk-action checkbox sits outside .investigation-row-link
+     on purpose -- an <a> can't legally contain interactive content, and a
+     checkbox nested inside one fires the link's navigation on every click
+     alongside the toggle. This row lays the checkbox and the (unchanged)
+     link side by side instead. */
+  .investigation-row-top { display: flex; align-items: flex-start; gap: var(--space-2); }
+  .investigation-select-checkbox { margin-top: 4px; flex-shrink: 0; width: 16px; height: 16px; cursor: pointer; }
+  .cases-bulk-toolbar {
+    display: flex; align-items: center; gap: var(--space-3); margin: var(--space-3) 0;
+    font-size: 13px;
+  }
+  .cases-bulk-toolbar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .cases-bulk-toolbar select.input { min-height: 36px; width: auto; }
+  .cases-bulk-count { color: var(--ink-muted); }
   .investigation-top-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
   .investigation-top-row .card-kicker { display: flex; align-items: center; gap: 8px; }
   .investigation-question { font-size: 13px; opacity: 0.75; }
@@ -114,6 +128,27 @@
 
   {% if entries %}
   {% set iv_pagination_args = {'iv_q': entries_query, 'iv_type': entries_type_filter, 'iv_status': entries_status_filter, 'iv_level': entries_level_filter, 'iv_hidden': '1' if entries_show_hidden else ''} %}
+  {# The bulk-action form itself carries no checkboxes -- each row's own
+     checkbox below points back at it via the HTML5 `form` attribute
+     instead, so it isn't nested inside .investigation-row-link's <a>
+     (illegal: an <a> can't contain interactive content) or inside the
+     per-row Hide/Delete <form>s (browsers don't support nested forms). #}
+  <form id="cases-bulk-form" method="post" action="{{ url_for('case_bulk_action') }}">
+    <input type="hidden" name="return_to" value="{{ request.full_path }}">
+  </form>
+  <div class="cases-bulk-toolbar">
+    <label>
+      <input type="checkbox" id="cases-select-all" aria-label="Select all cases on this page">
+      Select all
+    </label>
+    <span class="cases-bulk-count" id="cases-bulk-count"></span>
+    <select class="input" id="cases-bulk-action" form="cases-bulk-form" name="bulk_action" disabled>
+      <option value="" selected disabled>Choose action&hellip;</option>
+      <option value="hide">Hide selected</option>
+      <option value="delete">Delete selected</option>
+    </select>
+    <button type="submit" form="cases-bulk-form" id="cases-bulk-apply" class="btn btn-ghost" disabled>Apply</button>
+  </div>
   {% if entries_total_pages > 1 %}
   <div class="admin-pagination">
     <span class="muted">Page {{ entries_page }} of {{ entries_total_pages }}</span>
@@ -130,17 +165,21 @@
   <div class="investigations-list">
     {% for entry in entries %}
     <div class="card elev-sm investigation-row">
-      <a class="investigation-row-link" href="{{ entry.href }}">
-        <div class="investigation-top-row">
-          <div class="card-kicker">
-            <span class="tag {{ 'tag-accent' if entry.type == 'generated' else 'tag-neutral' }}">{{ entry.type_label }}</span>
-            {{ entry.companies_label }}
+      <div class="investigation-row-top">
+        <input type="checkbox" class="investigation-select-checkbox" form="cases-bulk-form" name="selected"
+               value="{{ entry.type }}:{{ entry.id }}" aria-label="Select {{ entry.title }}">
+        <a class="investigation-row-link" href="{{ entry.href }}">
+          <div class="investigation-top-row">
+            <div class="card-kicker">
+              <span class="tag {{ 'tag-accent' if entry.type == 'generated' else 'tag-neutral' }}">{{ entry.type_label }}</span>
+              {{ entry.companies_label }}
+            </div>
+            <span class="tag tag-outline">{{ entry.right_tag }}</span>
           </div>
-          <span class="tag tag-outline">{{ entry.right_tag }}</span>
-        </div>
-        <div class="card-title">{{ entry.title }}</div>
-        {% if entry.subtitle %}<div class="investigation-question">{{ entry.subtitle }}</div>{% endif %}
-      </a>
+          <div class="card-title">{{ entry.title }}</div>
+          {% if entry.subtitle %}<div class="investigation-question">{{ entry.subtitle }}</div>{% endif %}
+        </a>
+      </div>
       <div class="investigation-actions">
         {% if entry.type != 'case' %}
         {# "case" (in_progress/failed/cancelled/insufficient_data research_cases rows) has no
@@ -177,5 +216,53 @@
   <div class="empty-state">{{ "No hidden cases." if entries_show_hidden else "No investigations match these filters." }}</div>
   {% else %}
   <div class="empty-state">No investigations yet. Start one from the Research tab.</div>
+  {% endif %}
+
+  {% if entries %}
+  <script>
+    // Cases list bulk-action toolbar: enable the action select + Apply
+    // button only once at least one row is checked, keep the "Select all"
+    // checkbox and the running count in sync with individual row checks
+    // (in either direction), and confirm before a bulk delete the same way
+    // the per-row Delete button already does.
+    (function () {
+      const checkboxes = Array.from(document.querySelectorAll('.investigation-select-checkbox'));
+      const selectAll = document.getElementById('cases-select-all');
+      const actionSelect = document.getElementById('cases-bulk-action');
+      const applyBtn = document.getElementById('cases-bulk-apply');
+      const countEl = document.getElementById('cases-bulk-count');
+      const form = document.getElementById('cases-bulk-form');
+      if (!form || checkboxes.length === 0) return;
+
+      function refresh() {
+        const checked = checkboxes.filter((cb) => cb.checked);
+        const anySelected = checked.length > 0;
+        actionSelect.disabled = !anySelected;
+        applyBtn.disabled = !anySelected || !actionSelect.value;
+        countEl.textContent = anySelected ? `${checked.length} selected` : '';
+        selectAll.checked = anySelected && checked.length === checkboxes.length;
+        selectAll.indeterminate = anySelected && checked.length < checkboxes.length;
+      }
+
+      checkboxes.forEach((cb) => cb.addEventListener('change', refresh));
+      selectAll.addEventListener('change', () => {
+        checkboxes.forEach((cb) => { cb.checked = selectAll.checked; });
+        refresh();
+      });
+      actionSelect.addEventListener('change', refresh);
+
+      form.addEventListener('submit', (event) => {
+        if (actionSelect.value === 'delete') {
+          const n = checkboxes.filter((cb) => cb.checked).length;
+          const msg = `Delete ${n} selected case${n === 1 ? '' : 's'}? This cannot be undone from here.`;
+          if (!confirm(msg)) {
+            event.preventDefault();
+          }
+        }
+      });
+
+      refresh();
+    })();
+  </script>
   {% endif %}
 {% endblock %}
