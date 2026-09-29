@@ -20,6 +20,17 @@ answer) -- this is the same "never invent missing data" rule the policy
 states explicitly for Level 1, generalized as the escalation path's own
 safety net.
 
+Escalation also fires when a level parses the question just fine but the
+*data* isn't there -- a metric with no canonical_financials row for the
+requested period, or a CAGR/YoY calculation missing one of its input years.
+Rather than dead-ending on "no data on file", `route_question()` treats that
+`insufficient_data` outcome the same as an unparseable question and escalates
+it too (up to the same Level 3 ceiling the extraction-failure path already
+has): Level 3's LLM sees broader evidence than a single canonical_financials
+lookup (documents, macro series, whatever partial series does exist) and can
+often say something useful -- or, worst case, explain the gap -- instead of
+Level 1/2's terser "not on file" being the final word.
+
 Every call is audited end-to-end via llm/routing_audit.py, independent of
 llm/observability.py's own per-model-call llm_call_log rows.
 """
@@ -487,10 +498,20 @@ def route_question(
         if outcome is None:
             escalation_notes.append("Level 1 could not deterministically resolve a single metric/period -- escalated to Level 2")
             level = ComplexityLevel.CALCULATE
+        elif outcome.execution_status == "insufficient_data":
+            reason = outcome.missing_data_issues[-1] if outcome.missing_data_issues else "no matching data on file"
+            escalation_notes.append(f"Level 1 found no data to answer deterministically ({reason}) -- escalated to Level 2")
+            outcome = None
+            level = ComplexityLevel.CALCULATE
     if outcome is None and level == ComplexityLevel.CALCULATE:
         outcome = _level2_calculate(conn, question, company_ids, statement_type)
         if outcome is None:
             escalation_notes.append("Level 2 could not deterministically resolve a calculation -- escalated to Level 3")
+            level = ComplexityLevel.INTERPRET
+        elif outcome.execution_status == "insufficient_data":
+            reason = outcome.missing_data_issues[-1] if outcome.missing_data_issues else "no matching data on file"
+            escalation_notes.append(f"Level 2 could not calculate due to missing data ({reason}) -- escalated to Level 3")
+            outcome = None
             level = ComplexityLevel.INTERPRET
 
     if outcome is None:
