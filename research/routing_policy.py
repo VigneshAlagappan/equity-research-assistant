@@ -20,6 +20,17 @@ answer) -- this is the same "never invent missing data" rule the policy
 states explicitly for Level 1, generalized as the escalation path's own
 safety net.
 
+Escalation also fires when a level parses the question just fine but the
+*data* isn't there -- a metric with no canonical_financials row for the
+requested period, or a CAGR/YoY calculation missing one of its input years.
+Rather than dead-ending on "no data on file", `route_question()` treats that
+`insufficient_data` outcome the same as an unparseable question and escalates
+it too (up to the same Level 3 ceiling the extraction-failure path already
+has): Level 3's LLM sees broader evidence than a single canonical_financials
+lookup (documents, macro series, whatever partial series does exist) and can
+often say something useful -- or, worst case, explain the gap -- instead of
+Level 1/2's terser "not on file" being the final word.
+
 Every call is audited end-to-end via llm/routing_audit.py, independent of
 llm/observability.py's own per-model-call llm_call_log rows.
 """
@@ -507,12 +518,19 @@ def _dispatch_levels_1_2(
     conn: DBConnection, question: str, company_ids: list[str], statement_type: str | None, level: int,
 ) -> tuple[LevelOutcome | None, int, list[str]]:
     """Runs Level 1, escalating to Level 2 if Level 1 returns None (can't
-    confidently resolve), per the module's own "never guess, escalate
-    instead" policy. Returns (outcome, level, escalation_notes) -- outcome
-    is None only when Level 2 also returns None (escalate past Level 2,
-    caller's responsibility), and `level` reflects the last level actually
-    attempted (needed by route_question() to pick the right Level 3/4/5
-    dispatch below when this escalates all the way past Level 2)."""
+    confidently resolve) or comes back `insufficient_data` (parsed fine but
+    the data isn't there -- no canonical_financials row for the period, or
+    a derived ratio like ROE/ROA that couldn't be computed from what's on
+    file), per the module's own "never guess, escalate instead" policy,
+    generalized: a level that tried and came up empty deserves the same
+    escalation as a level that couldn't even parse the question, since a
+    higher level's broader evidence gathering may still produce something
+    useful (see docs/ADR/023's 2026-09-29 "escalate on missing data"
+    addendum). Returns (outcome, level, escalation_notes) -- outcome is
+    None only when Level 2 also escalates (past Level 2, caller's
+    responsibility), and `level` reflects the last level actually attempted
+    (needed by route_question() to pick the right Level 3/4/5 dispatch
+    below when this escalates all the way past Level 2)."""
     escalation_notes: list[str] = []
     outcome: LevelOutcome | None = None
 
@@ -521,10 +539,20 @@ def _dispatch_levels_1_2(
         if outcome is None:
             escalation_notes.append("Level 1 could not deterministically resolve a single metric/period -- escalated to Level 2")
             level = ComplexityLevel.CALCULATE
+        elif outcome.execution_status == "insufficient_data":
+            reason = outcome.missing_data_issues[-1] if outcome.missing_data_issues else "no matching data on file"
+            escalation_notes.append(f"Level 1 found no data to answer deterministically ({reason}) -- escalated to Level 2")
+            outcome = None
+            level = ComplexityLevel.CALCULATE
     if outcome is None and level == ComplexityLevel.CALCULATE:
         outcome = _level2_calculate(conn, question, company_ids, statement_type)
         if outcome is None:
             escalation_notes.append("Level 2 could not deterministically resolve a calculation -- escalated to Level 3")
+            level = ComplexityLevel.INTERPRET
+        elif outcome.execution_status == "insufficient_data":
+            reason = outcome.missing_data_issues[-1] if outcome.missing_data_issues else "no matching data on file"
+            escalation_notes.append(f"Level 2 could not calculate due to missing data ({reason}) -- escalated to Level 3")
+            outcome = None
             level = ComplexityLevel.INTERPRET
 
     return outcome, level, escalation_notes

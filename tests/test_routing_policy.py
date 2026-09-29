@@ -153,6 +153,50 @@ def test_level1_escalates_through_to_level3_when_extraction_fails(ingested_conn,
     assert any("escalated to Level 3" in note for note in result.audit.missing_data_issues)
 
 
+def test_level1_escalates_to_level3_when_the_reported_figure_is_missing(ingested_conn, monkeypatch) -> None:
+    """Level 1 parses "net profit"/"FY2020" just fine -- the question isn't
+    ambiguous -- but the fixture only has FY2023/FY2024 on file, so no
+    canonical_financials row exists for FY2020. That must escalate (through
+    Level 2, which can't help a plain non-CAGR/non-YoY question either) to
+    Level 3, rather than dead-ending on Level 1's own "No reported ... on
+    file" answer -- same reasoning as the extraction-failure escalation
+    above, just for missing *data* instead of an unparseable question."""
+    calls = _mock_chain(
+        monkeypatch, _jev_json(1),
+        "No FY2020 figure is on file for HDFC Bank; FY2023 and FY2024 are both recorded, though. "
+        "**Confidence:** Low -- requested period not covered.",
+    )
+
+    result = route_question(ingested_conn, "What was HDFC Bank's net profit in FY2020?", ["HDFCBANK"])
+
+    assert len(calls) == 2  # Jev's call, then Level 3's answer call -- Level 1 itself made no LLM call
+    assert result.classification.level is ComplexityLevel.RETRIEVE  # Jev's own decision is still recorded as-is
+    assert any("Level 1 found no data" in note and "escalated to Level 2" in note for note in result.audit.missing_data_issues)
+    assert any("escalated to Level 3" in note for note in result.audit.missing_data_issues)
+    assert "No FY2020 figure is on file" in result.answer
+
+
+def test_level2_escalates_to_level3_when_a_calculation_input_year_is_missing(ingested_conn, monkeypatch) -> None:
+    """A CAGR Level 2 can parse fine (metric, explicit "5-year" window) but
+    can't compute -- the fixture only has two fiscal years on file, so the
+    start year a 5-year CAGR needs was never ingested. That must escalate
+    to Level 3 rather than dead-ending on "Could not calculate ..." -- an
+    LLM working from whatever evidence IS available may still say something
+    useful about the two years that do exist."""
+    calls = _mock_chain(
+        monkeypatch, _jev_json(2),
+        "Only FY2023 and FY2024 profit are on file, so a precise 5-year CAGR can't be computed, but profit "
+        "grew year over year. **Confidence:** Low -- limited history on file.",
+    )
+
+    result = route_question(ingested_conn, "What was HDFC Bank's 5-year net profit CAGR?", ["HDFCBANK"])
+
+    assert len(calls) == 2  # Jev's call, then Level 3's answer call -- Level 2's own calc attempt made no LLM call
+    assert result.classification.level is ComplexityLevel.CALCULATE  # Jev's own decision is still recorded as-is
+    assert any("Level 2 could not calculate" in note and "escalated to Level 3" in note for note in result.audit.missing_data_issues)
+    assert "Only FY2023 and FY2024" in result.answer
+
+
 def test_audit_row_is_persisted(ingested_conn, monkeypatch) -> None:
     from storage.repositories import list_signals_routing_log
 

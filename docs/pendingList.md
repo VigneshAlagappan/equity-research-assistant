@@ -148,46 +148,6 @@ list_watchlist_activity()` to source real announcement/financial rows
 instead of the current always-empty lists, and update
 `docs/FeatureList.md`'s Watchlist row accordingly.
 
-### Execution / Job Analytics (Admin → Settings)
-
-Status: Future Roadmap — spec received, deferred by explicit user decision
-(2026-09-28)
-
-A new admin page to measure how Signal requests perform across Jev
-Complexity Levels 1–5 over time, to inform whether/which levels need
-async execution and state management. Scope per the owner's spec:
-filter by day/week/month and by level, summary stats (Total Runs, Avg
-Latency, P50, P95, Success Rate), a line chart (execution time over time,
-one series per level) with a scatter-plot toggle for outlier-spotting, and
-a configurable retention window (`execution_metrics_retention_days`,
-default 90) cleaned up via the existing scheduler — observability only,
-must not touch complexity routing, model selection, planner, or agent
-behavior.
-
-Exploration already done, so this is well-scoped when picked up: the
-data mostly already exists in `signals_routing_log` (`llm/routing_audit.py`
-/ ADR-023) — run_id, jev_level, model_selected, neo4j_used, planner_used,
-total `latency_ms`, tokens, cost, execution_status are all captured today.
-The real gap is **component-level timing** (Neon/DB time, calculation
-time, LLM time, Neo4j time, Planner time — currently only the total is
-recorded), which needs new nullable columns on `signals_routing_log`
-(not a new table — extending the existing table was the explicit
-decision) and instrumentation added at each `research/routing_policy.py`
-`_levelN_*` function using the same raw `time.monotonic()` idiom already
-used throughout the codebase (no shared timing utility exists). The
-`eval_analytics` admin panel just shipped (ADR-023, commits 6aaad39/
-e285d4a) is the template to copy for the new page — same
-`_ADMIN_SETTINGS_PANELS` / `_build_admin_settings_context` wiring in
-`web/app.py`, same hand-rolled-SVG chart convention (no charting
-library) as `web/static/js/eval_analytics_charts.js`. Note the bug that
-commit fixed: any new panel's Jinja body must be gated on `{% if
-<its-own-var> is defined %}`, since `|format`/`|tojson` filters raise on
-Jinja's Undefined and will break every *other* admin panel's render
-otherwise.
-
-Do not build this until a separate, explicit implementation request is
-made.
-
 ## Status
 
 Git is clean — all work described above (and everything that produced this
