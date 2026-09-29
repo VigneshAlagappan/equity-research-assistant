@@ -1493,6 +1493,16 @@ def test_research_thread_generate_creates_a_thread_and_page(tmp_path: Path, monk
         assert b"How did net profit change?" in page.data
         assert b"The Short Answer" in page.data
         assert b'<span class="tag tag-fact">[FACT]</span>' in page.data
+        # Specifically the visible question block, not just an incidental
+        # match in <title> -- the real (generated-report) branch used to
+        # render no question at all (only the legacy example-thread branch
+        # had a thread-question-block, keyed off a `thread` var this branch
+        # never passes), so the question silently vanished from every real
+        # saved report's page while the answer rendered fine.
+        page_html = page.data.decode()
+        question_block_start = page_html.index('class="thread-question-block"')
+        question_block_end = page_html.index("</div>", question_block_start)
+        assert "How did net profit change?" in page_html[question_block_start:question_block_end]
 
 
 def test_research_thread_generate_without_api_key_is_503(client, monkeypatch) -> None:
