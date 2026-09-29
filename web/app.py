@@ -256,6 +256,7 @@ from storage.repositories import (
 )
 from research.case_runner import run_case_in_background, start_case
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
+from web.execution_analytics import build_execution_analytics_context
 from web.corporate_actions_feed import build_corporate_actions_feed
 from web.shareholding_feed import build_shareholding_feed
 from web.fixtures import EXAMPLES, THREADS
@@ -1385,6 +1386,22 @@ def create_app() -> Flask:
             "audit_raw_total_objects": sum(r["total"] for r in raw_rows),
         }
 
+    def _execution_analytics_panel_context(db) -> dict:
+        """Admin > Settings > Execution Analytics -- how Signal requests
+        (Ask AI, "Generate full report", Deep Dive investigation) perform
+        across Complexity Levels 1-5 over time. Same query-param filter-bar
+        convention as _audit_panel_context above (`ea_*`, not `al_*`, so
+        the two panels' filters never collide when both appear in the same
+        URL's query string), just three controls instead of Audit's many:
+        period (7d/30d/90d/365d), granularity (daily/weekly/monthly, for the
+        line chart's bucketing), and level (1-5 or all). All the actual
+        aggregation lives in web/execution_analytics.py, not here -- this
+        function only reads the query params and hands them off."""
+        period = request.args.get("ea_period", "")
+        granularity = request.args.get("ea_granularity", "")
+        level = request.args.get("ea_level", "all")
+        return build_execution_analytics_context(db, period=period, granularity=granularity, level_filter=level)
+
     @app.route("/admin")
     def admin():
         """Retired as a standalone page — its 8 panels now live under
@@ -1540,6 +1557,12 @@ def create_app() -> Flask:
             **(_ingest_panel_context(db, get_logs_db()) if admin_sub == "ingest" else {}),
             **(_audit_panel_context(db, get_logs_db()) if admin_sub == "audit" else {}),
             **(_schedule_panel_context(get_logs_db()) if admin_sub == "schedule" else {}),
+            # execution_metrics lives in the main db (Postgres/Neon under
+            # DATABASE_BACKEND=postgres, storage.backend_bootstrap's
+            # wholesale swap) -- unlike batch_job_runs/etc, which stay
+            # SQLite-only forever (get_logs_db()'s own docstring), so this
+            # panel reads `db`, not `logs_db`.
+            **(_execution_analytics_panel_context(db) if admin_sub == "execution_analytics" else {}),
         }
 
     @app.route("/admin/usage")
@@ -2891,6 +2914,7 @@ def create_app() -> Flask:
     _ADMIN_SETTINGS_PANELS = (
         "companies", "taxonomy", "columns", "overview_ratios",
         "import", "stock_actions", "ingest", "schedule", "audit",
+        "execution_analytics",
     )
 
     @app.route("/settings", methods=["GET", "POST"])

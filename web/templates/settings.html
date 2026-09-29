@@ -364,6 +364,45 @@
   .admin-audit-detail-row td { background: color-mix(in srgb, var(--color-text) 3%, transparent); padding: var(--space-3); }
   .admin-audit-detail-table { font-size: 12px; margin: 0; }
 
+  /* Execution Analytics -- one fixed color per Complexity Level (never
+     cycled/reassigned by whichever levels happen to be present, so Level 3
+     is always the same color whether "All" or "Level 3" is selected).
+     Dark-surface steps under the same dark-theme grouping selector
+     --indicator-* above already uses. */
+  :root {
+    --ea-series-1: #2a78d6; --ea-series-2: #eb6834; --ea-series-3: #1baf7a;
+    --ea-series-4: #eda100; --ea-series-5: #e87ba4; --ea-status-error: #d03b3b;
+  }
+  :root[data-theme="dark"], :root[data-theme="signals"] {
+    --ea-series-1: #3987e5; --ea-series-2: #d95926; --ea-series-3: #199e70;
+    --ea-series-4: #c98500; --ea-series-5: #d55181; --ea-status-error: #e66767;
+  }
+  .ea-summary-row { display: flex; flex-wrap: wrap; gap: var(--space-4); margin: var(--space-4) 0; }
+  .ea-stat { min-width: 110px; }
+  .ea-stat-value { font-size: 22px; font-weight: 600; line-height: 1.2; }
+  .ea-stat-label { font-size: 12px; color: var(--ink-muted); margin-top: 2px; }
+  .ea-chart-toggle { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
+  .ea-view-btn {
+    background: none; border: 1px solid var(--color-divider); border-radius: 6px; cursor: pointer;
+    font: inherit; font-size: 13px; padding: 4px 12px; color: var(--ink-muted);
+  }
+  .ea-view-btn.active { color: var(--ink); border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+  .ea-svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .ea-svg text { fill: var(--ink-muted); font-size: 10px; }
+  .ea-svg .ea-axis-line { stroke: var(--color-divider); stroke-width: 1; }
+  .ea-svg .ea-gridline { stroke: var(--color-divider); stroke-width: 1; opacity: 0.5; }
+  .ea-svg .ea-line { fill: none; stroke-width: 2; }
+  .ea-svg .ea-dot { cursor: pointer; }
+  .ea-legend { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-2); font-size: 12px; color: var(--ink-muted); }
+  .ea-legend-item { display: flex; align-items: center; gap: 6px; }
+  .ea-legend-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .ea-tooltip {
+    position: fixed; z-index: 40; background: var(--surface2);
+    border: 1px solid var(--color-divider); border-radius: 6px; padding: var(--space-2) var(--space-3);
+    font-size: 12px; line-height: 1.5; pointer-events: none; box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+    max-width: 260px; color: var(--ink);
+  }
+
   .taxonomy-section { margin-top: var(--space-5); }
   .taxonomy-section:first-of-type { margin-top: var(--space-3); }
   .taxonomy-section-title { font-size: 15px; font-weight: 600; }
@@ -434,6 +473,7 @@
 
   <div class="settings-nav-group-label">System</div>
   <a class="settings-nav-item {{ 'active' if active_panel == 'admin-audit' }}" data-panel="admin-audit" href="{{ url_for('settings', panel='admin-audit') }}">Audit Log</a>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-execution_analytics' }}" data-panel="admin-execution_analytics" href="{{ url_for('settings', panel='admin-execution_analytics') }}">Execution Analytics</a>
   {% endif %}
 </nav>
 
@@ -1929,12 +1969,85 @@
       {% endif %}
       </div>
     </div>
+
+    <div class="settings-panel" id="settings-panel-admin-execution_analytics" {{ 'hidden' if active_admin_panel != 'execution_analytics' }}>
+      <p class="muted">
+        How Signal requests (Ask AI, "Generate full report", Deep Dive investigation) perform across
+        Complexity Levels 1&ndash;5 over time — total volume, latency, and success rate, so this app can
+        measure which levels actually need asynchronous execution and state management before changing
+        anything about how they're routed or run.
+      </p>
+      {% if ea_retention_days is defined %}
+      <p class="muted" style="margin-top: 0;">
+        Detail rows are kept for {{ ea_retention_days }} days (<code>EXECUTION_METRICS_RETENTION_DAYS</code>),
+        then rolled up into a daily summary and pruned by the
+        <a href="{{ url_for('settings', panel='admin-schedule') }}">Schedule</a> panel's
+        "Execution Analytics retention" job — never in the request path.
+      </p>
+      {% endif %}
+
+      {% if ea_summary is defined %}
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-execution_analytics">
+        <label>Period
+          <select name="ea_period" onchange="this.form.submit()">
+            {% for opt in ea_period_options %}
+            <option value="{{ opt.value }}" {{ 'selected' if ea_period == opt.value }}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Granularity
+          <select name="ea_granularity" onchange="this.form.submit()">
+            {% for opt in ea_granularity_options %}
+            <option value="{{ opt.value }}" {{ 'selected' if ea_granularity == opt.value }}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Complexity Level
+          <select name="ea_level" onchange="this.form.submit()">
+            <option value="all" {{ 'selected' if ea_level == 'all' }}>All</option>
+            {% for lvl in (1, 2, 3, 4, 5) %}
+            <option value="{{ lvl }}" {{ 'selected' if ea_level == lvl|string }}>Level {{ lvl }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <noscript><button type="submit" class="btn btn-secondary">Apply</button></noscript>
+      </form>
+
+      <div class="ea-summary-row">
+        <div class="ea-stat"><div class="ea-stat-value">{{ ea_summary.total_runs }}</div><div class="ea-stat-label">Total Runs</div></div>
+        <div class="ea-stat"><div class="ea-stat-value">{{ ea_summary.avg_latency_display }}</div><div class="ea-stat-label">Avg Latency</div></div>
+        <div class="ea-stat"><div class="ea-stat-value">{{ ea_summary.p50_latency_display }}</div><div class="ea-stat-label">P50</div></div>
+        <div class="ea-stat"><div class="ea-stat-value">{{ ea_summary.p95_latency_display }}</div><div class="ea-stat-label">P95</div></div>
+        <div class="ea-stat"><div class="ea-stat-value">{{ ea_summary.success_rate_display }}</div><div class="ea-stat-label">Success Rate</div></div>
+      </div>
+
+      {% if ea_summary.total_runs %}
+      <div class="ea-chart-toggle" role="group" aria-label="Chart view">
+        <button type="button" class="ea-view-btn active" data-ea-view="line">Line chart</button>
+        <button type="button" class="ea-view-btn" data-ea-view="scatter">Scatter (outliers)</button>
+      </div>
+
+      <div id="execution-analytics-root" data-ea-data="{{ execution_analytics_data_json }}">
+        <svg id="execution-analytics-svg" class="ea-svg" viewBox="0 0 960 360" preserveAspectRatio="xMidYMid meet"></svg>
+        <div id="execution-analytics-legend" class="ea-legend"></div>
+      </div>
+      <div id="execution-analytics-tooltip" class="ea-tooltip" hidden></div>
+      {% else %}
+      <div class="empty-state">
+        No execution data recorded yet for this period/level — run an Ask AI question, a full Signals
+        report, or a Deep Dive investigation to start populating this panel.
+      </div>
+      {% endif %}
+      {% endif %}
+    </div>
 {% endif %}
 
 </div>
 </div>
 
   <script src="{{ static_url('js/company_picker.js') }}"></script>
+  <script src="{{ static_url('js/execution_analytics.js') }}"></script>
   <script>
     // Audit Log — each row's detail (reconciliation history for a company
     // row, per-item outcomes for a Job Runs row) is a sibling <tr> rendered

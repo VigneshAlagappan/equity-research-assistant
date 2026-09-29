@@ -2580,6 +2580,119 @@ def get_investigation_cost_summary(conn: sqlite3.Connection, investigation_id: s
     return dict(row)
 
 
+def insert_execution_metrics(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    task_name: str,
+    execution_mode: str,
+    complexity_level: int | None,
+    complexity_tier: str | None,
+    total_ms: float | None,
+    db_ms: float | None,
+    calc_ms: float | None,
+    llm_ms: float | None,
+    neo4j_ms: float | None,
+    planner_ms: float | None,
+    model_used: str | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    estimated_cost_usd: float | None,
+    status: str,
+    error_detail: str | None = None,
+) -> None:
+    """Persist one Signal request/run's timing + outcome (Admin > Settings >
+    Execution Analytics, llm/execution_metrics.py). Observability only --
+    never read by any routing/planning/model-selection code, and callers
+    (llm/execution_metrics.py's finish_run) are expected to swallow any
+    failure here rather than let a metrics-write problem affect the actual
+    request/case outcome it's describing."""
+    conn.execute(
+        "INSERT INTO execution_metrics "
+        "(run_id, created_at, task_name, execution_mode, complexity_level, complexity_tier, "
+        "total_ms, db_ms, calc_ms, llm_ms, neo4j_ms, planner_ms, model_used, input_tokens, "
+        "output_tokens, estimated_cost_usd, status, error_detail) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            run_id, utcnow_iso(), task_name, execution_mode, complexity_level, complexity_tier,
+            total_ms, db_ms, calc_ms, llm_ms, neo4j_ms, planner_ms, model_used, input_tokens,
+            output_tokens, estimated_cost_usd, status, error_detail,
+        ),
+    )
+    conn.commit()
+
+
+def list_execution_metrics(
+    conn: sqlite3.Connection, *, since_iso: str | None = None, until_iso: str | None = None,
+    complexity_level: int | None = None, limit: int = 20000,
+) -> list[dict]:
+    """Raw rows for the Execution Analytics panel -- aggregated into
+    daily/weekly/monthly buckets and percentiles in Python (web/
+    execution_analytics.py), same "cheap at this app's scale, no per-backend
+    SQL" approach the Audit Log panel's raw_objects rollup already uses.
+    Ordered oldest-first so a client-side line chart can plot left-to-right
+    without re-sorting. `until_iso` (exclusive-free upper bound) is used by
+    scripts/execution_metrics_cleanup.py to pull exactly the rows it's about
+    to roll up and delete, not by the analytics panel itself."""
+    query = "SELECT * FROM execution_metrics WHERE 1=1"
+    params: list = []
+    if since_iso is not None:
+        query += " AND created_at >= ?"
+        params.append(since_iso)
+    if until_iso is not None:
+        query += " AND created_at < ?"
+        params.append(until_iso)
+    if complexity_level is not None:
+        query += " AND complexity_level = ?"
+        params.append(complexity_level)
+    query += " ORDER BY created_at ASC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def upsert_execution_metrics_daily(conn: sqlite3.Connection, rows: list[dict]) -> None:
+    """Writes (or overwrites) one execution_metrics_daily row per
+    (day, task_name, complexity_level) -- called by the retention cleanup
+    job (scripts/execution_metrics_cleanup.py) right before it deletes the
+    detailed execution_metrics rows a day's worth of `rows` was computed
+    from, so re-running cleanup on a day it already rolled up (e.g. a
+    retried job) overwrites with the same numbers rather than double-adding."""
+    for row in rows:
+        conn.execute(
+            "INSERT INTO execution_metrics_daily "
+            "(day, task_name, complexity_level, total_runs, success_runs, error_runs, "
+            "avg_total_ms, p50_total_ms, p95_total_ms, max_total_ms, "
+            "total_input_tokens, total_output_tokens, total_estimated_cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(day, task_name, complexity_level) DO UPDATE SET "
+            "total_runs=excluded.total_runs, success_runs=excluded.success_runs, "
+            "error_runs=excluded.error_runs, avg_total_ms=excluded.avg_total_ms, "
+            "p50_total_ms=excluded.p50_total_ms, p95_total_ms=excluded.p95_total_ms, "
+            "max_total_ms=excluded.max_total_ms, total_input_tokens=excluded.total_input_tokens, "
+            "total_output_tokens=excluded.total_output_tokens, "
+            "total_estimated_cost_usd=excluded.total_estimated_cost_usd",
+            (
+                row["day"], row["task_name"], row["complexity_level"], row["total_runs"],
+                row["success_runs"], row["error_runs"], row["avg_total_ms"], row["p50_total_ms"],
+                row["p95_total_ms"], row["max_total_ms"], row["total_input_tokens"],
+                row["total_output_tokens"], row["total_estimated_cost_usd"],
+            ),
+        )
+    conn.commit()
+
+
+def delete_execution_metrics_before(conn: sqlite3.Connection, cutoff_iso: str) -> int:
+    """Deletes detailed execution_metrics rows older than cutoff_iso --
+    called only by scripts/execution_metrics_cleanup.py (the "Maintenance"
+    scheduled job), never from the request path. Callers must roll up
+    (upsert_execution_metrics_daily) whatever they still need from these
+    rows first -- this is a hard delete, not a soft/archival one."""
+    cursor = conn.execute("DELETE FROM execution_metrics WHERE created_at < ?", (cutoff_iso,))
+    conn.commit()
+    return cursor.rowcount
+
+
 def get_latest_data_timestamp(conn: sqlite3.Connection, company_ids: list[str]) -> str | None:
     """Most recent financial_observations.created_at / documents.retrieved_at
     across these companies — the freshness signal context/reuse.py checks a
