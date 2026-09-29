@@ -744,6 +744,94 @@ def test_research_ask_returns_answer_and_charts(tmp_path: Path, monkeypatch) -> 
     assert len(captured) == 2
 
 
+def test_research_ask_level1_question_answers_via_neon_only_with_no_answer_llm_call(tmp_path: Path, monkeypatch) -> None:
+    """A Level-1-shaped question (single company, single stored metric +
+    fiscal year) must actually be answered by research/routing_policy.py's
+    deterministic path (ADR-023), not the always-LLM answer_question()
+    pipeline -- see the "Jev classifies but nothing executes the fast path"
+    gap this test locks in the fix for. Only Jev's own classification call
+    should reach the LLM; the answer itself comes from canonical_financials
+    alone, and a signals_routing_log row should now exist for it (previously
+    always zero rows for any live /research/ask traffic)."""
+    from storage.repositories import list_signals_routing_log
+
+    db_path = tmp_path / "research_ask_level1.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    file_path = tmp_path / "HDFCBANK.xlsx"
+    _make_screener_workbook(file_path)
+    ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    # Only one LLM response supplied (Jev's classification) -- if the
+    # deterministic path is bypassed and answer_question() runs anyway, the
+    # second (missing) call raises IndexError inside _SequencedFakeMessages,
+    # failing the test loudly rather than silently answering with stale data.
+    captured = _install_sequenced_fake_llm(monkeypatch, [
+        '{"complexity_level": 1, "confidence": 0.9, "reason": "single stored fact"}',
+    ])
+
+    with app.test_client() as test_client:
+        response = test_client.post(
+            "/research/ask", json={"question": "What was net profit in FY2024?", "company_ids": ["HDFCBANK"]}
+        )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "[FACT]" in data["answer_html"] or "20500" in data["answer_html"] or "20,500" in data["answer_html"]
+    assert "net_profit" in data["charts"]["HDFCBANK"]  # unchanged: charts still build from canonical_financials
+    assert len(captured) == 1  # only the Jev classifier call -- no answer-generation LLM call
+
+    audit_conn = init_db(db_path=db_path)
+    rows = list_signals_routing_log(audit_conn)
+    matching = [row for row in rows if row["question"] == "What was net profit in FY2024?"]
+    assert len(matching) == 1
+    assert matching[0]["jev_level"] == 1
+    assert matching[0]["execution_status"] == "answered"
+
+
+def test_research_ask_level1_classification_with_unextractable_question_still_uses_llm(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Jev classifies Level 1, but the question has no extractable metric/
+    fiscal year -- Level 1 (and then Level 2) must escalate rather than
+    guess, so this must fall through to the existing answer_question() path
+    unchanged: two LLM calls, and no signals_routing_log row (a partial row
+    here would misrepresent what actually answered the question)."""
+    from storage.repositories import list_signals_routing_log
+
+    db_path = tmp_path / "research_ask_level1_escalates.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    file_path = tmp_path / "HDFCBANK.xlsx"
+    _make_screener_workbook(file_path)
+    ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
+    conn.close()
+
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    captured = _install_sequenced_fake_llm(monkeypatch, [
+        '{"complexity_level": 1, "confidence": 0.4, "reason": "vague"}',
+        "General commentary. [FACT] x. **Confidence:** Low -- vague question.",
+    ])
+
+    with app.test_client() as test_client:
+        response = test_client.post(
+            "/research/ask", json={"question": "Tell me about HDFC Bank's profitability", "company_ids": ["HDFCBANK"]}
+        )
+
+    assert response.status_code == 200
+    assert len(captured) == 2  # Jev's call, then the answer-generation call
+
+    audit_conn = init_db(db_path=db_path)
+    rows = list_signals_routing_log(audit_conn)
+    assert rows == []
+
+
 def test_research_ask_renders_markdown_structure_in_answer(tmp_path: Path, monkeypatch) -> None:
     """The model routinely answers a multi-part question with headers/bold/
     lists (research/assistant.py's SYSTEM_PROMPT doesn't forbid it) — the

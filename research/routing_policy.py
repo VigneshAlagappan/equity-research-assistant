@@ -29,10 +29,12 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
+from typing import Callable
 from storage.db_types import DBConnection
 
 from config.settings import GRAPH_BACKEND, LEVEL_MODEL_CHAIN
 from financials.calculations import CalculationError, MissingDataError, cagr_for_metric, yoy_growth_for_metric
+from financials.ratios import SectorMismatchError, roa_for_company, roe_for_company
 from llm import observability
 from llm.complexity import ComplexityClassification, ComplexityLevel, classify_complexity
 from llm.hardness import Tier, fixed
@@ -70,9 +72,11 @@ def case_type_for_level(level: int) -> str:
 def classify_and_log(conn: DBConnection, question: str, company_ids: list[str]) -> ComplexityClassification:
     """Jev classification alone, logged into llm_call_log the same way
     route_question() logs its own Jev call -- for callers (web/app.py) that
-    need just the level to decide which existing pipeline/case to run,
-    without going through route_question()'s own Level 1-4 execution
-    paths."""
+    need the classification up front to decide which case/pipeline to run
+    (Level 5 -> investigation, everything else -> ask), and to pass into
+    attempt_deterministic_level() afterward for Levels 1/2 -- without
+    route_question()'s own second classify_complexity() call or its Level
+    3-5 dispatch."""
     classification, jev_route_result = classify_complexity(question, company_ids)
     if jev_route_result is not None:
         observability.record(
@@ -110,6 +114,25 @@ _METRIC_ALIASES: dict[str, tuple[str, ...]] = {
     "gross_npa_percent": ("gnpa", "gross npa"),
     "net_npa_percent": ("nnpa", "net npa"),
     "earnings_per_share": ("eps", "earnings per share"),
+}
+
+# Ratios not every vendor reports directly (Screener et al. sometimes omit
+# ROE/ROA even though every input they're derived from -- net_profit,
+# total_assets, total_shareholders_funds -- is on file), but which
+# financials/ratios.py already knows how to compute deterministically from
+# canonical_financials alone: no LLM, same "stable rule -> code, not a model"
+# reasoning as CAGR/YoY above (ADR-006). _level1_retrieve consults this to
+# decide whether a missing direct value should escalate to Level 2 (might be
+# derivable) rather than give up with "no data on file"; _level2_calculate
+# consults it to actually derive the value. Only ROE/ROA are wired here --
+# financials/ratios.py's nim()/gnpa_ratio()/net_profit_margin() have no
+# per-company DB-wired wrapper yet (unlike roe_for_company/roa_for_company,
+# which are already used by financials/report.py, charts/financial_charts.py,
+# and web/valuation_feed.py), so adding them here is future work, not a gap
+# in this pass.
+_DERIVED_RATIO_CALCULATORS: dict[str, Callable] = {
+    "return_on_equity_percent": roe_for_company,
+    "return_on_assets_percent": roa_for_company,
 }
 
 
@@ -172,6 +195,8 @@ def _level1_retrieve(conn: DBConnection, question: str, company_ids: list[str], 
     row = get_canonical_value(conn, company_id, metric_key, "annual", fiscal_year, None, statement_type)
     label = metric_key.replace("_", " ")
     if row is None:
+        if metric_key in _DERIVED_RATIO_CALCULATORS:
+            return None  # not vendor-reported, but Level 2 may be able to derive it (e.g. ROE from net_profit/equity)
         return LevelOutcome(
             answer=f"No reported {label} on file for {company_id} in {fiscal_year}.",
             data_sources=["neon:canonical_financials"],
@@ -233,6 +258,25 @@ def _level2_calculate(conn: DBConnection, question: str, company_ids: list[str],
             )
         return LevelOutcome(
             answer=f"{result.label} for {company_id}: {result.value:.1f}%. [CALCULATION] {result.explanation}",
+            data_sources=["neon:canonical_financials"], calculations_performed=[result.label],
+            evidence_identifiers=[f"canonical_financials:{company_id}:{metric_key}:{fiscal_year}:{statement_type}"],
+            execution_status="answered",
+        )
+
+    if metric_key in _DERIVED_RATIO_CALCULATORS:
+        fiscal_year = _extract_fiscal_year(question)
+        if fiscal_year is None:
+            return None  # no explicit period -> can't resolve without guessing
+        try:
+            result = _DERIVED_RATIO_CALCULATORS[metric_key](conn, company_id, fiscal_year, statement_type=statement_type)
+        except (MissingDataError, SectorMismatchError) as exc:
+            return LevelOutcome(
+                answer=f"Could not calculate {label} for {company_id}: {exc}",
+                data_sources=["neon:canonical_financials"], missing_data_issues=[str(exc)],
+                execution_status="insufficient_data",
+            )
+        return LevelOutcome(
+            answer=f"{result.label} for {company_id}: {result.value:.2f}%. [CALCULATION] {result.explanation}",
             data_sources=["neon:canonical_financials"], calculations_performed=[result.label],
             evidence_identifiers=[f"canonical_financials:{company_id}:{metric_key}:{fiscal_year}:{statement_type}"],
             execution_status="answered",
@@ -459,6 +503,78 @@ class RoutingResult:
     audit: RoutingAudit
 
 
+def _dispatch_levels_1_2(
+    conn: DBConnection, question: str, company_ids: list[str], statement_type: str | None, level: int,
+) -> tuple[LevelOutcome | None, int, list[str]]:
+    """Runs Level 1, escalating to Level 2 if Level 1 returns None (can't
+    confidently resolve), per the module's own "never guess, escalate
+    instead" policy. Returns (outcome, level, escalation_notes) -- outcome
+    is None only when Level 2 also returns None (escalate past Level 2,
+    caller's responsibility), and `level` reflects the last level actually
+    attempted (needed by route_question() to pick the right Level 3/4/5
+    dispatch below when this escalates all the way past Level 2)."""
+    escalation_notes: list[str] = []
+    outcome: LevelOutcome | None = None
+
+    if level == ComplexityLevel.RETRIEVE:
+        outcome = _level1_retrieve(conn, question, company_ids, statement_type)
+        if outcome is None:
+            escalation_notes.append("Level 1 could not deterministically resolve a single metric/period -- escalated to Level 2")
+            level = ComplexityLevel.CALCULATE
+    if outcome is None and level == ComplexityLevel.CALCULATE:
+        outcome = _level2_calculate(conn, question, company_ids, statement_type)
+        if outcome is None:
+            escalation_notes.append("Level 2 could not deterministically resolve a calculation -- escalated to Level 3")
+            level = ComplexityLevel.INTERPRET
+
+    return outcome, level, escalation_notes
+
+
+def attempt_deterministic_level(
+    conn: DBConnection, question: str, company_ids: list[str], classification: ComplexityClassification, *,
+    statement_type: str | None = "consolidated",
+) -> LevelOutcome | None:
+    """The live web app's entry point into Levels 1/2 ONLY -- unlike
+    route_question(), this never calls classify_complexity() itself (the
+    caller has already classified the question, e.g. via classify_and_log(),
+    and passes that same classification in here to avoid a second, wasted
+    Jev call). Returns None whenever Level 1/2 doesn't apply at all
+    (classification.level isn't 1 or 2, or company_ids isn't exactly one
+    company -- Levels 1/2 are single-company only) or when Level 1/2 both
+    escalate (couldn't confidently resolve) -- either way, the caller's own
+    existing Level 3+ pipeline should run instead, and no signals_routing_log
+    row is written here, since a partial row would misrepresent what
+    actually ends up answering the question in that case. Only a REAL Level
+    1/2 outcome gets one, matching what route_question() itself would have
+    persisted for the same question."""
+    level = int(classification.level)
+    if level not in (ComplexityLevel.RETRIEVE, ComplexityLevel.CALCULATE) or len(company_ids) != 1:
+        return None
+
+    run_id = new_run_id()
+    start = time.monotonic()
+    outcome, _final_level, escalation_notes = _dispatch_levels_1_2(conn, question, company_ids, statement_type, level)
+    if outcome is None:
+        return None
+
+    audit = RoutingAudit(
+        run_id=run_id, question=question, company_ids=company_ids,
+        jev_level=level, jev_confidence=classification.confidence,
+        jev_reason=classification.reason, jev_source=classification.source,
+        model_selected=outcome.model_used, fallback_model_used=outcome.fallback_model_used,
+        data_sources=outcome.data_sources, neo4j_used=outcome.neo4j_used, planner_used=outcome.planner_used,
+        tools_executed=outcome.tools_executed, calculations_performed=outcome.calculations_performed,
+        evidence_identifiers=outcome.evidence_identifiers,
+        missing_data_issues=escalation_notes + outcome.missing_data_issues,
+        final_confidence=outcome.final_confidence, execution_status=outcome.execution_status,
+        latency_ms=(time.monotonic() - start) * 1000,
+        input_tokens=outcome.input_tokens, output_tokens=outcome.output_tokens,
+        estimated_cost_usd=outcome.estimated_cost_usd, answer_reference=outcome.answer_reference,
+    )
+    persist(conn, audit)
+    return outcome
+
+
 def route_question(
     conn: DBConnection, question: str, company_ids: list[str], *,
     statement_type: str | None = "consolidated", model: str | None = None, case_id: str | None = None,
@@ -478,20 +594,9 @@ def route_question(
             result=jev_route_result,
         )
 
-    level = int(classification.level)
-    escalation_notes: list[str] = []
-    outcome: LevelOutcome | None = None
-
-    if level == ComplexityLevel.RETRIEVE:
-        outcome = _level1_retrieve(conn, question, company_ids, statement_type)
-        if outcome is None:
-            escalation_notes.append("Level 1 could not deterministically resolve a single metric/period -- escalated to Level 2")
-            level = ComplexityLevel.CALCULATE
-    if outcome is None and level == ComplexityLevel.CALCULATE:
-        outcome = _level2_calculate(conn, question, company_ids, statement_type)
-        if outcome is None:
-            escalation_notes.append("Level 2 could not deterministically resolve a calculation -- escalated to Level 3")
-            level = ComplexityLevel.INTERPRET
+    outcome, level, escalation_notes = _dispatch_levels_1_2(
+        conn, question, company_ids, statement_type, int(classification.level),
+    )
 
     if outcome is None:
         if level == ComplexityLevel.INTERPRET:

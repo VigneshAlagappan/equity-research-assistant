@@ -122,7 +122,8 @@ from ingestion.pipeline import ingest_file
 from research.abstracts import generate_abstract
 from research.assistant import answer_question, sentry_span
 from research.company_resolver import resolve_companies
-from research.routing_policy import LEVEL_LABELS, case_type_for_level, classify_and_log
+from llm.complexity import ComplexityClassification
+from research.routing_policy import LEVEL_LABELS, attempt_deterministic_level, case_type_for_level, classify_and_log
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
@@ -3209,6 +3210,7 @@ def create_app() -> Flask:
     def _compute_answer_question(
         db, question: str, company_ids: list[str], *, statement_type: str, thread_id: str, thread_url: str,
         owner_id: str | None, case_id: str | None = None, complexity_level: int | None = None,
+        classification: ComplexityClassification | None = None,
     ) -> dict:
         """The actual "ask the LLM research assistant" work, extracted out
         of the old _answer_question_response() so it can run either
@@ -3280,13 +3282,17 @@ def create_app() -> Flask:
         # validation check above has already passed and company_ids is at
         # its most accurate (post LLM-fallback resolution), so an invalid
         # request never pays for a classification call it'll just discard.
-        # `complexity_level` arrives pre-set only from the -async routes
-        # (which must classify BEFORE case creation, to tag the case row
-        # immediately -- see _answer_question_async_response/
-        # investigate_generate_async) -- the sync path (_answer_question_
-        # response) always reaches this still None and classifies fresh.
-        if complexity_level is None:
-            complexity_level = int(classify_and_log(db, question, company_ids).level)
+        # `complexity_level`/`classification` arrive pre-set only from the
+        # -async routes (which must classify BEFORE case creation, to tag
+        # the case row immediately -- see _answer_question_async_response) --
+        # the sync path (_answer_question_response) always reaches this
+        # still None and classifies fresh. The full `classification` object
+        # (not just the int level) is kept because it's reused just below to
+        # attempt Levels 1/2's deterministic path without a second,
+        # redundant classify_complexity() call.
+        if classification is None:
+            classification = classify_and_log(db, question, company_ids)
+            complexity_level = int(classification.level)
 
         # A group question ("Nifty 50 net profit CAGR") is a sum-then-CAGR
         # arithmetic problem, not something an LLM should reason about
@@ -3323,10 +3329,30 @@ def create_app() -> Flask:
                     thread_url=thread_url,
                 )
 
-        try:
-            answer = answer_question(db, question, company_ids, statement_type=statement_type, case_id=case_id)
-        except anthropic.APIError as exc:
-            raise _AskRequestError(f"The assistant request failed: {exc}", 502) from exc
+        # Jev classified this as Level 1 (Retrieve) or Level 2 (Calculate) --
+        # attempt research/routing_policy.py's deterministic, no-LLM-for-the-
+        # answer path (ADR-023) before falling back to answer_question()'s
+        # always-LLM path below. Single-company only, matching both the
+        # aggregate-query branch just above and attempt_deterministic_level's
+        # own Level 1/2 constraint. Returns None (falls through unchanged)
+        # whenever it doesn't apply or Level 1/2 both escalate -- see that
+        # function's own docstring for why no signals_routing_log row is
+        # written in that case.
+        deterministic_outcome = None
+        if len(company_ids) == 1 and complexity_level in (1, 2):
+            if case_id is not None:
+                update_case_activity(db, case_id, "Checking canonical data")
+            deterministic_outcome = attempt_deterministic_level(
+                db, question, company_ids, classification, statement_type=statement_type,
+            )
+
+        if deterministic_outcome is not None:
+            answer = deterministic_outcome.answer
+        else:
+            try:
+                answer = answer_question(db, question, company_ids, statement_type=statement_type, case_id=case_id)
+            except anthropic.APIError as exc:
+                raise _AskRequestError(f"The assistant request failed: {exc}", 502) from exc
         # InsufficientEvidenceError/CaseCancelledError (only ever raised when
         # case_id is set) deliberately propagate past this try/except --
         # research.case_runner.run_case_in_background()'s own except
@@ -3502,10 +3528,12 @@ def create_app() -> Flask:
         owner_id = g.user["user_id"] if g.user else None
         # Jev's level (docs/ADR/023) -- this route only ever runs kind="ask"
         # (the caller, research.html, already decided that via /research/
-        # understand's case_type before POSTing here), so the level is
-        # stored purely for the case's own tag/filter, never re-used to
-        # pick a different pipeline mid-flight.
-        complexity_level = int(classify_and_log(db, question, company_ids).level)
+        # understand's case_type before POSTing here). Stored for the case's
+        # own tag/filter, AND passed through to _compute_answer_question
+        # below, which reuses this same classification to attempt Levels
+        # 1/2's deterministic path instead of re-classifying.
+        classification = classify_and_log(db, question, company_ids)
+        complexity_level = int(classification.level)
 
         case_id = uuid.uuid4().hex[:12]
         start_case(
@@ -3519,6 +3547,7 @@ def create_app() -> Flask:
                     conn, question, company_ids,
                     statement_type=statement_type, thread_id=thread_id, thread_url=thread_url,
                     owner_id=owner_id, case_id=case_id, complexity_level=complexity_level,
+                    classification=classification,
                 )
             except _AskRequestError as exc:
                 # Reached only via a race (e.g. a company archived between
