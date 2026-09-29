@@ -294,6 +294,43 @@ def test_level1_still_answers_directly_when_roe_is_vendor_reported(ingested_conn
     assert result.audit.missing_data_issues == []  # no escalation needed
 
 
+def test_attempt_deterministic_level_records_an_execution_metrics_row(ingested_conn, monkeypatch) -> None:
+    """Execution Analytics (llm/execution_metrics.py) previously had no
+    visibility into the fast path at all -- a real Level 1/2 answer never
+    showed up on the dashboard, which otherwise only ever saw the much
+    slower answer_question()/run_investigation() traffic."""
+    from storage.repositories import list_execution_metrics
+
+    monkeypatch.setattr("llm.router.anthropic_provider", _RaisingProvider())
+    outcome = attempt_deterministic_level(
+        ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"], _classification(1),
+    )
+
+    assert outcome is not None
+    rows = list_execution_metrics(ingested_conn)
+    matching = [row for row in rows if row["task_name"] == "signals_fast_path"]
+    assert len(matching) == 1
+    assert matching[0]["complexity_level"] == 1  # Jev's real level, not hardness.py's unrelated tier number
+    assert matching[0]["status"] == "answered"
+
+
+def test_attempt_deterministic_level_records_escalated_status_with_no_llm_call(
+    ingested_conn, monkeypatch,
+) -> None:
+    from storage.repositories import list_execution_metrics
+
+    monkeypatch.setattr("llm.router.anthropic_provider", _RaisingProvider())
+    outcome = attempt_deterministic_level(
+        ingested_conn, "Tell me about HDFC Bank's profitability", ["HDFCBANK"], _classification(1),
+    )
+
+    assert outcome is None
+    rows = list_execution_metrics(ingested_conn)
+    matching = [row for row in rows if row["task_name"] == "signals_fast_path"]
+    assert len(matching) == 1
+    assert matching[0]["status"] == "escalated"
+
+
 def test_attempt_deterministic_level_returns_none_immediately_for_level3_plus(ingested_conn, monkeypatch) -> None:
     """A Level 3/4/5 classification must never even attempt Level 1/2 code --
     returns None with zero LLM calls and zero signals_routing_log rows,

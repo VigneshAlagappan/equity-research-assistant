@@ -118,6 +118,23 @@ class VectorStore(Protocol):
         ...
 
 
+#: (url, collection, timeout, api_key) -> QdrantVectorStore. Process-wide
+#: cache, same reasoning as retrieval/embedding_provider_local.py's
+#: _MODEL_CACHE: a fresh QdrantVectorStore builds a fresh QdrantClient (its
+#: own TLS/HTTP2 connection pool to Qdrant Cloud), and nothing anywhere in
+#: this codebase ever calls .close() on one. Before this cache existed,
+#: every evidence-gathering call site that reaches here (gather_evidence's
+#: hybrid-retrieval step, called once per company per question) built and
+#: immediately dropped one -- a real, observed production incident: a
+#: single "10 quarter CAGR" question (several evidence fetches) drove a
+#: small (1GB) Lightsail instance from ~20% to 78% memory in under 5
+#: minutes, OOM-killing the container. Keyed by the settings tuple (not a
+#: single unkeyed global) so a legitimate settings change within one
+#: process -- as several tests intentionally do via monkeypatch -- still
+#: gets its own client rather than silently reusing a stale one.
+_STORE_CACHE: dict[tuple, "VectorStore"] = {}
+
+
 def default_vector_store() -> VectorStore | None:
     """The only place that imports a concrete backend module directly —
     everywhere else routes through the VectorStore seam (dependency
@@ -125,7 +142,9 @@ def default_vector_store() -> VectorStore | None:
     config.settings.VECTOR_STORE_BACKEND="none" — every caller treats a None
     store exactly like an unreachable one (section 10: continue with
     FTS5/BM25 only). Reads settings at call time, not import time, so tests
-    can monkeypatch the backend choice."""
+    can monkeypatch the backend choice. The returned instance is a
+    process-wide singleton per distinct settings tuple (_STORE_CACHE above)
+    -- callers must not assume a fresh object each call."""
     from config import settings
 
     backend = settings.VECTOR_STORE_BACKEND
@@ -134,5 +153,9 @@ def default_vector_store() -> VectorStore | None:
     if backend == "qdrant":
         from retrieval.vector_store_qdrant import QdrantVectorStore
 
-        return QdrantVectorStore()
+        cache_key = (backend, settings.QDRANT_URL, settings.QDRANT_COLLECTION,
+                     settings.QDRANT_TIMEOUT_SECONDS, settings.QDRANT_API_KEY)
+        if cache_key not in _STORE_CACHE:
+            _STORE_CACHE[cache_key] = QdrantVectorStore()
+        return _STORE_CACHE[cache_key]
     raise ValueError(f"Unknown VECTOR_STORE_BACKEND={backend!r} (expected 'qdrant' or 'none')")

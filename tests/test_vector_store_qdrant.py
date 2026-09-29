@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from retrieval.vector_store import VectorRecord, VectorStoreUnavailable
+from retrieval.vector_store import VectorRecord, VectorStoreUnavailable, default_vector_store
 from retrieval.vector_store_qdrant import QdrantVectorStore
 
 
@@ -183,3 +183,47 @@ def test_upsert_raises_vector_store_unavailable_when_unreachable(fake_client: Fa
 
     with pytest.raises(VectorStoreUnavailable):
         store.upsert([VectorRecord(chunk_id=1, document_id=10, company_id="ACME", embedding=[1.0, 0.0])])
+
+
+# ------------------------------------------------------------------
+# default_vector_store() caching -- a real production incident: every call
+# used to build a brand-new QdrantVectorStore (and, on first real use, a
+# brand-new QdrantClient holding its own TLS connection pool that nothing
+# ever closes). A single evidence-heavy question made several such calls in
+# one request, driving a 1GB Lightsail instance from ~20% to 78% memory in
+# under 5 minutes and OOM-killing the container.
+# ------------------------------------------------------------------
+
+
+def test_default_vector_store_returns_the_same_instance_across_calls(monkeypatch) -> None:
+    import retrieval.vector_store as vector_store_module
+
+    monkeypatch.setattr(vector_store_module, "_STORE_CACHE", {})
+    monkeypatch.setattr("config.settings.VECTOR_STORE_BACKEND", "qdrant")
+    monkeypatch.setattr("config.settings.QDRANT_URL", "http://localhost:6333")
+    monkeypatch.setattr("config.settings.QDRANT_COLLECTION", "test_collection")
+    monkeypatch.setattr("config.settings.QDRANT_TIMEOUT_SECONDS", 3.0)
+    monkeypatch.setattr("config.settings.QDRANT_API_KEY", None)
+
+    first = default_vector_store()
+    second = default_vector_store()
+
+    assert first is second
+    assert isinstance(first, QdrantVectorStore)
+
+
+def test_default_vector_store_returns_a_different_instance_for_a_different_url(monkeypatch) -> None:
+    import retrieval.vector_store as vector_store_module
+
+    monkeypatch.setattr(vector_store_module, "_STORE_CACHE", {})
+    monkeypatch.setattr("config.settings.VECTOR_STORE_BACKEND", "qdrant")
+    monkeypatch.setattr("config.settings.QDRANT_COLLECTION", "test_collection")
+    monkeypatch.setattr("config.settings.QDRANT_TIMEOUT_SECONDS", 3.0)
+    monkeypatch.setattr("config.settings.QDRANT_API_KEY", None)
+
+    monkeypatch.setattr("config.settings.QDRANT_URL", "http://localhost:6333")
+    first = default_vector_store()
+    monkeypatch.setattr("config.settings.QDRANT_URL", "http://localhost:9999")
+    second = default_vector_store()
+
+    assert first is not second  # a genuine settings change still gets its own client, never a stale one

@@ -3386,7 +3386,10 @@ def create_app() -> Flask:
             answer = deterministic_outcome.answer
         else:
             try:
-                answer = answer_question(db, question, company_ids, statement_type=statement_type, case_id=case_id)
+                answer = answer_question(
+                    db, question, company_ids, statement_type=statement_type, case_id=case_id,
+                    complexity_level=complexity_level,
+                )
             except anthropic.APIError as exc:
                 raise _AskRequestError(f"The assistant request failed: {exc}", 502) from exc
         # InsufficientEvidenceError/CaseCancelledError (only ever raised when
