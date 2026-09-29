@@ -1127,7 +1127,7 @@
         <a class="investigation-row" href="{{ url_for('research_thread', thread_id=t.thread_id) }}">
           <div class="investigation-top-row">
             <div class="card-kicker">{{ t.kicker }}</div>
-            <span class="tag tag-outline">{{ t.confidence }} confidence</span>
+            <span class="tag tag-outline">{{ t.confidence_tag }}</span>
           </div>
           <div class="card-title">{{ t.title }}</div>
           <div class="investigation-question">{{ t.question }}</div>

@@ -318,6 +318,20 @@ def _is_blank_note_html(html: str) -> bool:
     return not _HTML_TAG_RE.sub("", html).strip()
 
 
+def _confidence_tag(confidence: str | None, complexity_level: int | None) -> tuple[str, str]:
+    """(badge label, filter key) for a generated report. Levels 1-2 are
+    answered by deterministic code with no LLM, so they never carry a
+    parsed "**Confidence:**" line -- label them by how they were produced
+    instead of the misleading "Unknown confidence"."""
+    if confidence:
+        return f"{confidence} confidence", confidence.lower()
+    if complexity_level == 1:
+        return "Direct lookup · reported data", "direct_lookup"
+    if complexity_level == 2:
+        return "Calculated from reported data", "calculated"
+    return "Unknown confidence", "unknown"
+
+
 def _chart_points(series_a: list[float], series_b: list[float], width: int = 460, height: int = 150) -> dict[str, str]:
     """Map two same-length series to SVG polyline `points` strings on a shared scale.
 
@@ -2385,7 +2399,7 @@ def create_app() -> Flask:
                     "kicker": "Generated · also " + ", ".join(other_companies) if other_companies else "Generated",
                     "title": meta["title"] or generated["question"],
                     "question": generated["question"],
-                    "confidence": meta["confidence"] or "Unknown",
+                    "confidence_tag": _confidence_tag(meta["confidence"], generated["complexity_level"])[0],
                     "generated_at": generated["generated_at"],
                 }
             )
@@ -4305,6 +4319,7 @@ def create_app() -> Flask:
         _STATUS_FILTER_OPTIONS = [
             ("high", "High confidence"), ("moderate", "Moderate confidence"),
             ("low", "Low confidence"), ("unknown", "Unknown confidence"),
+            ("direct_lookup", "Direct lookup"), ("calculated", "Calculated"),
             ("supported", "Supported"), ("partially_supported", "Partially Supported"),
             ("refuted", "Refuted"), ("insufficient_evidence", "Insufficient Evidence"),
             ("no_verdict", "No verdict yet"),
@@ -4334,7 +4349,7 @@ def create_app() -> Flask:
         entries = []
         for generated in list_generated_reports(get_db()):
             meta = extract_report_meta(generated["report_markdown"])
-            confidence = meta["confidence"] or "Unknown"
+            confidence_tag, confidence_key = _confidence_tag(meta["confidence"], generated["complexity_level"])
             entries.append(
                 {
                     "type": "generated",
@@ -4348,8 +4363,8 @@ def create_app() -> Flask:
                     # company_ids can be empty for a macro-only question
                     # (research/macro_evidence.py) — no company to list.
                     "companies_label": ", ".join(generated["company_ids"]) or "Macro/regulatory",
-                    "right_tag": confidence + " confidence",
-                    "status_key": confidence.lower(),
+                    "right_tag": confidence_tag,
+                    "status_key": confidence_key,
                     "generated_at": generated["generated_at"] or "",
                     "hidden": bool(generated["hidden_at"]),
                 }
