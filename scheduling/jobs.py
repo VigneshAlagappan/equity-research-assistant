@@ -36,12 +36,14 @@ from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
 from scripts.batch_generate_insights import run_key_insights_batch
 from scripts.classify_macro_factors_batch import run_macro_factor_classification_batch
 from scripts.db_shard import run_db_shard_job
+from scripts.execution_metrics_cleanup import run_execution_metrics_cleanup
 from scripts.fetch_daily_prices import run_price_history_update
 from scripts.fetch_daily_prices_usa import run_price_history_update_usa
 from scripts.fetch_investor_relations import run_investor_relations_batch, SUPPORTED_COMPANY_IDS
 from scripts.process_pending_documents_batch import run_document_processing_batch
 from scripts.reconcile_generated_reports import run_generated_report_reconciliation
 from scripts.reconcile_raw_objects import run_raw_object_reconciliation
+from scripts.run_signals_eval import run_signals_eval
 from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
 
 
@@ -84,6 +86,7 @@ CATEGORY_ORDER = (
     "Macro",
     "Insights",
     "Documents",
+    "Evals",
     "Maintenance",
 )
 
@@ -277,6 +280,10 @@ def _run_db_shard(conn) -> int:
     return run_db_shard_job(conn)
 
 
+def _run_execution_metrics_cleanup(conn) -> int:
+    return run_execution_metrics_cleanup(conn)
+
+
 def _run_raw_object_reconciliation(conn) -> int:
     """ADR-022's S3<->Postgres catalog reconciliation -- report-only,
     never deletes/recreates anything (see scripts/reconcile_raw_objects.py's
@@ -418,12 +425,16 @@ SCHEDULED_JOBS: list[ScheduledJob] = [
                  "document_processing", None, _run_doc_analysis),
     ScheduledJob("investor_relations", "Investor relations documents (Q4/Berkshire)", "Quarterly", "Documents",
                  "investor_relations_fetch", None, _run_investor_relations),
+    ScheduledJob("signals_eval", "Signals complexity-routing golden eval set (ADR-023)", "Weekly", "Evals",
+                 "signals_eval", None, run_signals_eval),
     ScheduledJob("db_shard", "DB sharding", "Daily", "Maintenance",
                  "db_shard", None, _run_db_shard),
     ScheduledJob("raw_object_reconciliation", "Raw object catalog reconciliation (S3 <-> Postgres)", "Weekly",
                  "Maintenance", "raw_object_reconciliation", None, _run_raw_object_reconciliation),
     ScheduledJob("generated_report_reconciliation", "Research thread reconciliation (S3 <-> Postgres)", "Weekly",
                  "Maintenance", "generated_report_reconciliation", None, _run_generated_report_reconciliation),
+    ScheduledJob("execution_metrics_cleanup", "Execution Analytics retention (roll up + prune old runs)", "Daily",
+                 "Maintenance", "execution_metrics_cleanup", None, _run_execution_metrics_cleanup),
 ]
 
 

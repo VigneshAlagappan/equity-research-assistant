@@ -1451,19 +1451,24 @@ def set_ingestion_queue_item_status(conn: sqlite3.Connection, item_id: int, stat
 
 def create_research_case(
     conn: sqlite3.Connection, case_id: str, *, kind: str, question: str, company_ids: list[str],
-    statement_type: str, owner_id: int | None,
+    statement_type: str, owner_id: int | None, complexity_level: int | None = None,
 ) -> sqlite3.Row:
     """The one write that starts a case -- research/case_runner.py calls
     this synchronously, in the real request, before handing off to a
     background thread, so the caller always gets a real case_id back
     immediately (schemas/*.sql's research_cases table docstring has the
-    full state-machine rationale)."""
+    full state-machine rationale).
+
+    complexity_level is Jev's 1-5 Signals complexity level (docs/ADR/023) --
+    the caller classifies BEFORE calling this (it's what decides `kind`
+    itself: level 5 -> "investigation", everything else -> "ask"), so it's
+    known and stored right at creation, not just once the case completes."""
     now = utcnow_iso()
     conn.execute(
         "INSERT INTO research_cases (case_id, kind, question, company_ids, statement_type, status, "
-        "current_activity, owner_id, started_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, 'in_progress', 'Queued', ?, ?, ?)",
-        (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now),
+        "current_activity, owner_id, started_at, updated_at, complexity_level) "
+        "VALUES (?, ?, ?, ?, ?, 'in_progress', 'Queued', ?, ?, ?, ?)",
+        (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now, complexity_level),
     )
     conn.commit()
     return get_research_case(conn, case_id)
@@ -1626,6 +1631,7 @@ def save_investigation(
     unanswered_questions: list[str],
     additional_evidence_needed: list[str],
     as_of: str | None = None,
+    complexity_level: int | None = None,
 ) -> None:
     """Writes the investigation row AND its `investigation_companies`
     associations in one transaction — the JSON `company_ids` column stays the
@@ -1633,13 +1639,20 @@ def save_investigation(
     is what "Company -> Investigations" queries (see
     storage/investigation_repository.py for why both exist). A cross-company
     investigation is one record here, associated with several companies, never
-    duplicated per company."""
+    duplicated per company.
+
+    complexity_level is Jev's 1-5 Signals complexity level (docs/ADR/023) --
+    normally 5 ("Hypothesize"), since that's what routes a question to this
+    pipeline at all, but passed through as the actual classified value
+    rather than hardcoded, for audit fidelity."""
     conn.execute(
         "INSERT INTO investigations (investigation_id, question, company_ids, statement_type, "
-        "strongest_explanation, unanswered_questions, additional_evidence_needed, generated_at, as_of) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "strongest_explanation, unanswered_questions, additional_evidence_needed, generated_at, as_of, "
+        "complexity_level) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (investigation_id, question, json.dumps(company_ids), statement_type, strongest_explanation,
-         json.dumps(unanswered_questions), json.dumps(additional_evidence_needed), utcnow_iso(), as_of),
+         json.dumps(unanswered_questions), json.dumps(additional_evidence_needed), utcnow_iso(), as_of,
+         complexity_level),
     )
     insert_investigation_companies(conn, investigation_id, company_ids)
     conn.commit()
@@ -2304,6 +2317,7 @@ def _row_to_generated_report(row: sqlite3.Row) -> dict:
         "version": row["version"] if "version" in columns else None,
         "visibility": row["visibility"] if "visibility" in columns else "private",
         "owner_id": row["owner_id"] if "owner_id" in columns else None,
+        "complexity_level": row["complexity_level"] if "complexity_level" in columns else None,
     }
 
 
@@ -2317,6 +2331,7 @@ def save_generated_report(
     *,
     question_embedding: list[float] | None = None,
     question_embedding_model: str | None = None,
+    complexity_level: int | None = None,
 ) -> None:
     """Persist a full Signals report (research/signals_report.py, via
     /research/thread/generate) so it survives a server restart — unlike the
@@ -2328,16 +2343,20 @@ def save_generated_report(
     "storage stays a passive persistence layer" discipline
     retrieval/semantic_indexer.py's VectorRecord handoff already follows).
     Left NULL when the caller couldn't get one (embedding provider down) —
-    context/reuse.py falls back to word-overlap-only for that report."""
+    context/reuse.py falls back to word-overlap-only for that report.
+
+    complexity_level is Jev's 1-5 Signals complexity level (docs/ADR/023)
+    for this question, NULL for callers that haven't classified (e.g. the
+    aggregate-query fast path, which never reaches level-based dispatch)."""
     conn.execute(
         "INSERT INTO generated_reports "
         "(thread_id, question, company_ids, statement_type, report_markdown, generated_at, "
-        " question_embedding, question_embedding_model) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        " question_embedding, question_embedding_model, complexity_level) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             thread_id, question, json.dumps(company_ids), statement_type, report_markdown, utcnow_iso(),
             json.dumps(question_embedding) if question_embedding is not None else None,
-            question_embedding_model,
+            question_embedding_model, complexity_level,
         ),
     )
     conn.commit()
@@ -2520,6 +2539,66 @@ def list_llm_call_log(conn: sqlite3.Connection, limit: int = 200) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def insert_signals_routing_log(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    question: str,
+    company_ids: str,
+    jev_level: int,
+    jev_confidence: float | None,
+    jev_reason: str | None,
+    jev_source: str,
+    model_selected: str | None,
+    fallback_model_used: str | None,
+    data_sources_json: str,
+    neo4j_used: bool,
+    planner_used: bool,
+    tools_executed_json: str,
+    calculations_performed_json: str,
+    evidence_identifiers_json: str,
+    missing_data_issues_json: str,
+    final_confidence: str | None,
+    execution_status: str,
+    latency_ms: float,
+    input_tokens: int,
+    output_tokens: int,
+    estimated_cost_usd: float,
+    answer_reference: str | None,
+) -> None:
+    """Persist one research/routing_policy.py::route_question() outcome —
+    llm/routing_audit.py's audit trail for the Signals Complexity
+    Classification and Execution Routing Policy (docs/ADR/023)."""
+    conn.execute(
+        "INSERT INTO signals_routing_log "
+        "(run_id, created_at, question, company_ids, jev_level, jev_confidence, jev_reason, jev_source, "
+        "model_selected, fallback_model_used, data_sources_json, neo4j_used, planner_used, "
+        "tools_executed_json, calculations_performed_json, evidence_identifiers_json, "
+        "missing_data_issues_json, final_confidence, execution_status, latency_ms, input_tokens, "
+        "output_tokens, estimated_cost_usd, answer_reference) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            run_id, utcnow_iso(), question, company_ids, jev_level, jev_confidence, jev_reason, jev_source,
+            model_selected, fallback_model_used, data_sources_json, int(neo4j_used), int(planner_used),
+            tools_executed_json, calculations_performed_json, evidence_identifiers_json,
+            missing_data_issues_json, final_confidence, execution_status, latency_ms, input_tokens,
+            output_tokens, estimated_cost_usd, answer_reference,
+        ),
+    )
+    conn.commit()
+
+
+def list_signals_routing_log(conn: sqlite3.Connection, limit: int = 200) -> list[dict]:
+    """Most recent routed questions, newest first — for a future eval runner
+    (policy section 5: "allow a future eval runner to determine what Signals
+    did, what evidence it used, whether it followed the expected behavior
+    for its complexity level, and where a failure occurred")."""
+    rows = conn.execute(
+        "SELECT * FROM signals_routing_log ORDER BY created_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_llm_usage_summary(conn: sqlite3.Connection) -> dict:
     """All-time totals plus a by-task and by-model breakdown of llm_call_log
     — backs the /admin/usage page (web/app.py). A reuse hit (context/reuse.py)
@@ -2578,6 +2657,119 @@ def get_investigation_cost_summary(conn: sqlite3.Connection, investigation_id: s
         (investigation_id,),
     ).fetchone()
     return dict(row)
+
+
+def insert_execution_metrics(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    task_name: str,
+    execution_mode: str,
+    complexity_level: int | None,
+    complexity_tier: str | None,
+    total_ms: float | None,
+    db_ms: float | None,
+    calc_ms: float | None,
+    llm_ms: float | None,
+    neo4j_ms: float | None,
+    planner_ms: float | None,
+    model_used: str | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    estimated_cost_usd: float | None,
+    status: str,
+    error_detail: str | None = None,
+) -> None:
+    """Persist one Signal request/run's timing + outcome (Admin > Settings >
+    Execution Analytics, llm/execution_metrics.py). Observability only --
+    never read by any routing/planning/model-selection code, and callers
+    (llm/execution_metrics.py's finish_run) are expected to swallow any
+    failure here rather than let a metrics-write problem affect the actual
+    request/case outcome it's describing."""
+    conn.execute(
+        "INSERT INTO execution_metrics "
+        "(run_id, created_at, task_name, execution_mode, complexity_level, complexity_tier, "
+        "total_ms, db_ms, calc_ms, llm_ms, neo4j_ms, planner_ms, model_used, input_tokens, "
+        "output_tokens, estimated_cost_usd, status, error_detail) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            run_id, utcnow_iso(), task_name, execution_mode, complexity_level, complexity_tier,
+            total_ms, db_ms, calc_ms, llm_ms, neo4j_ms, planner_ms, model_used, input_tokens,
+            output_tokens, estimated_cost_usd, status, error_detail,
+        ),
+    )
+    conn.commit()
+
+
+def list_execution_metrics(
+    conn: sqlite3.Connection, *, since_iso: str | None = None, until_iso: str | None = None,
+    complexity_level: int | None = None, limit: int = 20000,
+) -> list[dict]:
+    """Raw rows for the Execution Analytics panel -- aggregated into
+    daily/weekly/monthly buckets and percentiles in Python (web/
+    execution_analytics.py), same "cheap at this app's scale, no per-backend
+    SQL" approach the Audit Log panel's raw_objects rollup already uses.
+    Ordered oldest-first so a client-side line chart can plot left-to-right
+    without re-sorting. `until_iso` (exclusive-free upper bound) is used by
+    scripts/execution_metrics_cleanup.py to pull exactly the rows it's about
+    to roll up and delete, not by the analytics panel itself."""
+    query = "SELECT * FROM execution_metrics WHERE 1=1"
+    params: list = []
+    if since_iso is not None:
+        query += " AND created_at >= ?"
+        params.append(since_iso)
+    if until_iso is not None:
+        query += " AND created_at < ?"
+        params.append(until_iso)
+    if complexity_level is not None:
+        query += " AND complexity_level = ?"
+        params.append(complexity_level)
+    query += " ORDER BY created_at ASC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def upsert_execution_metrics_daily(conn: sqlite3.Connection, rows: list[dict]) -> None:
+    """Writes (or overwrites) one execution_metrics_daily row per
+    (day, task_name, complexity_level) -- called by the retention cleanup
+    job (scripts/execution_metrics_cleanup.py) right before it deletes the
+    detailed execution_metrics rows a day's worth of `rows` was computed
+    from, so re-running cleanup on a day it already rolled up (e.g. a
+    retried job) overwrites with the same numbers rather than double-adding."""
+    for row in rows:
+        conn.execute(
+            "INSERT INTO execution_metrics_daily "
+            "(day, task_name, complexity_level, total_runs, success_runs, error_runs, "
+            "avg_total_ms, p50_total_ms, p95_total_ms, max_total_ms, "
+            "total_input_tokens, total_output_tokens, total_estimated_cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(day, task_name, complexity_level) DO UPDATE SET "
+            "total_runs=excluded.total_runs, success_runs=excluded.success_runs, "
+            "error_runs=excluded.error_runs, avg_total_ms=excluded.avg_total_ms, "
+            "p50_total_ms=excluded.p50_total_ms, p95_total_ms=excluded.p95_total_ms, "
+            "max_total_ms=excluded.max_total_ms, total_input_tokens=excluded.total_input_tokens, "
+            "total_output_tokens=excluded.total_output_tokens, "
+            "total_estimated_cost_usd=excluded.total_estimated_cost_usd",
+            (
+                row["day"], row["task_name"], row["complexity_level"], row["total_runs"],
+                row["success_runs"], row["error_runs"], row["avg_total_ms"], row["p50_total_ms"],
+                row["p95_total_ms"], row["max_total_ms"], row["total_input_tokens"],
+                row["total_output_tokens"], row["total_estimated_cost_usd"],
+            ),
+        )
+    conn.commit()
+
+
+def delete_execution_metrics_before(conn: sqlite3.Connection, cutoff_iso: str) -> int:
+    """Deletes detailed execution_metrics rows older than cutoff_iso --
+    called only by scripts/execution_metrics_cleanup.py (the "Maintenance"
+    scheduled job), never from the request path. Callers must roll up
+    (upsert_execution_metrics_daily) whatever they still need from these
+    rows first -- this is a hard delete, not a soft/archival one."""
+    cursor = conn.execute("DELETE FROM execution_metrics WHERE created_at < ?", (cutoff_iso,))
+    conn.commit()
+    return cursor.rowcount
 
 
 def get_latest_data_timestamp(conn: sqlite3.Connection, company_ids: list[str]) -> str | None:

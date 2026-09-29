@@ -57,6 +57,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_llm_call_log_columns(conn)
     _migrate_shareholding_observations_columns(conn)
     _migrate_investigations_as_of_column(conn)
+    _migrate_complexity_level_columns(conn)
     _migrate_investigation_hypotheses_scoring_columns(conn)
     _migrate_investigation_companies(conn)
     _migrate_document_chunks_embedding_columns(conn)
@@ -319,6 +320,19 @@ def _migrate_investigations_as_of_column(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(investigations)")}
     if columns and "as_of" not in columns:
         conn.execute("ALTER TABLE investigations ADD COLUMN as_of TEXT")
+
+
+def _migrate_complexity_level_columns(conn: sqlite3.Connection) -> None:
+    """`complexity_level` (Jev's 1-5 Signals complexity level, docs/ADR/023)
+    was added to research_cases/generated_reports/investigations after each
+    already shipped -- ALTER TABLE backfills it as NULL for every
+    pre-existing row (a report/case/investigation saved before Jev-based
+    routing existed genuinely has no level to report), same pattern as
+    _migrate_investigations_as_of_column."""
+    for table in ("research_cases", "generated_reports", "investigations"):
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if columns and "complexity_level" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN complexity_level INTEGER")
 
 
 def _migrate_investigation_hypotheses_scoring_columns(conn: sqlite3.Connection) -> None:

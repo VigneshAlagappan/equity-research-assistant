@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 
 from companies.registry import get_company
-from financials.calculations import CalculationResult, MissingDataError
+from financials.calculations import CalculationResult, MissingDataError, format_currency_value
 from normalization.periods import fiscal_year_number
 from storage.db_types import DBConnection, Row
 from storage.repositories import get_canonical_value, get_metric_dictionary_entry
@@ -134,8 +134,8 @@ def roa_for_company(
         unit="PERCENT",
         explanation=(
             f"ROA = {value:.2f}%, calculated as net_profit {fiscal_year} "
-            f"({net_profit['canonical_value']:g} {net_profit['unit']}) / average total_assets "
-            f"({prior_fy}-{fiscal_year}: {avg_assets:g} {assets_end['unit']})"
+            f"({format_currency_value(net_profit['canonical_value'], net_profit['unit'])}) / average total_assets "
+            f"({prior_fy}-{fiscal_year}: {format_currency_value(avg_assets, assets_end['unit'])})"
         ),
     )
 
@@ -182,8 +182,8 @@ def roe_for_company(
         unit="PERCENT",
         explanation=(
             f"ROE = {value:.2f}%, calculated as net_profit {fiscal_year} "
-            f"({net_profit['canonical_value']:g} {net_profit['unit']}) / average total_shareholders_funds "
-            f"({prior_fy}-{fiscal_year}: {avg_equity:g} {unit}){derived_note}"
+            f"({format_currency_value(net_profit['canonical_value'], net_profit['unit'])}) / average total_shareholders_funds "
+            f"({prior_fy}-{fiscal_year}: {format_currency_value(avg_equity, unit)}){derived_note}"
         ),
     )
 

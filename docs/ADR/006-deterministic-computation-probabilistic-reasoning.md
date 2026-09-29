@@ -198,3 +198,15 @@ And:
 ## Revisit when
 
 The boundary may evolve as capabilities change, but reproducible financial computation should remain deterministic unless there is a compelling architectural reason otherwise.
+
+## Addendum (2026-09-28) — a narrow, explicit exception for complexity classification
+
+ADR-023 introduces Jev, an LLM-based classifier that decides which of Signal's five complexity levels (Retrieve / Calculate / Interpret / Compare / Hypothesize) a research question requires, before any retrieval or reasoning begins.
+
+This is a deliberate exception to this ADR's invariant, not a reversal of it.
+
+Classification was tried as deterministic code first — `llm/hardness.py`'s keyword/regex classifier is exactly that attempt, collapsed to three tiers instead of five. It has no stable, closed vocabulary to match against: unlike a `metric_key` or a macro series name (finite, known in advance), the ways a person phrases "compare this to the industry" or "why did this happen" are open-ended natural language with no fixed rule that reliably distinguishes them from a Level 1 lookup or a Level 3 interpretation. A regex list is really a hand-picked sample of phrasings, not a rule — it silently misclassifies anything phrased differently, with no way to detect the miss.
+
+The exception is scoped narrowly: Jev decides a level, nothing else. It never computes a number, never selects which evidence is true, and never performs the research itself — every one of ADR-006's original categories (ratios, CAGR, reconciliation, filtering, hypothesis evaluation, synthesis) stays exactly where this ADR puts it. Levels 1 and 2 of ADR-023's routing policy remain deterministic code with no LLM in the answer path at all; only the decision of *which path to take* is delegated to a classifier, and only because that decision itself has no stable rule.
+
+See ADR-023 for the full policy, the routing paths per level, and the audit trail that makes Jev's decisions inspectable after the fact.

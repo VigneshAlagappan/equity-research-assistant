@@ -228,6 +228,14 @@ And:
 
 > **Budget exhaustion must reduce confidence or completeness; it must never be represented as evidence sufficiency.**
 
+## Addendum (2026-09-28) — Jev now decides which questions reach this governance at all
+
+The "Investigation depth" section above frames Quick/Standard/Deep as user-facing profiles where "all profiles use the same governed execution model." That framing predates ADR-023 (Signals Complexity Classification and Execution Routing Policy) and is no longer how a question is dispatched.
+
+Under ADR-023, Jev — an LLM classifier, not the user — assigns every question one of five complexity levels before any execution begins. Only Level 5 ("Hypothesize": causal reasoning, competing explanations, the same question shape this ADR's own Context section describes) reaches the investigation pipeline this ADR governs. Levels 1–4 (Retrieve/Calculate/Interpret/Compare) are answered through lighter paths — `research/routing_policy.py`'s own deterministic/evidence-grounded handlers, or `research/assistant.py::answer_question`'s single-pass call — that never enter the orchestrator described here, and so were never subject to `MAX_EVIDENCE_ITERATIONS`, `INVESTIGATION_TIMEOUT_SECONDS`, or any other dimension this ADR governs in the first place.
+
+So "Quick/Standard/Deep as depth profiles inside one governed model" is superseded by "one of five levels decides whether the governed investigation model runs at all." Every invariant in this ADR remains fully in force for whatever reaches Level 5 — nothing about how the investigation pipeline itself is bounded, or how budget exhaustion is reported, has changed. There is no longer a manual "Deep dive" toggle for a user to request this pipeline directly (see ADR-023's own addendum) — a question only arrives here via Jev's classification.
+
 ## Revisit when
 
 Budget dimensions, thresholds, and user-facing investigation profiles should evolve as telemetry and evaluation data become available.

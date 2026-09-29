@@ -1211,15 +1211,15 @@ def _insert_investigation_companies_pg(conn: DBConnection, investigation_id: str
 
 def create_research_case(
     conn: DBConnection, case_id: str, *, kind: str, question: str, company_ids: list[str],
-    statement_type: str, owner_id: int | None,
+    statement_type: str, owner_id: int | None, complexity_level: int | None = None,
 ) -> Row:
     now = _utcnow_iso()
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO research_cases (case_id, kind, question, company_ids, statement_type, status, "
-            "current_activity, owner_id, started_at, updated_at) "
-            "VALUES (%s, %s, %s, %s, %s, 'in_progress', 'Queued', %s, %s, %s)",
-            (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now),
+            "current_activity, owner_id, started_at, updated_at, complexity_level) "
+            "VALUES (%s, %s, %s, %s, %s, 'in_progress', 'Queued', %s, %s, %s, %s)",
+            (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now, complexity_level),
         )
     conn.commit()
     return get_research_case(conn, case_id)
@@ -1359,14 +1359,17 @@ def save_investigation(
     unanswered_questions: list[str],
     additional_evidence_needed: list[str],
     as_of: str | None = None,
+    complexity_level: int | None = None,
 ) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO investigations (investigation_id, question, company_ids, statement_type, "
-            "strongest_explanation, unanswered_questions, additional_evidence_needed, generated_at, as_of) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "strongest_explanation, unanswered_questions, additional_evidence_needed, generated_at, as_of, "
+            "complexity_level) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (investigation_id, question, json.dumps(company_ids), statement_type, strongest_explanation,
-             json.dumps(unanswered_questions), json.dumps(additional_evidence_needed), _utcnow_iso(), as_of),
+             json.dumps(unanswered_questions), json.dumps(additional_evidence_needed), _utcnow_iso(), as_of,
+             complexity_level),
         )
     _insert_investigation_companies_pg(conn, investigation_id, company_ids)
     conn.commit()
@@ -1891,6 +1894,7 @@ def _row_to_generated_report(row: Row) -> dict:
         "version": row.get("version"),
         "visibility": row.get("visibility", "private"),
         "owner_id": row.get("owner_id"),
+        "complexity_level": row.get("complexity_level"),
     }
 
 
@@ -1904,17 +1908,18 @@ def save_generated_report(
     *,
     question_embedding: list[float] | None = None,
     question_embedding_model: str | None = None,
+    complexity_level: int | None = None,
 ) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO generated_reports "
             "(thread_id, question, company_ids, statement_type, report_markdown, generated_at, "
-            " question_embedding, question_embedding_model) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            " question_embedding, question_embedding_model, complexity_level) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 thread_id, question, json.dumps(company_ids), statement_type, report_markdown, _utcnow_iso(),
                 json.dumps(question_embedding) if question_embedding is not None else None,
-                question_embedding_model,
+                question_embedding_model, complexity_level,
             ),
         )
     conn.commit()
@@ -3027,6 +3032,60 @@ def list_llm_call_log(conn: DBConnection, limit: int = 200) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def insert_signals_routing_log(
+    conn: DBConnection,
+    *,
+    run_id: str,
+    question: str,
+    company_ids: str,
+    jev_level: int,
+    jev_confidence: float | None,
+    jev_reason: str | None,
+    jev_source: str,
+    model_selected: str | None,
+    fallback_model_used: str | None,
+    data_sources_json: str,
+    neo4j_used: bool,
+    planner_used: bool,
+    tools_executed_json: str,
+    calculations_performed_json: str,
+    evidence_identifiers_json: str,
+    missing_data_issues_json: str,
+    final_confidence: str | None,
+    execution_status: str,
+    latency_ms: float,
+    input_tokens: int,
+    output_tokens: int,
+    estimated_cost_usd: float,
+    answer_reference: str | None,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO signals_routing_log "
+            "(run_id, created_at, question, company_ids, jev_level, jev_confidence, jev_reason, jev_source, "
+            "model_selected, fallback_model_used, data_sources_json, neo4j_used, planner_used, "
+            "tools_executed_json, calculations_performed_json, evidence_identifiers_json, "
+            "missing_data_issues_json, final_confidence, execution_status, latency_ms, input_tokens, "
+            "output_tokens, estimated_cost_usd, answer_reference) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                run_id, _utcnow_iso(), question, company_ids, jev_level, jev_confidence, jev_reason, jev_source,
+                model_selected, fallback_model_used, data_sources_json, int(neo4j_used), int(planner_used),
+                tools_executed_json, calculations_performed_json, evidence_identifiers_json,
+                missing_data_issues_json, final_confidence, execution_status, latency_ms, input_tokens,
+                output_tokens, estimated_cost_usd, answer_reference,
+            ),
+        )
+    conn.commit()
+
+
+def list_signals_routing_log(conn: DBConnection, limit: int = 200) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM signals_routing_log ORDER BY created_at DESC LIMIT %s", (limit,))
+        rows = cur.fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_llm_usage_summary(conn: DBConnection) -> dict:
     with conn.cursor() as cur:
         cur.execute(
@@ -3080,6 +3139,111 @@ def get_investigation_cost_summary(conn: DBConnection, investigation_id: str) ->
         )
         row = cur.fetchone()
     return dict(row)
+
+
+# ------------------------------------------------------------------
+# execution_metrics (Admin > Settings > Execution Analytics)
+# ------------------------------------------------------------------
+
+
+def insert_execution_metrics(
+    conn: DBConnection,
+    *,
+    run_id: str,
+    task_name: str,
+    execution_mode: str,
+    complexity_level: int | None,
+    complexity_tier: str | None,
+    total_ms: float | None,
+    db_ms: float | None,
+    calc_ms: float | None,
+    llm_ms: float | None,
+    neo4j_ms: float | None,
+    planner_ms: float | None,
+    model_used: str | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    estimated_cost_usd: float | None,
+    status: str,
+    error_detail: str | None = None,
+) -> None:
+    """Persist one Signal request/run's timing + outcome -- Postgres mirror
+    of storage.repositories.insert_execution_metrics (see that function's
+    docstring)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO execution_metrics "
+            "(run_id, created_at, task_name, execution_mode, complexity_level, complexity_tier, "
+            "total_ms, db_ms, calc_ms, llm_ms, neo4j_ms, planner_ms, model_used, input_tokens, "
+            "output_tokens, estimated_cost_usd, status, error_detail) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                run_id, _utcnow_iso(), task_name, execution_mode, complexity_level, complexity_tier,
+                total_ms, db_ms, calc_ms, llm_ms, neo4j_ms, planner_ms, model_used, input_tokens,
+                output_tokens, estimated_cost_usd, status, error_detail,
+            ),
+        )
+    conn.commit()
+
+
+def list_execution_metrics(
+    conn: DBConnection, *, since_iso: str | None = None, until_iso: str | None = None,
+    complexity_level: int | None = None, limit: int = 20000,
+) -> list[dict]:
+    """Postgres mirror of storage.repositories.list_execution_metrics."""
+    query = "SELECT * FROM execution_metrics WHERE 1=1"
+    params: list = []
+    if since_iso is not None:
+        query += " AND created_at >= %s"
+        params.append(since_iso)
+    if until_iso is not None:
+        query += " AND created_at < %s"
+        params.append(until_iso)
+    if complexity_level is not None:
+        query += " AND complexity_level = %s"
+        params.append(complexity_level)
+    query += " ORDER BY created_at ASC LIMIT %s"
+    params.append(limit)
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+    return [dict(row) for row in rows]
+
+
+def upsert_execution_metrics_daily(conn: DBConnection, rows: list[dict]) -> None:
+    """Postgres mirror of storage.repositories.upsert_execution_metrics_daily."""
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                "INSERT INTO execution_metrics_daily "
+                "(day, task_name, complexity_level, total_runs, success_runs, error_runs, "
+                "avg_total_ms, p50_total_ms, p95_total_ms, max_total_ms, "
+                "total_input_tokens, total_output_tokens, total_estimated_cost_usd) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (day, task_name, complexity_level) DO UPDATE SET "
+                "total_runs=excluded.total_runs, success_runs=excluded.success_runs, "
+                "error_runs=excluded.error_runs, avg_total_ms=excluded.avg_total_ms, "
+                "p50_total_ms=excluded.p50_total_ms, p95_total_ms=excluded.p95_total_ms, "
+                "max_total_ms=excluded.max_total_ms, total_input_tokens=excluded.total_input_tokens, "
+                "total_output_tokens=excluded.total_output_tokens, "
+                "total_estimated_cost_usd=excluded.total_estimated_cost_usd",
+                (
+                    row["day"], row["task_name"], row["complexity_level"], row["total_runs"],
+                    row["success_runs"], row["error_runs"], row["avg_total_ms"], row["p50_total_ms"],
+                    row["p95_total_ms"], row["max_total_ms"], row["total_input_tokens"],
+                    row["total_output_tokens"], row["total_estimated_cost_usd"],
+                ),
+            )
+    conn.commit()
+
+
+def delete_execution_metrics_before(conn: DBConnection, cutoff_iso: str) -> int:
+    """Postgres mirror of storage.repositories.delete_execution_metrics_before."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM execution_metrics WHERE created_at < %s", (cutoff_iso,))
+        deleted = cur.rowcount
+    conn.commit()
+    return deleted
 
 
 # ------------------------------------------------------------------

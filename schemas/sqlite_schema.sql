@@ -418,8 +418,10 @@ CREATE TABLE IF NOT EXISTS generated_reports (
                                   -- matching then falls back to word-overlap only for
                                   -- this report, same graceful-degradation spirit as
                                   -- retrieval/hybrid_search.py
-  question_embedding_model TEXT  -- which model produced it, so a later model/provider
+  question_embedding_model TEXT, -- which model produced it, so a later model/provider
                                   -- change can't silently compare incompatible vectors
+  complexity_level INTEGER       -- Jev's 1-5 Signals complexity level (docs/ADR/023) for this
+                                  -- question, NULL for a report saved before Jev-based routing existed
 );
 
 -- ============================================================
@@ -523,8 +525,130 @@ CREATE INDEX IF NOT EXISTS idx_llm_call_log_created_at ON llm_call_log(created_a
 -- idx_llm_call_log_investigation_id is created by
 -- _migrate_llm_call_log_columns (storage/database.py), not here — this
 -- script runs unconditionally via executescript() before migrations patch
+
+-- ============================================================
+-- One row per research/routing_policy.py::route_question() call — the
+-- Signals Complexity Classification and Execution Routing Policy's audit
+-- trail (docs/ADR/023), distinct from llm_call_log above: llm_call_log is
+-- one row per individual model call (Jev's classification call and a
+-- level's own interpretation call each get their own llm_call_log row via
+-- llm/observability.py, task_name="jev_complexity_classifier" /
+-- "signals_level3" / "signals_level4" / "signals_level5"); this table is
+-- one row per ROUTED QUESTION end-to-end — which level Jev picked, which
+-- data sources/tools actually ran, what evidence was used, and whether
+-- anything was missing or misaligned. Loosely joinable to llm_call_log by
+-- (question, created_at) proximity only — no shared run_id between the two
+-- tables today (a follow-up, not required for either to be independently
+-- useful/queryable, see ADR-023's "Revisit when").
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS signals_routing_log (
+  run_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  question TEXT NOT NULL,
+  company_ids TEXT,                 -- comma-separated company_id list, as routed (may have grown past
+                                     -- the caller's own list — see peer_company_ids inside data_sources_json)
+  jev_level INTEGER NOT NULL,       -- 1-5, the level Jev (or the deterministic fallback) picked
+  jev_confidence REAL,
+  jev_reason TEXT,
+  jev_source TEXT NOT NULL,         -- "jev" | "deterministic_fallback"
+  model_selected TEXT,
+  fallback_model_used TEXT,
+  data_sources_json TEXT,           -- e.g. ["neon:canonical_financials", "neon:macro_observations"]
+  neo4j_used INTEGER NOT NULL DEFAULT 0,
+  planner_used INTEGER NOT NULL DEFAULT 0,
+  tools_executed_json TEXT,
+  calculations_performed_json TEXT,
+  evidence_identifiers_json TEXT,
+  missing_data_issues_json TEXT,    -- non-empty whenever a level had to "state the limitation"
+                                     -- instead of answering fully (policy, Level 4/5 rules)
+  final_confidence TEXT,            -- High / Moderate / Low, parsed from the answer's own confidence line
+                                     -- when the level's prompt requires one (Levels 3-5); NULL for 1/2
+  execution_status TEXT NOT NULL,   -- answered | insufficient_data | error
+  latency_ms REAL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost_usd REAL NOT NULL DEFAULT 0,
+  answer_reference TEXT             -- thread_id / investigation_id the full answer was persisted under, if any
+);
+
+CREATE INDEX IF NOT EXISTS idx_signals_routing_log_created_at ON signals_routing_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_signals_routing_log_jev_level ON signals_routing_log(jev_level);
 -- an existing table, so an index on a column that table doesn't have yet
 -- would fail on every pre-existing database.
+
+-- ============================================================
+-- Execution Analytics (Admin > Settings > Execution Analytics) -- one row
+-- per Signal request/run (Ask AI, "Generate full report", Deep Dive
+-- investigation), keyed by run_id and linked to llm_call_log's own audit
+-- trail through that same value (passed as llm_call_log.thread_id for the
+-- assistant_qa/signals_report task_names, or as llm_call_log.
+-- investigation_id for the investigation pipeline -- see llm/
+-- execution_metrics.py). Purely observational: never read by any routing/
+-- planning/model-selection code, only written after the fact and read back
+-- by the analytics panel. Deliberately excludes prompts/responses/evidence/
+-- chain-of-thought -- those already live in generated_reports/investigations/
+-- llm_call_log; this table is only timing/outcome, so it stays cheap to
+-- retain and cheap to query.
+--
+-- Per-phase *_ms columns are populated only where that phase is separable
+-- in the current pipeline -- e.g. an investigation's retrieval time is
+-- folded into planner_ms (research/investigation_planner.py::plan_and_gather
+-- does both planning and evidence-gathering in one pass), so db_ms/neo4j_ms
+-- stay NULL for that task_name rather than being force-split. NULL always
+-- means "not measured for this run", never "zero".
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS execution_metrics (
+  metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  task_name TEXT NOT NULL,        -- assistant_qa | signals_report | investigation
+  execution_mode TEXT NOT NULL DEFAULT 'sync',  -- sync | async (research_cases-backed)
+  complexity_level INTEGER,       -- 1-5 (llm/hardness.py's TIER_LEVEL; 0 = reuse hit)
+  complexity_tier TEXT,
+  total_ms REAL,
+  db_ms REAL,                     -- Postgres/Neon evidence retrieval
+  calc_ms REAL,                   -- deterministic ratio/indicator calculation
+  llm_ms REAL,                    -- time inside llm/router.py::route()
+  neo4j_ms REAL,                  -- Knowledge Graph evidence lookup
+  planner_ms REAL,                -- research/investigation_planner.py plan_and_gather
+  model_used TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  estimated_cost_usd REAL,
+  status TEXT NOT NULL,           -- success | error | insufficient_data | cancelled | reused
+  error_detail TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_metrics_created_at ON execution_metrics(created_at);
+CREATE INDEX IF NOT EXISTS idx_execution_metrics_run_id ON execution_metrics(run_id);
+CREATE INDEX IF NOT EXISTS idx_execution_metrics_level_created ON execution_metrics(complexity_level, created_at);
+
+-- Lightweight daily rollup, written by the retention cleanup job
+-- (scripts/execution_metrics_cleanup.py, scheduling/jobs.py's "Maintenance"
+-- category) just before it prunes detailed execution_metrics rows older
+-- than execution_metrics_retention_days -- so long-term trend history
+-- survives detailed-row expiry without keeping the detailed rows forever.
+-- complexity_level defaults to 0 (never NULL) purely so it can sit in this
+-- table's natural key -- 0 already means "n/a/reuse" on execution_metrics
+-- itself, so no new sentinel is introduced.
+CREATE TABLE IF NOT EXISTS execution_metrics_daily (
+  day TEXT NOT NULL,
+  task_name TEXT NOT NULL,
+  complexity_level INTEGER NOT NULL DEFAULT 0,
+  total_runs INTEGER NOT NULL DEFAULT 0,
+  success_runs INTEGER NOT NULL DEFAULT 0,
+  error_runs INTEGER NOT NULL DEFAULT 0,
+  avg_total_ms REAL,
+  p50_total_ms REAL,
+  p95_total_ms REAL,
+  max_total_ms REAL,
+  total_input_tokens INTEGER NOT NULL DEFAULT 0,
+  total_output_tokens INTEGER NOT NULL DEFAULT 0,
+  total_estimated_cost_usd REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, task_name, complexity_level)
+);
 
 -- ============================================================
 -- Hybrid retrieval diagnostics (retrieval/observability.py) -- one row per
@@ -875,7 +999,11 @@ CREATE TABLE IF NOT EXISTS research_cases (
   investigation_id TEXT,            -- investigations.investigation_id this case's investigation became, if any
   started_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  completed_at TEXT
+  completed_at TEXT,
+  complexity_level INTEGER          -- Jev's 1-5 Signals complexity level (docs/ADR/023), set at case
+                                     -- creation -- what actually decided kind=ask vs kind=investigation
+                                     -- (level 5 -> investigation, everything else -> ask), replacing the
+                                     -- old client-side Quick/Deep toggle
 );
 CREATE INDEX IF NOT EXISTS idx_research_cases_owner ON research_cases(owner_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_research_cases_status ON research_cases(status);
@@ -900,7 +1028,12 @@ CREATE TABLE IF NOT EXISTS investigations (
   unanswered_questions TEXT,        -- JSON array
   additional_evidence_needed TEXT,  -- JSON array
   generated_at TEXT NOT NULL,
-  as_of TEXT                        -- ISO date: point-in-time evidence cutoff, NULL = "everything known today"
+  as_of TEXT,                       -- ISO date: point-in-time evidence cutoff, NULL = "everything known today"
+  complexity_level INTEGER          -- Jev's 1-5 Signals complexity level (docs/ADR/023) -- always 5
+                                     -- ("Hypothesize") for an investigation reached through the normal
+                                     -- Jev-routed dispatch; kept as the actual classified value (not a
+                                     -- hardcoded 5) for audit fidelity, since an investigation can also
+                                     -- be started directly
 );
 
 -- One investigation <-> many companies. `investigations.company_ids` above

@@ -98,17 +98,21 @@ def _capture_exception(exc: BaseException) -> None:
 
 def start_case(
     conn, *, case_id: str, kind: str, question: str, company_ids: list[str],
-    statement_type: str, owner_id: int | None,
+    statement_type: str, owner_id: int | None, complexity_level: int | None = None,
 ):
     """Synchronous -- called in the real request, on the request's own
     connection, before the background thread starts. Returns the new
     research_cases row immediately so the route can respond with case_id
     right away, same "create then hand off" shape /investigate/generate-
     async and the -ask-async routes already established before this module
-    existed."""
+    existed.
+
+    complexity_level is Jev's 1-5 Signals complexity level (docs/ADR/023),
+    classified by the caller before this -- it's what decides `kind` itself
+    (level 5 -> "investigation", everything else -> "ask")."""
     return create_research_case(
         conn, case_id, kind=kind, question=question, company_ids=company_ids,
-        statement_type=statement_type, owner_id=owner_id,
+        statement_type=statement_type, owner_id=owner_id, complexity_level=complexity_level,
     )
 
 
