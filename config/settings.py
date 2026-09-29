@@ -643,6 +643,16 @@ SECRET_KEY = _load_or_create_secret_key()
 # to send it back in the X-Cron-Secret header.
 CRON_TRIGGER_SECRET = os.environ.get("CRON_TRIGGER_SECRET")
 
+# How long execution_metrics detail rows (Admin > Settings > Execution
+# Analytics, llm/execution_metrics.py) are kept before the "Maintenance" >
+# "Execution metrics retention" scheduled job (scheduling/jobs.py) deletes
+# them -- a lightweight daily rollup (execution_metrics_daily) is written
+# first, so trend history over Complexity Levels 1-5 survives past this
+# window even though the per-run detail doesn't. Never enforced in the
+# request path itself (README/task boundary: retention is a background job,
+# not something a Signal request should ever pay for).
+EXECUTION_METRICS_RETENTION_DAYS = int(os.environ.get("EXECUTION_METRICS_RETENTION_DAYS", "90"))
+
 # ------------------------------------------------------------------
 # Logging
 # ------------------------------------------------------------------

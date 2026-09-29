@@ -258,6 +258,7 @@ from storage.repositories import (
 )
 from research.case_runner import run_case_in_background, start_case
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
+from web.execution_analytics import build_execution_analytics_context
 from web.corporate_actions_feed import build_corporate_actions_feed
 from web.shareholding_feed import build_shareholding_feed
 from web.fixtures import EXAMPLES, THREADS
@@ -1387,6 +1388,34 @@ def create_app() -> Flask:
             "audit_raw_total_objects": sum(r["total"] for r in raw_rows),
         }
 
+    def _execution_analytics_panel_context(db) -> dict:
+        """Admin > Settings > Execution Analytics -- how Signal requests
+        (Ask AI, "Generate full report", Deep Dive investigation) perform
+        across Complexity Levels 1-5 over time. Same query-param filter-bar
+        convention as _audit_panel_context above (`exa_*`, not `al_*` or
+        the sibling Eval Analytics panel's `ea_*`, so all three panels'
+        filters can never collide when they appear in the same URL's query
+        string), just three controls instead of Audit's many: period
+        (7d/30d/90d/365d), granularity (daily/weekly/monthly, for the line
+        chart's bucketing), and level (1-5 or all). All the actual
+        aggregation lives in web/execution_analytics.py, not here -- this
+        function only reads the query params and hands them off.
+
+        Distinct from Eval Analytics below (`_eval_analytics_panel_context`,
+        signals_routing_log/ADR-023): that panel measures whether Jev's
+        classifier is *accurate* against a curated eval set and isn't
+        populated by real user traffic today (web/app.py's live routes only
+        call routing_policy.classify_and_log() for the level, never
+        route_question() itself); this one measures actual wall-clock
+        execution (db/calc/llm/neo4j/planner phase timing, success rate) of
+        every real Signal request, still served by research/assistant.py,
+        research/signals_report.py, and research/investigation.py exactly
+        as before -- the two panels are complementary, not duplicates."""
+        period = request.args.get("exa_period", "")
+        granularity = request.args.get("exa_granularity", "")
+        level = request.args.get("exa_level", "all")
+        return build_execution_analytics_context(db, period=period, granularity=granularity, level_filter=level)
+
     _EVAL_DETAIL_RE = re.compile(r"expected=L(\d+) actual=L(\d+)")
 
     def _eval_analytics_panel_context(db, logs_db) -> dict:
@@ -1680,6 +1709,12 @@ def create_app() -> Flask:
             **(_ingest_panel_context(db, get_logs_db()) if admin_sub == "ingest" else {}),
             **(_audit_panel_context(db, get_logs_db()) if admin_sub == "audit" else {}),
             **(_schedule_panel_context(get_logs_db()) if admin_sub == "schedule" else {}),
+            # execution_metrics lives in the main db (Postgres/Neon under
+            # DATABASE_BACKEND=postgres, storage.backend_bootstrap's
+            # wholesale swap) -- unlike batch_job_runs/etc, which stay
+            # SQLite-only forever (get_logs_db()'s own docstring), so this
+            # panel reads `db`, not `logs_db`.
+            **(_execution_analytics_panel_context(db) if admin_sub == "execution_analytics" else {}),
             **(_eval_analytics_panel_context(db, get_logs_db()) if admin_sub == "eval_analytics" else {}),
         }
 
@@ -3031,7 +3066,8 @@ def create_app() -> Flask:
     # endpoint-name prefix (see settings() below).
     _ADMIN_SETTINGS_PANELS = (
         "companies", "taxonomy", "columns", "overview_ratios",
-        "import", "stock_actions", "ingest", "schedule", "audit", "eval_analytics",
+        "import", "stock_actions", "ingest", "schedule", "audit",
+        "execution_analytics", "eval_analytics",
     )
 
     @app.route("/settings", methods=["GET", "POST"])

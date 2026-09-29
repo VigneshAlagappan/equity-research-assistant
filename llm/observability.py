@@ -16,6 +16,7 @@ import logging
 from storage.db_types import DBConnection
 
 from context.optimizer import OptimizedContext
+from llm import execution_metrics
 from llm.router import RouteResult
 from storage.repositories import insert_llm_call_log
 
@@ -97,6 +98,18 @@ def record(
         response.model, response.input_tokens, response.output_tokens,
         response.cache_creation_input_tokens, response.cache_read_input_tokens,
     )
+
+    # Feeds whichever execution_metrics run is currently active (llm/
+    # execution_metrics.py's start_run, entered by the call site that
+    # eventually led here) -- a no-op when none is (e.g. a script calling
+    # research/assistant.py directly with no run started).
+    active_run = execution_metrics.current_run()
+    if active_run is not None:
+        active_run.attach_llm_result(
+            complexity_level=result.hardness.level, complexity_tier=result.hardness.tier.value,
+            model_used=response.model, input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens, estimated_cost_usd=cost,
+        )
 
     logger.info(
         "llm_call task=%s companies=%s tier=%s level=%s model=%s provider=%s fallback_used=%s "

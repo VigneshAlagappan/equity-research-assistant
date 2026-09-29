@@ -23,7 +23,7 @@ from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
 from config.settings import ANTHROPIC_MODEL
-from llm import observability
+from llm import execution_metrics, observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
 from research.capabilities import PlannerCapabilities
@@ -201,10 +201,11 @@ def generate_hypotheses(
     user_message = f"Company context:\n{context}\n\nQuestion/observation: {question}"
 
     try:
-        result = route(
-            system=_build_system_prompt(), user_message=user_message, hardness=hardness,
-            max_tokens=MAX_TOKENS, pinned_model=pinned_model,
-        )
+        with execution_metrics.phase("llm"):
+            result = route(
+                system=_build_system_prompt(), user_message=user_message, hardness=hardness,
+                max_tokens=MAX_TOKENS, pinned_model=pinned_model,
+            )
     except AllProvidersUnavailableError as exc:
         raise HypothesisGenerationError(f"all configured models failed: {exc}") from exc
 

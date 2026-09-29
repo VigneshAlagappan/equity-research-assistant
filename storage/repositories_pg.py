@@ -3142,6 +3142,111 @@ def get_investigation_cost_summary(conn: DBConnection, investigation_id: str) ->
 
 
 # ------------------------------------------------------------------
+# execution_metrics (Admin > Settings > Execution Analytics)
+# ------------------------------------------------------------------
+
+
+def insert_execution_metrics(
+    conn: DBConnection,
+    *,
+    run_id: str,
+    task_name: str,
+    execution_mode: str,
+    complexity_level: int | None,
+    complexity_tier: str | None,
+    total_ms: float | None,
+    db_ms: float | None,
+    calc_ms: float | None,
+    llm_ms: float | None,
+    neo4j_ms: float | None,
+    planner_ms: float | None,
+    model_used: str | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    estimated_cost_usd: float | None,
+    status: str,
+    error_detail: str | None = None,
+) -> None:
+    """Persist one Signal request/run's timing + outcome -- Postgres mirror
+    of storage.repositories.insert_execution_metrics (see that function's
+    docstring)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO execution_metrics "
+            "(run_id, created_at, task_name, execution_mode, complexity_level, complexity_tier, "
+            "total_ms, db_ms, calc_ms, llm_ms, neo4j_ms, planner_ms, model_used, input_tokens, "
+            "output_tokens, estimated_cost_usd, status, error_detail) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                run_id, _utcnow_iso(), task_name, execution_mode, complexity_level, complexity_tier,
+                total_ms, db_ms, calc_ms, llm_ms, neo4j_ms, planner_ms, model_used, input_tokens,
+                output_tokens, estimated_cost_usd, status, error_detail,
+            ),
+        )
+    conn.commit()
+
+
+def list_execution_metrics(
+    conn: DBConnection, *, since_iso: str | None = None, until_iso: str | None = None,
+    complexity_level: int | None = None, limit: int = 20000,
+) -> list[dict]:
+    """Postgres mirror of storage.repositories.list_execution_metrics."""
+    query = "SELECT * FROM execution_metrics WHERE 1=1"
+    params: list = []
+    if since_iso is not None:
+        query += " AND created_at >= %s"
+        params.append(since_iso)
+    if until_iso is not None:
+        query += " AND created_at < %s"
+        params.append(until_iso)
+    if complexity_level is not None:
+        query += " AND complexity_level = %s"
+        params.append(complexity_level)
+    query += " ORDER BY created_at ASC LIMIT %s"
+    params.append(limit)
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+    return [dict(row) for row in rows]
+
+
+def upsert_execution_metrics_daily(conn: DBConnection, rows: list[dict]) -> None:
+    """Postgres mirror of storage.repositories.upsert_execution_metrics_daily."""
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                "INSERT INTO execution_metrics_daily "
+                "(day, task_name, complexity_level, total_runs, success_runs, error_runs, "
+                "avg_total_ms, p50_total_ms, p95_total_ms, max_total_ms, "
+                "total_input_tokens, total_output_tokens, total_estimated_cost_usd) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (day, task_name, complexity_level) DO UPDATE SET "
+                "total_runs=excluded.total_runs, success_runs=excluded.success_runs, "
+                "error_runs=excluded.error_runs, avg_total_ms=excluded.avg_total_ms, "
+                "p50_total_ms=excluded.p50_total_ms, p95_total_ms=excluded.p95_total_ms, "
+                "max_total_ms=excluded.max_total_ms, total_input_tokens=excluded.total_input_tokens, "
+                "total_output_tokens=excluded.total_output_tokens, "
+                "total_estimated_cost_usd=excluded.total_estimated_cost_usd",
+                (
+                    row["day"], row["task_name"], row["complexity_level"], row["total_runs"],
+                    row["success_runs"], row["error_runs"], row["avg_total_ms"], row["p50_total_ms"],
+                    row["p95_total_ms"], row["max_total_ms"], row["total_input_tokens"],
+                    row["total_output_tokens"], row["total_estimated_cost_usd"],
+                ),
+            )
+    conn.commit()
+
+
+def delete_execution_metrics_before(conn: DBConnection, cutoff_iso: str) -> int:
+    """Postgres mirror of storage.repositories.delete_execution_metrics_before."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM execution_metrics WHERE created_at < %s", (cutoff_iso,))
+        deleted = cur.rowcount
+    conn.commit()
+    return deleted
+
+
+# ------------------------------------------------------------------
 # ingestion_queue_items
 # ------------------------------------------------------------------
 
