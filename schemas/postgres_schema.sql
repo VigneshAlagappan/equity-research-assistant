@@ -1305,6 +1305,71 @@ CREATE TABLE IF NOT EXISTS llm_call_log (
 CREATE INDEX IF NOT EXISTS idx_llm_call_log_created_at ON llm_call_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_llm_call_log_investigation_id ON llm_call_log(investigation_id);
 
+-- ============================================================
+-- Execution Analytics (Admin > Settings > Execution Analytics) -- one row
+-- per Signal request/run (Ask AI, "Generate full report", Deep Dive
+-- investigation), keyed by run_id and linked to llm_call_log's own audit
+-- trail through that same value (passed as llm_call_log.thread_id for the
+-- assistant_qa/signals_report task_names, or as llm_call_log.
+-- investigation_id for the investigation pipeline -- see llm/
+-- execution_metrics.py). Purely observational: never read by any routing/
+-- planning/model-selection code, only written after the fact and read back
+-- by the analytics panel. Deliberately excludes prompts/responses/evidence/
+-- chain-of-thought -- those already live in generated_reports/investigations/
+-- llm_call_log; this table is only timing/outcome, so it stays cheap to
+-- retain and cheap to query.
+--
+-- Per-phase *_ms columns are populated only where that phase is separable
+-- in the current pipeline -- e.g. an investigation's retrieval time is
+-- folded into planner_ms (research/investigation_planner.py::plan_and_gather
+-- does both planning and evidence-gathering in one pass), so db_ms/neo4j_ms
+-- stay NULL for that task_name rather than being force-split. NULL always
+-- means "not measured for this run", never "zero".
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS execution_metrics (
+  metric_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  task_name TEXT NOT NULL,
+  execution_mode TEXT NOT NULL DEFAULT 'sync',
+  complexity_level INTEGER,
+  complexity_tier TEXT,
+  total_ms REAL,
+  db_ms REAL,
+  calc_ms REAL,
+  llm_ms REAL,
+  neo4j_ms REAL,
+  planner_ms REAL,
+  model_used TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  estimated_cost_usd REAL,
+  status TEXT NOT NULL,
+  error_detail TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_metrics_created_at ON execution_metrics(created_at);
+CREATE INDEX IF NOT EXISTS idx_execution_metrics_run_id ON execution_metrics(run_id);
+CREATE INDEX IF NOT EXISTS idx_execution_metrics_level_created ON execution_metrics(complexity_level, created_at);
+
+CREATE TABLE IF NOT EXISTS execution_metrics_daily (
+  day TEXT NOT NULL,
+  task_name TEXT NOT NULL,
+  complexity_level INTEGER NOT NULL DEFAULT 0,
+  total_runs INTEGER NOT NULL DEFAULT 0,
+  success_runs INTEGER NOT NULL DEFAULT 0,
+  error_runs INTEGER NOT NULL DEFAULT 0,
+  avg_total_ms REAL,
+  p50_total_ms REAL,
+  p95_total_ms REAL,
+  max_total_ms REAL,
+  total_input_tokens INTEGER NOT NULL DEFAULT 0,
+  total_output_tokens INTEGER NOT NULL DEFAULT 0,
+  total_estimated_cost_usd REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, task_name, complexity_level)
+);
+
 -- One row per research/routing_policy.py::route_question() call — see
 -- schemas/sqlite_schema.sql's signals_routing_log for the full field-by-field
 -- rationale (docs/ADR/023); this is its Postgres/Neon port, same shape as

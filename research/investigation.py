@@ -58,6 +58,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from llm import execution_metrics
 from research.assistant import CaseCancelledError, InsufficientEvidenceError, gather_evidence
 from research.capabilities import PlannerCapabilities, default_capabilities
 from research.hypothesis_evaluator import HypothesisEvaluation, HypothesisEvaluationError, evaluate_hypothesis
@@ -156,7 +157,8 @@ def _investigate_hypothesis(
     Returns the final plan (whatever evidence was accumulated) and the final
     evaluation, or (plan, None) if evaluation itself failed — same failure
     shape run_investigation() already handled before this loop existed."""
-    plan = plan_and_gather(conn, hypothesis, question, capabilities=capabilities, fact_store=fact_store)
+    with execution_metrics.phase("planner"):
+        plan = plan_and_gather(conn, hypothesis, question, capabilities=capabilities, fact_store=fact_store)
     evaluation: HypothesisEvaluation | None = None
 
     for attempt in range(1, MAX_EVIDENCE_ITERATIONS + 1):
@@ -175,9 +177,10 @@ def _investigate_hypothesis(
             return plan, evaluation  # timeout control
 
         gap_query = " ".join(evaluation.missing_evidence) or question
-        retry_plan = plan_and_gather(
-            conn, hypothesis, gap_query, capabilities=capabilities, fact_store=fact_store, retry=True
-        )
+        with execution_metrics.phase("planner"):
+            retry_plan = plan_and_gather(
+                conn, hypothesis, gap_query, capabilities=capabilities, fact_store=fact_store, retry=True
+            )
         merged = _merge_plans(plan, retry_plan)
         if _evidence_key(merged) == _evidence_key(plan):
             logger.info("No new evidence found for %s — stopping evidence loop", hypothesis.hypothesis_id)
@@ -188,6 +191,32 @@ def _investigate_hypothesis(
 
 
 def run_investigation(
+    conn: DBConnection, question: str, company_ids: list[str], *, statement_type: str = "consolidated",
+    model: str | None = None, capabilities: PlannerCapabilities | None = None, fact_store: FactStore | None = None,
+    as_of: str | None = None, investigation_id: str | None = None, case_id: str | None = None,
+    complexity_level: int | None = None,
+) -> Investigation:
+    """Execution Analytics wrapper (llm/execution_metrics.py) around
+    _run_investigation_impl, which does the actual Steps 2E-2H work -- see
+    that function's docstring. investigation_id is resolved here (not left
+    to the impl) so it can double as execution_metrics.run_id, the same
+    value hypothesis generation/evaluation/synthesis's own llm_call_log
+    rows already carry as investigation_id -- one id links every table.
+    execution_mode="async" exactly when case_id is set, i.e. this call is
+    running inside research/case_runner.py's background thread
+    (web/app.py's /investigate/generate-async) rather than directly inside
+    a request (/investigate/generate)."""
+    investigation_id = investigation_id or uuid.uuid4().hex[:12]
+    execution_mode = "async" if case_id is not None else "sync"
+    with execution_metrics.start_run(conn, investigation_id, "investigation", execution_mode=execution_mode):
+        return _run_investigation_impl(
+            conn, question, company_ids, statement_type=statement_type, model=model, capabilities=capabilities,
+            fact_store=fact_store, as_of=as_of, investigation_id=investigation_id, case_id=case_id,
+            complexity_level=complexity_level,
+        )
+
+
+def _run_investigation_impl(
     conn: DBConnection, question: str, company_ids: list[str], *, statement_type: str = "consolidated",
     model: str | None = None, capabilities: PlannerCapabilities | None = None, fact_store: FactStore | None = None,
     as_of: str | None = None, investigation_id: str | None = None, case_id: str | None = None,

@@ -111,6 +111,10 @@
   </div>
 
   {% if generated %}
+  <div class="thread-question-block">
+    <div class="thread-eyebrow">Research question</div>
+    <h2>{{ generated.question }}</h2>
+  </div>
   <div class="signals-report-meta">Generated <span class="local-time" data-utc="{{ generated.generated_at }}">{{ generated.generated_at }}</span> · {{ generated.company_ids|join(', ') }} · {{ generated.statement_type }}</div>
 
   <div class="thread-layout">

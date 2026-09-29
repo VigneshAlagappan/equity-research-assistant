@@ -15,11 +15,12 @@ deterministic tools and retrieval is sufficient").
 
 from __future__ import annotations
 
+import uuid
 from storage.db_types import DBConnection
 
 from config.settings import ANTHROPIC_MODEL
 from context.optimizer import OptimizedContext, optimize
-from llm import observability
+from llm import execution_metrics, observability
 from llm.hardness import classify
 from llm.router import TIER_PREFERRED_MODEL, AllProvidersUnavailableError, route
 from research.capabilities import InvestigationMemoryCapabilities, default_investigation_memory
@@ -136,17 +137,17 @@ def gather_evidence(
     logic or paying for it twice. Returns (financial_evidence, variable_evidence)
     kept separate, not concatenated -- answer_question() needs that split
     for its own prompt-caching cacheable_prefix (see its own docstring)."""
-    with sentry_span("db.postgres", "Financials evidence (canonical_financials)"):
+    with sentry_span("db.postgres", "Financials evidence (canonical_financials)"), execution_metrics.phase("db"):
         financial_evidence = get_comparison_evidence(conn, company_ids, statement_type)
     variable_evidence: list = []
     if len(company_ids) == 1:
-        with sentry_span("db.postgres", "Document evidence (documents)"):
+        with sentry_span("db.postgres", "Document evidence (documents)"), execution_metrics.phase("db"):
             variable_evidence += get_document_evidence(conn, company_ids[0], question)
-        with sentry_span("vector.qdrant", "Document passage evidence (hybrid retrieval)"):
+        with sentry_span("vector.qdrant", "Document passage evidence (hybrid retrieval)"), execution_metrics.phase("db"):
             variable_evidence += get_document_passage_evidence(conn, company_ids[0], question)
-        with sentry_span("graph.neo4j", "Knowledge Graph evidence"):
+        with sentry_span("graph.neo4j", "Knowledge Graph evidence"), execution_metrics.phase("neo4j"):
             variable_evidence += get_knowledge_graph_evidence(conn, company_ids[0], question)
-    with sentry_span("db.postgres", "Macro evidence (macro_observations)"):
+    with sentry_span("db.postgres", "Macro evidence (macro_observations)"), execution_metrics.phase("db"):
         variable_evidence += get_macro_evidence(conn, question)
     return financial_evidence, variable_evidence
 
@@ -160,6 +161,40 @@ def answer_question(
     *,
     investigation_memory: InvestigationMemoryCapabilities | None = None,
     case_id: str | None = None,
+    complexity_level: int | None = None,
+) -> str:
+    """Execution Analytics wrapper (llm/execution_metrics.py) around
+    _answer_question_impl, which does the actual work -- see that function's
+    docstring. run_id is case_id when this call is running inside research/
+    case_runner.py's background thread (execution_mode="async"), or a fresh
+    id for every plain synchronous call otherwise -- either way it's what
+    execution_metrics.run_id gets linked to llm_call_log through (see
+    observability.record's thread_id kwarg below). `complexity_level` is
+    Jev's real classification (research/routing_policy.py's ComplexityLevel,
+    docs/ADR/023) when the caller already has one -- see start_run()'s own
+    docstring for why this takes priority over llm/hardness.py's unrelated
+    model-tier number for this run's execution_metrics row."""
+    run_id = case_id or uuid.uuid4().hex[:12]
+    execution_mode = "async" if case_id is not None else "sync"
+    with execution_metrics.start_run(
+        conn, run_id, "assistant_qa", execution_mode=execution_mode, jev_complexity_level=complexity_level,
+    ):
+        return _answer_question_impl(
+            conn, question, company_ids, statement_type, model,
+            investigation_memory=investigation_memory, case_id=case_id, run_id=run_id,
+        )
+
+
+def _answer_question_impl(
+    conn: DBConnection,
+    question: str,
+    company_ids: list[str],
+    statement_type: str | None = "consolidated",
+    model: str | None = None,
+    *,
+    investigation_memory: InvestigationMemoryCapabilities | None = None,
+    case_id: str | None = None,
+    run_id: str | None = None,
 ) -> str:
     """Answer a research question about one or more companies, and/or about
     macro/regulatory data (India or US), grounded in retrieved evidence.
@@ -250,6 +285,9 @@ def answer_question(
             conn, task_name="assistant_qa", company_ids=company_ids, question=question,
             reused_thread_id=reused.thread_id, similarity=reused.similarity,
         )
+        active_run = execution_metrics.current_run()
+        if active_run is not None:
+            active_run.status = "reused"
         return reused.report_markdown
 
     if case_id is not None:
@@ -309,7 +347,7 @@ def answer_question(
         update_case_activity(conn, case_id, "Generating answer")
 
     try:
-        with sentry_span("llm.anthropic", f"answer_question ({hardness.tier.value})"):
+        with sentry_span("llm.anthropic", f"answer_question ({hardness.tier.value})"), execution_metrics.phase("llm"):
             result = route(
                 system=SYSTEM_PROMPT, user_message=user_message, hardness=hardness,
                 max_tokens=MAX_TOKENS, pinned_model=pinned_model, cacheable_prefix=cacheable_prefix,
@@ -319,7 +357,7 @@ def answer_question(
 
     observability.record(
         conn, task_name="assistant_qa", company_ids=company_ids, question=question,
-        result=result, optimized=optimized,
+        result=result, optimized=optimized, thread_id=run_id,
     )
 
     response = result.response

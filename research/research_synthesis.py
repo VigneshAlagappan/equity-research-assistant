@@ -22,7 +22,7 @@ from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
 from config.settings import ANTHROPIC_MODEL
-from llm import observability
+from llm import execution_metrics, observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
 from research.hypothesis_evaluator import HypothesisEvaluation
@@ -119,10 +119,11 @@ def synthesize(
     user_message = f"Question/observation: {question}\n\nEvaluated hypotheses:\n{_render_hypotheses(hypotheses, evaluations)}"
 
     try:
-        result = route(
-            system=RESEARCH_SYNTHESIS_SYSTEM_PROMPT, user_message=user_message, hardness=hardness,
-            max_tokens=MAX_TOKENS, pinned_model=pinned_model,
-        )
+        with execution_metrics.phase("llm"):
+            result = route(
+                system=RESEARCH_SYNTHESIS_SYSTEM_PROMPT, user_message=user_message, hardness=hardness,
+                max_tokens=MAX_TOKENS, pinned_model=pinned_model,
+            )
     except AllProvidersUnavailableError as exc:
         raise ResearchSynthesisError(f"all configured models failed: {exc}") from exc
 

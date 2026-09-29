@@ -79,6 +79,47 @@ def rolling_avg(values: list[float], window: int) -> list[float]:
     return [sum(values[i : i + window]) / window for i in range(len(values) - window + 1)]
 
 
+def format_currency_value(value: float, unit: str) -> str:
+    """Country/currency-aware display for a canonical_financials value —
+    INR-denominated units render the way an Indian retail analyst actually
+    reads them (Rs symbol + Cr/L suffix, matching Screener/Moneycontrol),
+    not a bare number. Also fixes a real, previously-visible bug: every
+    call site here used to interpolate the raw value with Python's `:g`
+    format, which silently switches to scientific notation once a number
+    gets large enough (e.g. a large-cap's total_revenue in INR_CRORE
+    rendering as "1.07568e+06 INR_CRORE" instead of a readable figure) —
+    `:g`'s "6 significant digits" default was never a deliberate choice
+    here, just what happened to be used for float interpolation.
+    metrics_dictionary's full default_unit vocabulary (normalization/
+    financials.py) is INR_CRORE, INR_LAKH, INR, USD_MILLION, USD_THOUSAND,
+    USD, PERCENT, NUMBER — anything not named above (NUMBER, an unexpected
+    future unit) falls through to the original plain "value unit" display,
+    never raises."""
+    if unit == "INR_CRORE":
+        return f"₹{value:,.2f} Cr"
+    if unit == "INR_LAKH":
+        return f"₹{value:,.2f} L"
+    if unit == "INR":
+        # Raw rupees are rare (canonical_financials mostly stores INR
+        # figures pre-scaled to INR_CRORE/INR_LAKH) but handled the same
+        # compact way if it ever occurs, picking whichever of Cr/L the
+        # magnitude actually calls for.
+        if abs(value) >= 1_00_00_000:
+            return f"₹{value / 1_00_00_000:,.2f} Cr"
+        if abs(value) >= 1_00_000:
+            return f"₹{value / 1_00_000:,.2f} L"
+        return f"₹{value:,.2f}"
+    if unit == "USD_MILLION":
+        return f"${value:,.2f} M"
+    if unit == "USD_THOUSAND":
+        return f"${value:,.2f} K"
+    if unit == "USD":
+        return f"${value:,.2f}"
+    if unit == "PERCENT":
+        return f"{value:.2f}%"
+    return f"{value:g} {unit}"
+
+
 # ------------------------------------------------------------------
 # DB-aware wrappers — fetch from canonical_financials, cite the inputs.
 # ------------------------------------------------------------------
@@ -107,8 +148,8 @@ def cagr_for_metric(
         unit="PERCENT",
         explanation=(
             f"CAGR = {value:.1f}%, calculated from {start_fiscal_year}-{end_fiscal_year} "
-            f"reported {metric_key} ({start_row['canonical_value']:g} -> {end_row['canonical_value']:g} "
-            f"{start_row['unit']})"
+            f"reported {metric_key} ({format_currency_value(start_row['canonical_value'], start_row['unit'])} "
+            f"-> {format_currency_value(end_row['canonical_value'], end_row['unit'])})"
         ),
     )
 
@@ -135,8 +176,8 @@ def yoy_growth_for_metric(
         unit="PERCENT",
         explanation=(
             f"YoY growth = {value:.1f}%, calculated from {previous_fiscal_year}-{fiscal_year} "
-            f"reported {metric_key} ({previous_row['canonical_value']:g} -> {current_row['canonical_value']:g} "
-            f"{current_row['unit']})"
+            f"reported {metric_key} ({format_currency_value(previous_row['canonical_value'], previous_row['unit'])} "
+            f"-> {format_currency_value(current_row['canonical_value'], current_row['unit'])})"
         ),
     )
 

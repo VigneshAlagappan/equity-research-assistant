@@ -1148,13 +1148,15 @@ single-pass `research/assistant.py::answer_question()` pipeline ("ask",
 Levels 1-4) or the investigation pipeline ("investigation", Level 5) — and
 every resulting `research_cases`/`generated_reports`/`investigations` row is
 tagged with its Jev level, shown and filterable on the Cases (`/investigations`)
-list. What's *not* yet live: `route_question()`'s own Level 1/2 deterministic
-short-circuits and Level 4 peer-grounded evidence gathering aren't the
-execution engine for live "ask" traffic yet — that still always runs the
-full `answer_question()` LLM call regardless of level. `route_question()` is
-fully built and tested (`python main.py route-ask`), and wiring it in as the
-live execution path for Levels 1-4 is a scoped, well-understood follow-up,
-not a design gap.
+list. The Level 1/2 deterministic short-circuits *are* live: a single-company
+Level 1/2 question goes through `attempt_deterministic_level()` first and is
+answered from `canonical_financials` with no LLM call (falling through to
+`answer_question()` only if both levels escalate). What's *not* yet live:
+Level 3/4 via `route_question()` — including Level 4 peer-grounded evidence
+gathering — so those still run the full `answer_question()` LLM call.
+`route_question()` is fully built and tested (`python main.py route-ask`), and
+wiring it in for Levels 3-4 is a scoped, well-understood follow-up, not a
+design gap.
 
 ### Golden Research Loop validation
 
@@ -1689,16 +1691,17 @@ pre-existing test failure.
   avoid changing their existing answer quality). Only `research/assistant.py`
   auto-routes across QUICK/STANDARD/DEEP tiers today, so Insights and Signals
   reports don't get tiering's cost savings yet.
-- **`route_question()`'s deterministic Level 1-4 execution isn't the live
-  path for "ask" traffic yet** — Jev (see [Signals Complexity
-  Routing](#signals-complexity-routing--jev-adr-023)) already decides
-  dispatch (ask vs. investigation) and tags every research item with its
-  level, but a Level 1/2 question that could be answered at zero LLM cost,
-  or a Level 4 question that could be peer-grounded automatically, still
-  goes through the same full `answer_question()` LLM call as every other
-  "ask". The deterministic/grounded execution paths are fully built and
-  tested (`python main.py route-ask`), just not yet wired in as the live
-  execution engine — a scoped follow-up, not a design gap.
+- **`route_question()`'s Level 3/4 execution isn't the live path for "ask"
+  traffic yet** — Jev (see [Signals Complexity
+  Routing](#signals-complexity-routing--jev-adr-023)) decides dispatch (ask
+  vs. investigation), tags every research item with its level, and Level 1/2
+  questions are already answered deterministically at zero LLM cost
+  (`attempt_deterministic_level()`). But a Level 4 question that could be
+  peer-grounded automatically still goes through the same full
+  `answer_question()` LLM call as every other Level 3/4 "ask". The grounded
+  execution path is fully built and tested (`python main.py route-ask`),
+  just not yet wired in as the live engine — a scoped follow-up, not a
+  design gap.
 - **`context/graph_neo4j.py`'s Cypher read path is unverified against a real
   server** — `main.py graph-backfill --all-financials` has verified the
   write path for real (companies/sectors/investigations, knowledge-graph

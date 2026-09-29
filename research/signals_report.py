@@ -21,13 +21,14 @@ already applies to any question the evidence block doesn't cover.
 from __future__ import annotations
 
 import re
+import uuid
 from storage.db_types import DBConnection
 from dataclasses import dataclass, field
 
 from config.settings import ANTHROPIC_MODEL, OPENROUTER_MODEL_ID
 from context.graph import render_related_investigations
 from context.optimizer import OptimizedContext, optimize
-from llm import observability
+from llm import execution_metrics, observability
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route
 from research.capabilities import InvestigationMemoryCapabilities, default_investigation_memory
@@ -165,6 +166,31 @@ def generate_signals_report(
     *,
     investigation_memory: InvestigationMemoryCapabilities | None = None,
 ) -> SignalsReport:
+    """Execution Analytics wrapper (llm/execution_metrics.py) -- always
+    execution_mode="sync" today: unlike Ask AI/Deep Dive, /research/thread/
+    generate has no -async counterpart yet, so every run of this pipeline
+    is a real, synchronous, request-blocking one -- exactly the kind of
+    data point this feature exists to surface (task boundary: measure
+    first, don't add async here). See _generate_signals_report_impl for the
+    actual pipeline."""
+    run_id = uuid.uuid4().hex[:12]
+    with execution_metrics.start_run(conn, run_id, "signals_report", execution_mode="sync"):
+        return _generate_signals_report_impl(
+            conn, question, company_ids, statement_type, model,
+            investigation_memory=investigation_memory, run_id=run_id,
+        )
+
+
+def _generate_signals_report_impl(
+    conn: DBConnection,
+    question: str,
+    company_ids: list[str],
+    statement_type: str | None = "consolidated",
+    model: str = ANTHROPIC_MODEL or OPENROUTER_MODEL_ID,
+    *,
+    investigation_memory: InvestigationMemoryCapabilities | None = None,
+    run_id: str | None = None,
+) -> SignalsReport:
     """Generate a full Signals-format report, grounded in retrieved evidence.
 
     Reuse-before-recompute (context/reuse.py): first checked against
@@ -197,28 +223,34 @@ def generate_signals_report(
             conn, task_name="signals_report", company_ids=company_ids, question=question,
             reused_thread_id=reused.thread_id, similarity=reused.similarity,
         )
+        active_run = execution_metrics.current_run()
+        if active_run is not None:
+            active_run.status = "reused"
         evidence = [
             Evidence(kind=e["kind"], company_id=e["company_id"], label=e["label"], value=e["value"], citation=e["citation"])
             for e in reused.evidence
         ]
         return SignalsReport(report_markdown=reused.report_markdown, evidence=evidence, followups=reused.followups)
 
-    financial_evidence = get_comparison_evidence(conn, company_ids, statement_type)  # cacheable
+    with execution_metrics.phase("db"):
+        financial_evidence = get_comparison_evidence(conn, company_ids, statement_type)  # cacheable
     variable_evidence: list[Evidence] = []
     if len(company_ids) == 1:
-        # Uploaded-document evidence (Docs tab) only has single-company
-        # attribution today — see research/documents.py.
-        variable_evidence += get_document_evidence(conn, company_ids[0], question)  # whole document
-        # Additive (feature spec section 9): hybrid (FTS5+semantic) retrieval's
-        # top-K passages, alongside the whole-document evidence above — same
-        # reasoning as research/assistant.py::answer_question()'s identical
-        # addition. Never replaces the whole-document evidence.
-        variable_evidence += get_document_passage_evidence(conn, company_ids[0], question)  # targeted passages
-        # Cross-company Knowledge Graph claims (Step 2B) connected to this
-        # company's own Company node or to any known entity the question
-        # names — see research/knowledge_evidence.py. Single-company only,
-        # same constraint the Docs evidence above already has.
-        variable_evidence += get_knowledge_graph_evidence(conn, company_ids[0], question)
+        with execution_metrics.phase("db"):
+            # Uploaded-document evidence (Docs tab) only has single-company
+            # attribution today — see research/documents.py.
+            variable_evidence += get_document_evidence(conn, company_ids[0], question)  # whole document
+            # Additive (feature spec section 9): hybrid (FTS5+semantic) retrieval's
+            # top-K passages, alongside the whole-document evidence above — same
+            # reasoning as research/assistant.py::answer_question()'s identical
+            # addition. Never replaces the whole-document evidence.
+            variable_evidence += get_document_passage_evidence(conn, company_ids[0], question)  # targeted passages
+        with execution_metrics.phase("neo4j"):
+            # Cross-company Knowledge Graph claims (Step 2B) connected to this
+            # company's own Company node or to any known entity the question
+            # names — see research/knowledge_evidence.py. Single-company only,
+            # same constraint the Docs evidence above already has.
+            variable_evidence += get_knowledge_graph_evidence(conn, company_ids[0], question)
     evidence = financial_evidence + variable_evidence
     if not evidence:
         return SignalsReport(
@@ -253,10 +285,11 @@ def generate_signals_report(
         user_message += "\n\n" + render_related_investigations(related)
 
     try:
-        result = route(
-            system=SIGNALS_SYSTEM_PROMPT, user_message=user_message, hardness=hardness,
-            max_tokens=MAX_TOKENS, pinned_model=model, cacheable_prefix=cacheable_prefix,
-        )
+        with execution_metrics.phase("llm"):
+            result = route(
+                system=SIGNALS_SYSTEM_PROMPT, user_message=user_message, hardness=hardness,
+                max_tokens=MAX_TOKENS, pinned_model=model, cacheable_prefix=cacheable_prefix,
+            )
     except AllProvidersUnavailableError:
         return SignalsReport(
             report_markdown="The assistant is temporarily unavailable (all configured models failed). Try again shortly."
@@ -264,7 +297,7 @@ def generate_signals_report(
 
     observability.record(
         conn, task_name="signals_report", company_ids=company_ids, question=question,
-        result=result, optimized=optimized,
+        result=result, optimized=optimized, thread_id=run_id,
         graph_hit_thread_id=related[0].thread_id if related else None,
         graph_hit_score=related[0].score if related else None,
     )

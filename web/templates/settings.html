@@ -364,6 +364,47 @@
   .admin-audit-detail-row td { background: color-mix(in srgb, var(--color-text) 3%, transparent); padding: var(--space-3); }
   .admin-audit-detail-table { font-size: 12px; margin: 0; }
 
+  /* Execution Analytics -- one fixed color per Complexity Level (never
+     cycled/reassigned by whichever levels happen to be present, so Level 3
+     is always the same color whether "All" or "Level 3" is selected).
+     Dark-surface steps under the same dark-theme grouping selector
+     --indicator-* above already uses. `--exa-*`/`.exa-*`, not `--ea-*`/
+     `.ea-*` -- disambiguated from the sibling Eval Analytics panel below,
+     which independently landed the same "ea" abbreviation for its own,
+     unrelated tokens/classes. */
+  :root {
+    --exa-series-1: #2a78d6; --exa-series-2: #eb6834; --exa-series-3: #1baf7a;
+    --exa-series-4: #eda100; --exa-series-5: #e87ba4; --exa-status-error: #d03b3b;
+  }
+  :root[data-theme="dark"], :root[data-theme="signals"] {
+    --exa-series-1: #3987e5; --exa-series-2: #d95926; --exa-series-3: #199e70;
+    --exa-series-4: #c98500; --exa-series-5: #d55181; --exa-status-error: #e66767;
+  }
+  .exa-summary-row { display: flex; flex-wrap: wrap; gap: var(--space-4); margin: var(--space-4) 0; }
+  .exa-stat { min-width: 110px; }
+  .exa-stat-value { font-size: 22px; font-weight: 600; line-height: 1.2; }
+  .exa-stat-label { font-size: 12px; color: var(--ink-muted); margin-top: 2px; }
+  .exa-chart-toggle { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
+  .exa-view-btn {
+    background: none; border: 1px solid var(--color-divider); border-radius: 6px; cursor: pointer;
+    font: inherit; font-size: 13px; padding: 4px 12px; color: var(--ink-muted);
+  }
+  .exa-view-btn.active { color: var(--ink); border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+  .exa-svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .exa-svg text { fill: var(--ink-muted); font-size: 10px; }
+  .exa-svg .exa-axis-line { stroke: var(--color-divider); stroke-width: 1; }
+  .exa-svg .exa-gridline { stroke: var(--color-divider); stroke-width: 1; opacity: 0.5; }
+  .exa-svg .exa-line { fill: none; stroke-width: 2; }
+  .exa-svg .exa-dot { cursor: pointer; }
+  .exa-legend { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-2); font-size: 12px; color: var(--ink-muted); }
+  .exa-legend-item { display: flex; align-items: center; gap: 6px; }
+  .exa-legend-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .exa-tooltip {
+    position: fixed; z-index: 40; background: var(--surface2);
+    border: 1px solid var(--color-divider); border-radius: 6px; padding: var(--space-2) var(--space-3);
+    font-size: 12px; line-height: 1.5; pointer-events: none; box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+    max-width: 260px; color: var(--ink);
+  }
   /* Eval Analytics (web/static/js/eval_analytics_charts.js) — palette from
      the dataviz skill's reference instance, validated via its
      validate_palette.js: an ORDINAL ramp (one hue, monotone light->dark)
@@ -488,6 +529,7 @@
 
   <div class="settings-nav-group-label">System</div>
   <a class="settings-nav-item {{ 'active' if active_panel == 'admin-audit' }}" data-panel="admin-audit" href="{{ url_for('settings', panel='admin-audit') }}">Audit Log</a>
+  <a class="settings-nav-item {{ 'active' if active_panel == 'admin-execution_analytics' }}" data-panel="admin-execution_analytics" href="{{ url_for('settings', panel='admin-execution_analytics') }}">Execution Analytics</a>
   <a class="settings-nav-item {{ 'active' if active_panel == 'admin-eval_analytics' }}" data-panel="admin-eval_analytics" href="{{ url_for('settings', panel='admin-eval_analytics') }}">Eval Analytics</a>
   {% endif %}
 </nav>
@@ -1985,6 +2027,78 @@
       </div>
     </div>
 
+    <div class="settings-panel" id="settings-panel-admin-execution_analytics" {{ 'hidden' if active_admin_panel != 'execution_analytics' }}>
+      <p class="muted">
+        How Signal requests (Ask AI, "Generate full report", Deep Dive investigation) perform across
+        Complexity Levels 1&ndash;5 over time — total volume, latency, and success rate, so this app can
+        measure which levels actually need asynchronous execution and state management before changing
+        anything about how they're routed or run.
+      </p>
+      {% if exa_retention_days is defined %}
+      <p class="muted" style="margin-top: 0;">
+        Detail rows are kept for {{ exa_retention_days }} days (<code>EXECUTION_METRICS_RETENTION_DAYS</code>),
+        then rolled up into a daily summary and pruned by the
+        <a href="{{ url_for('settings', panel='admin-schedule') }}">Schedule</a> panel's
+        "Execution Analytics retention" job — never in the request path.
+      </p>
+      {% endif %}
+
+      {% if exa_summary is defined %}
+      <form class="admin-companies-filters" method="get" action="{{ url_for('settings') }}">
+        <input type="hidden" name="panel" value="admin-execution_analytics">
+        <label>Period
+          <select name="exa_period" onchange="this.form.submit()">
+            {% for opt in exa_period_options %}
+            <option value="{{ opt.value }}" {{ 'selected' if exa_period == opt.value }}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Granularity
+          <select name="exa_granularity" onchange="this.form.submit()">
+            {% for opt in exa_granularity_options %}
+            <option value="{{ opt.value }}" {{ 'selected' if exa_granularity == opt.value }}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Complexity Level
+          <select name="exa_level" onchange="this.form.submit()">
+            <option value="all" {{ 'selected' if exa_level == 'all' }}>All</option>
+            {% for lvl in (1, 2, 3, 4, 5) %}
+            <option value="{{ lvl }}" {{ 'selected' if exa_level == lvl|string }}>Level {{ lvl }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <noscript><button type="submit" class="btn btn-secondary">Apply</button></noscript>
+      </form>
+
+      <div class="exa-summary-row">
+        <div class="exa-stat"><div class="exa-stat-value">{{ exa_summary.total_runs }}</div><div class="exa-stat-label">Total Runs</div></div>
+        <div class="exa-stat"><div class="exa-stat-value">{{ exa_summary.avg_latency_display }}</div><div class="exa-stat-label">Avg Latency</div></div>
+        <div class="exa-stat"><div class="exa-stat-value">{{ exa_summary.p50_latency_display }}</div><div class="exa-stat-label">P50</div></div>
+        <div class="exa-stat"><div class="exa-stat-value">{{ exa_summary.p95_latency_display }}</div><div class="exa-stat-label">P95</div></div>
+        <div class="exa-stat"><div class="exa-stat-value">{{ exa_summary.success_rate_display }}</div><div class="exa-stat-label">Success Rate</div></div>
+      </div>
+
+      {% if exa_summary.total_runs %}
+      <div class="exa-chart-toggle" role="group" aria-label="Chart view">
+        <button type="button" class="exa-view-btn active" data-exa-view="line">Line chart</button>
+        <button type="button" class="exa-view-btn" data-exa-view="scatter">Scatter (outliers)</button>
+      </div>
+
+      <div id="execution-analytics-root" data-exa-data="{{ execution_analytics_data_json }}">
+        <svg id="execution-analytics-svg" class="exa-svg" viewBox="0 0 960 360" preserveAspectRatio="xMidYMid meet"></svg>
+        <div id="execution-analytics-legend" class="exa-legend"></div>
+      </div>
+      <div id="execution-analytics-tooltip" class="exa-tooltip" hidden></div>
+      {% else %}
+      <div class="empty-state">
+        No execution data recorded yet for this period/level — run an Ask AI question, a full Signals
+        report, or a Deep Dive investigation to start populating this panel.
+      </div>
+      {% endif %}
+      {% endif %}
+    </div>
+
     <div class="settings-panel" id="settings-panel-admin-eval_analytics" {{ 'hidden' if active_admin_panel != 'eval_analytics' }}>
       <p class="muted">
         How Signals is actually classifying and routing questions (docs/ADR/023), and whether the periodic golden-set
@@ -2124,6 +2238,7 @@
 </div>
 
   <script src="{{ static_url('js/company_picker.js') }}"></script>
+  <script src="{{ static_url('js/execution_analytics.js') }}"></script>
   <script defer src="{{ static_url('js/eval_analytics_charts.js') }}"></script>
   <script>
     // Audit Log — each row's detail (reconciliation history for a company

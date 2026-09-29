@@ -578,6 +578,79 @@ CREATE INDEX IF NOT EXISTS idx_signals_routing_log_jev_level ON signals_routing_
 -- would fail on every pre-existing database.
 
 -- ============================================================
+-- Execution Analytics (Admin > Settings > Execution Analytics) -- one row
+-- per Signal request/run (Ask AI, "Generate full report", Deep Dive
+-- investigation), keyed by run_id and linked to llm_call_log's own audit
+-- trail through that same value (passed as llm_call_log.thread_id for the
+-- assistant_qa/signals_report task_names, or as llm_call_log.
+-- investigation_id for the investigation pipeline -- see llm/
+-- execution_metrics.py). Purely observational: never read by any routing/
+-- planning/model-selection code, only written after the fact and read back
+-- by the analytics panel. Deliberately excludes prompts/responses/evidence/
+-- chain-of-thought -- those already live in generated_reports/investigations/
+-- llm_call_log; this table is only timing/outcome, so it stays cheap to
+-- retain and cheap to query.
+--
+-- Per-phase *_ms columns are populated only where that phase is separable
+-- in the current pipeline -- e.g. an investigation's retrieval time is
+-- folded into planner_ms (research/investigation_planner.py::plan_and_gather
+-- does both planning and evidence-gathering in one pass), so db_ms/neo4j_ms
+-- stay NULL for that task_name rather than being force-split. NULL always
+-- means "not measured for this run", never "zero".
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS execution_metrics (
+  metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  task_name TEXT NOT NULL,        -- assistant_qa | signals_report | investigation
+  execution_mode TEXT NOT NULL DEFAULT 'sync',  -- sync | async (research_cases-backed)
+  complexity_level INTEGER,       -- 1-5 (llm/hardness.py's TIER_LEVEL; 0 = reuse hit)
+  complexity_tier TEXT,
+  total_ms REAL,
+  db_ms REAL,                     -- Postgres/Neon evidence retrieval
+  calc_ms REAL,                   -- deterministic ratio/indicator calculation
+  llm_ms REAL,                    -- time inside llm/router.py::route()
+  neo4j_ms REAL,                  -- Knowledge Graph evidence lookup
+  planner_ms REAL,                -- research/investigation_planner.py plan_and_gather
+  model_used TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  estimated_cost_usd REAL,
+  status TEXT NOT NULL,           -- success | error | insufficient_data | cancelled | reused
+  error_detail TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_metrics_created_at ON execution_metrics(created_at);
+CREATE INDEX IF NOT EXISTS idx_execution_metrics_run_id ON execution_metrics(run_id);
+CREATE INDEX IF NOT EXISTS idx_execution_metrics_level_created ON execution_metrics(complexity_level, created_at);
+
+-- Lightweight daily rollup, written by the retention cleanup job
+-- (scripts/execution_metrics_cleanup.py, scheduling/jobs.py's "Maintenance"
+-- category) just before it prunes detailed execution_metrics rows older
+-- than execution_metrics_retention_days -- so long-term trend history
+-- survives detailed-row expiry without keeping the detailed rows forever.
+-- complexity_level defaults to 0 (never NULL) purely so it can sit in this
+-- table's natural key -- 0 already means "n/a/reuse" on execution_metrics
+-- itself, so no new sentinel is introduced.
+CREATE TABLE IF NOT EXISTS execution_metrics_daily (
+  day TEXT NOT NULL,
+  task_name TEXT NOT NULL,
+  complexity_level INTEGER NOT NULL DEFAULT 0,
+  total_runs INTEGER NOT NULL DEFAULT 0,
+  success_runs INTEGER NOT NULL DEFAULT 0,
+  error_runs INTEGER NOT NULL DEFAULT 0,
+  avg_total_ms REAL,
+  p50_total_ms REAL,
+  p95_total_ms REAL,
+  max_total_ms REAL,
+  total_input_tokens INTEGER NOT NULL DEFAULT 0,
+  total_output_tokens INTEGER NOT NULL DEFAULT 0,
+  total_estimated_cost_usd REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, task_name, complexity_level)
+);
+
+-- ============================================================
 -- Hybrid retrieval diagnostics (retrieval/observability.py) -- one row per
 -- retrieval/hybrid_search.py call. Same "structured log line, not just a
 -- console message" role llm_call_log plays for LLM calls, section 13's
