@@ -1501,7 +1501,7 @@ def test_research_thread_generate_creates_a_thread_and_page(tmp_path: Path, monk
         # saved report's page while the answer rendered fine.
         page_html = page.data.decode()
         question_block_start = page_html.index('class="thread-question-block"')
-        question_block_end = page_html.index("</div>", question_block_start)
+        question_block_end = page_html.index('class="signals-report-meta"', question_block_start)
         assert "How did net profit change?" in page_html[question_block_start:question_block_end]
 
 
