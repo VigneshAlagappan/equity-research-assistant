@@ -99,7 +99,7 @@ def test_level1_retrieve_makes_no_answer_llm_call(ingested_conn, monkeypatch) ->
     result = route_question(ingested_conn, "What was net profit in FY2024?", ["HDFCBANK"])
 
     assert len(calls) == 1  # only Jev's own classification call
-    assert "20500" in result.answer
+    assert "₹20,500.00 Cr" in result.answer  # financials/calculations.py's format_currency_value (net_profit is INR_CRORE)
     assert result.classification.level is ComplexityLevel.RETRIEVE
     assert result.audit.execution_status == "answered"
     assert result.audit.model_selected is None  # no answer-generation model was used
@@ -188,7 +188,7 @@ def test_attempt_deterministic_level_answers_level1_with_no_llm_call(ingested_co
     )
 
     assert outcome is not None
-    assert "20500" in outcome.answer
+    assert "₹20,500.00 Cr" in outcome.answer
     assert outcome.execution_status == "answered"
 
 

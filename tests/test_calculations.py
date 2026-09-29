@@ -11,6 +11,7 @@ from financials.calculations import (
     MissingDataError,
     cagr,
     cagr_for_metric,
+    format_currency_value,
     qoq_growth,
     qoq_growth_for_metric,
     rolling_avg,
@@ -72,6 +73,40 @@ def test_rolling_avg_rejects_window_larger_than_series() -> None:
 def test_rolling_avg_rejects_non_positive_window() -> None:
     with pytest.raises(CalculationError):
         rolling_avg([1, 2, 3], 0)
+
+
+def test_format_currency_value_inr_crore_uses_rupee_symbol_and_cr_suffix() -> None:
+    assert format_currency_value(20500.0, "INR_CRORE") == "₹20,500.00 Cr"
+
+
+def test_format_currency_value_never_uses_scientific_notation_for_large_inr_crore() -> None:
+    """A real, previously-visible bug (:g's default 6-significant-digit
+    cutoff): a large-cap's total_revenue in INR_CRORE used to render as
+    "1.07568e+06 INR_CRORE" instead of a readable figure."""
+    formatted = format_currency_value(1_075_675.0, "INR_CRORE")
+    assert formatted == "₹1,075,675.00 Cr"
+    assert "e+" not in formatted
+
+
+def test_format_currency_value_inr_lakh() -> None:
+    assert format_currency_value(1234.5, "INR_LAKH") == "₹1,234.50 L"
+
+
+def test_format_currency_value_raw_inr_picks_crore_or_lakh_by_magnitude() -> None:
+    assert format_currency_value(2_00_00_000, "INR") == "₹2.00 Cr"
+    assert format_currency_value(5_00_000, "INR") == "₹5.00 L"
+    assert format_currency_value(50_000, "INR") == "₹50,000.00"
+
+
+def test_format_currency_value_usd_units() -> None:
+    assert format_currency_value(707.92, "USD_MILLION") == "$707.92 M"
+    assert format_currency_value(1234.5, "USD_THOUSAND") == "$1,234.50 K"
+    assert format_currency_value(99.5, "USD") == "$99.50"
+
+
+def test_format_currency_value_percent_and_unknown_unit() -> None:
+    assert format_currency_value(17.8, "PERCENT") == "17.80%"
+    assert format_currency_value(42, "NUMBER") == "42 NUMBER"
 
 
 # ------------------------------------------------------------------

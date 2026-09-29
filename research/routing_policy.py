@@ -33,7 +33,7 @@ from typing import Callable
 from storage.db_types import DBConnection
 
 from config.settings import GRAPH_BACKEND, LEVEL_MODEL_CHAIN
-from financials.calculations import CalculationError, MissingDataError, cagr_for_metric, yoy_growth_for_metric
+from financials.calculations import CalculationError, MissingDataError, cagr_for_metric, format_currency_value, yoy_growth_for_metric
 from financials.ratios import SectorMismatchError, roa_for_company, roe_for_company
 from llm import observability
 from llm.complexity import ComplexityClassification, ComplexityLevel, classify_complexity
@@ -204,7 +204,7 @@ def _level1_retrieve(conn: DBConnection, question: str, company_ids: list[str], 
             execution_status="insufficient_data",
         )
     return LevelOutcome(
-        answer=f"{label.title()} for {company_id} in {fiscal_year}: {row['canonical_value']:g} {row['unit']}. "
+        answer=f"{label.title()} for {company_id} in {fiscal_year}: {format_currency_value(row['canonical_value'], row['unit'])}. "
         f"[FACT] source: canonical_financials.",
         data_sources=["neon:canonical_financials"],
         evidence_identifiers=[f"canonical_financials:{company_id}:{metric_key}:{fiscal_year}:{statement_type}"],
