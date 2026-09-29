@@ -398,6 +398,53 @@ TIER_MIN_REASONING_STRENGTH: dict[str, int] = {
     "deep": 4,
 }
 
+# ------------------------------------------------------------------
+# Signals Complexity Classification and Execution Routing Policy
+# (docs/ADR/023-jev-llm-complexity-classification-and-routing.md) --
+# research/routing_policy.py sorts every research question into one of
+# five complexity levels (Retrieve / Calculate / Interpret / Compare /
+# Hypothesize) via llm/complexity.py's Jev classifier, then dispatches to
+# the level's execution path. Model routing for that classifier and for
+# Levels 3/4's interpretation calls is configured here, exactly like
+# TIER_PREFERRED_MODEL/TIER_FALLBACK_CHAIN_OVERRIDE above -- no model name
+# is ever hard-coded into llm/complexity.py or research/routing_policy.py
+# itself, only read from these settings, so swapping providers/models never
+# requires touching the Level 1-5 definitions or routing logic.
+#
+# Per policy: "Default model: configured OpenRouter Gemma free-tier model.
+# Fallback: configured Anthropic model." -- the OPPOSITE order from
+# TIER_FALLBACK_CHAIN_OVERRIDE["quick"] above (which puts Haiku first, an
+# unrelated operator cost decision for the 3-tier hardness system). Jev/
+# Level 3/Level 4 get their own explicit chains rather than reusing that
+# one, via llm.router.route_explicit_chain (not the tier-derived route()).
+#
+# Level 5 (Hypothesize) is NOT configured here: it runs the existing
+# research/investigation.py hypothesis-driven pipeline unchanged, which
+# already does its own config-driven routing through TIER_PREFERRED_MODEL/
+# TIER_FALLBACK_CHAIN_OVERRIDE above (ADR-010) -- adding a second, parallel
+# model-selection surface for the same underlying calls would just be two
+# knobs controlling one thing.
+# ------------------------------------------------------------------
+
+JEV_CLASSIFIER_MODEL_CHAIN: list[str] = [OPENROUTER_MODEL_ID, "claude-haiku-4-5"]
+
+# Level 3 (Retrieve + Calculate + Interpret) and Level 4 (Compare +
+# Contextualize) each get their own configured chain (same default values
+# today, independently overridable -- an operator may later want a
+# stronger/different model for cross-company comparison than for
+# single-dataset interpretation without touching Level 3's setting).
+LEVEL_MODEL_CHAIN: dict[int, list[str]] = {
+    3: [OPENROUTER_MODEL_ID, "claude-haiku-4-5"],
+    4: [OPENROUTER_MODEL_ID, "claude-haiku-4-5"],
+}
+
+# Level 4's "prefer one strong comparison dataset... no more than two
+# comparison datasets unless the user explicitly requests broader analysis"
+# rule (research/peer_resolver.py) -- lifted only when the question itself
+# asks for a broader/whole-industry view (see that module's
+# _BROADER_SCOPE_RE), never silently.
+MAX_COMPARISON_DATASETS = 2
+
 # sources/sec_edgar.py: SEC's fair-access policy requires every request
 # carry an identifying User-Agent ("Company Name contact@example.com") --
 # not an API key, but genuinely checked, and requests without one get

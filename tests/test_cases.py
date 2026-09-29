@@ -16,7 +16,7 @@ from normalization.financials import ensure_metric_vocabulary
 from storage.database import init_db
 from storage.repositories import get_research_case, is_case_cancel_requested
 from tests.test_screener_adapter import _make_screener_workbook
-from tests.test_web import _build_app, _install_fake_llm
+from tests.test_web import _build_app, _install_fake_llm, _install_sequenced_fake_llm
 
 
 def _poll_until_done(test_client, job_id: str, attempts: int = 200):
@@ -83,11 +83,16 @@ def test_insufficient_data_case_completes_gracefully_and_stays_on_the_cases_list
 
     app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    # Jev's complexity classification (docs/ADR/023) runs once, unconditionally,
+    # before case creation/evidence gathering even happens -- "should never be
+    # returned" only ever meant the real ANSWER call, which should still be
+    # short-circuited by the empty-evidence check inside the case.
     captured = _install_fake_llm(monkeypatch, text="should never be returned")
 
     with app.test_client() as test_client:
         # No company named and nothing macro-related ingested -- gather_evidence()
-        # finds nothing at all, so this should short-circuit before any LLM call.
+        # finds nothing at all, so this should short-circuit before any real
+        # answer-generating LLM call.
         start = test_client.post("/research/ask-async", json={"question": "asdkfjaslkdjf nonsense query", "company_ids": []})
         assert start.status_code == 202
         case_id = start.get_json()["job_id"]
@@ -96,7 +101,7 @@ def test_insufficient_data_case_completes_gracefully_and_stays_on_the_cases_list
         assert final["status"] == "done"
         assert final["outcome"] == "insufficient_data"
         assert "No matching evidence" in final["result"]["answer_html"]
-        assert captured == []  # never called the API
+        assert len(captured) == 1  # only Jev's classification call, never a real answer call
 
         page = test_client.get("/investigations")
         body = page.data.decode()
@@ -201,14 +206,17 @@ def test_natural_shorthand_company_names_resolve_via_the_llm_fallback(tmp_path: 
     app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
 
-    # Two different fake-LLM responses in sequence: the first call this
-    # pipeline makes is company resolution (JSON), the second is the real
-    # answer (plain text) -- a single fixed-text fake client would return
-    # the wrong shape to whichever call happened not to match.
+    # Several different fake-LLM responses in sequence: Jev's complexity
+    # classification runs first (synchronously, before the case is even
+    # created, docs/ADR/023), then company resolution (JSON), then the
+    # aggregate-intent check, then the real answer (plain text) -- a single
+    # fixed-text fake client would return the wrong shape to whichever call
+    # happened not to match.
     import llm.providers.anthropic_provider as anthropic_provider
     from types import SimpleNamespace
 
     responses = iter([
+        '{"complexity_level": 4, "confidence": 0.9, "reason": "comparison question"}',
         '{"company_ids": ["IDFCFIRSTB", "FEDERALBNK"]}',
         # 2 companies now resolved -> _compute_answer_question's own
         # aggregate-intent check (research/aggregate_query.py) fires next,
@@ -255,7 +263,10 @@ def test_research_understand_resolves_companies_and_suggests_deep_for_a_comparis
     conn.close()
 
     app = _build_app(db_path, tmp_path, monkeypatch)
-    _install_fake_llm(monkeypatch, text='{"company_ids": ["IDFCFIRSTB", "FEDERALBNK"]}')
+    _install_sequenced_fake_llm(monkeypatch, [
+        '{"company_ids": ["IDFCFIRSTB", "FEDERALBNK"]}',
+        '{"complexity_level": 5, "confidence": 0.9, "reason": "causal divergence across two companies"}',
+    ])
 
     with app.test_client() as test_client:
         response = test_client.post(
@@ -267,7 +278,9 @@ def test_research_understand_resolves_companies_and_suggests_deep_for_a_comparis
     data = response.get_json()
     assert sorted(data["company_ids"]) == ["FEDERALBNK", "IDFCFIRSTB"]
     assert sorted(data["company_labels"]) == ["IDFC First Bank", "The Federal Bank"]
-    assert data["suggested_case_type"] == "deep"  # >1 company -> always DEEP (llm/hardness.py)
+    assert data["complexity_level"] == 5
+    assert data["complexity_label"] == "Hypothesize"
+    assert data["case_type"] == "investigation"  # Level 5 -> the investigation pipeline
 
 
 def test_research_understand_suggests_quick_for_a_plain_lookup(tmp_path: Path, monkeypatch) -> None:
@@ -279,7 +292,10 @@ def test_research_understand_suggests_quick_for_a_plain_lookup(tmp_path: Path, m
     conn.close()
 
     app = _build_app(db_path, tmp_path, monkeypatch)
-    _install_fake_llm(monkeypatch, text='{"company_ids": ["HDFCBANK"]}')
+    _install_sequenced_fake_llm(monkeypatch, [
+        '{"company_ids": ["HDFCBANK"]}',
+        '{"complexity_level": 1, "confidence": 0.9, "reason": "simple factual lookup"}',
+    ])
 
     with app.test_client() as test_client:
         response = test_client.post(
@@ -289,7 +305,8 @@ def test_research_understand_suggests_quick_for_a_plain_lookup(tmp_path: Path, m
     assert response.status_code == 200
     data = response.get_json()
     assert data["company_ids"] == ["HDFCBANK"]
-    assert data["suggested_case_type"] == "quick"
+    assert data["complexity_level"] == 1
+    assert data["case_type"] == "ask"
 
 
 def test_research_understand_requires_a_question(tmp_path: Path, monkeypatch) -> None:
@@ -329,10 +346,14 @@ def test_deep_dive_case_appears_on_cases_list_and_reconnects_via_case_detail(
 
     app = _build_app(db_path, tmp_path, monkeypatch)
     monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    # Jev's complexity classification (docs/ADR/023) now runs before this
+    # route even creates the case -- without a fake client installed, that
+    # call would hit the real Anthropic API.
+    _install_fake_llm(monkeypatch, text='{"complexity_level": 5, "confidence": 0.9, "reason": "test"}')
 
     def _fake_run_investigation(
         conn, question, company_ids, *, statement_type="consolidated", as_of=None,
-        investigation_id=None, case_id=None,
+        investigation_id=None, case_id=None, complexity_level=None,
     ):
         from research.investigation import Investigation
 

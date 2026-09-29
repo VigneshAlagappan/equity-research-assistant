@@ -43,6 +43,7 @@ from scripts.fetch_investor_relations import run_investor_relations_batch, SUPPO
 from scripts.process_pending_documents_batch import run_document_processing_batch
 from scripts.reconcile_generated_reports import run_generated_report_reconciliation
 from scripts.reconcile_raw_objects import run_raw_object_reconciliation
+from scripts.run_signals_eval import run_signals_eval
 from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
 
 
@@ -85,6 +86,7 @@ CATEGORY_ORDER = (
     "Macro",
     "Insights",
     "Documents",
+    "Evals",
     "Maintenance",
 )
 
@@ -423,6 +425,8 @@ SCHEDULED_JOBS: list[ScheduledJob] = [
                  "document_processing", None, _run_doc_analysis),
     ScheduledJob("investor_relations", "Investor relations documents (Q4/Berkshire)", "Quarterly", "Documents",
                  "investor_relations_fetch", None, _run_investor_relations),
+    ScheduledJob("signals_eval", "Signals complexity-routing golden eval set (ADR-023)", "Weekly", "Evals",
+                 "signals_eval", None, run_signals_eval),
     ScheduledJob("db_shard", "DB sharding", "Daily", "Maintenance",
                  "db_shard", None, _run_db_shard),
     ScheduledJob("raw_object_reconciliation", "Raw object catalog reconciliation (S3 <-> Postgres)", "Weekly",

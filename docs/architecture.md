@@ -14,6 +14,68 @@ For product/feature scope, see [README.md](../README.md) and
 [FeatureList.md](FeatureList.md). For running the app, see
 [USER_GUIDE.md](USER_GUIDE.md).
 
+This document has two parts, for two different readers. **[Investor View](#investor-view)**
+is a short, non-technical summary of what Signals does and why the
+architecture is a defensible asset, not an implementation detail. **[Architect
+View](#architect-view)** is everything below it — the full technical
+architecture, module by module, including what's deliberately not built yet.
+
+## Investor View
+
+**What it is.** Signals is an equity-research assistant that answers
+questions about listed companies (US and India today) the way a research
+analyst would: by pulling the actual reported numbers, filings, and
+management commentary, then reasoning over them — never by asking an LLM to
+recall or guess a figure from its training data. Every number in an answer
+traces back to a specific regulatory filing, a specific calculation, or a
+specific document quote; every answer ends with a stated confidence level.
+
+**Why the architecture is the product, not just plumbing.**
+
+- **Evidence-grounded, not hallucination-prone.** The LLM is never allowed to
+  compute or invent a number — it only narrates numbers Python already
+  calculated from ingested filings (regulatory XBRL where available, the same
+  source-of-truth an auditor would use). This is the single hardest thing to
+  retrofit into a competing "just prompt an LLM" tool, and it's a foundational
+  design choice here, not a later patch.
+- **Costs scale with question difficulty, not a flat per-question LLM bill.**
+  A classifier (internally called Jev — see [Signals Complexity
+  Routing](#signals-complexity-routing--jev-adr-023)) sorts every question
+  into one of five difficulty levels before spending anything: a plain
+  lookup ("What was net profit last quarter?") is answered straight from the
+  database at zero LLM cost; a genuinely hard causal question ("why did
+  margins diverge from peers?") is the only kind that pays for the full
+  multi-step reasoning pipeline. That's a real, structural cost advantage as
+  usage scales, not a marketing claim — it's enforced in code, and every
+  routing decision is logged and auditable after the fact.
+- **Not locked into one AI vendor.** Every LLM call goes through a
+  provider-neutral routing layer with automatic fallback (cloud → cloud →
+  local) — switching or mixing model providers is a configuration change, not
+  a rewrite. Reduces single-vendor pricing and availability risk, a real
+  consideration for any AI-dependent product today.
+- **Auditable by design.** Every fact carries a citation; every source
+  conflict is resolved by an explicit trust ranking, never silently; every
+  LLM call and every routing decision is logged with cost, latency, and the
+  reasoning behind the choice. This is what makes the product usable for
+  research a professional would actually stake a decision on, and it's what
+  a regulator or an enterprise buyer's security review would look for first.
+- **Point-in-time correct.** Historical research can be scoped to "only what
+  was known as of this date" — evidence published after that date is
+  filtered out deterministically, not left to the model's judgment. This
+  matters for any credible backtesting or historical-decision use case.
+
+**Maturity, honestly.** This is a working, evidence-grounded research system
+with real US and India market coverage, running on production-grade managed
+infrastructure (Postgres, S3, and a vector database, on AWS) — not a local
+prototype. It is explicitly **self-use scope today**: one seeded admin
+account, no per-tenant data isolation, no billing. Becoming a multi-tenant
+SaaS product is a scoped, known next step (see [Known gaps](#known-gaps--not-yet-built)),
+not a fundamental redesign — the architectural choices above (evidence
+grounding, cost-aware routing, provider neutrality, auditability) are exactly
+the ones that are expensive to retrofit later and were made first.
+
+## Architect View
+
 ### The four-layer split
 
 The guiding division of responsibility across the whole system, each layer
@@ -55,9 +117,13 @@ answering a different question and never doing another layer's job:
   (the hypothesis-driven investigation pipeline: `research/hypothesis_generator.py`
   generates hypotheses, `research/investigation_planner.py` gathers evidence per
   hypothesis, `research/hypothesis_evaluator.py` evaluates each one, and
-  `research/research_synthesis.py` ranks and synthesizes the findings),
-  reachable from the Research tab's "Run structured investigation" button
-  (`/investigate/generate`, `/investigate/<id>`). For a question, it generates
+  `research/research_synthesis.py` ranks and synthesizes the findings). There
+  is no manual "Deep dive" toggle any more — Jev (see [Signals Complexity
+  Routing](#signals-complexity-routing--jev-adr-023)) classifies every
+  question and routes it here automatically when it needs causal/hypothesis
+  reasoning (Level 5), via `/investigate/generate-async`; the endpoint
+  (`/investigate/generate`, `/investigate/<id>`) also remains directly
+  callable. For a question, it generates
   several competing hypotheses, then per hypothesis runs an
   Orchestrator-controlled evidence-sufficiency loop — an
   `INSUFFICIENT_EVIDENCE` verdict triggers one more gap-targeted retrieval
@@ -1024,6 +1090,72 @@ today's quality bar for those two features; only `research/assistant.py`
 auto-routes across tiers by default. All three get the fallback-on-failure
 and observability logging regardless of whether they're pinned or auto-routed.
 
+### Signals Complexity Routing — Jev (ADR-023)
+
+A separate, higher-level classifier sits in front of the pipeline above,
+deciding *which pipeline a question reaches at all* — not to be confused with
+`llm/hardness.py`'s QUICK/STANDARD/DEEP classifier, which still picks a
+*model tier* for one already-decided call. Jev (`llm/complexity.py`) is an
+LLM call that sorts every question into one of five Signals complexity
+levels before any retrieval or reasoning begins:
+
+```
+Level 1  Retrieve                Neon (canonical_financials) → Answer            (no LLM)
+Level 2  Retrieve + Calculate    Neon → financials/calculations.py → Answer      (no LLM)
+Level 3  + Interpret             Evidence → configured LLM → Answer             (single dataset)
+Level 4  + Compare/Contextualize peer/macro grounding → Evidence → LLM → Answer  (capped comparison)
+Level 5  Hypothesis/Causal       research/investigation.py's pipeline (above)    (unchanged)
+```
+
+`research/routing_policy.py::route_question()` implements all five levels —
+Levels 1/2 are pure deterministic code (metric/fiscal-year extraction against
+the closed `metrics_dictionary` vocabulary, escalating to the next level
+rather than guessing when extraction can't confidently resolve the
+question), Level 4 grounds ambiguous comparison language ("industry",
+"peers") against the anchor company's own sector classification
+(`research/peer_resolver.py`, deterministic, capped at 2 peer datasets unless
+broader scope is asked for), and Level 5 delegates to the unchanged
+investigation pipeline described above. Every routed question is logged to
+`signals_routing_log` (`llm/routing_audit.py`) — one row per question, with
+Jev's level/confidence/reason, data sources touched, calculations performed,
+and final execution status — a separate, coarser-grained audit trail than
+`llm_call_log`'s one-row-per-model-call record. A periodic eval runner
+(`scripts/run_signals_eval.py`, a small versioned golden set in
+`research/signals_eval_cases.py` spanning all 5 levels) re-runs `route_question()`
+against known questions and records whether Jev's classified level matched
+what's expected, via the same `batch_job_runs`/`batch_job_items` audit
+convention every other recurring job in this app uses — registered in
+`scheduling/jobs.py` (`signals_eval`, "Evals" category, Weekly), so it's
+reachable via CLI, the Schedule panel's "Run now", and the cron-triggered
+endpoint like any other scheduled job, with no new scheduling mechanism.
+
+Both audit trails feed an **Eval Analytics** admin panel (Settings →
+Administration → System), the trends/tuning layer over that raw data:
+question volume, latency, cost, and confidence by complexity level from
+`signals_routing_log` (informing model-routing tuning — e.g. which level
+could move to a cheaper model chain), and a per-level accuracy breakdown
+plus a pass-rate trend line across recent eval runs from `signals_eval`'s
+`batch_job_runs`/`batch_job_items` history (informing whether Jev's
+classifier is drifting). It aggregates rather than duplicates — the Audit
+Log → Job Runs tab already lists every raw run/item. Charts are the same
+hand-rolled SVG convention as the Charts tab, with complexity level as an
+ordinal color ramp and match/mismatch as a fixed status pair, both
+palette-validated per the project's data-viz standard.
+
+**What's actually live in the web app today** (see ADR-023's own addendum for
+the full detail): Jev decides *dispatch* — whether a question goes to the
+single-pass `research/assistant.py::answer_question()` pipeline ("ask",
+Levels 1-4) or the investigation pipeline ("investigation", Level 5) — and
+every resulting `research_cases`/`generated_reports`/`investigations` row is
+tagged with its Jev level, shown and filterable on the Cases (`/investigations`)
+list. What's *not* yet live: `route_question()`'s own Level 1/2 deterministic
+short-circuits and Level 4 peer-grounded evidence gathering aren't the
+execution engine for live "ask" traffic yet — that still always runs the
+full `answer_question()` LLM call regardless of level. `route_question()` is
+fully built and tested (`python main.py route-ask`), and wiring it in as the
+live execution path for Levels 1-4 is a scoped, well-understood follow-up,
+not a design gap.
+
 ### Golden Research Loop validation
 
 [`SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md`](SIGNAL_GOLDEN_RESEARCH_LOOP_VALIDATION.md)
@@ -1557,6 +1689,16 @@ pre-existing test failure.
   avoid changing their existing answer quality). Only `research/assistant.py`
   auto-routes across QUICK/STANDARD/DEEP tiers today, so Insights and Signals
   reports don't get tiering's cost savings yet.
+- **`route_question()`'s deterministic Level 1-4 execution isn't the live
+  path for "ask" traffic yet** — Jev (see [Signals Complexity
+  Routing](#signals-complexity-routing--jev-adr-023)) already decides
+  dispatch (ask vs. investigation) and tags every research item with its
+  level, but a Level 1/2 question that could be answered at zero LLM cost,
+  or a Level 4 question that could be peer-grounded automatically, still
+  goes through the same full `answer_question()` LLM call as every other
+  "ask". The deterministic/grounded execution paths are fully built and
+  tested (`python main.py route-ask`), just not yet wired in as the live
+  execution engine — a scoped follow-up, not a design gap.
 - **`context/graph_neo4j.py`'s Cypher read path is unverified against a real
   server** — `main.py graph-backfill --all-financials` has verified the
   write path for real (companies/sectors/investigations, knowledge-graph
@@ -1639,3 +1781,8 @@ pre-existing test failure.
 6. **Cost-aware LLM execution** — hardness-based model routing, cloud→cloud→
    local fallback, context deduplication/budgeting, and reuse-before-recompute
    are all inspectable via `llm_call_log`, not invisible.
+7. **Complexity-scaled execution** — Jev (ADR-023) classifies every question
+   into one of five complexity levels before any retrieval or reasoning
+   begins, so a plain lookup and a causal investigation never cost the same;
+   every routing decision is logged to `signals_routing_log`, independent of
+   `llm_call_log`'s per-model-call record.

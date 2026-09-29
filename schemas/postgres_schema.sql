@@ -475,6 +475,8 @@ CREATE TABLE IF NOT EXISTS generated_reports (
                                   -- retrieval/hybrid_search.py
   question_embedding_model TEXT, -- which model produced it, so a later model/provider
                                   -- change can't silently compare incompatible vectors
+  complexity_level INTEGER,      -- Jev's 1-5 Signals complexity level (docs/ADR/023) for this
+                                  -- question, NULL for a report saved before Jev-based routing existed
   hidden_at TEXT,                -- reversible (Cases list "Hide"/"Unhide") -- ported from
                                   -- storage/database.py's _migrate_case_visibility_columns,
                                   -- SQLite added these via ALTER TABLE rather than in the
@@ -490,6 +492,7 @@ CREATE TABLE IF NOT EXISTS generated_reports (
   visibility TEXT NOT NULL DEFAULT 'private',
   owner_id INTEGER               -- nullable -- see _migrate_case_ownership_visibility_columns
 );
+ALTER TABLE generated_reports ADD COLUMN IF NOT EXISTS complexity_level INTEGER;
 
 -- ============================================================
 -- The deterministic Evidence (research/evidence.py) that actually grounded
@@ -819,10 +822,13 @@ CREATE TABLE IF NOT EXISTS research_cases (
   investigation_id TEXT,            -- investigations.investigation_id this case's investigation became, if any
   started_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  completed_at TEXT
+  completed_at TEXT,
+  complexity_level INTEGER          -- Jev's 1-5 Signals complexity level (docs/ADR/023), set at case
+                                     -- creation -- what actually decided kind=ask vs kind=investigation
 );
 CREATE INDEX IF NOT EXISTS idx_research_cases_owner ON research_cases(owner_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_research_cases_status ON research_cases(status);
+ALTER TABLE research_cases ADD COLUMN IF NOT EXISTS complexity_level INTEGER;
 
 -- ============================================================
 -- Hypothesis-driven investigations (Steps 2E-2H, research/investigation.py)
@@ -856,8 +862,13 @@ CREATE TABLE IF NOT EXISTS investigations (
   version INTEGER,
   strongest_verdict TEXT,           -- computed once at persist time (was a live JOIN before)
   visibility TEXT NOT NULL DEFAULT 'private',
-  owner_id INTEGER                  -- nullable -- see _migrate_case_ownership_visibility_columns
+  owner_id INTEGER,                 -- nullable -- see _migrate_case_ownership_visibility_columns
+  complexity_level INTEGER          -- Jev's 1-5 Signals complexity level (docs/ADR/023) -- always 5
+                                     -- ("Hypothesize") for an investigation reached through the normal
+                                     -- Jev-routed dispatch, kept as the actual classified value for
+                                     -- audit fidelity
 );
+ALTER TABLE investigations ADD COLUMN IF NOT EXISTS complexity_level INTEGER;
 
 -- One investigation <-> many companies. `investigations.company_ids` above
 -- stays the ordered, as-asked list (it is what the investigation view
@@ -1358,6 +1369,39 @@ CREATE TABLE IF NOT EXISTS execution_metrics_daily (
   total_estimated_cost_usd REAL NOT NULL DEFAULT 0,
   PRIMARY KEY (day, task_name, complexity_level)
 );
+
+-- One row per research/routing_policy.py::route_question() call — see
+-- schemas/sqlite_schema.sql's signals_routing_log for the full field-by-field
+-- rationale (docs/ADR/023); this is its Postgres/Neon port, same shape as
+-- every other table in this file.
+CREATE TABLE IF NOT EXISTS signals_routing_log (
+  run_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  question TEXT NOT NULL,
+  company_ids TEXT,
+  jev_level INTEGER NOT NULL,
+  jev_confidence REAL,
+  jev_reason TEXT,
+  jev_source TEXT NOT NULL,
+  model_selected TEXT,
+  fallback_model_used TEXT,
+  data_sources_json TEXT,
+  neo4j_used INTEGER NOT NULL DEFAULT 0,
+  planner_used INTEGER NOT NULL DEFAULT 0,
+  tools_executed_json TEXT,
+  calculations_performed_json TEXT,
+  evidence_identifiers_json TEXT,
+  missing_data_issues_json TEXT,
+  final_confidence TEXT,
+  execution_status TEXT NOT NULL,
+  latency_ms REAL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost_usd REAL NOT NULL DEFAULT 0,
+  answer_reference TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_signals_routing_log_created_at ON signals_routing_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_signals_routing_log_jev_level ON signals_routing_log(jev_level);
 
 CREATE TABLE IF NOT EXISTS ingestion_queue_items (
   item_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

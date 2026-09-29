@@ -120,6 +120,12 @@ Maximum infrastructure control but high operational and hardware cost and potent
 
 > **Signal's research architecture depends on reasoning capabilities, not model brands.**
 
+## Addendum (2026-09-28) — a second, explicitly-ordered chain alongside the tier-derived one
+
+ADR-023 (Signals Complexity Classification and Execution Routing Policy) added `llm/router.py::route_explicit_chain` as a sibling to `route()`: where `route()` derives its fallback chain from a hardness `Tier`'s reasoning-strength gate, `route_explicit_chain` tries an operator-configured, hand-ordered model list directly (`config.settings.JEV_CLASSIFIER_MODEL_CHAIN`, `LEVEL_MODEL_CHAIN`). It backs Jev's own classification call and Signals Levels 3/4's interpretation calls, whose policy ("configured OpenRouter model first, Anthropic fallback") doesn't fit `route()`'s reasoning-strength-gated selection.
+
+Both entry points still resolve to the same provider-neutral `Provider` Protocol (`llm/providers/base.py`) this ADR establishes — this is a second *selection* strategy behind the unchanged abstraction, not a new coupling to any vendor. The architectural invariant holds unchanged.
+
 ## Revisit when
 
 Individual provider adapters and routing policies should change frequently.

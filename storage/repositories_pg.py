@@ -1211,15 +1211,15 @@ def _insert_investigation_companies_pg(conn: DBConnection, investigation_id: str
 
 def create_research_case(
     conn: DBConnection, case_id: str, *, kind: str, question: str, company_ids: list[str],
-    statement_type: str, owner_id: int | None,
+    statement_type: str, owner_id: int | None, complexity_level: int | None = None,
 ) -> Row:
     now = _utcnow_iso()
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO research_cases (case_id, kind, question, company_ids, statement_type, status, "
-            "current_activity, owner_id, started_at, updated_at) "
-            "VALUES (%s, %s, %s, %s, %s, 'in_progress', 'Queued', %s, %s, %s)",
-            (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now),
+            "current_activity, owner_id, started_at, updated_at, complexity_level) "
+            "VALUES (%s, %s, %s, %s, %s, 'in_progress', 'Queued', %s, %s, %s, %s)",
+            (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now, complexity_level),
         )
     conn.commit()
     return get_research_case(conn, case_id)
@@ -1359,14 +1359,17 @@ def save_investigation(
     unanswered_questions: list[str],
     additional_evidence_needed: list[str],
     as_of: str | None = None,
+    complexity_level: int | None = None,
 ) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO investigations (investigation_id, question, company_ids, statement_type, "
-            "strongest_explanation, unanswered_questions, additional_evidence_needed, generated_at, as_of) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "strongest_explanation, unanswered_questions, additional_evidence_needed, generated_at, as_of, "
+            "complexity_level) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (investigation_id, question, json.dumps(company_ids), statement_type, strongest_explanation,
-             json.dumps(unanswered_questions), json.dumps(additional_evidence_needed), _utcnow_iso(), as_of),
+             json.dumps(unanswered_questions), json.dumps(additional_evidence_needed), _utcnow_iso(), as_of,
+             complexity_level),
         )
     _insert_investigation_companies_pg(conn, investigation_id, company_ids)
     conn.commit()
@@ -1891,6 +1894,7 @@ def _row_to_generated_report(row: Row) -> dict:
         "version": row.get("version"),
         "visibility": row.get("visibility", "private"),
         "owner_id": row.get("owner_id"),
+        "complexity_level": row.get("complexity_level"),
     }
 
 
@@ -1904,17 +1908,18 @@ def save_generated_report(
     *,
     question_embedding: list[float] | None = None,
     question_embedding_model: str | None = None,
+    complexity_level: int | None = None,
 ) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO generated_reports "
             "(thread_id, question, company_ids, statement_type, report_markdown, generated_at, "
-            " question_embedding, question_embedding_model) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            " question_embedding, question_embedding_model, complexity_level) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 thread_id, question, json.dumps(company_ids), statement_type, report_markdown, _utcnow_iso(),
                 json.dumps(question_embedding) if question_embedding is not None else None,
-                question_embedding_model,
+                question_embedding_model, complexity_level,
             ),
         )
     conn.commit()
@@ -3023,6 +3028,60 @@ def insert_llm_call_log(
 def list_llm_call_log(conn: DBConnection, limit: int = 200) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM llm_call_log ORDER BY call_id DESC LIMIT %s", (limit,))
+        rows = cur.fetchall()
+    return [dict(row) for row in rows]
+
+
+def insert_signals_routing_log(
+    conn: DBConnection,
+    *,
+    run_id: str,
+    question: str,
+    company_ids: str,
+    jev_level: int,
+    jev_confidence: float | None,
+    jev_reason: str | None,
+    jev_source: str,
+    model_selected: str | None,
+    fallback_model_used: str | None,
+    data_sources_json: str,
+    neo4j_used: bool,
+    planner_used: bool,
+    tools_executed_json: str,
+    calculations_performed_json: str,
+    evidence_identifiers_json: str,
+    missing_data_issues_json: str,
+    final_confidence: str | None,
+    execution_status: str,
+    latency_ms: float,
+    input_tokens: int,
+    output_tokens: int,
+    estimated_cost_usd: float,
+    answer_reference: str | None,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO signals_routing_log "
+            "(run_id, created_at, question, company_ids, jev_level, jev_confidence, jev_reason, jev_source, "
+            "model_selected, fallback_model_used, data_sources_json, neo4j_used, planner_used, "
+            "tools_executed_json, calculations_performed_json, evidence_identifiers_json, "
+            "missing_data_issues_json, final_confidence, execution_status, latency_ms, input_tokens, "
+            "output_tokens, estimated_cost_usd, answer_reference) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                run_id, _utcnow_iso(), question, company_ids, jev_level, jev_confidence, jev_reason, jev_source,
+                model_selected, fallback_model_used, data_sources_json, int(neo4j_used), int(planner_used),
+                tools_executed_json, calculations_performed_json, evidence_identifiers_json,
+                missing_data_issues_json, final_confidence, execution_status, latency_ms, input_tokens,
+                output_tokens, estimated_cost_usd, answer_reference,
+            ),
+        )
+    conn.commit()
+
+
+def list_signals_routing_log(conn: DBConnection, limit: int = 200) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM signals_routing_log ORDER BY created_at DESC LIMIT %s", (limit,))
         rows = cur.fetchall()
     return [dict(row) for row in rows]
 

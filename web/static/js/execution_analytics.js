@@ -2,7 +2,7 @@
    per Complexity Level, X=time/Y=avg execution time) with a scatter toggle
    (one point per run, X=timestamp/Y=duration, for spotting slow outliers).
    Hand-rolled SVG built from one embedded JSON blob (#execution-analytics-
-   root's data-ea-data), same approach as charts_overlay.js/
+   root's data-exa-data), same approach as charts_overlay.js/
    valuation_dashboard.js -- no charting library in this codebase.
 
    The period/granularity/level filters (top of the panel) are plain <select
@@ -18,7 +18,7 @@
 
   let data;
   try {
-    data = JSON.parse(root.dataset.eaData || "{}");
+    data = JSON.parse(root.dataset.exaData || "{}");
   } catch (e) {
     return;
   }
@@ -39,10 +39,10 @@
   const LEVEL_LABELS = { 1: "Level 1", 2: "Level 2", 3: "Level 3", 4: "Level 4", 5: "Level 5" };
 
   function levelColor(level) {
-    return getComputedStyle(document.documentElement).getPropertyValue("--ea-series-" + level).trim() || "#888";
+    return getComputedStyle(document.documentElement).getPropertyValue("--exa-series-" + level).trim() || "#888";
   }
   function errorColor() {
-    return getComputedStyle(document.documentElement).getPropertyValue("--ea-status-error").trim() || "#d03b3b";
+    return getComputedStyle(document.documentElement).getPropertyValue("--exa-status-error").trim() || "#d03b3b";
   }
 
   function fmtSeconds(ms) {
@@ -75,17 +75,17 @@
 
   function drawAxes(yMaxMs, xTicks, xScale) {
     svg.appendChild(el("line", {
-      class: "ea-axis-line", x1: MARGIN.left, y1: MARGIN.top + PLOT_H, x2: MARGIN.left + PLOT_W, y2: MARGIN.top + PLOT_H,
+      class: "exa-axis-line", x1: MARGIN.left, y1: MARGIN.top + PLOT_H, x2: MARGIN.left + PLOT_W, y2: MARGIN.top + PLOT_H,
     }));
     svg.appendChild(el("line", {
-      class: "ea-axis-line", x1: MARGIN.left, y1: MARGIN.top, x2: MARGIN.left, y2: MARGIN.top + PLOT_H,
+      class: "exa-axis-line", x1: MARGIN.left, y1: MARGIN.top, x2: MARGIN.left, y2: MARGIN.top + PLOT_H,
     }));
     const yTickCount = 4;
     for (let i = 0; i <= yTickCount; i++) {
       const value = (yMaxMs / yTickCount) * i;
       const y = MARGIN.top + PLOT_H - (value / yMaxMs) * PLOT_H;
       if (i > 0) {
-        svg.appendChild(el("line", { class: "ea-gridline", x1: MARGIN.left, y1: y, x2: MARGIN.left + PLOT_W, y2: y }));
+        svg.appendChild(el("line", { class: "exa-gridline", x1: MARGIN.left, y1: y, x2: MARGIN.left + PLOT_W, y2: y }));
       }
       const label = el("text", { x: MARGIN.left - 8, y: y + 3, "text-anchor": "end" });
       label.textContent = fmtSeconds(value);
@@ -119,9 +119,9 @@
     legend.innerHTML = "";
     levelsPresent.forEach((lvl) => {
       const item = document.createElement("span");
-      item.className = "ea-legend-item";
+      item.className = "exa-legend-item";
       const swatch = document.createElement("span");
-      swatch.className = "ea-legend-swatch";
+      swatch.className = "exa-legend-swatch";
       swatch.style.background = levelColor(lvl);
       item.appendChild(swatch);
       item.appendChild(document.createTextNode(LEVEL_LABELS[lvl] || ("Level " + lvl)));
@@ -129,9 +129,9 @@
     });
     if (showError) {
       const item = document.createElement("span");
-      item.className = "ea-legend-item";
+      item.className = "exa-legend-item";
       const swatch = document.createElement("span");
-      swatch.className = "ea-legend-swatch";
+      swatch.className = "exa-legend-swatch";
       swatch.style.background = errorColor();
       item.appendChild(swatch);
       item.appendChild(document.createTextNode("Error"));
@@ -169,9 +169,9 @@
         p: p,
       }));
       const path = points.map((pt, i) => (i === 0 ? "M" : "L") + pt.x.toFixed(1) + "," + pt.y.toFixed(1)).join(" ");
-      svg.appendChild(el("path", { class: "ea-line", d: path, stroke: color }));
+      svg.appendChild(el("path", { class: "exa-line", d: path, stroke: color }));
       points.forEach((pt) => {
-        const dot = el("circle", { class: "ea-dot", cx: pt.x, cy: pt.y, r: 3.5, fill: color });
+        const dot = el("circle", { class: "exa-dot", cx: pt.x, cy: pt.y, r: 3.5, fill: color });
         dot.addEventListener("mouseenter", (e) => showTooltip(e, [
           LEVEL_LABELS[series.level] || ("Level " + series.level),
           pt.p.bucket,
@@ -217,7 +217,7 @@
       if (row.level) levelsPresent.add(row.level);
       const color = isError ? errorColor() : (row.level ? levelColor(row.level) : "#888");
       const dot = el("circle", {
-        class: "ea-dot", cx: xScale(t), cy: yScale(row.duration_ms), r: 4, fill: color, "fill-opacity": isError ? 0.9 : 0.65,
+        class: "exa-dot", cx: xScale(t), cy: yScale(row.duration_ms), r: 4, fill: color, "fill-opacity": isError ? 0.9 : 0.65,
       });
       const lines = [
         row.task + (row.level ? " — Level " + row.level : ""),
@@ -234,14 +234,14 @@
     renderLegend(Array.from(levelsPresent).sort(), hasError);
   }
 
-  const viewButtons = document.querySelectorAll(".ea-view-btn");
+  const viewButtons = document.querySelectorAll(".exa-view-btn");
   function setView(view) {
-    viewButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.eaView === view));
+    viewButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.exaView === view));
     if (view === "scatter") renderScatter();
     else renderLine();
   }
   viewButtons.forEach((btn) => {
-    btn.addEventListener("click", () => setView(btn.dataset.eaView));
+    btn.addEventListener("click", () => setView(btn.dataset.exaView));
   });
 
   setView("line");

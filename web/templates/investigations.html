@@ -90,6 +90,15 @@
         {% endfor %}
       </select>
     </div>
+    <div class="field">
+      <label for="iv-level">Level</label>
+      <select class="input" id="iv-level" name="iv_level" onchange="this.form.requestSubmit()">
+        <option value="">All levels</option>
+        {% for level, label in level_options %}
+        <option value="{{ level }}" {{ 'selected' if entries_level_filter == level|string }}>Level {{ level }} &middot; {{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
     <div class="field iv-hidden-toggle">
       <label for="iv-hidden">
         <input type="checkbox" id="iv-hidden" name="iv_hidden" value="1" {{ 'checked' if entries_show_hidden }}
@@ -98,13 +107,13 @@
       </label>
     </div>
     <button type="submit" class="btn btn-primary">Search</button>
-    {% if entries_query or entries_type_filter or entries_status_filter or entries_show_hidden %}
+    {% if entries_query or entries_type_filter or entries_status_filter or entries_level_filter or entries_show_hidden %}
     <a class="btn btn-ghost" href="{{ url_for('investigations') }}">Clear</a>
     {% endif %}
   </form>
 
   {% if entries %}
-  {% set iv_pagination_args = {'iv_q': entries_query, 'iv_type': entries_type_filter, 'iv_status': entries_status_filter, 'iv_hidden': '1' if entries_show_hidden else ''} %}
+  {% set iv_pagination_args = {'iv_q': entries_query, 'iv_type': entries_type_filter, 'iv_status': entries_status_filter, 'iv_level': entries_level_filter, 'iv_hidden': '1' if entries_show_hidden else ''} %}
   {% if entries_total_pages > 1 %}
   <div class="admin-pagination">
     <span class="muted">Page {{ entries_page }} of {{ entries_total_pages }}</span>
@@ -164,7 +173,7 @@
     </div>
   </div>
   {% endif %}
-  {% elif entries_query or entries_type_filter or entries_status_filter or entries_show_hidden %}
+  {% elif entries_query or entries_type_filter or entries_status_filter or entries_level_filter or entries_show_hidden %}
   <div class="empty-state">{{ "No hidden cases." if entries_show_hidden else "No investigations match these filters." }}</div>
   {% else %}
   <div class="empty-state">No investigations yet. Start one from the Research tab.</div>

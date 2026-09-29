@@ -79,6 +79,7 @@ from ingestion.pipeline import (
 from normalization.financials import ensure_metric_vocabulary
 from sources.sec_edgar import get_cik_for_ticker
 from research.assistant import answer_question
+from research.routing_policy import route_question
 from storage.database import init_db, list_tables
 from storage.repositories import (
     add_watchlist_item,
@@ -812,6 +813,33 @@ def cmd_ask(args: argparse.Namespace) -> None:
     print(answer)
 
 
+def cmd_route_ask(args: argparse.Namespace) -> None:
+    """Ask a question through the Signals Complexity Classification and
+    Execution Routing Policy (docs/ADR/023) -- Jev classifies it into a
+    complexity level (1-5), then it's dispatched to that level's execution
+    path, instead of always going through the single research assistant
+    call `ask` uses."""
+    setup_logging()
+    conn = init_db()
+
+    for company_id in args.company:
+        if get_company(conn, company_id) is None:
+            conn.close()
+            raise SystemExit(
+                f"No company registered with company_id={company_id!r}. "
+                f"Run: python main.py add-company {company_id} ... (or seed-companies)"
+            )
+
+    result = route_question(conn, args.question, args.company, statement_type=args.statement_type)
+    conn.close()
+    print(result.answer)
+    print(
+        f"\n--- Signals routing: Level {int(result.classification.level)} "
+        f"({result.classification.source}, confidence {result.classification.confidence:.2f}) -- "
+        f"{result.classification.reason} [run_id={result.audit.run_id}] ---"
+    )
+
+
 def cmd_watchlist_add(args: argparse.Namespace) -> None:
     """Pin a company or example research thread to the (single, shared) watchlist."""
     setup_logging()
@@ -1063,6 +1091,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--statement-type", default="consolidated", choices=["consolidated", "standalone"],
     )
     ask_parser.set_defaults(func=cmd_ask)
+
+    route_ask_parser = subparsers.add_parser(
+        "route-ask",
+        help="Ask a question through the Signals complexity-classification routing policy (docs/ADR/023)",
+    )
+    route_ask_parser.add_argument("question")
+    route_ask_parser.add_argument(
+        "--company", action="append", default=[], dest="company",
+        help="Company ID to include; repeat --company for a multi-company question",
+    )
+    route_ask_parser.add_argument(
+        "--statement-type", default="consolidated", choices=["consolidated", "standalone"],
+    )
+    route_ask_parser.set_defaults(func=cmd_route_ask)
 
     watchlist_add_parser = subparsers.add_parser("watchlist-add", help="Pin a company or thread to the watchlist")
     watchlist_add_parser.add_argument("item_type", choices=["company", "thread"])

@@ -122,7 +122,7 @@ from ingestion.pipeline import ingest_file
 from research.abstracts import generate_abstract
 from research.assistant import answer_question, sentry_span
 from research.company_resolver import resolve_companies
-from llm.hardness import Tier, classify as classify_hardness
+from research.routing_policy import LEVEL_LABELS, case_type_for_level, classify_and_log
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
@@ -219,6 +219,7 @@ from storage.repositories import (
     list_reconciliation_log_by_company,
     list_running_batch_job_runs,
     list_sec_edgar_migration_status,
+    list_signals_routing_log,
     list_xbrl_migration_status,
     list_note_attachments_for_company,
     list_report_evidence,
@@ -1390,17 +1391,167 @@ def create_app() -> Flask:
         """Admin > Settings > Execution Analytics -- how Signal requests
         (Ask AI, "Generate full report", Deep Dive investigation) perform
         across Complexity Levels 1-5 over time. Same query-param filter-bar
-        convention as _audit_panel_context above (`ea_*`, not `al_*`, so
-        the two panels' filters never collide when both appear in the same
-        URL's query string), just three controls instead of Audit's many:
-        period (7d/30d/90d/365d), granularity (daily/weekly/monthly, for the
-        line chart's bucketing), and level (1-5 or all). All the actual
+        convention as _audit_panel_context above (`exa_*`, not `al_*` or
+        the sibling Eval Analytics panel's `ea_*`, so all three panels'
+        filters can never collide when they appear in the same URL's query
+        string), just three controls instead of Audit's many: period
+        (7d/30d/90d/365d), granularity (daily/weekly/monthly, for the line
+        chart's bucketing), and level (1-5 or all). All the actual
         aggregation lives in web/execution_analytics.py, not here -- this
-        function only reads the query params and hands them off."""
-        period = request.args.get("ea_period", "")
-        granularity = request.args.get("ea_granularity", "")
-        level = request.args.get("ea_level", "all")
+        function only reads the query params and hands them off.
+
+        Distinct from Eval Analytics below (`_eval_analytics_panel_context`,
+        signals_routing_log/ADR-023): that panel measures whether Jev's
+        classifier is *accurate* against a curated eval set and isn't
+        populated by real user traffic today (web/app.py's live routes only
+        call routing_policy.classify_and_log() for the level, never
+        route_question() itself); this one measures actual wall-clock
+        execution (db/calc/llm/neo4j/planner phase timing, success rate) of
+        every real Signal request, still served by research/assistant.py,
+        research/signals_report.py, and research/investigation.py exactly
+        as before -- the two panels are complementary, not duplicates."""
+        period = request.args.get("exa_period", "")
+        granularity = request.args.get("exa_granularity", "")
+        level = request.args.get("exa_level", "all")
         return build_execution_analytics_context(db, period=period, granularity=granularity, level_filter=level)
+
+    _EVAL_DETAIL_RE = re.compile(r"expected=L(\d+) actual=L(\d+)")
+
+    def _eval_analytics_panel_context(db, logs_db) -> dict:
+        """Only computed when the Eval Analytics panel is actually being
+        viewed -- same reasoning _audit_panel_context()/_schedule_panel_
+        context() give for their own panels.
+
+        Two independent sources, both already used elsewhere in this app,
+        aggregated here rather than duplicated:
+          - signals_routing_log (llm/routing_audit.py's per-question audit
+            trail, docs/ADR/023) -- every real routed question, not just
+            eval traffic -- gives level distribution/latency/cost/
+            confidence: the "how is Signals actually being used and what
+            does it cost" half, informing model-routing tuning.
+          - batch_job_runs/batch_job_items for job_name='signals_eval'
+            (scripts/run_signals_eval.py) -- the periodic golden-set
+            accuracy history, parsed out of each item's stable
+            "expected=L{n} actual=L{n} confidence=... status=...
+            latency_ms=..." detail string -- the "is Jev's classifier
+            actually accurate, and is it getting better or worse over
+            time" half.
+
+        The Audit Log > Job Runs tab already lists signals_eval's raw
+        run/item history (any BatchRun-wrapped job shows up there) -- this
+        panel doesn't repeat that list, it aggregates across it (and
+        across signals_routing_log, which Job Runs never touches) into the
+        level/time breakdowns a raw list can't show at a glance."""
+        _PERIOD_DELTAS = {"7d": timedelta(days=7), "30d": timedelta(days=30), "90d": timedelta(days=90)}
+        period_filter = request.args.get("ea_period") or "30d"
+        since_iso = (
+            (datetime.now(timezone.utc) - _PERIOD_DELTAS[period_filter]).isoformat()
+            if period_filter in _PERIOD_DELTAS else None
+        )
+
+        # limit=5000, not the list_signals_routing_log() default of 200 --
+        # this panel aggregates across the whole selected window rather
+        # than showing a raw recent-first list, so it needs however many
+        # rows actually fall inside that window, not just "the last 200
+        # regardless of when they happened."
+        routing_rows = list_signals_routing_log(db, limit=5000)
+        if since_iso:
+            routing_rows = [r for r in routing_rows if r["created_at"] >= since_iso]
+
+        level_stats: dict[int, dict] = {
+            level: {
+                "count": 0, "latency_total": 0.0, "cost_total": 0.0,
+                "confidence_total": 0.0, "confidence_count": 0,
+                "answered": 0, "insufficient_data": 0, "error": 0,
+            }
+            for level in LEVEL_LABELS
+        }
+        for row in routing_rows:
+            stats = level_stats.setdefault(row["jev_level"], {
+                "count": 0, "latency_total": 0.0, "cost_total": 0.0,
+                "confidence_total": 0.0, "confidence_count": 0,
+                "answered": 0, "insufficient_data": 0, "error": 0,
+            })
+            stats["count"] += 1
+            stats["latency_total"] += row["latency_ms"] or 0
+            stats["cost_total"] += row["estimated_cost_usd"] or 0
+            if row["jev_confidence"] is not None:
+                stats["confidence_total"] += row["jev_confidence"]
+                stats["confidence_count"] += 1
+            if row["execution_status"] in stats:
+                stats[row["execution_status"]] += 1
+
+        level_breakdown = [
+            {
+                "level": level,
+                "label": LEVEL_LABELS.get(level, f"Level {level}"),
+                "count": s["count"],
+                "avg_latency_ms": round(s["latency_total"] / s["count"]) if s["count"] else None,
+                "avg_cost_usd": round(s["cost_total"] / s["count"], 4) if s["count"] else None,
+                "avg_confidence": (
+                    round(s["confidence_total"] / s["confidence_count"], 2) if s["confidence_count"] else None
+                ),
+                "answered": s["answered"], "insufficient_data": s["insufficient_data"], "error": s["error"],
+            }
+            for level, s in sorted(level_stats.items())
+        ]
+        total_routed = len(routing_rows)
+        total_cost_usd = sum(r["estimated_cost_usd"] or 0 for r in routing_rows)
+
+        # Eval accuracy history -- oldest-first (for the trend line chart)
+        # list of signals_eval runs, each with overall + per-level
+        # matched/total parsed from its items' detail strings.
+        eval_runs = list_batch_job_runs(logs_db, job_name="signals_eval", limit=30)
+        eval_history = []
+        for run in reversed(eval_runs):
+            items = list_batch_job_items(logs_db, run["run_id"])
+            by_level: dict[int, dict[str, int]] = {}
+            matched = 0
+            for item in items:
+                match = _EVAL_DETAIL_RE.search(item.get("detail") or "")
+                if not match:
+                    continue
+                expected_level = int(match.group(1))
+                bucket = by_level.setdefault(expected_level, {"matched": 0, "total": 0})
+                bucket["total"] += 1
+                if item["status"] == "ok":
+                    bucket["matched"] += 1
+                    matched += 1
+            total = len(items)
+            eval_history.append({
+                "run_id": run["run_id"],
+                "started_at": run["started_at"],
+                "status": run["status"],
+                "total": total,
+                "matched": matched,
+                "pass_rate": round(matched / total, 4) if total else None,
+                "by_level": by_level,
+            })
+
+        latest_eval = eval_history[-1] if eval_history else None
+        latest_eval_by_level = [
+            {
+                "level": level,
+                "label": LEVEL_LABELS[level],
+                "matched": (latest_eval["by_level"].get(level) or {}).get("matched", 0),
+                "total": (latest_eval["by_level"].get(level) or {}).get("total", 0),
+                "pass_rate": (
+                    round(bucket["matched"] / bucket["total"], 4)
+                    if (bucket := latest_eval["by_level"].get(level)) and bucket["total"] else None
+                ),
+            }
+            for level in sorted(LEVEL_LABELS)
+        ] if latest_eval else []
+
+        return {
+            "ea_period_filter": period_filter,
+            "ea_level_breakdown": level_breakdown,
+            "ea_total_routed": total_routed,
+            "ea_total_cost_usd": round(total_cost_usd, 2),
+            "ea_eval_history": eval_history,
+            "ea_latest_eval": latest_eval,
+            "ea_latest_eval_by_level": latest_eval_by_level,
+        }
 
     @app.route("/admin")
     def admin():
@@ -1563,6 +1714,7 @@ def create_app() -> Flask:
             # SQLite-only forever (get_logs_db()'s own docstring), so this
             # panel reads `db`, not `logs_db`.
             **(_execution_analytics_panel_context(db) if admin_sub == "execution_analytics" else {}),
+            **(_eval_analytics_panel_context(db, get_logs_db()) if admin_sub == "eval_analytics" else {}),
         }
 
     @app.route("/admin/usage")
@@ -2914,7 +3066,7 @@ def create_app() -> Flask:
     _ADMIN_SETTINGS_PANELS = (
         "companies", "taxonomy", "columns", "overview_ratios",
         "import", "stock_actions", "ingest", "schedule", "audit",
-        "execution_analytics",
+        "execution_analytics", "eval_analytics",
     )
 
     @app.route("/settings", methods=["GET", "POST"])
@@ -3092,7 +3244,7 @@ def create_app() -> Flask:
 
     def _compute_answer_question(
         db, question: str, company_ids: list[str], *, statement_type: str, thread_id: str, thread_url: str,
-        owner_id: str | None, case_id: str | None = None,
+        owner_id: str | None, case_id: str | None = None, complexity_level: int | None = None,
     ) -> dict:
         """The actual "ask the LLM research assistant" work, extracted out
         of the old _answer_question_response() so it can run either
@@ -3160,6 +3312,18 @@ def create_app() -> Flask:
             with sentry_span("llm.anthropic", "Company resolution"):
                 company_ids = resolve_companies(db, question).company_ids
 
+        # Jev's complexity level (docs/ADR/023) -- computed here, after every
+        # validation check above has already passed and company_ids is at
+        # its most accurate (post LLM-fallback resolution), so an invalid
+        # request never pays for a classification call it'll just discard.
+        # `complexity_level` arrives pre-set only from the -async routes
+        # (which must classify BEFORE case creation, to tag the case row
+        # immediately -- see _answer_question_async_response/
+        # investigate_generate_async) -- the sync path (_answer_question_
+        # response) always reaches this still None and classifies fresh.
+        if complexity_level is None:
+            complexity_level = int(classify_and_log(db, question, company_ids).level)
+
         # A group question ("Nifty 50 net profit CAGR") is a sum-then-CAGR
         # arithmetic problem, not something an LLM should reason about
         # company-by-company -- a real, observed failure otherwise: handing
@@ -3180,6 +3344,7 @@ def create_app() -> Flask:
                 save_generated_report(
                     db, thread_id, question, company_ids, statement_type, answer,
                     question_embedding=question_embedding, question_embedding_model=question_embedding_model,
+                    complexity_level=complexity_level,
                 )
                 _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer, owner_id=owner_id)
                 return dict(
@@ -3251,6 +3416,7 @@ def create_app() -> Flask:
             save_generated_report(
                 db, thread_id, question, company_ids, statement_type, answer,
                 question_embedding=question_embedding, question_embedding_model=question_embedding_model,
+                complexity_level=complexity_level,
             )
         with sentry_span("s3", "_persist_generated_report_s3"):
             _persist_generated_report_s3(db, thread_id, question, company_ids, statement_type, answer, owner_id=owner_id)
@@ -3370,11 +3536,17 @@ def create_app() -> Flask:
         # request context and isn't available inside the background
         # thread below (same reasoning as thread_id/thread_url above).
         owner_id = g.user["user_id"] if g.user else None
+        # Jev's level (docs/ADR/023) -- this route only ever runs kind="ask"
+        # (the caller, research.html, already decided that via /research/
+        # understand's case_type before POSTing here), so the level is
+        # stored purely for the case's own tag/filter, never re-used to
+        # pick a different pipeline mid-flight.
+        complexity_level = int(classify_and_log(db, question, company_ids).level)
 
         case_id = uuid.uuid4().hex[:12]
         start_case(
             db, case_id=case_id, kind="ask", question=question, company_ids=company_ids,
-            statement_type=statement_type, owner_id=owner_id,
+            statement_type=statement_type, owner_id=owner_id, complexity_level=complexity_level,
         )
 
         def compute(conn) -> dict:
@@ -3382,7 +3554,7 @@ def create_app() -> Flask:
                 return _compute_answer_question(
                     conn, question, company_ids,
                     statement_type=statement_type, thread_id=thread_id, thread_url=thread_url,
-                    owner_id=owner_id, case_id=case_id,
+                    owner_id=owner_id, case_id=case_id, complexity_level=complexity_level,
                 )
             except _AskRequestError as exc:
                 # Reached only via a race (e.g. a company archived between
@@ -3519,23 +3691,26 @@ def create_app() -> Flask:
 
     @app.route("/research/understand", methods=["POST"])
     def research_understand():
-        """Called by research.html as soon as the user pauses typing (or
-        before Ask/Investigate, whichever fires first) -- resolves which
-        companies the question is actually about (tags first, e.g. "Nifty
-        50", cheap and deterministic; research/company_resolver.py's
-        LLM-based resolution as the fallback for an individual company
-        named informally -- "IDFC Bank" for the registered "IDFC First
-        Bank" -- neither the client's own old regex matching nor tag
-        resolution catches that), and suggests Quick Answer vs Deep Dive
-        via llm/hardness.py's classify() (unchanged, existing heuristic --
-        DEEP for a peer comparison or "why"/"compare"/"versus"-shaped
-        question, otherwise Quick).
+        """Called by research.html as soon as the user pauses typing --
+        resolves which companies the question is actually about (tags
+        first, e.g. "Nifty 50", cheap and deterministic; research/
+        company_resolver.py's LLM-based resolution as the fallback for an
+        individual company named informally -- "IDFC Bank" for the
+        registered "IDFC First Bank" -- neither the client's own old regex
+        matching nor tag resolution catches that), and classifies the
+        question into one of Jev's five Signals complexity levels
+        (llm/complexity.py, docs/ADR/023) to preview which pipeline it
+        will run through.
 
-        Returns a SUGGESTION, never a decision the caller is forced into
-        -- research.html's own toggle starts on whichever this names, but
-        the user can click the other option before submitting; nothing
-        here creates a case or spends more than this one resolution call
-        (no chart building, no full answer/investigation)."""
+        This is a live PREVIEW only -- there is no manual Quick Answer/Deep
+        Dive toggle for the user to override (removed along with the
+        client-side case-type picker); the actual submit re-classifies
+        authoritatively at dispatch time via the same
+        research.routing_policy.classify_and_log() this calls, since a
+        preview computed while the user was still typing can be stale by
+        the time they submit. Nothing here creates a case or spends more
+        than this one classification call (no chart building, no full
+        answer/investigation)."""
         payload = request.get_json(silent=True) or {}
         question = (payload.get("question") or "").strip()
         if not question:
@@ -3549,14 +3724,16 @@ def create_app() -> Flask:
         companies = [get_company(db, company_id) for company_id in company_ids]
         company_labels = [c["display_name"] for c in companies if c is not None]
 
-        hardness = classify_hardness(question, company_ids, evidence_count=0)
-        suggested_case_type = "deep" if hardness.tier == Tier.DEEP else "quick"
+        classification = classify_and_log(db, question, company_ids)
+        level = int(classification.level)
 
         return jsonify(
             company_ids=company_ids,
             company_labels=company_labels,
-            suggested_case_type=suggested_case_type,
-            suggestion_reason=hardness.reason,
+            complexity_level=level,
+            complexity_label=LEVEL_LABELS[level],
+            complexity_reason=classification.reason,
+            case_type=case_type_for_level(level),
         )
 
     @app.route("/research/ask", methods=["POST"])
@@ -3904,10 +4081,17 @@ def create_app() -> Flask:
         # the run underneath it turns out.
         result_url = url_for("investigate_view", investigation_id=investigation_id)
         owner_id = g.user["user_id"] if g.user else None
+        # Jev's level (docs/ADR/023) -- this route only ever runs
+        # kind="investigation" (the caller, research.html, already decided
+        # that via /research/understand's case_type before POSTing here),
+        # so the level is stored purely for the case/investigation's own
+        # tag/filter, normally 5 ("Hypothesize") since that's what routes a
+        # question here at all.
+        complexity_level = int(classify_and_log(db, question, company_ids).level)
 
         start_case(
             db, case_id=investigation_id, kind="investigation", question=question, company_ids=company_ids,
-            statement_type=statement_type, owner_id=owner_id,
+            statement_type=statement_type, owner_id=owner_id, complexity_level=complexity_level,
         )
 
         def compute(conn) -> dict:
@@ -3915,6 +4099,7 @@ def create_app() -> Flask:
                 run_investigation(
                     conn, question, company_ids, statement_type=statement_type, as_of=as_of,
                     investigation_id=investigation_id, case_id=investigation_id,
+                    complexity_level=complexity_level,
                 )
             except InvestigationError as exc:
                 raise RuntimeError(f"The investigation couldn't complete: {exc}") from exc
@@ -4103,6 +4288,17 @@ def create_app() -> Flask:
             ("case_cancelled", "Cancelled"), ("case_insufficient_data", "Insufficient data"),
         ]
 
+        # Jev's 1-5 Signals complexity level (docs/ADR/023) is now what tags
+        # each research item, replacing the old Quick Answer/Deep Dive-only
+        # label -- a row saved before Jev-based routing existed has
+        # complexity_level=NULL and falls back to the old generic label
+        # (still meaningful: it's still either a single-pass answer or a
+        # structured investigation, just not level-tagged).
+        def _type_label(complexity_level: int | None, fallback: str) -> str:
+            if complexity_level is None:
+                return fallback
+            return f"Level {complexity_level} · {LEVEL_LABELS.get(complexity_level, '?')}"
+
         entries = []
         for generated in list_generated_reports(get_db()):
             meta = extract_report_meta(generated["report_markdown"])
@@ -4111,7 +4307,8 @@ def create_app() -> Flask:
                 {
                     "type": "generated",
                     "id": generated["thread_id"],
-                    "type_label": "Quick Answer",
+                    "type_label": _type_label(generated["complexity_level"], "Quick Answer"),
+                    "complexity_level": generated["complexity_level"],
                     "href": url_for("research_thread", thread_id=generated["thread_id"]),
                     "title": meta["title"] or generated["question"],
                     # Only shown when it adds information beyond the title.
@@ -4150,7 +4347,8 @@ def create_app() -> Flask:
                 {
                     "type": "structured",
                     "id": inv["investigation_id"],
-                    "type_label": "Deep Dive",
+                    "type_label": _type_label(inv["complexity_level"], "Deep Dive"),
+                    "complexity_level": inv["complexity_level"],
                     "href": url_for("investigate_view", investigation_id=inv["investigation_id"]),
                     "title": inv["question"],
                     "subtitle": "",
@@ -4184,12 +4382,13 @@ def create_app() -> Flask:
             # kind already uses elsewhere in this feed ("Quick Answer" /
             # "Deep Dive") -- so the label doesn't change the moment a case
             # flips from in_progress to done, just the right_tag does.
-            kind_label = "Deep Dive" if case["kind"] == "investigation" else "Quick Answer"
+            kind_fallback = "Deep Dive" if case["kind"] == "investigation" else "Quick Answer"
             entries.append(
                 {
                     "type": "case",
                     "id": case["case_id"],
-                    "type_label": kind_label,
+                    "type_label": _type_label(case["complexity_level"], kind_fallback),
+                    "complexity_level": case["complexity_level"],
                     "href": url_for("case_detail", case_id=case["case_id"]),
                     "title": case["question"],
                     "subtitle": "",
@@ -4208,6 +4407,9 @@ def create_app() -> Flask:
         iv_status_filter = request.args.get("iv_status") or ""
         if iv_status_filter:
             entries = [r for r in entries if r["status_key"] == iv_status_filter]
+        iv_level_filter = request.args.get("iv_level") or ""
+        if iv_level_filter:
+            entries = [r for r in entries if str(r["complexity_level"]) == iv_level_filter]
         # Hidden entries tucked away by default -- "Show hidden" flips this
         # into a dedicated review mode (only hidden entries, so Unhide is
         # findable) rather than interleaving hidden/visible together, which
@@ -4227,6 +4429,7 @@ def create_app() -> Flask:
             entries_page=iv["page"], entries_total_pages=iv["total_pages"],
             entries_query=iv_query, entries_type_filter=iv_type_filter,
             entries_status_filter=iv_status_filter, status_options=_STATUS_FILTER_OPTIONS,
+            entries_level_filter=iv_level_filter, level_options=sorted(LEVEL_LABELS.items()),
             entries_show_hidden=iv_show_hidden,
         )
 

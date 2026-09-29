@@ -160,20 +160,24 @@ def build_execution_analytics_context(conn, *, period: str, granularity: str, le
     ]
 
     return {
-        "ea_retention_days": EXECUTION_METRICS_RETENTION_DAYS,
-        "ea_period": period,
-        "ea_granularity": granularity,
-        "ea_level": level_filter if level_filter in ("1", "2", "3", "4", "5") else "all",
-        "ea_period_options": [
+        # "exa_*", not "ea_*" -- disambiguated from the sibling Eval
+        # Analytics panel (_eval_analytics_panel_context, web/app.py), which
+        # independently landed the same "ea" abbreviation for its own,
+        # unrelated Jinja context vars and query params.
+        "exa_retention_days": EXECUTION_METRICS_RETENTION_DAYS,
+        "exa_period": period,
+        "exa_granularity": granularity,
+        "exa_level": level_filter if level_filter in ("1", "2", "3", "4", "5") else "all",
+        "exa_period_options": [
             {"value": "7d", "label": "Last 7 days"}, {"value": "30d", "label": "Last 30 days"},
             {"value": "90d", "label": "Last 90 days"}, {"value": "365d", "label": "Last year"},
         ],
-        "ea_granularity_options": [
+        "exa_granularity_options": [
             {"value": "daily", "label": "Daily"}, {"value": "weekly", "label": "Weekly"},
             {"value": "monthly", "label": "Monthly"},
         ],
-        "ea_summary": summary,
-        "ea_execution_mode_by_level": execution_mode_by_level,
+        "exa_summary": summary,
+        "exa_execution_mode_by_level": execution_mode_by_level,
         "execution_analytics_data_json": json.dumps({
             "line_series": line_series,
             "scatter": scatter,
