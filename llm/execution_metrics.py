@@ -70,6 +70,15 @@ class RunTimer:
     error_detail: str | None = None
     _durations_ms: dict = field(default_factory=dict)
     _start: float = field(default_factory=time.perf_counter)
+    # True once complexity_level holds Jev's real, per-request classification
+    # (research/routing_policy.py's ComplexityLevel, 1-5, passed into
+    # start_run()'s jev_complexity_level) rather than llm/hardness.py's
+    # model-tier heuristic (Tier.QUICK/STANDARD/DEEP, only ever 2/3/5) --
+    # attach_llm_result() below must never clobber an authoritative Jev
+    # level with the unrelated hardness-tier number a route() call happens
+    # to carry. Was previously always False, silently mislabeling every row
+    # with the wrong classifier's number under the right-looking field name.
+    _complexity_level_is_jev: bool = False
 
     def add_phase_ms(self, bucket: str, ms: float) -> None:
         self._durations_ms[bucket] = self._durations_ms.get(bucket, 0.0) + ms
@@ -84,9 +93,13 @@ class RunTimer:
         so tokens/cost accumulate across all of them while complexity_level/
         tier/model_used just take the latest call's values (good enough for
         observability; an investigation is fixed-DEEP throughout today
-        anyway -- see research/investigation.py's own comment)."""
-        self.complexity_level = complexity_level
-        self.complexity_tier = complexity_tier
+        anyway -- see research/investigation.py's own comment). The
+        complexity_level/tier this receives is llm/hardness.py's model-tier
+        number, not Jev's -- skipped when start_run() already set Jev's real
+        level (_complexity_level_is_jev), so the correct value survives."""
+        if not self._complexity_level_is_jev:
+            self.complexity_level = complexity_level
+            self.complexity_tier = complexity_tier
         self.model_used = model_used
         self.input_tokens += input_tokens
         self.output_tokens += output_tokens
@@ -134,7 +147,10 @@ def phase(bucket: str):
 
 
 @contextmanager
-def start_run(conn: DBConnection, run_id: str, task_name: str, *, execution_mode: str = "sync"):
+def start_run(
+    conn: DBConnection, run_id: str, task_name: str, *,
+    execution_mode: str = "sync", jev_complexity_level: int | None = None,
+):
     """Starts timing one Signal request/run and persists exactly one
     execution_metrics row when the `with` block exits, however it exits.
     `execution_mode` should be "async" when this run is executing inside
@@ -142,11 +158,24 @@ def start_run(conn: DBConnection, run_id: str, task_name: str, *, execution_mode
     down to this pipeline call), "sync" otherwise -- see the three call
     sites' own reasoning for how they derive it.
 
+    `jev_complexity_level` is Jev's real per-request classification
+    (research/routing_policy.py's ComplexityLevel, 1-5) when the caller
+    already has one (research/assistant.py::answer_question(), passed the
+    level web/app.py's classify_and_log() computed) -- takes priority over
+    whatever llm/hardness.py-derived number a route() call inside this run
+    would otherwise report via attach_llm_result(). Omitted (None) for
+    callers with no Jev classification available (main.py's CLI path,
+    research/signals_report.py, research/investigation.py) -- those rows
+    keep today's hardness-tier-derived number rather than a fabricated one.
+
     An exception raised inside the block is recorded (InsufficientEvidence
     Error/CaseCancelledError by name -> their own status, anything else ->
     "error") and then re-raised unchanged -- this context manager only
     observes the run, it never swallows or changes its outcome."""
     timer = RunTimer(run_id=run_id, task_name=task_name, execution_mode=execution_mode)
+    if jev_complexity_level is not None:
+        timer.complexity_level = jev_complexity_level
+        timer._complexity_level_is_jev = True
     token = _current.set(timer)
     try:
         yield timer

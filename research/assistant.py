@@ -161,6 +161,7 @@ def answer_question(
     *,
     investigation_memory: InvestigationMemoryCapabilities | None = None,
     case_id: str | None = None,
+    complexity_level: int | None = None,
 ) -> str:
     """Execution Analytics wrapper (llm/execution_metrics.py) around
     _answer_question_impl, which does the actual work -- see that function's
@@ -168,10 +169,16 @@ def answer_question(
     case_runner.py's background thread (execution_mode="async"), or a fresh
     id for every plain synchronous call otherwise -- either way it's what
     execution_metrics.run_id gets linked to llm_call_log through (see
-    observability.record's thread_id kwarg below)."""
+    observability.record's thread_id kwarg below). `complexity_level` is
+    Jev's real classification (research/routing_policy.py's ComplexityLevel,
+    docs/ADR/023) when the caller already has one -- see start_run()'s own
+    docstring for why this takes priority over llm/hardness.py's unrelated
+    model-tier number for this run's execution_metrics row."""
     run_id = case_id or uuid.uuid4().hex[:12]
     execution_mode = "async" if case_id is not None else "sync"
-    with execution_metrics.start_run(conn, run_id, "assistant_qa", execution_mode=execution_mode):
+    with execution_metrics.start_run(
+        conn, run_id, "assistant_qa", execution_mode=execution_mode, jev_complexity_level=complexity_level,
+    ):
         return _answer_question_impl(
             conn, question, company_ids, statement_type, model,
             investigation_memory=investigation_memory, case_id=case_id, run_id=run_id,
