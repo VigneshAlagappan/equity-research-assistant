@@ -43,6 +43,7 @@ TASK_LABELS = {
     "assistant_qa": "Ask AI",
     "signals_report": "Generate full report",
     "investigation": "Deep Dive investigation",
+    "signals_fast_path": "Fast path (Level 1/2, no LLM)",
 }
 
 

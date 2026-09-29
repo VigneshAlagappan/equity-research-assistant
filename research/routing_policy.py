@@ -35,7 +35,7 @@ from storage.db_types import DBConnection
 from config.settings import GRAPH_BACKEND, LEVEL_MODEL_CHAIN
 from financials.calculations import CalculationError, MissingDataError, cagr_for_metric, format_currency_value, yoy_growth_for_metric
 from financials.ratios import SectorMismatchError, roa_for_company, roe_for_company
-from llm import observability
+from llm import execution_metrics, observability
 from llm.complexity import ComplexityClassification, ComplexityLevel, classify_complexity
 from llm.hardness import Tier, fixed
 from llm.router import AllProvidersUnavailableError, route_explicit_chain
@@ -553,9 +553,27 @@ def attempt_deterministic_level(
 
     run_id = new_run_id()
     start = time.monotonic()
-    outcome, _final_level, escalation_notes = _dispatch_levels_1_2(conn, question, company_ids, statement_type, level)
-    if outcome is None:
-        return None
+    # Execution Analytics (llm/execution_metrics.py) previously had no
+    # visibility into this fast path at all -- every Level 1/2 answer that
+    # took it (the whole point of the path: instant, no LLM) simply never
+    # showed up on the dashboard, which otherwise only sees the much slower
+    # answer_question()/run_investigation() traffic. run_id doubles as both
+    # this row's and signals_routing_log's, so the two are correlatable.
+    with execution_metrics.start_run(conn, run_id, "signals_fast_path", execution_mode="sync", jev_complexity_level=level):
+        outcome, _final_level, escalation_notes = _dispatch_levels_1_2(
+            conn, question, company_ids, statement_type, level,
+        )
+        if outcome is None:
+            # Escalated past Level 2 -- still worth one row (the fast-path
+            # attempt genuinely ran and took real time), just tagged
+            # distinctly from a real answer, same "free-text status for a
+            # normal non-exception outcome" precedent research/assistant.py
+            # already sets ("reused") for its own semantic-cache hit.
+            timer = execution_metrics.current_run()
+            if timer is not None:
+                timer.status = "escalated"
+            return None
+        execution_metrics.current_run().status = outcome.execution_status
 
     audit = RoutingAudit(
         run_id=run_id, question=question, company_ids=company_ids,
