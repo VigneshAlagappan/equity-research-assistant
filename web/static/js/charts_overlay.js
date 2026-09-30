@@ -177,6 +177,9 @@
       ds.PERIOD_KEYS.forEach((pk, i) => {
         const k = periodKeyStr(pk);
         if (seen[k]) return;
+        // Skip a period in which none of this company's attributes has a
+        // real value -- an all-blank axis slot / table column is noise.
+        if (ds.attributes && !ds.attributes.some((a) => a.values[i] !== null && a.values[i] !== undefined && Number.isFinite(a.values[i]))) return;
         seen[k] = true;
         merged.push({ key: pk, label: ds.PERIODS[i] });
       });

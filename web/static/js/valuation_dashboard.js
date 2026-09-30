@@ -206,9 +206,10 @@
   }
 
   function buildRow(metric, periodKeys, currency) {
-    const startVal = metric.values[0];
-    const endVal = metric.values[metric.values.length - 1];
-    const cagrVal = cagr(startVal, endVal, elapsedYears(periodKeys[0], periodKeys[periodKeys.length - 1]));
+    const first = firstNonNull(metric.values);
+    const last = lastNonNull(metric.values);
+    const cagrVal = first.idx < 0 || first.idx === last.idx ? null
+      : cagr(first.val, last.val, elapsedYears(periodKeys[first.idx], periodKeys[last.idx]));
     return {
       label: metric.label,
       type: metric.type || "fact",
@@ -398,7 +399,24 @@
         '<div class="empty-state">No data for this view yet — try the other Annual/Quarterly toggle.</div>'
       );
     }
-    const sectionRows = sectionId === "valuation" ? valuationSection(METRICS) : METRICS[sectionId];
+    const allRows = sectionId === "valuation" ? valuationSection(METRICS) : METRICS[sectionId];
+    // Drop period columns where no row has a real value — a blank column
+    // tells the reader nothing, and leaving them in also blanked the
+    // Growth column (CAGR was taken from values[0] / values[last]).
+    const keepIdx = [];
+    periods.forEach((_, i) => {
+      if (allRows.some((m) => m.values[i] !== null && m.values[i] !== undefined && Number.isFinite(m.values[i]))) keepIdx.push(i);
+    });
+    if (!keepIdx.length) {
+      return (
+        "<h2>" + escapeHtml(meta.title) + "</h2>" +
+        '<div class="empty-state">No data for this view yet — try the other Annual/Quarterly toggle.</div>'
+      );
+    }
+    const pick = (arr) => (arr ? keepIdx.map((i) => arr[i]) : arr);
+    periods = pick(periods);
+    periodKeys = pick(periodKeys);
+    const sectionRows = allRows.map((m) => Object.assign({}, m, { values: pick(m.values), sources: pick(m.sources) }));
     const rows = sectionRows.map((m) => buildRow(m, periodKeys, currency));
 
     let kpiHtml = "";

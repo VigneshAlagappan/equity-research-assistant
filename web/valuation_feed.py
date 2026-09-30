@@ -47,6 +47,7 @@ from companies.registry import get_company
 from web.company_kind import is_financial_company
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
 from normalization.periods import fiscal_year_number
+from web.charts_feed import dividends_from_corporate_actions
 from storage.repositories import get_canonical_series
 
 # Rescales any unit that isn't already each currency's "big" display unit
@@ -99,6 +100,14 @@ def _row(
 def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: str = "consolidated") -> dict:
     raw = {key: _series_by_year(conn, company_id, key, statement_type) for key in _RAW_METRIC_KEYS}
     years = sorted({year for series in raw.values() for year in series})
+    dividend_filled = False
+    _company = get_company(conn, company_id)
+    if _company is not None:
+        from_actions = dividends_from_corporate_actions(conn, company_id, _company["fiscal_year_end_month"], [(y, 0) for y in years])
+        missing = {pk[0]: v for pk, v in from_actions.items() if pk[0] not in raw["dividend_per_share"]}
+        if missing:
+            raw["dividend_per_share"] = {**raw["dividend_per_share"], **missing}
+            dividend_filled = True
 
     def ratio_series(fn, unit_scale: float = 1.0) -> dict[int, float]:
         """fn is roe_for_company/roa_for_company — needs the prior fiscal year
@@ -227,7 +236,7 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
         "perShare": [
             _row("eps", "EPS (Net Profit / share)", "perShare", years, eps_series, row_type="calc"),
             _row("bookValue", "Book Value (Networth based)", "perShare", years, book_value_series, row_type="calc"),
-            _row("dividend", "Dividend per share", "perShare", years, raw["dividend_per_share"]),
+            _row("dividend", "Dividend per share", "perShare", years, raw["dividend_per_share"], row_type="calc" if dividend_filled else "fact"),
             _row("salesPerShare", "Sales (Revenue per share)", "perShare", years, sales_per_share_series, row_type="calc"),
             _row("shares", "Shares Outstanding", "sharesCount", years, raw["shares_outstanding"]),
         ],
@@ -257,5 +266,8 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
     company = get_company(conn, company_id)
     if not is_financial_company(company):
         metrics["bankRatios"] = []  # Bank Ratios only apply to banks/financials
+        # Likewise the lending-book lines -- deposits/borrowings/advances
+        # are a bank balance-sheet shape, not a corporate one.
+        metrics["balanceSheet"] = [r for r in metrics["balanceSheet"] if r["key"] not in ("deposits", "borrowings", "advances")]
     currency = company["currency"] if company else "INR"
     return {"YEARS": years, "CURRENCY": currency, "METRICS": metrics}

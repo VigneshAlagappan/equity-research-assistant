@@ -48,6 +48,7 @@ canonical_financials row, web/app.py's company_report()).
 from __future__ import annotations
 
 import calendar
+import re
 from storage.db_types import DBConnection
 from datetime import date
 
@@ -142,6 +143,50 @@ def _corporate_actions_by_period(
                 buckets[i].append({"action_type": row["action_type"], "subject": row["subject"], "ex_date": ex_date})
                 break
     return buckets
+
+
+_DIVIDEND_AMOUNT = re.compile(r"(?:\b(?:rs|re|usd)\.?\s*|\$\s*)(\d+(?:\.\d+)?)(?=[^\d.]|$)")
+
+
+def _dividend_amount_per_share(subject: str) -> float | None:
+    """Rupees per share out of NSE's free-text dividend subject --
+    "Dividend - Rs 13 Per Share", "Interim Dividend - Re 0.70 Per Share",
+    "Annual General Meeting/Dividend - Rs 2.50 Per Share", older
+    "Agm/Div-Rs.12/- Per Share". A subject naming several per-share amounts
+    (e.g. a regular plus a special dividend in one row) sums them; one with
+    no "Rs/Re/$ <amount>" at all (the old "Div185%" percent-of-face-value
+    style) returns None rather than guessing."""
+    s = subject.lower()
+    amounts = [float(m.group(1)) for m in _DIVIDEND_AMOUNT.finditer(s)]
+    if not amounts:
+        return None
+    per_share = [float(m.group(1)) for m in _DIVIDEND_AMOUNT.finditer(s) if s[m.end():].lstrip(" /-").startswith("per sh")]
+    return sum(per_share) if per_share else amounts[0]
+
+
+def dividends_from_corporate_actions(
+    conn: DBConnection, company_id: str, fiscal_year_end_month: int, period_keys: list[tuple[int, int]]
+) -> dict[tuple[int, int], float]:
+    """Per-share dividend declared in each fiscal period, summed from the
+    Corporate Actions feed (interim + final + special, by ex-date falling in
+    the period's date range -- same period placement as
+    _corporate_actions_by_period()). Used only to fill periods where
+    canonical_financials has no dividend_per_share, since filings often
+    trail the NSE corporate-actions feed. A period with no parseable
+    dividend action is omitted (stays blank), not reported as 0."""
+    ranges = {pk: _period_date_range(fiscal_year_end_month, pk[0], pk[1]) for pk in period_keys}
+    out: dict[tuple[int, int], float] = {}
+    for row in select_corporate_actions(conn, company_id):
+        if row["action_type"] != "dividend" or not row["ex_date"]:
+            continue
+        amount = _dividend_amount_per_share(row["subject"])
+        if amount is None:
+            continue
+        for pk, (start, end) in ranges.items():
+            if start.isoformat() <= row["ex_date"] <= end.isoformat():
+                out[pk] = out.get(pk, 0.0) + amount
+                break
+    return out
 
 
 def _period_label(fiscal_year: str, quarter: str | None) -> str:
@@ -266,6 +311,13 @@ def build_charts_feed(
     company = get_company(conn, company_id)
     raw = {key: _series_by_period(conn, company_id, key, period_type, statement_type) for key in _RAW_METRIC_KEYS}
     period_keys = sorted({pk for series in raw.values() for pk in series})
+    dividend_filled = False
+    if period_type == "annual" and company is not None:
+        from_actions = dividends_from_corporate_actions(conn, company_id, company["fiscal_year_end_month"], period_keys)
+        missing = {pk: v for pk, v in from_actions.items() if pk not in raw["dividend_per_share"]}
+        if missing:
+            raw["dividend_per_share"] = {**raw["dividend_per_share"], **missing}
+            dividend_filled = True
     # fiscal_year/quarter text per period_key, for ROE/ROA lookups (annual
     # only) and for building the display label — reconstructed directly from
     # the sorted key rather than threading the original strings through
@@ -464,7 +516,7 @@ def build_charts_feed(
         "perShare": [
             _row("eps", "EPS (Net Profit / share)", "perShare", period_keys, eps_series, row_type="calc"),
             _row("bookValue", "Book Value (Networth based)", "perShare", period_keys, book_value_series, row_type="calc"),
-            _row("dividend", "Dividend per share", "perShare", period_keys, raw["dividend_per_share"]),
+            _row("dividend", "Dividend per share", "perShare", period_keys, raw["dividend_per_share"], row_type="calc" if dividend_filled else "fact"),
             _row("salesPerShare", "Sales (Revenue per share)", "perShare", period_keys, sales_per_share_series, row_type="calc"),
             _row("shares", "Shares Outstanding", "sharesCount", period_keys, raw["shares_outstanding"]),
         ],
@@ -499,6 +551,9 @@ def build_charts_feed(
 
     if not is_financial_company(company):
         metrics["bankRatios"] = []  # Bank Ratios only apply to banks/financials
+        # Likewise the lending-book lines -- deposits/borrowings/advances
+        # are a bank balance-sheet shape, not a corporate one.
+        metrics["balanceSheet"] = [r for r in metrics["balanceSheet"] if r["key"] not in ("deposits", "borrowings", "advances")]
     currency = company["currency"] if company else "INR"
     periods = [_period_label(fy_by_key[pk], quarter_by_key[pk]) for pk in period_keys]
     # PERIOD_KEYS (parallel to PERIODS, [year, quarter_num] per entry) lets a

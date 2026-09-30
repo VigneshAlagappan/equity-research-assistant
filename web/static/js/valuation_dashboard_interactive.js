@@ -571,6 +571,17 @@
         return r.json();
       })
       .then((data) => {
+        // Drop years in which no metric has a value, so the start/end
+        // selectors and every table never land on an empty year.
+        const keep = [];
+        data.YEARS.forEach((_, i) => {
+          const any = Object.keys(data.METRICS).some((sec) => data.METRICS[sec].some((m) => m.values[i] !== null && m.values[i] !== undefined && Number.isFinite(m.values[i])));
+          if (any) keep.push(i);
+        });
+        if (keep.length !== data.YEARS.length) {
+          data.YEARS = keep.map((i) => data.YEARS[i]);
+          Object.keys(data.METRICS).forEach((sec) => data.METRICS[sec].forEach((m) => { m.values = keep.map((i) => m.values[i]); }));
+        }
         state.data = data;
         const years = data.YEARS;
         if (years.length === 0) {
