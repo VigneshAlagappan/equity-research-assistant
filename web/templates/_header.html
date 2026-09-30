@@ -26,7 +26,7 @@
       <a class="site-nav-link {{ 'current' if request.endpoint in ('research', 'research_thread') else '' }}" href="{{ url_for('research') }}">Investigate</a>
       <a class="site-nav-link {{ 'current' if request.endpoint in ('companies', 'company_report') else '' }}" href="{{ url_for('companies') }}">Companies</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'compare' else '' }}" href="{{ url_for('compare') }}">Compare</a>
-      <a class="site-nav-link {{ 'current' if request.endpoint in ('cases', 'case_detail', 'conversation_view') else '' }}" href="{{ url_for('cases') }}">Cases</a>
+      <a class="site-nav-link {{ 'current' if request.endpoint in ('cases', 'case_detail') else '' }}" href="{{ url_for('cases') }}">Cases</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'news' else '' }}" href="{{ url_for('news') }}">News</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'tools' else '' }}" href="{{ url_for('tools') }}">Tools</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'watchlist' else '' }}" href="{{ url_for('watchlist') }}">Watchlist</a>

@@ -123,7 +123,10 @@
 
   function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
+  let sawRunning = false;
+
   function renderRunning(status) {
+    sawRunning = true;
     body.innerHTML = `
       <div class="case-detail-activity">
         ${renderSteps(status.current_activity)}
@@ -150,16 +153,13 @@
     // and Deep Dive's {url: "/investigate/<id>"} (_investigation_case_
     // status_payload) -- an investigation's real result is its own page,
     // never rendered inline here.
-    if (status.outcome === 'answered' && status.result && status.result.conversation_url) {
-      window.location.href = status.result.conversation_url;
-      return;
-    }
-    if (status.outcome === 'answered' && status.result && status.result.thread_url) {
-      window.location.href = status.result.thread_url;
-      return;
-    }
-    if (status.outcome === 'answered' && status.url) {
-      window.location.href = status.url;
+    // A finished, answered case renders its real result in place at this same
+    // URL (conversation / investigation / saved answer), so reload to show it.
+    // Only after watching it run: a case that was already finished when the page
+    // loaded but still lands here has no saved result to show, and reloading it
+    // would loop.
+    if (status.outcome === 'answered' && sawRunning) {
+      window.location.reload();
       return;
     }
     const answerHtml = status.result ? status.result.answer_html : 'No result.';

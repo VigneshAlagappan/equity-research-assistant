@@ -1005,7 +1005,9 @@ def test_company_ask_saves_answer_as_a_thread(tmp_path: Path, monkeypatch) -> No
         assert data["thread_id"]
         assert data["thread_url"] == f"/research/thread/{data['thread_id']}"
 
-        thread_page = test_client.get(data["thread_url"])
+        # The old thread URL redirects to the case page that now shows it.
+        assert test_client.get(data["thread_url"]).status_code == 301
+        thread_page = test_client.get(data["thread_url"], follow_redirects=True)
         assert thread_page.status_code == 200
         assert b"How did net profit change?" in thread_page.data
 
@@ -1063,7 +1065,7 @@ def test_company_ask_async_runs_in_background_and_status_reaches_done(tmp_path: 
         assert result["thread_id"]
         assert result["thread_url"] == f"/research/thread/{result['thread_id']}"
 
-        thread_page = test_client.get(result["thread_url"])
+        thread_page = test_client.get(result["thread_url"], follow_redirects=True)
         assert thread_page.status_code == 200
         assert b"How did net profit change?" in thread_page.data
 
@@ -1406,12 +1408,12 @@ def test_research_thread_toggle_reflects_watchlist_state(tmp_path: Path, monkeyp
         )
         thread_id = generated.get_json()["url"].rsplit("/", 1)[-1]
 
-        not_pinned = test_client.get(f"/research/thread/{thread_id}")
+        not_pinned = test_client.get(f"/research/thread/{thread_id}", follow_redirects=True)
         assert b"Add to watchlist" in not_pinned.data
 
         test_client.post("/watchlist/add", data={"item_type": "thread", "item_ref": thread_id})
 
-        pinned = test_client.get(f"/research/thread/{thread_id}")
+        pinned = test_client.get(f"/research/thread/{thread_id}", follow_redirects=True)
     assert b"Watchlisted" in pinned.data
 
 
@@ -1491,7 +1493,7 @@ def test_research_thread_generate_creates_a_thread_and_page(tmp_path: Path, monk
         data = response.get_json()
         assert data["url"].startswith("/research/thread/")
 
-        page = test_client.get(data["url"])
+        page = test_client.get(data["url"], follow_redirects=True)
         assert page.status_code == 200
         assert b"How did net profit change?" in page.data
         assert b"The Short Answer" in page.data
@@ -1558,7 +1560,7 @@ def test_generated_report_appears_in_investigations(tmp_path: Path, monkeypatch)
     # user-facing label for a generated (single-pass) report.
     assert ">Investigation<" in body  # no Jev level on this legacy-shaped save
     assert "HDFC Bank" in body
-    assert f'/research/thread/{thread_id}"' in body
+    assert re.search(r'href="/cases/[0-9a-f]+"', body)  # the row opens the case page
     # The 3 hand-written EXAMPLES/THREADS fixtures (web/fixtures.py) are
     # illustrative, not real data — deliberately not mixed into this real,
     # growing feed (they still show up on the Research page's own "try an
@@ -1599,14 +1601,14 @@ def test_generated_report_appears_under_every_named_companys_threads_tab(
         icici_page = test_client.get("/companies/ICICIBANK?tab=threads").data.decode()
         unrelated_page = test_client.get("/companies/DELTACORP?tab=threads").data.decode()
 
-    assert f'/research/thread/{thread_id}"' in hdfc_page
+    assert re.search(r'href="/cases/[0-9a-f]+"', hdfc_page)
     assert "Compare HDFC Bank and ICICI Bank profit growth" in hdfc_page
     assert "with ICICI Bank" in hdfc_page
 
-    assert f'/research/thread/{thread_id}"' in icici_page
+    assert re.search(r'href="/cases/[0-9a-f]+"', icici_page)
     assert "with HDFC Bank" in icici_page
 
-    assert f'/research/thread/{thread_id}"' not in unrelated_page
+    assert 'href="/cases/' not in unrelated_page.split('id="sec-cases"')[1].split("</section>")[0]
     assert "No cases yet" in unrelated_page
 
 
@@ -2139,7 +2141,7 @@ def test_company_page_lists_its_structured_investigations(tmp_path: Path, monkey
         body = client.get("/companies/HDFCBANK").data.decode()
 
     assert 'id="sec-cases"' in body
-    assert "/investigate/inv_solo" in body
+    assert 'href="/cases/inv_solo"' in body
     assert "Why do HDFCBANK differ?" in body
 
 
@@ -2161,7 +2163,7 @@ def test_a_cross_company_investigation_appears_under_every_company_it_covers(
         icici = client.get("/companies/ICICIBANK").data.decode()
 
     for body, other in ((hdfc, "ICICI Bank"), (icici, "HDFC Bank")):
-        assert "/investigate/inv_pair" in body
+        assert 'href="/cases/inv_pair"' in body
         assert f"with {other}" in body  # named as a shared, not duplicated, record
 
     conn = init_db(db_path=db_path)
@@ -2189,7 +2191,7 @@ def test_a_point_in_time_investigation_is_labelled_as_of_on_both_surfaces(
     app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as client:
         company_page = client.get("/companies/HDFCBANK").data.decode()
-        investigation_page = client.get("/investigate/inv_hist").data.decode()
+        investigation_page = client.get("/investigate/inv_hist", follow_redirects=True).data.decode()
 
     assert "as of 2013-03-31" in company_page
     assert "evidence as of 2013-03-31" in investigation_page

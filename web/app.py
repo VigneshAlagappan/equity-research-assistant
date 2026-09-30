@@ -187,6 +187,7 @@ from storage.repositories import (
     create_case_turn,
     fail_case_turn,
     get_case_turn,
+    get_research_case_for_result,
     list_case_company_ids,
     list_case_turns,
     complete_research_case,
@@ -3566,7 +3567,7 @@ def create_app() -> Flask:
             statement_type=statement_type, origin=origin, thread_id=thread_id,
         )
         if case_id and origin == "conversation":
-            result["conversation_url"] = url_for("conversation_view", case_id=case_id)
+            result["conversation_url"] = url_for("case_detail", case_id=case_id)
         return jsonify(result)
 
     def _answer_question_async_response(company_ids: list[str] | None = None, origin: str = "investigation"):
@@ -3704,7 +3705,7 @@ def create_app() -> Flask:
             result = json.loads(case["result_json"]) if case["result_json"] else {}
             if case["origin"] == "conversation" and case["thread_id"]:
                 # Where the UI should send the user to continue the conversation.
-                result["conversation_url"] = url_for("conversation_view", case_id=case["case_id"])
+                result["conversation_url"] = url_for("case_detail", case_id=case["case_id"])
         payload["status"] = "done"
         payload["outcome"] = case["outcome"]
         payload["result"] = result
@@ -3737,26 +3738,31 @@ def create_app() -> Flask:
 
     @app.route("/cases/<case_id>")
     def case_detail(case_id: str):
-        """Case detail/reconnect page -- opening this for an in_progress
-        case shows its current activity and keeps polling (same
-        pollAskStatus() mechanism the Ask AI drawer already uses, just
-        pointed at whichever status endpoint/payload shape matches this
-        case's kind -- see _case_status_payload/_investigation_case_status_
-        payload); a completed case redirects straight to its real result
-        (the generated_reports thread for kind='ask', the /investigate/<id>
-        page for kind='investigation' -- or, for an outcome='insufficient_
-        data' case, which never got either, rendered inline here instead)."""
+        """THE page for one case -- the only URL a case needs. What it shows
+        depends on where the case is: still running (current activity, keeps
+        polling -- same pollAskStatus() mechanism the Ask AI drawer uses, on
+        whichever status endpoint matches the case's kind), or finished, in
+        which case it renders the real result in place: the multi-turn
+        conversation (origin='conversation'), the investigation
+        (kind='investigation'), or the saved answer. An outcome='insufficient_
+        data'/failed/cancelled case never got a result, so it renders inline
+        here. The pre-/cases result URLs (/research/thread/<id>,
+        /investigate/<id>) redirect here."""
         db = get_db()
         case = get_research_case(db, case_id)
-        if case is None:
+        if case is None or case["deleted_at"]:
             abort(404)
         if case["status"] == "completed" and case["outcome"] == "answered":
-            if case["kind"] == "investigation" and case["investigation_id"]:
-                return redirect(url_for("investigate_view", investigation_id=case["investigation_id"]))
-            if case["kind"] != "investigation" and case["thread_id"]:
-                if case["origin"] == "conversation":
-                    return redirect(url_for("conversation_view", case_id=case_id))
-                return redirect(url_for("research_thread", thread_id=case["thread_id"]))
+            if case["origin"] == "conversation" and case["thread_id"]:
+                report = get_generated_report(db, case["thread_id"])
+                if report is not None:
+                    return _render_conversation(db, case, report)
+            # Only when the saved result row still exists -- otherwise fall through
+            # to the inline status page below rather than 404 on a finished case.
+            if case["investigation_id"] and get_investigation(db, case["investigation_id"]) is not None:
+                return _render_investigation(case["investigation_id"])
+            if case["thread_id"] and get_generated_report(db, case["thread_id"]) is not None:
+                return _render_thread(case["thread_id"])
         if case["kind"] == "investigation":
             status_url = url_for("investigate_status", investigation_id=case_id)
             initial_status = _investigation_case_status_payload(case)
@@ -3790,23 +3796,11 @@ def create_app() -> Flask:
             payload["answer_html"] = str(_render_markdown_with_tags(turn["answer"] or ""))
         return payload
 
-    @app.route("/conversations/<case_id>")
-    def conversation_view(case_id: str):
+    def _render_conversation(db, case, report):
         """A Conversation (case with origin='conversation'): its first
         question/answer, every follow-up turn, and a composer to ask the next
-        one. Anything that isn't a finished conversation (still running,
-        failed, or an Investigation) is sent to the case page, which already
-        knows how to show progress or forward to the right result."""
-        db = get_db()
-        case = get_research_case(db, case_id)
-        if case is None or case["deleted_at"]:
-            abort(404)
-        report = get_generated_report(db, case["thread_id"]) if case["thread_id"] else None
-        if (
-            case["origin"] != "conversation" or case["status"] != "completed"
-            or case["outcome"] != "answered" or report is None
-        ):
-            return redirect(url_for("case_detail", case_id=case_id))
+        one. Rendered by case_detail once the first answer is saved."""
+        case_id = case["case_id"]
         names = {c["company_id"]: c["display_name"] for c in list_companies(db, include_archived=True)}
         turns = [
             {"question": case["question"], "status": "done",
@@ -3815,11 +3809,10 @@ def create_app() -> Flask:
         return render_template(
             "conversation.html", case_id=case_id, title=case["question"], turns=turns,
             companies=[{"company_id": c, "name": names.get(c, c)} for c in list_case_company_ids(db, case_id)],
-            thread_url=url_for("research_thread", thread_id=case["thread_id"]),
             api_key_set=ANTHROPIC_API_KEY_SET,
         )
 
-    @app.route("/conversations/<case_id>/turns", methods=["POST"])
+    @app.route("/cases/<case_id>/turns", methods=["POST"])
     def conversation_turn_create(case_id: str):
         """Asks the next question in a Conversation. Runs in a background
         thread and returns 202 with a turn_id to poll -- a follow-up can take
@@ -3870,7 +3863,7 @@ def create_app() -> Flask:
         threading.Thread(target=_run, daemon=True).start()
         return jsonify(turn_id=turn_id, position=turn["position"]), 202
 
-    @app.route("/conversations/<case_id>/turns/<turn_id>")
+    @app.route("/cases/<case_id>/turns/<turn_id>")
     def conversation_turn_status(case_id: str, turn_id: str):
         turn = get_case_turn(get_db(), turn_id)
         if turn is None or turn["case_id"] != case_id:
@@ -4038,6 +4031,15 @@ def create_app() -> Flask:
 
     @app.route("/research/thread/<thread_id>")
     def research_thread(thread_id: str):
+        """Old result URL -- redirects to the case page that now shows it. A
+        thread with no case (the hand-written example threads, which aren't DB
+        rows at all) is served directly, as before."""
+        case = get_research_case_for_result(get_db(), thread_id=thread_id)
+        if case is not None:
+            return redirect(url_for("case_detail", case_id=case["case_id"]), code=301)
+        return _render_thread(thread_id)
+
+    def _render_thread(thread_id: str):
         db = get_db()
         generated = get_generated_report(db, thread_id)
         if generated is not None:
@@ -4410,6 +4412,13 @@ def create_app() -> Flask:
 
     @app.route("/investigate/<investigation_id>")
     def investigate_view(investigation_id: str):
+        """Old result URL -- redirects to the case page that now shows it."""
+        case = get_research_case_for_result(get_db(), investigation_id=investigation_id)
+        if case is not None:
+            return redirect(url_for("case_detail", case_id=case["case_id"]), code=301)
+        return _render_investigation(investigation_id)
+
+    def _render_investigation(investigation_id: str):
         db = get_db()
         investigation_row = get_investigation(db, investigation_id)
         if investigation_row is None:
@@ -4544,7 +4553,6 @@ def create_app() -> Flask:
                     inv = investigations_by_id[case["investigation_id"]]
                     verdict = inv["strongest_verdict"] or legacy_verdicts.get(inv["investigation_id"])
                     entry["status_key"], entry["right_tag"] = _VERDICT_STATUS.get(verdict, ("no_verdict", "No verdict yet"))
-                    entry["href"] = url_for("investigate_view", investigation_id=inv["investigation_id"])
                     entry["as_of"] = inv["as_of"]
                 elif case["thread_id"] and case["thread_id"] in reports:
                     report = reports[case["thread_id"]]
@@ -4552,10 +4560,6 @@ def create_app() -> Flask:
                     entry["right_tag"], entry["status_key"] = _confidence_tag(meta["confidence"], report["complexity_level"])
                     entry["title"] = meta["title"] or report["question"]
                     entry["subtitle"] = report["question"] if meta["title"] else ""
-                    entry["href"] = (
-                        url_for("conversation_view", case_id=case["case_id"]) if is_conversation
-                        else url_for("research_thread", thread_id=report["thread_id"])
-                    )
                 else:  # result row missing (e.g. deleted underneath) -- the case detail still renders
                     entry["status_key"], entry["right_tag"] = "no_verdict", "Result unavailable"
             elif case["status"] == "completed":  # outcome='insufficient_data'

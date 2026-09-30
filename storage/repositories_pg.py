@@ -1340,6 +1340,20 @@ def fail_case_turn(conn: DBConnection, turn_id: str, error_message: str) -> None
     conn.commit()
 
 
+def get_research_case_for_result(
+    conn: DBConnection, *, thread_id: str | None = None, investigation_id: str | None = None
+) -> Row | None:
+    if thread_id:
+        sql, param = "SELECT * FROM research_cases WHERE thread_id = %s AND deleted_at IS NULL", thread_id
+    elif investigation_id:
+        sql, param = "SELECT * FROM research_cases WHERE investigation_id = %s AND deleted_at IS NULL", investigation_id
+    else:
+        return None
+    with conn.cursor() as cur:
+        cur.execute(sql, (param,))
+        return cur.fetchone()
+
+
 def list_research_cases(conn: DBConnection, *, owner_id: int | None = None) -> list[Row]:
     sql = "SELECT * FROM research_cases WHERE deleted_at IS NULL"
     params: list = []

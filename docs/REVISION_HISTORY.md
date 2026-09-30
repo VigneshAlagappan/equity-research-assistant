@@ -7,6 +7,8 @@ Newest first. Derived from git history on `feature-v3`; only the deployment mark
 - `research_cases` is the single container: new `origin`, `hidden_at`, `deleted_at` columns and a `case_companies` company-tag table (schema applied to Neon); every question now creates a case
 - Cases page reads only cases; company pages show the same cases filtered by tag; tags editable per case; Delete is soft for every case
 - All historical cases, reports, investigations and their S3 artifacts cleared from production before the change
+- One URL per case: `/cases/<id>` renders the conversation, investigation, saved answer or progress in place; `/research/thread/<id>` and `/investigate/<id>` 301-redirect to it
+- Routing/assistant tests updated to the current model-tier config (no product change)
 - Company page: Investigations and Conversations combined under one "Cases" section
 - Cases list moved to `/cases` (`/investigations` 301-redirects, filters preserved)
 - Multi-turn Conversations: `/conversations/<case_id>` with background follow-up turns (`case_turns` table, `research/conversation.py`); Ask AI/chat now hand off to the conversation page

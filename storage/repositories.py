@@ -1586,6 +1586,23 @@ def fail_case_turn(conn: sqlite3.Connection, turn_id: str, error_message: str) -
     conn.commit()
 
 
+def get_research_case_for_result(
+    conn: sqlite3.Connection, *, thread_id: str | None = None, investigation_id: str | None = None
+) -> sqlite3.Row | None:
+    """The live (non-deleted) case whose saved result is this thread or
+    investigation -- how the old result URLs find the /cases/<id> page that now
+    shows them."""
+    if thread_id:
+        return conn.execute(
+            "SELECT * FROM research_cases WHERE thread_id = ? AND deleted_at IS NULL", (thread_id,)
+        ).fetchone()
+    if investigation_id:
+        return conn.execute(
+            "SELECT * FROM research_cases WHERE investigation_id = ? AND deleted_at IS NULL", (investigation_id,)
+        ).fetchone()
+    return None
+
+
 def list_research_cases(conn: sqlite3.Connection, *, owner_id: int | None = None) -> list[sqlite3.Row]:
     """Every non-deleted case (hidden ones included -- the Cases list's own
     "Show hidden" toggle filters those), newest first. The Cases page's one
