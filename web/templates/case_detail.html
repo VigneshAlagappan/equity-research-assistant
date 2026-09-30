@@ -150,6 +150,10 @@
     // and Deep Dive's {url: "/investigate/<id>"} (_investigation_case_
     // status_payload) -- an investigation's real result is its own page,
     // never rendered inline here.
+    if (status.outcome === 'answered' && status.result && status.result.conversation_url) {
+      window.location.href = status.result.conversation_url;
+      return;
+    }
     if (status.outcome === 'answered' && status.result && status.result.thread_url) {
       window.location.href = status.result.thread_url;
       return;

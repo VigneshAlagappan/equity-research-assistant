@@ -383,8 +383,8 @@
   }
 
   function renderAnswered(question, data) {
-    const savedNote = data.thread_url
-      ? `<p class="askai-answer-saved">Saved as a Conversation &middot; <a href="${data.thread_url}">Open</a>.</p>`
+    const savedNote = (data.conversation_url || data.thread_url)
+      ? `<p class="askai-answer-saved">Saved as a Conversation &middot; <a href="${data.conversation_url || data.thread_url}">Continue the conversation</a>.</p>`
       : '';
     body.innerHTML = `
       <div class="askai-answer">

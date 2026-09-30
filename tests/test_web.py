@@ -1013,7 +1013,7 @@ def test_company_ask_saves_answer_as_a_thread(tmp_path: Path, monkeypatch) -> No
     # Ask AI is a Conversation: it lands in the company page's Conversations section
     # (a filtered view of the same case the Cases page lists), linking to its thread.
     assert 'id="sec-conversations"' in threads_tab
-    assert f'/research/thread/{data["thread_id"]}"' in threads_tab
+    assert f'{data["conversation_url"]}"' in threads_tab  # opens the conversation, where follow-ups happen
     assert "How did net profit change?" in threads_tab
 
 

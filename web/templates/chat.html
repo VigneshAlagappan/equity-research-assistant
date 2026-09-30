@@ -328,6 +328,11 @@
       card.scrollIntoView({ behavior: 'smooth', block: 'end' });
 
       bodyEl.innerHTML = data.answer_html; // server pre-escapes everything except [FACT]/[CALCULATION]/[INFERENCE] spans
+      if (data.conversation_url) {
+        const more = document.createElement('p');
+        more.innerHTML = `<a href="${data.conversation_url}">Continue this conversation &rarr;</a>`;
+        bodyEl.appendChild(more);
+      }
 
       // Comparing multiple companies (peer-comparison questions): one combined,
       // indexed-to-100 chart per metric instead of a separate chart per

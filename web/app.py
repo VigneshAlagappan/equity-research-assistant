@@ -183,6 +183,12 @@ from storage.repositories import (
     get_overview_ratio_settings,
     get_all_company_index_tags,
     add_case_company,
+    complete_case_turn,
+    create_case_turn,
+    fail_case_turn,
+    get_case_turn,
+    list_case_company_ids,
+    list_case_turns,
     complete_research_case,
     hide_research_case,
     list_case_tags,
@@ -262,6 +268,7 @@ from storage.repositories import (
     update_case_activity,
 )
 from research.case_runner import run_case_in_background, start_case
+from research.conversation import answer_follow_up
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
 from web.execution_analytics import build_execution_analytics_context
 from web.corporate_actions_feed import build_corporate_actions_feed
@@ -3489,7 +3496,7 @@ def create_app() -> Flask:
     def _record_completed_case(
         db, *, kind: str, question: str, company_ids: list[str], statement_type: str,
         origin: str, thread_id: str | None = None, investigation_id: str | None = None,
-    ) -> None:
+    ) -> str | None:
         """The sync (non-background) routes save their result directly and
         never went through research_cases, so their output would be invisible
         to the Cases list -- which reads research_cases as the one container
@@ -3514,8 +3521,10 @@ def create_app() -> Flask:
                 db, case_id, outcome="answered", result_json=json.dumps({"thread_id": thread_id, "investigation_id": investigation_id}),
                 thread_id=thread_id, investigation_id=investigation_id,
             )
+            return case_id
         except Exception:  # noqa: BLE001 -- see docstring
             logger.exception("Could not record the completed case for thread=%s investigation=%s", thread_id, investigation_id)
+            return None
 
     def _answer_question_response(company_ids: list[str] | None = None, origin: str = "investigation"):
         """Shared by /chat, /research/ask and /companies/<id>/ask — all three are
@@ -3546,10 +3555,12 @@ def create_app() -> Flask:
             )
         except _AskRequestError as exc:
             return jsonify(error=str(exc)), exc.status
-        _record_completed_case(
+        case_id = _record_completed_case(
             get_db(), kind="ask", question=question, company_ids=company_ids, statement_type=statement_type,
             origin=origin, thread_id=thread_id,
         )
+        if case_id and origin == "conversation":
+            result["conversation_url"] = url_for("conversation_view", case_id=case_id)
         return jsonify(result)
 
     def _answer_question_async_response(company_ids: list[str] | None = None, origin: str = "investigation"):
@@ -3685,6 +3696,9 @@ def create_app() -> Flask:
             }
         else:
             result = json.loads(case["result_json"]) if case["result_json"] else {}
+            if case["origin"] == "conversation" and case["thread_id"]:
+                # Where the UI should send the user to continue the conversation.
+                result["conversation_url"] = url_for("conversation_view", case_id=case["case_id"])
         payload["status"] = "done"
         payload["outcome"] = case["outcome"]
         payload["result"] = result
@@ -3734,6 +3748,8 @@ def create_app() -> Flask:
             if case["kind"] == "investigation" and case["investigation_id"]:
                 return redirect(url_for("investigate_view", investigation_id=case["investigation_id"]))
             if case["kind"] != "investigation" and case["thread_id"]:
+                if case["origin"] == "conversation":
+                    return redirect(url_for("conversation_view", case_id=case_id))
                 return redirect(url_for("research_thread", thread_id=case["thread_id"]))
         if case["kind"] == "investigation":
             status_url = url_for("investigate_status", investigation_id=case_id)
@@ -3746,6 +3762,114 @@ def create_app() -> Flask:
             company_ids=json.loads(case["company_ids"] or "[]"),
             status_url=status_url, initial_status=initial_status,
         )
+
+    def _conversation_history(db, case, first_answer: str) -> list[tuple[str, str]]:
+        """(question, answer) pairs, oldest first: the case's own first
+        exchange (turn 0), then every completed follow-up."""
+        history = [(case["question"], first_answer)]
+        for turn in list_case_turns(db, case["case_id"]):
+            if turn["status"] == "completed" and turn["answer"]:
+                history.append((turn["question"], turn["answer"]))
+        return history
+
+    def _turn_payload(turn) -> dict:
+        payload = {"turn_id": turn["turn_id"], "position": turn["position"], "question": turn["question"]}
+        if turn["status"] == "in_progress":
+            payload["status"] = "running"
+        elif turn["status"] == "failed":
+            payload["status"] = "error"
+            payload["error"] = turn["error_message"] or "Something went wrong."
+        else:
+            payload["status"] = "done"
+            payload["answer_html"] = str(_render_markdown_with_tags(turn["answer"] or ""))
+        return payload
+
+    @app.route("/conversations/<case_id>")
+    def conversation_view(case_id: str):
+        """A Conversation (case with origin='conversation'): its first
+        question/answer, every follow-up turn, and a composer to ask the next
+        one. Anything that isn't a finished conversation (still running,
+        failed, or an Investigation) is sent to the case page, which already
+        knows how to show progress or forward to the right result."""
+        db = get_db()
+        case = get_research_case(db, case_id)
+        if case is None or case["deleted_at"]:
+            abort(404)
+        report = get_generated_report(db, case["thread_id"]) if case["thread_id"] else None
+        if (
+            case["origin"] != "conversation" or case["status"] != "completed"
+            or case["outcome"] != "answered" or report is None
+        ):
+            return redirect(url_for("case_detail", case_id=case_id))
+        names = {c["company_id"]: c["display_name"] for c in list_companies(db, include_archived=True)}
+        turns = [
+            {"question": case["question"], "status": "done",
+             "answer_html": str(_render_markdown_with_tags(report["report_markdown"]))},
+        ] + [_turn_payload(t) for t in list_case_turns(db, case_id)]
+        return render_template(
+            "conversation.html", case_id=case_id, title=case["question"], turns=turns,
+            companies=[{"company_id": c, "name": names.get(c, c)} for c in list_case_company_ids(db, case_id)],
+            thread_url=url_for("research_thread", thread_id=case["thread_id"]),
+            api_key_set=ANTHROPIC_API_KEY_SET,
+        )
+
+    @app.route("/conversations/<case_id>/turns", methods=["POST"])
+    def conversation_turn_create(case_id: str):
+        """Asks the next question in a Conversation. Runs in a background
+        thread and returns 202 with a turn_id to poll -- a follow-up can take
+        as long as any other answer, and the same gateway/worker timeouts
+        that forced every other ask route async apply here."""
+        db = get_db()
+        case = get_research_case(db, case_id)
+        if case is None or case["deleted_at"]:
+            abort(404)
+        if case["origin"] != "conversation":
+            return jsonify(error="Only a Conversation takes follow-up questions."), 400
+        if case["status"] != "completed" or case["outcome"] != "answered" or not case["thread_id"]:
+            return jsonify(error="This conversation's first answer isn't ready yet."), 409
+        if not ANTHROPIC_API_KEY_SET:
+            return jsonify(error="ANTHROPIC_API_KEY is not set on the server — the assistant can't run."), 503
+        question = ((request.get_json(silent=True) or {}).get("question") or "").strip()
+        if not question:
+            return jsonify(error="Ask a question first."), 400
+        if is_investment_decision_question(question):
+            return jsonify(error=_INVESTMENT_ADVICE_REJECTION_MESSAGE), 400
+        if any(t["status"] == "in_progress" for t in list_case_turns(db, case_id)):
+            return jsonify(error="The previous question is still being answered."), 409
+        report = get_generated_report(db, case["thread_id"])
+        if report is None:
+            return jsonify(error="This conversation's first answer is no longer available."), 409
+
+        history = _conversation_history(db, case, report["report_markdown"])
+        company_ids = list_case_company_ids(db, case_id)
+        statement_type = case["statement_type"]
+        turn = create_case_turn(db, case_id, question)
+        turn_id = turn["turn_id"]
+
+        def _run() -> None:
+            conn = scheduling_open_db()
+            try:
+                answer = answer_follow_up(conn, question, history, company_ids, statement_type, run_id=turn_id)
+                complete_case_turn(conn, turn_id, answer)
+            except Exception as exc:  # noqa: BLE001 -- surface any failure on the turn, never a silently stuck one
+                logger.exception("Conversation turn %s (case %s) failed", turn_id, case_id)
+                try:
+                    conn.rollback()  # Postgres: clear an aborted transaction before the failure write below
+                except Exception:  # noqa: BLE001
+                    pass
+                fail_case_turn(conn, turn_id, f"{type(exc).__name__}: {exc}")
+            finally:
+                conn.close()
+
+        threading.Thread(target=_run, daemon=True).start()
+        return jsonify(turn_id=turn_id, position=turn["position"]), 202
+
+    @app.route("/conversations/<case_id>/turns/<turn_id>")
+    def conversation_turn_status(case_id: str, turn_id: str):
+        turn = get_case_turn(get_db(), turn_id)
+        if turn is None or turn["case_id"] != case_id:
+            abort(404)
+        return jsonify(_turn_payload(turn))
 
     @app.route("/research/understand", methods=["POST"])
     def research_understand():
@@ -4422,7 +4546,10 @@ def create_app() -> Flask:
                     entry["right_tag"], entry["status_key"] = _confidence_tag(meta["confidence"], report["complexity_level"])
                     entry["title"] = meta["title"] or report["question"]
                     entry["subtitle"] = report["question"] if meta["title"] else ""
-                    entry["href"] = url_for("research_thread", thread_id=report["thread_id"])
+                    entry["href"] = (
+                        url_for("conversation_view", case_id=case["case_id"]) if is_conversation
+                        else url_for("research_thread", thread_id=report["thread_id"])
+                    )
                 else:  # result row missing (e.g. deleted underneath) -- the case detail still renders
                     entry["status_key"], entry["right_tag"] = "no_verdict", "Result unavailable"
             elif case["status"] == "completed":  # outcome='insufficient_data'

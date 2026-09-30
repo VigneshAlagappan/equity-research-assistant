@@ -1,5 +1,5 @@
-"""Applies the Cases-container schema (research_cases.origin/hidden_at/deleted_at
-and the case_companies tag table) to the Postgres database named by NEON.
+"""Applies the Cases-container schema (research_cases.origin/hidden_at/deleted_at,
+the case_companies tag table and the case_turns multi-turn table) to the Postgres database named by NEON.
 
 Every statement is additive and IF NOT EXISTS, taken verbatim from
 schemas/postgres_schema.sql, so it is safe to re-run.
@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 START = "ALTER TABLE research_cases ADD COLUMN IF NOT EXISTS origin"
-END = "CREATE INDEX IF NOT EXISTS idx_case_companies_company ON case_companies(company_id);"
+END = "CREATE INDEX IF NOT EXISTS idx_case_turns_case ON case_turns(case_id, position);"
 
 
 def _ddl() -> str:
@@ -53,6 +53,10 @@ def _exercise(conn) -> None:
     assert [r["case_id"] for r in pg.list_cases_for_company(conn, ids[1])] == ["zz-schema-check"]
     assert pg.hide_research_case(conn, "zz-schema-check") is True
     assert pg.list_cases_for_company(conn, ids[1]) == []
+    turn = pg.create_case_turn(conn, "zz-schema-check", "follow up?")
+    assert turn["position"] == 1 and pg.create_case_turn(conn, "zz-schema-check", "again?")["position"] == 2
+    pg.complete_case_turn(conn, turn["turn_id"], "answer")
+    assert [t["status"] for t in pg.list_case_turns(conn, "zz-schema-check")] == ["completed", "in_progress"]
     assert pg.delete_research_case(conn, "zz-schema-check") is True
     print("pg repository functions OK")
 

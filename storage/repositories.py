@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import uuid
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1546,6 +1547,45 @@ def soft_delete_research_cases_for_result(
     return cursor.rowcount
 
 
+def create_case_turn(conn: sqlite3.Connection, case_id: str, question: str) -> sqlite3.Row:
+    """Appends a follow-up to a Conversation as its next turn (position 1, 2,
+    ... -- the case's own first question/answer is implicitly turn 0) in
+    status 'in_progress'; complete_case_turn/fail_case_turn finish it."""
+    turn_id = uuid.uuid4().hex[:12]
+    row = conn.execute("SELECT COALESCE(MAX(position), 0) + 1 AS n FROM case_turns WHERE case_id = ?", (case_id,)).fetchone()
+    conn.execute(
+        "INSERT INTO case_turns (turn_id, case_id, position, question, status, created_at) "
+        "VALUES (?, ?, ?, ?, 'in_progress', ?)",
+        (turn_id, case_id, row["n"], question, utcnow_iso()),
+    )
+    conn.commit()
+    return get_case_turn(conn, turn_id)
+
+
+def get_case_turn(conn: sqlite3.Connection, turn_id: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM case_turns WHERE turn_id = ?", (turn_id,)).fetchone()
+
+
+def list_case_turns(conn: sqlite3.Connection, case_id: str) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM case_turns WHERE case_id = ? ORDER BY position", (case_id,)).fetchall()
+
+
+def complete_case_turn(conn: sqlite3.Connection, turn_id: str, answer: str) -> None:
+    conn.execute(
+        "UPDATE case_turns SET status = 'completed', answer = ?, completed_at = ? WHERE turn_id = ?",
+        (answer, utcnow_iso(), turn_id),
+    )
+    conn.commit()
+
+
+def fail_case_turn(conn: sqlite3.Connection, turn_id: str, error_message: str) -> None:
+    conn.execute(
+        "UPDATE case_turns SET status = 'failed', error_message = ?, completed_at = ? WHERE turn_id = ?",
+        (error_message, utcnow_iso(), turn_id),
+    )
+    conn.commit()
+
+
 def list_research_cases(conn: sqlite3.Connection, *, owner_id: int | None = None) -> list[sqlite3.Row]:
     """Every non-deleted case (hidden ones included -- the Cases list's own
     "Show hidden" toggle filters those), newest first. The Cases page's one
@@ -1674,6 +1714,7 @@ def delete_research_case(conn: sqlite3.Connection, case_id: str) -> bool:
     record, not durable content worth archiving-forever; there's no
     hidden_at/deleted_at column on this table at all. Returns False (web/
     app.py's case_delete aborts 404) if case_id doesn't exist."""
+    conn.execute("DELETE FROM case_turns WHERE case_id = ?", (case_id,))
     conn.execute("DELETE FROM case_companies WHERE case_id = ?", (case_id,))
     cursor = conn.execute("DELETE FROM research_cases WHERE case_id = ?", (case_id,))
     conn.commit()

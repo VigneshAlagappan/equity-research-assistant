@@ -1027,6 +1027,26 @@ CREATE TABLE IF NOT EXISTS case_companies (
 );
 CREATE INDEX IF NOT EXISTS idx_case_companies_company ON case_companies(company_id);
 
+-- Multi-turn Conversations: a Conversation is ONE case (origin='conversation');
+-- its first question/answer is the case's own (question + saved report), and
+-- every follow-up is a row here, ordered by position (1, 2, ...). Turns live
+-- under the case, never as separate cases, so history/company tags/hide/delete
+-- all stay one record. status mirrors a case's job state so a follow-up can run
+-- in the background the same way: in_progress | completed | failed.
+CREATE TABLE IF NOT EXISTS case_turns (
+  turn_id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL REFERENCES research_cases(case_id),
+  position INTEGER NOT NULL,
+  question TEXT NOT NULL,
+  answer TEXT,                       -- plain-text answer with [FACT]/[INFERENCE] tags, set on completion
+  status TEXT NOT NULL DEFAULT 'in_progress',
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  completed_at TEXT,
+  UNIQUE (case_id, position)
+);
+CREATE INDEX IF NOT EXISTS idx_case_turns_case ON case_turns(case_id, position);
+
 -- ============================================================
 -- Hypothesis-driven investigations (Steps 2E-2H, research/investigation.py)
 -- -- the full "generate competing hypotheses -> gather evidence -> evaluate

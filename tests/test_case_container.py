@@ -90,3 +90,24 @@ def test_hard_delete_also_removes_its_tags(tmp_path: Path) -> None:
     _case(conn, "a", ["HDFCBANK"])
     assert delete_research_case(conn, "a") is True
     assert conn.execute("SELECT COUNT(*) FROM case_companies").fetchone()[0] == 0
+
+
+def test_case_turns_are_ordered_completed_or_failed_and_removed_with_the_case(tmp_path: Path) -> None:
+    from storage.repositories import complete_case_turn, create_case_turn, fail_case_turn, get_case_turn, list_case_turns
+
+    conn = _conn(tmp_path)
+    _case(conn, "a", ["HDFCBANK"], origin="conversation")
+    first = create_case_turn(conn, "a", "and last year?")
+    second = create_case_turn(conn, "a", "why?")
+    assert (first["position"], second["position"]) == (1, 2)
+    assert first["status"] == "in_progress" and first["answer"] is None
+
+    complete_case_turn(conn, first["turn_id"], "It rose.")
+    fail_case_turn(conn, second["turn_id"], "boom")
+    assert [(t["status"], t["answer"], t["error_message"]) for t in list_case_turns(conn, "a")] == [
+        ("completed", "It rose.", None), ("failed", None, "boom"),
+    ]
+    assert get_case_turn(conn, "missing") is None
+
+    assert delete_research_case(conn, "a") is True
+    assert conn.execute("SELECT COUNT(*) FROM case_turns").fetchone()[0] == 0

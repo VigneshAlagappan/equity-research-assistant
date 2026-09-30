@@ -7,6 +7,7 @@ fixtures rather than duplicating that isolation setup."""
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -596,3 +597,132 @@ def test_sync_ask_routes_record_a_completed_case_with_the_right_origin(tmp_path:
     for row in rows.values():
         assert row["status"] == "completed" and row["outcome"] == "answered"
     conn.close()
+
+
+# ------------------------------------------------------------------
+# Multi-turn Conversations: /conversations/<case_id> + follow-up turns
+# ------------------------------------------------------------------
+
+
+def _conversation(test_client, db_path) -> str:
+    """Asks the first question the way the Ask AI drawer does and waits for
+    it, returning the finished Conversation's case_id."""
+    start = test_client.post("/companies/HDFCBANK/ask-async", json={"question": "How did net profit change?"})
+    assert start.status_code == 202
+    case_id = start.get_json()["case_id"]
+    assert _poll_until_done(test_client, case_id)["status"] == "done"
+    return case_id
+
+
+def _poll_turn(test_client, case_id: str, turn_id: str, attempts: int = 200):
+    status = None
+    for _ in range(attempts):
+        status = test_client.get(f"/conversations/{case_id}/turns/{turn_id}").get_json()
+        if status["status"] != "running":
+            return status
+        time.sleep(0.1)
+    return status
+
+
+def test_finished_ask_ai_case_opens_as_a_conversation_page(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        case_id = _conversation(test_client, db_path)
+        # The case page forwards to the conversation (not the bare thread page) ...
+        assert test_client.get(f"/cases/{case_id}").headers["Location"].endswith(f"/conversations/{case_id}")
+        # ... the status payload tells the drawer where to continue ...
+        result = test_client.get(f"/ask/status/{case_id}").get_json()["result"]
+        assert result["conversation_url"] == f"/conversations/{case_id}"
+        # ... and the page shows the first exchange plus a composer.
+        page = test_client.get(f"/conversations/{case_id}")
+        assert page.status_code == 200
+        body = page.data.decode()
+        assert "How did net profit change?" in body and 'id="convo-form"' in body
+        # The Cases list links the row to the conversation, not the thread.
+        assert f'/conversations/{case_id}"' in test_client.get("/investigations").data.decode()
+
+
+def test_follow_up_turn_answers_with_the_conversation_as_context_and_persists(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        case_id = _conversation(test_client, db_path)
+        captured = _install_fake_llm(monkeypatch, text="It rose again. [FACT] y.")
+
+        response = test_client.post(f"/conversations/{case_id}/turns", json={"question": "And the year before?"})
+        assert response.status_code == 202
+        turn_id = response.get_json()["turn_id"]
+        status = _poll_turn(test_client, case_id, turn_id)
+        assert status["status"] == "done" and "It rose again." in status["answer_html"]
+
+        sent = json.dumps(captured, default=str)
+        assert "Conversation so far" in sent and "How did net profit change?" in sent and "And the year before?" in sent
+
+        # A second follow-up sees the first follow-up too, and everything survives a reload.
+        second = test_client.post(f"/conversations/{case_id}/turns", json={"question": "Why?"}).get_json()["turn_id"]
+        assert _poll_turn(test_client, case_id, second)["status"] == "done"
+        assert "And the year before?" in json.dumps(captured, default=str)
+        body = test_client.get(f"/conversations/{case_id}").data.decode()
+        assert body.index("How did net profit change?") < body.index("And the year before?") < body.index("Why?")
+
+    conn = init_db(db_path=db_path)
+    from storage.repositories import list_case_turns
+
+    assert [(t["position"], t["status"]) for t in list_case_turns(conn, case_id)] == [(1, "completed"), (2, "completed")]
+    conn.close()
+
+
+def test_follow_up_validation_and_guards(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        case_id = _conversation(test_client, db_path)
+        url = f"/conversations/{case_id}/turns"
+        assert test_client.post(url, json={"question": "  "}).status_code == 400
+        assert test_client.post(url, json={"question": "Should I buy this stock now?"}).status_code == 400
+        assert test_client.post("/conversations/nope/turns", json={"question": "hi?"}).status_code == 404
+        assert test_client.get("/conversations/nope").status_code == 404
+
+        # Only a Conversation takes follow-ups; an Investigation-origin case doesn't.
+        research_case = test_client.post(
+            "/research/ask-async", json={"question": "How did net profit change?", "company_ids": ["HDFCBANK"]},
+        ).get_json()["case_id"]
+        _poll_until_done(test_client, research_case)
+        assert test_client.post(f"/conversations/{research_case}/turns", json={"question": "more?"}).status_code == 400
+
+        # One question at a time: a second follow-up while one is still running is a 409.
+        from storage.repositories import create_case_turn
+
+        conn = init_db(db_path=db_path)
+        pending = create_case_turn(conn, case_id, "still running?")
+        conn.close()
+        assert test_client.post(url, json={"question": "next?"}).status_code == 409
+        assert test_client.get(f"/conversations/{case_id}/turns/{pending['turn_id']}").get_json()["status"] == "running"
+        assert test_client.get(f"/conversations/{research_case}/turns/{pending['turn_id']}").status_code == 404
+
+
+def test_follow_up_failure_is_recorded_on_the_turn_not_lost(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+
+    from web.app import answer_follow_up as real_answer_follow_up
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("provider exploded")
+
+    with app.test_client() as test_client:
+        case_id = _conversation(test_client, db_path)
+        monkeypatch.setattr("web.app.answer_follow_up", _boom)
+        turn_id = test_client.post(f"/conversations/{case_id}/turns", json={"question": "more?"}).get_json()["turn_id"]
+        status = _poll_turn(test_client, case_id, turn_id)
+        assert status["status"] == "error" and "provider exploded" in status["error"]
+        # The failed turn doesn't block asking again.
+        monkeypatch.setattr("web.app.answer_follow_up", real_answer_follow_up)
+        again = test_client.post(f"/conversations/{case_id}/turns", json={"question": "retry?"})
+        assert again.status_code == 202
+
+
+def test_a_conversation_that_is_not_finished_or_is_an_investigation_redirects_to_the_case_page(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    _failed_case(db_path, "case-f", origin="conversation")
+    _answered_case(db_path, "case-inv", thread_id="th-inv", origin="investigation")
+    with app.test_client() as test_client:
+        assert test_client.get("/conversations/case-f").headers["Location"].endswith("/cases/case-f")
+        assert test_client.get("/conversations/case-inv").headers["Location"].endswith("/cases/case-inv")

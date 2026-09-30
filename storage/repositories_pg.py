@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 
@@ -1295,6 +1296,50 @@ def soft_delete_research_cases_for_result(
     return rowcount
 
 
+def create_case_turn(conn: DBConnection, case_id: str, question: str) -> Row:
+    turn_id = uuid.uuid4().hex[:12]
+    with conn.cursor() as cur:
+        cur.execute("SELECT COALESCE(MAX(position), 0) + 1 AS n FROM case_turns WHERE case_id = %s", (case_id,))
+        position = cur.fetchone()["n"]
+        cur.execute(
+            "INSERT INTO case_turns (turn_id, case_id, position, question, status, created_at) "
+            "VALUES (%s, %s, %s, %s, 'in_progress', %s)",
+            (turn_id, case_id, position, question, _utcnow_iso()),
+        )
+    conn.commit()
+    return get_case_turn(conn, turn_id)
+
+
+def get_case_turn(conn: DBConnection, turn_id: str) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM case_turns WHERE turn_id = %s", (turn_id,))
+        return cur.fetchone()
+
+
+def list_case_turns(conn: DBConnection, case_id: str) -> list[Row]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM case_turns WHERE case_id = %s ORDER BY position", (case_id,))
+        return cur.fetchall()
+
+
+def complete_case_turn(conn: DBConnection, turn_id: str, answer: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE case_turns SET status = 'completed', answer = %s, completed_at = %s WHERE turn_id = %s",
+            (answer, _utcnow_iso(), turn_id),
+        )
+    conn.commit()
+
+
+def fail_case_turn(conn: DBConnection, turn_id: str, error_message: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE case_turns SET status = 'failed', error_message = %s, completed_at = %s WHERE turn_id = %s",
+            (error_message, _utcnow_iso(), turn_id),
+        )
+    conn.commit()
+
+
 def list_research_cases(conn: DBConnection, *, owner_id: int | None = None) -> list[Row]:
     sql = "SELECT * FROM research_cases WHERE deleted_at IS NULL"
     params: list = []
@@ -1411,6 +1456,7 @@ def delete_research_case(conn: DBConnection, case_id: str) -> bool:
     """See storage/repositories.py's sqlite counterpart for why this is a
     hard delete, unlike soft_delete_generated_report/soft_delete_investigation."""
     with conn.cursor() as cur:
+        cur.execute("DELETE FROM case_turns WHERE case_id = %s", (case_id,))
         cur.execute("DELETE FROM case_companies WHERE case_id = %s", (case_id,))
         cur.execute("DELETE FROM research_cases WHERE case_id = %s", (case_id,))
         rowcount = cur.rowcount
