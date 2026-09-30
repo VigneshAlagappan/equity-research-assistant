@@ -81,7 +81,7 @@
     </div>
     {% if threads %}
     <div>
-      <div style="font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent-bright);margin-bottom:8px">Pinned threads</div>
+      <div style="font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent-bright);margin-bottom:8px">Pinned cases</div>
       <div style="display:flex;flex-direction:column;gap:2px">
         {% for t in threads %}
         <a class="wl-thread-row" href="{{ t.href }}" style="display:block;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12.5px;line-height:1.4;color:var(--text-secondary);text-decoration:none">{{ t.title }}</a>
@@ -105,7 +105,7 @@
     {% if not wl.companies and not threads %}
     <div style="margin-top:24px;padding:28px 24px;text-align:center;color:var(--text-faint);background:var(--surface);border:1px dashed var(--border);border-radius:12px">
       Nothing pinned yet. Use the "Add to watchlist" button on a Company page
-      or a Research-thread page — or from the CLI:
+      or a case page — or from the CLI:
       <code style="background:var(--bg);padding:0.1rem 0.35rem;border-radius:4px">python main.py watchlist-add company HDFCBANK</code>.
     </div>
     {% else %}

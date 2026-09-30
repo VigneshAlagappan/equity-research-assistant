@@ -829,6 +829,48 @@ CREATE TABLE IF NOT EXISTS research_cases (
 CREATE INDEX IF NOT EXISTS idx_research_cases_owner ON research_cases(owner_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_research_cases_status ON research_cases(status);
 ALTER TABLE research_cases ADD COLUMN IF NOT EXISTS complexity_level INTEGER;
+ALTER TABLE research_cases ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'investigation';
+ALTER TABLE research_cases ADD COLUMN IF NOT EXISTS hidden_at TEXT;
+ALTER TABLE research_cases ADD COLUMN IF NOT EXISTS deleted_at TEXT;
+
+-- Cases / Conversations / Investigations model: research_cases is the one
+-- container every question runs through. `origin` is what the user sees it
+-- as (a Conversation = exploratory Ask AI/chat; an Investigation = structured
+-- research, depth given by complexity_level 1-5). hidden_at/deleted_at give
+-- cases the same reversible-hide / soft-delete every result table already has.
+-- case_companies is the canonical company-tag association (FK to companies,
+-- never free-text names): one case is ONE row here plus N tag rows, never
+-- duplicated per company. source records how the tag got there (auto =
+-- detected from the question, manual = added by the user), so re-detection
+-- can never clobber a user's own edits.
+CREATE TABLE IF NOT EXISTS case_companies (
+  case_id TEXT NOT NULL REFERENCES research_cases(case_id),
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  position INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'auto',   -- auto | manual
+  PRIMARY KEY (case_id, company_id)
+);
+CREATE INDEX IF NOT EXISTS idx_case_companies_company ON case_companies(company_id);
+
+-- Multi-turn Conversations: a Conversation is ONE case (origin='conversation');
+-- its first question/answer is the case's own (question + saved report), and
+-- every follow-up is a row here, ordered by position (1, 2, ...). Turns live
+-- under the case, never as separate cases, so history/company tags/hide/delete
+-- all stay one record. status mirrors a case's job state so a follow-up can run
+-- in the background the same way: in_progress | completed | failed.
+CREATE TABLE IF NOT EXISTS case_turns (
+  turn_id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL REFERENCES research_cases(case_id),
+  position INTEGER NOT NULL,
+  question TEXT NOT NULL,
+  answer TEXT,                       -- plain-text answer with [FACT]/[INFERENCE] tags, set on completion
+  status TEXT NOT NULL DEFAULT 'in_progress',
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  completed_at TEXT,
+  UNIQUE (case_id, position)
+);
+CREATE INDEX IF NOT EXISTS idx_case_turns_case ON case_turns(case_id, position);
 
 -- ============================================================
 -- Hypothesis-driven investigations (Steps 2E-2H, research/investigation.py)

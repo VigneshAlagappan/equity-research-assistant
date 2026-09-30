@@ -23,10 +23,10 @@
     </a>
     {% if not hide_nav_links %}
     <div class="site-header-links">
-      <a class="site-nav-link {{ 'current' if request.endpoint in ('research', 'research_thread') else '' }}" href="{{ url_for('research') }}">Research</a>
+      <a class="site-nav-link {{ 'current' if request.endpoint in ('research', 'research_thread') else '' }}" href="{{ url_for('research') }}">Investigate</a>
       <a class="site-nav-link {{ 'current' if request.endpoint in ('companies', 'company_report') else '' }}" href="{{ url_for('companies') }}">Companies</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'compare' else '' }}" href="{{ url_for('compare') }}">Compare</a>
-      <a class="site-nav-link {{ 'current' if request.endpoint == 'investigations' else '' }}" href="{{ url_for('investigations') }}">Investigations</a>
+      <a class="site-nav-link {{ 'current' if request.endpoint in ('cases', 'case_detail') else '' }}" href="{{ url_for('cases') }}">Cases</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'news' else '' }}" href="{{ url_for('news') }}">News</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'tools' else '' }}" href="{{ url_for('tools') }}">Tools</a>
       <a class="site-nav-link {{ 'current' if request.endpoint == 'watchlist' else '' }}" href="{{ url_for('watchlist') }}">Watchlist</a>
@@ -36,6 +36,7 @@
     {% endif %}
   </div>
   <div class="site-header-actions">
+    {% if not hide_search %}
     <div class="site-search" id="site-search">
       <svg class="site-search-icon" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
         <circle cx="7" cy="7" r="5.25"></circle>
@@ -44,6 +45,7 @@
       <input type="text" class="site-search-input" id="site-search-input" placeholder="Search companies…" autocomplete="off" aria-label="Search companies">
       <div class="site-search-results" id="site-search-results" hidden></div>
     </div>
+    {% endif %}
     <details class="profile-menu">
       <summary aria-label="Account menu">
         {% if g.user %}

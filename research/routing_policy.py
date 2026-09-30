@@ -192,6 +192,10 @@ class LevelOutcome:
     output_tokens: int = 0
     estimated_cost_usd: float = 0.0
     answer_reference: str | None = None
+    # The level that actually produced this answer -- can be higher than the one
+    # Jev classified when Level 1 escalated to Level 2. None where the producer
+    # doesn't set it.
+    level: int | None = None
 
 
 def _level1_retrieve(conn: DBConnection, question: str, company_ids: list[str], statement_type: str | None) -> LevelOutcome | None:
@@ -588,7 +592,7 @@ def attempt_deterministic_level(
     # answer_question()/run_investigation() traffic. run_id doubles as both
     # this row's and signals_routing_log's, so the two are correlatable.
     with execution_metrics.start_run(conn, run_id, "signals_fast_path", execution_mode="sync", jev_complexity_level=level):
-        outcome, _final_level, escalation_notes = _dispatch_levels_1_2(
+        outcome, answering_level, escalation_notes = _dispatch_levels_1_2(
             conn, question, company_ids, statement_type, level,
         )
         if outcome is None:
@@ -601,6 +605,7 @@ def attempt_deterministic_level(
             if timer is not None:
                 timer.status = "escalated"
             return None
+        outcome.level = int(answering_level)
         execution_metrics.current_run().status = outcome.execution_status
 
     audit = RoutingAudit(

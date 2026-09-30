@@ -234,6 +234,7 @@ def test_attempt_deterministic_level_answers_level1_with_no_llm_call(ingested_co
     assert outcome is not None
     assert "₹20,500.00 Cr" in outcome.answer
     assert outcome.execution_status == "answered"
+    assert outcome.level == 1  # the level that actually answered
 
 
 def test_attempt_deterministic_level_answers_level2_with_no_llm_call(ingested_conn, monkeypatch) -> None:
@@ -246,6 +247,7 @@ def test_attempt_deterministic_level_answers_level2_with_no_llm_call(ingested_co
     assert outcome is not None
     assert "%" in outcome.answer
     assert outcome.calculations_performed
+    assert outcome.level == 2
 
 
 def test_attempt_deterministic_level_persists_a_signals_routing_log_row(ingested_conn, monkeypatch) -> None:

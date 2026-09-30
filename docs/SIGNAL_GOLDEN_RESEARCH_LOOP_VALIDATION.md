@@ -276,10 +276,16 @@ Investigations section contains all three of its investigations, with cross-comp
             <div class="card-kicker">Deep Dive · also ICICIBANK</div>
 ```
 
+> **Update (2026-09-29):** the surfaces quoted above were later consolidated. The company page's
+> separate "Investigations" and "Threads" sections became one **Cases** section (`id="sec-cases"`)
+> backed by `case_companies` rather than `investigation_companies`, "Deep Dive" is now an
+> *Investigation* badge with its L1–L5 depth, and the "also …" kicker now reads "with …".
+> The record itself is unchanged: it is what was observed in this run.
+
 `GET /companies/INDUSINDBK` → 200 with `fe88a2289ada` present and tagged `as of 2013-03-31`.
 `GET /investigate/<id>` → 200 for all five (62–80 KB rendered). The global
-`/investigations` feed already listed structured investigations before this validation and
-continues to.
+`/investigations` feed (now the Cases list at `/cases`; `/investigations` redirects there) already listed
+structured investigations before this validation and continues to.
 
 ---
 
@@ -506,7 +512,7 @@ hypothesis, answer or workflow was added anywhere.
 | `storage/investigation_repository.py` | **New file.** `insert_investigation_companies`, `select_company_ids_for_investigation`, `select_investigations_for_company`, `count_investigation_hypotheses`, `select_investigations_missing_company_rows`, `backfill_investigation_companies`. |
 | `storage/repositories.py` | `save_investigation` now writes the associations in the same transaction and persists `as_of`. |
 | `storage/database.py` | `_migrate_investigations_as_of_column`, `_migrate_investigation_companies` (idempotent backfill from the legacy JSON column) wired into `init_db()`. |
-| `web/app.py` | Company route builds `company_investigations` through the join table. |
+| `web/app.py` | Company route builds `company_investigations` through the join table (as of 2026-09-29: `company_cases`, via `case_companies`). |
 | `web/templates/company.html` | **New "Investigations" section + tab entry**, with an "also &lt;other companies&gt;" kicker and an "as of" tag. |
 | `web/templates/investigation.html` | Renders "evidence as of &lt;date&gt;" when the investigation was point-in-time. |
 

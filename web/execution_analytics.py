@@ -41,8 +41,8 @@ MAX_SCATTER_POINTS = 3000
 
 TASK_LABELS = {
     "assistant_qa": "Ask AI",
-    "signals_report": "Generate full report",
-    "investigation": "Deep Dive investigation",
+    "signals_report": "Expanded investigation",
+    "investigation": "Investigation (L5)",
     "signals_fast_path": "Fast path (Level 1/2, no LLM)",
 }
 

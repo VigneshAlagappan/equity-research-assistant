@@ -7,6 +7,7 @@ fixtures rather than duplicating that isolation setup."""
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -60,7 +61,7 @@ def test_in_progress_case_appears_on_the_cases_list(tmp_path: Path, monkeypatch)
         assert start.status_code == 202
         case_id = start.get_json()["case_id"]
 
-        page = test_client.get("/investigations")
+        page = test_client.get("/cases")
         assert page.status_code == 200
         body = page.data.decode()
         assert "How did net profit change?" in body
@@ -103,7 +104,7 @@ def test_insufficient_data_case_completes_gracefully_and_stays_on_the_cases_list
         assert "No matching evidence" in final["result"]["answer_html"]
         assert len(captured) == 1  # only Jev's classification call, never a real answer call
 
-        page = test_client.get("/investigations")
+        page = test_client.get("/cases")
         body = page.data.decode()
         assert ">Insufficient data<" in body
 
@@ -132,33 +133,56 @@ def test_cancel_route_sets_the_cooperative_cancellation_flag(tmp_path: Path, mon
     conn.close()
 
 
-def test_case_delete_removes_a_failed_case(tmp_path: Path, monkeypatch) -> None:
-    """Real production bug (2026-09-27): investigations()'s "case" entries
-    (in_progress/failed/cancelled/insufficient_data research_cases rows --
-    see that route's own entries.append() call) always rendered a Delete
-    button pointing at case_delete(case_type='case', ...), but that route
-    only ever handled case_type in {'generated', 'structured'} -- clicking
-    Delete on a failed case always 400'd, "Unknown case_type: 'case'"."""
-    db_path = tmp_path / "signals_data.db"
-    init_db(db_path=db_path).close()
-    app = _build_app(db_path, tmp_path, monkeypatch)
-
+def _failed_case(db_path: Path, case_id: str, *, company_ids=(), origin="investigation") -> None:
     from storage.repositories import create_research_case, fail_research_case
 
     conn = init_db(db_path=db_path)
     create_research_case(
-        conn, "case-to-delete", kind="ask", question="q?", company_ids=[],
-        statement_type="consolidated", owner_id=None,
+        conn, case_id, kind="ask", question=f"question for {case_id}?", company_ids=list(company_ids),
+        statement_type="consolidated", owner_id=None, origin=origin,
     )
-    fail_research_case(conn, "case-to-delete", "boom")
+    fail_research_case(conn, case_id, "boom")
     conn.close()
 
-    with app.test_client() as test_client:
-        response = test_client.post("/cases/case/case-to-delete/delete")
-        assert response.status_code == 302
+
+def _answered_case(db_path: Path, case_id: str, *, thread_id: str, company_ids=("HDFCBANK",), origin="conversation") -> None:
+    """A finished case plus the saved report it points at, the shape every
+    real answered run leaves behind."""
+    from storage.repositories import complete_research_case, create_research_case, save_generated_report
 
     conn = init_db(db_path=db_path)
-    assert get_research_case(conn, "case-to-delete") is None
+    save_generated_report(conn, thread_id, f"q for {case_id}?", list(company_ids), "consolidated", "# Report\n\n**Confidence:** High\n")
+    create_research_case(
+        conn, case_id, kind="ask", question=f"q for {case_id}?", company_ids=list(company_ids),
+        statement_type="consolidated", owner_id=None, origin=origin,
+    )
+    complete_research_case(conn, case_id, outcome="answered", result_json="{}", thread_id=thread_id)
+    conn.close()
+
+
+def _seeded_db(tmp_path: Path) -> Path:
+    db_path = tmp_path / "signals_data.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    conn.close()
+    return db_path
+
+
+def test_case_delete_soft_deletes_a_failed_case_instead_of_erasing_it(tmp_path: Path, monkeypatch) -> None:
+    """Failed/cancelled cases used to be hard-deleted, unlike reports and
+    investigations. Every case is now archived the same way (deleted_at set,
+    row kept), so nothing a Delete click does destroys data."""
+    db_path = _seeded_db(tmp_path)
+    _failed_case(db_path, "case-to-delete")
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    with app.test_client() as test_client:
+        assert test_client.post("/cases/case-to-delete/delete").status_code == 302
+        assert "question for case-to-delete?" not in test_client.get("/cases").data.decode()
+
+    conn = init_db(db_path=db_path)
+    assert get_research_case(conn, "case-to-delete")["deleted_at"] is not None
     conn.close()
 
 
@@ -167,8 +191,143 @@ def test_case_delete_unknown_case_is_404(tmp_path: Path, monkeypatch) -> None:
     init_db(db_path=db_path).close()
     app = _build_app(db_path, tmp_path, monkeypatch)
     with app.test_client() as test_client:
-        response = test_client.post("/cases/case/not-a-real-case/delete")
-    assert response.status_code == 404
+        assert test_client.post("/cases/not-a-real-case/delete").status_code == 404
+        assert test_client.post("/cases/not-a-real-case/hide").status_code == 404
+
+
+def test_case_hide_toggles_and_cascades_to_the_saved_result(tmp_path: Path, monkeypatch) -> None:
+    db_path = _seeded_db(tmp_path)
+    _answered_case(db_path, "case-h", thread_id="th-h")
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    from storage.repositories import get_generated_report
+
+    with app.test_client() as test_client:
+        test_client.post("/cases/case-h/hide")
+        conn = init_db(db_path=db_path)
+        assert get_research_case(conn, "case-h")["hidden_at"] is not None
+        assert get_generated_report(conn, "th-h")["hidden_at"] is not None
+        conn.close()
+        assert "q for case-h?" not in test_client.get("/cases").data.decode()
+        assert "q for case-h?" in test_client.get("/cases?iv_hidden=1").data.decode()
+
+        test_client.post("/cases/case-h/hide")  # second click = Unhide
+        conn = init_db(db_path=db_path)
+        assert get_research_case(conn, "case-h")["hidden_at"] is None
+        assert get_generated_report(conn, "th-h")["hidden_at"] is None
+        conn.close()
+
+
+def test_case_bulk_action_hides_selected_cases_of_any_state(tmp_path: Path, monkeypatch) -> None:
+    """The Cases list's checkbox toolbar posts case_ids as one request. Hide
+    now works for every case -- including a failed one, which used to be
+    skipped because that table had no hidden_at column."""
+    db_path = _seeded_db(tmp_path)
+    _answered_case(db_path, "case-a", thread_id="th-a")
+    _failed_case(db_path, "case-f")
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    from storage.repositories import get_generated_report
+
+    with app.test_client() as test_client:
+        response = test_client.post("/cases/bulk-action", data={"bulk_action": "hide", "selected": ["case-a", "case-f"]})
+        assert response.status_code == 302
+
+    conn = init_db(db_path=db_path)
+    assert get_research_case(conn, "case-a")["hidden_at"] is not None
+    assert get_generated_report(conn, "th-a")["hidden_at"] is not None
+    assert get_research_case(conn, "case-f")["hidden_at"] is not None
+    conn.close()
+
+
+def test_case_bulk_action_deletes_selected_cases_and_their_results_without_erasing_rows(tmp_path: Path, monkeypatch) -> None:
+    db_path = _seeded_db(tmp_path)
+    _answered_case(db_path, "case-a", thread_id="th-a")
+    _failed_case(db_path, "case-f")
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    from storage.repositories import get_generated_report, list_generated_reports
+
+    with app.test_client() as test_client:
+        response = test_client.post("/cases/bulk-action", data={"bulk_action": "delete", "selected": ["case-a", "case-f", "nope"]})
+        assert response.status_code == 302
+
+    conn = init_db(db_path=db_path)
+    assert get_research_case(conn, "case-a")["deleted_at"] is not None
+    assert get_research_case(conn, "case-f")["deleted_at"] is not None
+    assert get_generated_report(conn, "th-a") is not None  # never erased...
+    assert "th-a" not in {r["thread_id"] for r in list_generated_reports(conn)}  # ...but no longer listed
+    conn.close()
+
+
+def test_cases_page_splits_conversations_from_investigations_and_labels_each(tmp_path: Path, monkeypatch) -> None:
+    db_path = _seeded_db(tmp_path)
+    _answered_case(db_path, "case-conv", thread_id="th-conv", origin="conversation")
+    _answered_case(db_path, "case-inv", thread_id="th-inv", origin="investigation")
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    with app.test_client() as test_client:
+        everything = test_client.get("/cases").data.decode()
+        conversations = test_client.get("/cases?iv_origin=conversation").data.decode()
+        investigations = test_client.get("/cases?iv_origin=investigation").data.decode()
+
+    assert "q for case-conv?" in everything and "q for case-inv?" in everything
+    assert ">Conversation<" in everything
+    assert "q for case-conv?" in conversations and "q for case-inv?" not in conversations
+    assert "q for case-inv?" in investigations and "q for case-conv?" not in investigations
+
+
+def test_company_page_lists_conversations_and_investigations_together_under_one_cases_header(tmp_path: Path, monkeypatch) -> None:
+    db_path = _seeded_db(tmp_path)
+    _answered_case(db_path, "case-conv", thread_id="th-conv", company_ids=("HDFCBANK",), origin="conversation")
+    _answered_case(db_path, "case-inv", thread_id="th-inv", company_ids=("HDFCBANK", "ICICIBANK"), origin="investigation")
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    with app.test_client() as test_client:
+        hdfc = test_client.get("/companies/HDFCBANK").data.decode()
+        icici = test_client.get("/companies/ICICIBANK").data.decode()
+
+    assert hdfc.count('id="sec-cases"') == 1
+    assert 'id="sec-investigations"' not in hdfc and 'id="sec-conversations"' not in hdfc
+    cases_html = hdfc.split('id="sec-cases"')[1]
+    # Both kinds in the one list, told apart by their badge; the shared case names its other company.
+    assert "q for case-conv?" in cases_html and "q for case-inv?" in cases_html
+    assert ">Conversation<" in cases_html and ">Investigation<" in cases_html
+    assert "with ICICI Bank" in cases_html
+    # The shared investigation is one record under ICICI too; the HDFC-only conversation is not.
+    assert "q for case-inv?" in icici and "q for case-conv?" not in icici
+
+
+def test_case_tag_routes_add_and_remove_registered_companies_only(tmp_path: Path, monkeypatch) -> None:
+    db_path = _seeded_db(tmp_path)
+    _answered_case(db_path, "case-t", thread_id="th-t", company_ids=("HDFCBANK",))
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    from storage.repositories import list_case_company_ids
+
+    with app.test_client() as test_client:
+        assert test_client.post("/cases/case-t/tags/add", data={"company_id": "ICICIBANK"}).status_code == 302
+        assert test_client.post("/cases/case-t/tags/add", data={"company_id": "NOT-A-COMPANY"}).status_code == 400
+        assert test_client.post("/cases/nope/tags/add", data={"company_id": "ICICIBANK"}).status_code == 404
+        conn = init_db(db_path=db_path)
+        assert list_case_company_ids(conn, "case-t") == ["HDFCBANK", "ICICIBANK"]
+        conn.close()
+        assert "q for case-t?" in test_client.get("/companies/ICICIBANK").data.decode()
+
+        assert test_client.post("/cases/case-t/tags/remove", data={"company_id": "HDFCBANK"}).status_code == 302
+        conn = init_db(db_path=db_path)
+        assert list_case_company_ids(conn, "case-t") == ["ICICIBANK"]
+        conn.close()
+        assert "q for case-t?" not in test_client.get("/companies/HDFCBANK").data.decode()
+
+
+def test_case_bulk_action_with_nothing_selected_is_a_harmless_no_op(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "signals_data.db"
+    init_db(db_path=db_path).close()
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        response = test_client.post("/cases/bulk-action", data={"bulk_action": "delete"})
+    assert response.status_code == 302
 
 
 def test_cancel_unknown_case_is_404(tmp_path: Path, monkeypatch) -> None:
@@ -390,3 +549,278 @@ def test_case_detail_unknown_case_is_404(tmp_path: Path, monkeypatch) -> None:
     with app.test_client() as test_client:
         response = test_client.get("/cases/not-a-real-case")
     assert response.status_code == 404
+
+
+def _seeded_app(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "signals_data.db"
+    conn = init_db(db_path=db_path)
+    ensure_metric_vocabulary(conn)
+    seed_companies(conn)
+    file_path = tmp_path / "HDFCBANK.xlsx"
+    _make_screener_workbook(file_path)
+    ingest_file(conn, file_path, company_id="HDFCBANK", source_id="screener")
+    conn.close()
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    monkeypatch.setattr("web.app.ANTHROPIC_API_KEY_SET", True)
+    _install_fake_llm(monkeypatch, text="Net profit rose. [FACT] x.")
+    return app, db_path
+
+
+def test_async_entry_points_tag_case_origin_and_auto_tag_the_company(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        ids = {}
+        for label, url in (("ask_ai", "/companies/HDFCBANK/ask-async"), ("chat", "/chat-async"), ("research", "/research/ask-async")):
+            response = test_client.post(url, json={"question": "How did net profit change?", "company_ids": ["HDFCBANK"]})
+            assert response.status_code == 202, (label, response.get_json())
+            ids[label] = response.get_json()["case_id"]
+            _poll_until_done(test_client, ids[label])
+
+    conn = init_db(db_path=db_path)
+    from storage.repositories import list_case_company_ids
+
+    assert get_research_case(conn, ids["ask_ai"])["origin"] == "conversation"
+    assert get_research_case(conn, ids["chat"])["origin"] == "conversation"
+    assert get_research_case(conn, ids["research"])["origin"] == "investigation"
+    assert list_case_company_ids(conn, ids["ask_ai"]) == ["HDFCBANK"]
+    conn.close()
+
+
+def test_sync_ask_routes_record_a_completed_case_with_the_right_origin(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        thread_id = test_client.post("/companies/HDFCBANK/ask", json={"question": "How did net profit change?"}).get_json()["thread_id"]
+        research_thread_id = test_client.post(
+            "/research/ask", json={"question": "Did revenue grow?", "company_ids": ["HDFCBANK"]}
+        ).get_json()["thread_id"]
+
+    conn = init_db(db_path=db_path)
+    rows = {r["thread_id"]: r for r in conn.execute("SELECT * FROM research_cases").fetchall()}
+    assert rows[thread_id]["origin"] == "conversation"
+    assert rows[research_thread_id]["origin"] == "investigation"
+    for row in rows.values():
+        assert row["status"] == "completed" and row["outcome"] == "answered"
+    conn.close()
+
+
+# ------------------------------------------------------------------
+# Multi-turn Conversations: /cases/<case_id> + follow-up turns
+# ------------------------------------------------------------------
+
+
+def _conversation(test_client, db_path) -> str:
+    """Asks the first question the way the Ask AI drawer does and waits for
+    it, returning the finished Conversation's case_id."""
+    start = test_client.post("/companies/HDFCBANK/ask-async", json={"question": "How did net profit change?"})
+    assert start.status_code == 202
+    case_id = start.get_json()["case_id"]
+    assert _poll_until_done(test_client, case_id)["status"] == "done"
+    return case_id
+
+
+def _poll_turn(test_client, case_id: str, turn_id: str, attempts: int = 200):
+    status = None
+    for _ in range(attempts):
+        status = test_client.get(f"/cases/{case_id}/turns/{turn_id}").get_json()
+        if status["status"] != "running":
+            return status
+        time.sleep(0.1)
+    return status
+
+
+def test_finished_ask_ai_case_opens_as_a_conversation_at_its_one_case_url(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        case_id = _conversation(test_client, db_path)
+        # The status payload tells the drawer where to continue: the case's one URL ...
+        status = test_client.get(f"/ask/status/{case_id}").get_json()
+        assert status["result"]["conversation_url"] == f"/cases/{case_id}"
+        # ... which renders the first exchange plus a composer, in place (no redirect) ...
+        page = test_client.get(f"/cases/{case_id}")
+        assert page.status_code == 200
+        body = page.data.decode()
+        assert "How did net profit change?" in body and 'id="convo-form"' in body
+        # ... the old thread URL for the same answer redirects there ...
+        old = test_client.get(status["result"]["thread_url"])
+        assert old.status_code == 301 and old.headers["Location"].endswith(f"/cases/{case_id}")
+        # ... and the Cases list links the row to it.
+        assert f'/cases/{case_id}"' in test_client.get("/cases").data.decode()
+
+
+def test_follow_up_turn_answers_with_the_conversation_as_context_and_persists(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        case_id = _conversation(test_client, db_path)
+        captured = _install_fake_llm(monkeypatch, text="It rose again. [FACT] y.")
+
+        response = test_client.post(f"/cases/{case_id}/turns", json={"question": "And the year before?"})
+        assert response.status_code == 202
+        turn_id = response.get_json()["turn_id"]
+        status = _poll_turn(test_client, case_id, turn_id)
+        assert status["status"] == "done" and "It rose again." in status["answer_html"]
+
+        sent = json.dumps(captured, default=str)
+        assert "Conversation so far" in sent and "How did net profit change?" in sent and "And the year before?" in sent
+
+        # A second follow-up sees the first follow-up too, and everything survives a reload.
+        second = test_client.post(f"/cases/{case_id}/turns", json={"question": "Why?"}).get_json()["turn_id"]
+        assert _poll_turn(test_client, case_id, second)["status"] == "done"
+        assert "And the year before?" in json.dumps(captured, default=str)
+        body = test_client.get(f"/cases/{case_id}").data.decode()
+        assert body.index("How did net profit change?") < body.index("And the year before?") < body.index("Why?")
+
+    conn = init_db(db_path=db_path)
+    from storage.repositories import list_case_turns
+
+    assert [(t["position"], t["status"]) for t in list_case_turns(conn, case_id)] == [(1, "completed"), (2, "completed")]
+    conn.close()
+
+
+def test_follow_up_validation_and_guards(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        case_id = _conversation(test_client, db_path)
+        url = f"/cases/{case_id}/turns"
+        assert test_client.post(url, json={"question": "  "}).status_code == 400
+        assert test_client.post(url, json={"question": "Should I buy this stock now?"}).status_code == 400
+        assert test_client.post("/cases/nope/turns", json={"question": "hi?"}).status_code == 404
+        assert test_client.get("/cases/nope").status_code == 404
+
+        # Only a Conversation takes follow-ups; an Investigation-origin case doesn't.
+        research_case = test_client.post(
+            "/research/ask-async", json={"question": "How did net profit change?", "company_ids": ["HDFCBANK"]},
+        ).get_json()["case_id"]
+        _poll_until_done(test_client, research_case)
+        assert test_client.post(f"/cases/{research_case}/turns", json={"question": "more?"}).status_code == 400
+
+        # One question at a time: a second follow-up while one is still running is a 409.
+        from storage.repositories import create_case_turn
+
+        conn = init_db(db_path=db_path)
+        pending = create_case_turn(conn, case_id, "still running?")
+        conn.close()
+        assert test_client.post(url, json={"question": "next?"}).status_code == 409
+        assert test_client.get(f"/cases/{case_id}/turns/{pending['turn_id']}").get_json()["status"] == "running"
+        assert test_client.get(f"/cases/{research_case}/turns/{pending['turn_id']}").status_code == 404
+
+
+def test_follow_up_failure_is_recorded_on_the_turn_not_lost(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+
+    from web.app import answer_follow_up as real_answer_follow_up
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("provider exploded")
+
+    with app.test_client() as test_client:
+        case_id = _conversation(test_client, db_path)
+        monkeypatch.setattr("web.app.answer_follow_up", _boom)
+        turn_id = test_client.post(f"/cases/{case_id}/turns", json={"question": "more?"}).get_json()["turn_id"]
+        status = _poll_turn(test_client, case_id, turn_id)
+        assert status["status"] == "error" and "provider exploded" in status["error"]
+        # The failed turn doesn't block asking again.
+        monkeypatch.setattr("web.app.answer_follow_up", real_answer_follow_up)
+        again = test_client.post(f"/cases/{case_id}/turns", json={"question": "retry?"})
+        assert again.status_code == 202
+
+
+def test_case_page_shows_progress_for_unfinished_and_the_result_for_non_conversations(tmp_path: Path, monkeypatch) -> None:
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    _failed_case(db_path, "case-f", origin="conversation")
+    _answered_case(db_path, "case-inv", thread_id="th-inv", origin="investigation")
+    with app.test_client() as test_client:
+        failed = test_client.get("/cases/case-f")
+        assert failed.status_code == 200 and b"boom" in failed.data and b'id="convo-form"' not in failed.data
+        # An answered case that isn't a Conversation shows its saved answer, with no follow-up composer.
+        answered = test_client.get("/cases/case-inv")
+        assert answered.status_code == 200 and b'id="convo-form"' not in answered.data
+        assert b"q for case-inv?" in answered.data
+
+
+def test_old_result_urls_redirect_to_the_case_but_caseless_and_deleted_ones_are_served_as_before(tmp_path: Path, monkeypatch) -> None:
+    db_path = _seeded_db(tmp_path)
+    _answered_case(db_path, "case-a", thread_id="th-a", origin="investigation")
+    _answered_case(db_path, "case-gone", thread_id="th-gone", origin="investigation")
+
+    from storage.repositories import (
+        complete_research_case, create_research_case, save_investigation, soft_delete_research_case,
+    )
+
+    conn = init_db(db_path=db_path)
+    save_investigation(
+        conn, investigation_id="inv-1", question="why?", company_ids=["HDFCBANK"], statement_type="consolidated",
+        strongest_explanation="Because.", unanswered_questions=[], additional_evidence_needed=[],
+    )
+    create_research_case(
+        conn, "inv-1", kind="investigation", question="why?", company_ids=["HDFCBANK"],
+        statement_type="consolidated", owner_id=None,
+    )
+    complete_research_case(conn, "inv-1", outcome="answered", result_json="{}", investigation_id="inv-1")
+    soft_delete_research_case(conn, "case-gone")
+    conn.close()
+    app = _build_app(db_path, tmp_path, monkeypatch)
+
+    with app.test_client() as test_client:
+        thread = test_client.get("/research/thread/th-a")
+        assert thread.status_code == 301 and thread.headers["Location"].endswith("/cases/case-a")
+        investigation = test_client.get("/investigate/inv-1")
+        assert investigation.status_code == 301 and investigation.headers["Location"].endswith("/cases/inv-1")
+        assert test_client.get("/cases/inv-1").status_code == 200  # renders the investigation in place
+        # A thread whose case was deleted is still served at its old URL, as before.
+        assert test_client.get("/research/thread/th-gone").status_code == 200
+        assert test_client.get("/cases/case-gone").status_code == 404
+        # A thread id with no case and no row falls through to the old behavior (404), not a redirect loop.
+        assert test_client.get("/research/thread/no-such-thread").status_code == 404
+
+
+def _ask_with_classification(tmp_path: Path, monkeypatch, *, classified: int, deterministic):
+    """Runs one Ask AI question whose Jev classification and deterministic
+    (Level 1/2) outcome are both fixed, returns (case row, saved report)."""
+    from types import SimpleNamespace
+
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    monkeypatch.setattr("web.app.classify_and_log", lambda db, question, company_ids: SimpleNamespace(level=classified))
+    monkeypatch.setattr("web.app.attempt_deterministic_level", lambda *a, **kw: deterministic)
+    with app.test_client() as test_client:
+        case_id = test_client.post(
+            "/companies/HDFCBANK/ask-async", json={"question": "How did net profit change?"}
+        ).get_json()["case_id"]
+        assert _poll_until_done(test_client, case_id)["status"] == "done"
+
+    from storage.repositories import get_generated_report
+
+    conn = init_db(db_path=db_path)
+    case = get_research_case(conn, case_id)
+    report = get_generated_report(conn, case["thread_id"])
+    conn.close()
+    return case, report
+
+
+def test_a_level_2_case_that_escalates_to_the_llm_path_is_retagged_level_3(tmp_path: Path, monkeypatch) -> None:
+    """Jev said Level 2 (Calculate), but the deterministic path couldn't
+    resolve it and the LLM answered -- so the case and its saved answer say L3,
+    not a "Calculate" badge on an answer with inference and a confidence line."""
+    case, report = _ask_with_classification(tmp_path, monkeypatch, classified=2, deterministic=None)
+    assert case["complexity_level"] == 3 and report["complexity_level"] == 3
+
+
+def test_a_level_1_case_answered_by_level_2_is_tagged_level_2(tmp_path: Path, monkeypatch) -> None:
+    from research.routing_policy import LevelOutcome
+
+    outcome = LevelOutcome(answer="Net profit grew 7.39%.", level=2)
+    case, report = _ask_with_classification(tmp_path, monkeypatch, classified=1, deterministic=outcome)
+    assert case["complexity_level"] == 2 and report["complexity_level"] == 2
+
+
+def test_a_level_2_case_answered_deterministically_stays_level_2(tmp_path: Path, monkeypatch) -> None:
+    from research.routing_policy import LevelOutcome
+
+    case, report = _ask_with_classification(
+        tmp_path, monkeypatch, classified=2, deterministic=LevelOutcome(answer="Net profit grew 7.39%.", level=2),
+    )
+    assert case["complexity_level"] == 2 and report["complexity_level"] == 2
+
+
+def test_a_level_3_case_is_never_retagged(tmp_path: Path, monkeypatch) -> None:
+    case, report = _ask_with_classification(tmp_path, monkeypatch, classified=3, deterministic=None)
+    assert case["complexity_level"] == 3 and report["complexity_level"] == 3

@@ -294,15 +294,15 @@ def test_answer_question_auto_routes_without_an_explicit_model(
     comes from _select_model, applied to whatever evidence this question
     actually retrieves — not a hardcoded tier, since the exact evidence
     count depends on the ingestion fixture. _select_model's return
-    (TIER_PREFERRED_MODEL, currently OpenRouter for every tier) is only
-    actually reached when that model is enabled, hence _enable_openrouter."""
+    (TIER_PREFERRED_MODEL, currently Haiku for every tier, config/settings.py
+    as of 2026-09-28) is what the Anthropic client should actually be called
+    with, so that's the client faked here."""
     from research.documents import get_document_evidence
     from retrieval.structured_search import get_comparison_evidence
 
     monkeypatch.setattr("config.settings.ANTHROPIC_MODEL", None)
     monkeypatch.setattr("research.assistant.ANTHROPIC_MODEL", None)
-    _enable_openrouter(monkeypatch)
-    captured = _install_fake_openrouter_client(monkeypatch)
+    captured = _install_fake_client(monkeypatch)
     question = "What was net profit in FY2024?"
 
     answer_question(ingested_conn, question, ["HDFCBANK"])

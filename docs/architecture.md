@@ -1147,7 +1147,7 @@ the full detail): Jev decides *dispatch* — whether a question goes to the
 single-pass `research/assistant.py::answer_question()` pipeline ("ask",
 Levels 1-4) or the investigation pipeline ("investigation", Level 5) — and
 every resulting `research_cases`/`generated_reports`/`investigations` row is
-tagged with its Jev level, shown and filterable on the Cases (`/investigations`)
+tagged with its Jev level, shown and filterable on the Cases (`/cases`)
 list. The Level 1/2 deterministic short-circuits *are* live: a single-company
 Level 1/2 question goes through `attempt_deterministic_level()` first and is
 answered from `canonical_financials` with no LLM call (falling through to
@@ -1276,7 +1276,7 @@ Single-file Flask app (`create_app()` factory), organized by feature area:
 - **Research** (`/`, `/research/ask`, `/research/thread/generate`,
   `/research/thread/<id>`): the Ask-AI and Signals-investigation entry
   points, calling `research/assistant.py` / `research/signals_report.py`.
-- **Investigations** (`/investigations`): list view over `generated_reports`.
+- **Cases** (`/cases`): the single history list over `research_cases` (Conversations and Investigations, company tags via `case_companies`).
 - **Watchlist**, **Settings** (`/settings` — theme, plus an Administration
   group that now hosts what used to be the standalone Admin page: company
   metadata edits, raw-file import, stock actions, vocabulary

@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 
@@ -1212,17 +1213,193 @@ def _insert_investigation_companies_pg(conn: DBConnection, investigation_id: str
 def create_research_case(
     conn: DBConnection, case_id: str, *, kind: str, question: str, company_ids: list[str],
     statement_type: str, owner_id: int | None, complexity_level: int | None = None,
+    origin: str = "investigation",
 ) -> Row:
     now = _utcnow_iso()
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO research_cases (case_id, kind, question, company_ids, statement_type, status, "
-            "current_activity, owner_id, started_at, updated_at, complexity_level) "
-            "VALUES (%s, %s, %s, %s, %s, 'in_progress', 'Queued', %s, %s, %s, %s)",
-            (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now, complexity_level),
+            "current_activity, owner_id, started_at, updated_at, complexity_level, origin) "
+            "VALUES (%s, %s, %s, %s, %s, 'in_progress', 'Queued', %s, %s, %s, %s, %s)",
+            (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now, complexity_level, origin),
         )
+        for position, company_id in enumerate(company_ids):
+            _insert_case_company(cur, case_id, company_id, position, "auto")
     conn.commit()
     return get_research_case(conn, case_id)
+
+
+def _insert_case_company(cur, case_id: str, company_id: str, position: int, source: str) -> bool:
+    """Only tags a registered company (FK to companies) -- see the sqlite
+    counterpart in storage/repositories.py."""
+    cur.execute(
+        "INSERT INTO case_companies (case_id, company_id, position, source) "
+        "SELECT %s, company_id, %s, %s FROM companies WHERE company_id = %s "
+        "ON CONFLICT (case_id, company_id) DO NOTHING",
+        (case_id, position, source, company_id),
+    )
+    return cur.rowcount > 0
+
+
+def add_case_company(conn: DBConnection, case_id: str, company_id: str, *, source: str = "manual") -> bool:
+    if get_research_case(conn, case_id) is None:
+        return False
+    with conn.cursor() as cur:
+        cur.execute("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM case_companies WHERE case_id = %s", (case_id,))
+        position = cur.fetchone()["n"]
+        _insert_case_company(cur, case_id, company_id, position, source)
+        cur.execute("SELECT 1 FROM case_companies WHERE case_id = %s AND company_id = %s", (case_id, company_id))
+        tagged = cur.fetchone() is not None
+    conn.commit()
+    return tagged
+
+
+def remove_case_company(conn: DBConnection, case_id: str, company_id: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM case_companies WHERE case_id = %s AND company_id = %s", (case_id, company_id))
+        rowcount = cur.rowcount
+    conn.commit()
+    return rowcount > 0
+
+
+def list_case_company_ids(conn: DBConnection, case_id: str) -> list[str]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT company_id FROM case_companies WHERE case_id = %s ORDER BY position, company_id", (case_id,))
+        return [row["company_id"] for row in cur.fetchall()]
+
+
+def list_cases_for_company(conn: DBConnection, company_id: str, *, owner_id: int | None = None) -> list[Row]:
+    sql = (
+        "SELECT rc.* FROM research_cases rc JOIN case_companies cc ON cc.case_id = rc.case_id "
+        "WHERE cc.company_id = %s AND rc.deleted_at IS NULL AND rc.hidden_at IS NULL"
+    )
+    params: list = [company_id]
+    if owner_id is not None:
+        sql += " AND rc.owner_id = %s"
+        params.append(owner_id)
+    with conn.cursor() as cur:
+        cur.execute(sql + " ORDER BY rc.started_at DESC", params)
+        return cur.fetchall()
+
+
+def soft_delete_research_cases_for_result(
+    conn: DBConnection, *, thread_id: str | None = None, investigation_id: str | None = None
+) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE research_cases SET deleted_at = %s WHERE deleted_at IS NULL AND "
+            "((%s IS NOT NULL AND thread_id = %s) OR (%s IS NOT NULL AND investigation_id = %s))",
+            (_utcnow_iso(), thread_id, thread_id, investigation_id, investigation_id),
+        )
+        rowcount = cur.rowcount
+    conn.commit()
+    return rowcount
+
+
+def create_case_turn(conn: DBConnection, case_id: str, question: str) -> Row:
+    turn_id = uuid.uuid4().hex[:12]
+    with conn.cursor() as cur:
+        cur.execute("SELECT COALESCE(MAX(position), 0) + 1 AS n FROM case_turns WHERE case_id = %s", (case_id,))
+        position = cur.fetchone()["n"]
+        cur.execute(
+            "INSERT INTO case_turns (turn_id, case_id, position, question, status, created_at) "
+            "VALUES (%s, %s, %s, %s, 'in_progress', %s)",
+            (turn_id, case_id, position, question, _utcnow_iso()),
+        )
+    conn.commit()
+    return get_case_turn(conn, turn_id)
+
+
+def get_case_turn(conn: DBConnection, turn_id: str) -> Row | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM case_turns WHERE turn_id = %s", (turn_id,))
+        return cur.fetchone()
+
+
+def list_case_turns(conn: DBConnection, case_id: str) -> list[Row]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM case_turns WHERE case_id = %s ORDER BY position", (case_id,))
+        return cur.fetchall()
+
+
+def complete_case_turn(conn: DBConnection, turn_id: str, answer: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE case_turns SET status = 'completed', answer = %s, completed_at = %s WHERE turn_id = %s",
+            (answer, _utcnow_iso(), turn_id),
+        )
+    conn.commit()
+
+
+def fail_case_turn(conn: DBConnection, turn_id: str, error_message: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE case_turns SET status = 'failed', error_message = %s, completed_at = %s WHERE turn_id = %s",
+            (error_message, _utcnow_iso(), turn_id),
+        )
+    conn.commit()
+
+
+def get_research_case_for_result(
+    conn: DBConnection, *, thread_id: str | None = None, investigation_id: str | None = None
+) -> Row | None:
+    if thread_id:
+        sql, param = "SELECT * FROM research_cases WHERE thread_id = %s AND deleted_at IS NULL", thread_id
+    elif investigation_id:
+        sql, param = "SELECT * FROM research_cases WHERE investigation_id = %s AND deleted_at IS NULL", investigation_id
+    else:
+        return None
+    with conn.cursor() as cur:
+        cur.execute(sql, (param,))
+        return cur.fetchone()
+
+
+def list_research_cases(conn: DBConnection, *, owner_id: int | None = None) -> list[Row]:
+    sql = "SELECT * FROM research_cases WHERE deleted_at IS NULL"
+    params: list = []
+    if owner_id is not None:
+        sql += " AND owner_id = %s"
+        params.append(owner_id)
+    with conn.cursor() as cur:
+        cur.execute(sql + " ORDER BY started_at DESC", params)
+        return cur.fetchall()
+
+
+def list_case_tags(conn: DBConnection) -> dict[str, list[str]]:
+    tags: dict[str, list[str]] = {}
+    with conn.cursor() as cur:
+        cur.execute("SELECT case_id, company_id FROM case_companies ORDER BY case_id, position, company_id")
+        for row in cur.fetchall():
+            tags.setdefault(row["case_id"], []).append(row["company_id"])
+    return tags
+
+
+def update_case_complexity_level(conn: DBConnection, case_id: str, level: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute("UPDATE research_cases SET complexity_level = %s WHERE case_id = %s", (level, case_id))
+    conn.commit()
+
+
+def _set_case_timestamp(conn: DBConnection, sql: str, params: tuple) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        rowcount = cur.rowcount
+    conn.commit()
+    return rowcount > 0
+
+
+def hide_research_case(conn: DBConnection, case_id: str) -> bool:
+    return _set_case_timestamp(
+        conn, "UPDATE research_cases SET hidden_at = %s WHERE case_id = %s AND deleted_at IS NULL", (_utcnow_iso(), case_id)
+    )
+
+
+def unhide_research_case(conn: DBConnection, case_id: str) -> bool:
+    return _set_case_timestamp(conn, "UPDATE research_cases SET hidden_at = NULL WHERE case_id = %s", (case_id,))
+
+
+def soft_delete_research_case(conn: DBConnection, case_id: str) -> bool:
+    return _set_case_timestamp(conn, "UPDATE research_cases SET deleted_at = %s WHERE case_id = %s", (_utcnow_iso(), case_id))
 
 
 def get_research_case(conn: DBConnection, case_id: str) -> Row | None:
@@ -1299,6 +1476,8 @@ def delete_research_case(conn: DBConnection, case_id: str) -> bool:
     """See storage/repositories.py's sqlite counterpart for why this is a
     hard delete, unlike soft_delete_generated_report/soft_delete_investigation."""
     with conn.cursor() as cur:
+        cur.execute("DELETE FROM case_turns WHERE case_id = %s", (case_id,))
+        cur.execute("DELETE FROM case_companies WHERE case_id = %s", (case_id,))
         cur.execute("DELETE FROM research_cases WHERE case_id = %s", (case_id,))
         rowcount = cur.rowcount
     conn.commit()
