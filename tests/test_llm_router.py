@@ -56,23 +56,36 @@ def test_quick_tier_falls_back_to_haiku_when_openrouter_unconfigured(monkeypatch
     assert result.fallback_used is False
 
 
-def test_quick_tier_prefers_openrouter_when_configured(monkeypatch) -> None:
-    """With OPENROUTER_API_KEY configured (_enable_openrouter), "quick"'s
-    hand-specified chain actually reaches OpenRouter first, ahead of Haiku."""
+def test_quick_tier_tries_haiku_first_then_openrouter_when_configured(monkeypatch) -> None:
+    """"quick"'s hand-specified chain (config.settings.TIER_FALLBACK_CHAIN_OVERRIDE,
+    Haiku -> OpenRouter -> local) reaches Haiku first even with OpenRouter
+    enabled -- OpenRouter is only the fallback if Haiku is unavailable."""
     model_id = _enable_openrouter(monkeypatch)
-    monkeypatch.setattr(
-        "llm.router.openrouter_provider.generate",
-        lambda **kw: _response(kw["model"], "openrouter"),
-    )
-    monkeypatch.setattr(
-        "llm.router.anthropic_provider.generate",
-        lambda **kw: _response(kw["model"], "anthropic"),
-    )
+    calls: list[str] = []
+
+    def anthropic_generate(**kw):
+        calls.append("anthropic")
+        return _response(kw["model"], "anthropic")
+
+    def openrouter_generate(**kw):
+        calls.append("openrouter")
+        return _response(kw["model"], "openrouter")
+
+    monkeypatch.setattr("llm.router.anthropic_provider.generate", anthropic_generate)
+    monkeypatch.setattr("llm.router.openrouter_provider.generate", openrouter_generate)
 
     result = route(system="s", user_message="u", hardness=fixed(Tier.QUICK, "test"), max_tokens=100)
-
-    assert result.response.model == model_id
+    assert result.response.model == "claude-haiku-4-5"
     assert result.fallback_used is False
+    assert calls == ["anthropic"]
+
+    def anthropic_down(**kw):
+        raise ProviderUnavailable("overloaded")
+
+    monkeypatch.setattr("llm.router.anthropic_provider.generate", anthropic_down)
+    result = route(system="s", user_message="u", hardness=fixed(Tier.QUICK, "test"), max_tokens=100)
+    assert result.response.model == model_id
+    assert result.fallback_used is True
 
 
 def test_deep_tier_falls_back_to_sonnet_when_openrouter_unconfigured(monkeypatch) -> None:
@@ -92,10 +105,11 @@ def test_deep_tier_falls_back_to_sonnet_when_openrouter_unconfigured(monkeypatch
     assert all(a.model != "claude-opus-5" for a in result.attempts)
 
 
-def test_deep_tier_prefers_openrouter_when_configured(monkeypatch) -> None:
-    """With OPENROUTER_API_KEY configured (_enable_openrouter), DEEP's
-    configured preferred model (config.settings.TIER_PREFERRED_MODEL) is
-    actually reached, ahead of Sonnet."""
+def test_deep_tier_uses_sonnet_before_openrouter_when_configured(monkeypatch) -> None:
+    """DEEP's eligible models are those meeting its minimum reasoning
+    strength -- Haiku is excluded, and of the rest Sonnet is the configured
+    preferred cloud model, so OpenRouter (also eligible) is only the
+    fallback behind it."""
     model_id = _enable_openrouter(monkeypatch)
     monkeypatch.setattr(
         "llm.router.openrouter_provider.generate",
@@ -107,9 +121,17 @@ def test_deep_tier_prefers_openrouter_when_configured(monkeypatch) -> None:
     )
 
     result = route(system="s", user_message="u", hardness=fixed(Tier.DEEP, "test"), max_tokens=100)
-
-    assert result.response.model == model_id
+    assert result.response.model == "claude-sonnet-5"
     assert result.fallback_used is False
+    assert all(a.model != "claude-haiku-4-5" or a.outcome == "skipped_insufficient_reasoning" for a in result.attempts)
+
+    def sonnet_down(**kw):
+        raise ProviderUnavailable("overloaded")
+
+    monkeypatch.setattr("llm.router.anthropic_provider.generate", sonnet_down)
+    result = route(system="s", user_message="u", hardness=fixed(Tier.DEEP, "test"), max_tokens=100)
+    assert result.response.model == model_id
+    assert result.fallback_used is True
 
 
 # ------------------------------------------------------------------
@@ -118,27 +140,28 @@ def test_deep_tier_prefers_openrouter_when_configured(monkeypatch) -> None:
 
 
 def test_preferred_model_unavailable_falls_back_to_next_cloud_model(monkeypatch) -> None:
-    """STANDARD's preferred model is OPENROUTER_MODEL_ID (config.settings.
-    TIER_PREFERRED_MODEL, as of 2026-09-27, via _enable_openrouter) — when
-    it's unavailable, the next-strongest eligible cloud model (Sonnet,
-    reasoning_strength=4) is the real same-tier cloud fallback to exercise
-    here, not Haiku (reasoning_strength=2, sorts after Sonnet)."""
-    model_id = _enable_openrouter(monkeypatch)
+    """STANDARD's preferred model is Haiku (config.settings.TIER_PREFERRED_MODEL,
+    as of 2026-09-28) -- when it's unavailable, the next-strongest eligible
+    cloud model (Sonnet, reasoning_strength=4) is the real same-tier fallback,
+    ahead of OpenRouter (same strength, but not Anthropic's own)."""
+    _enable_openrouter(monkeypatch)
 
-    def fake_openrouter_generate(**kw):
-        raise ProviderUnavailable("rate limited")
+    def anthropic_generate(**kw):
+        if kw["model"] == "claude-haiku-4-5":
+            raise ProviderUnavailable("rate limited")
+        return _response(kw["model"], "anthropic")
 
-    monkeypatch.setattr("llm.router.openrouter_provider.generate", fake_openrouter_generate)
+    monkeypatch.setattr("llm.router.anthropic_provider.generate", anthropic_generate)
     monkeypatch.setattr(
-        "llm.router.anthropic_provider.generate",
-        lambda **kw: _response(kw["model"], "anthropic"),
+        "llm.router.openrouter_provider.generate",
+        lambda **kw: _response(kw["model"], "openrouter"),
     )
 
     result = route(system="s", user_message="u", hardness=fixed(Tier.STANDARD, "test"), max_tokens=100)
 
     assert result.response.model == "claude-sonnet-5"
     assert result.fallback_used is True
-    assert any(a.model == model_id and a.outcome == "unavailable" for a in result.attempts)
+    assert any(a.model == "claude-haiku-4-5" and a.outcome == "unavailable" for a in result.attempts)
 
 
 def test_all_cloud_unavailable_falls_back_to_local(monkeypatch) -> None:
