@@ -282,6 +282,7 @@ from web.live_quote import get_live_quote, peek_cached_quote
 from web.news import fetch_company_news, google_news_last_24h_url
 from web.rich_text import sanitize_note_html
 from web.charts_feed import build_charts_feed
+from web.derived_feed_store import get_or_build as get_or_build_derived_feed
 from web.valuation_feed import build_valuation_feed
 import web.watchlist_feed as watchlist_feed
 from web.watchlist_feed import build_watchlist_view, list_watchlist_activity
@@ -2700,7 +2701,12 @@ def create_app() -> Flask:
         db = get_db()
         if get_company(db, company_id) is None:
             abort(404, f"No company registered with company_id={company_id!r}")
-        return jsonify(build_valuation_feed(db, company_id, statement_type=statement_type))
+        return jsonify(
+            get_or_build_derived_feed(
+                db, company_id, "valuation", statement_type, "annual",
+                lambda: build_valuation_feed(db, company_id, statement_type=statement_type),
+            )
+        )
 
     @app.route("/companies/<company_id>/charts-feed.json")
     def company_charts_feed(company_id: str):
@@ -2713,9 +2719,14 @@ def create_app() -> Flask:
         db = get_db()
         if get_company(db, company_id) is None:
             abort(404, f"No company registered with company_id={company_id!r}")
+        price_db = get_price_db()
         return jsonify(
-            build_charts_feed(
-                db, company_id, statement_type=statement_type, period_type=period_type, price_conn=get_price_db()
+            get_or_build_derived_feed(
+                db, company_id, "charts", statement_type, period_type,
+                lambda: build_charts_feed(
+                    db, company_id, statement_type=statement_type, period_type=period_type, price_conn=price_db
+                ),
+                price_conn=price_db,
             )
         )
 

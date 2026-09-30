@@ -4312,3 +4312,71 @@ def economic_observation_vintages(conn: sqlite3.Connection, series_id: int, peri
         """,
         (series_id, period),
     ).fetchall()
+
+
+# ------------------------------------------------------------------
+# derived_financial_feeds -- stored, calculated Financials/Charts feeds
+# (see web/derived_feed_store.py and schemas/sqlite_schema.sql).
+# ------------------------------------------------------------------
+
+
+def get_feed_fingerprint_inputs(conn: sqlite3.Connection, company_id: str) -> dict:
+    """The stored-data inputs a derived feed depends on: the latest shares
+    outstanding on file, plus change markers for canonical_financials and
+    corporate_actions (row count + newest marker)."""
+    shares = conn.execute(
+        "SELECT canonical_value FROM canonical_financials WHERE company_id = ? AND metric_key = 'shares_outstanding' "
+        "ORDER BY fiscal_year DESC, quarter DESC LIMIT 1",
+        (company_id,),
+    ).fetchone()
+    fin = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(decided_at) AS newest FROM canonical_financials WHERE company_id = ?", (company_id,)
+    ).fetchone()
+    actions = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(action_id) AS newest FROM corporate_actions WHERE company_id = ?", (company_id,)
+    ).fetchone()
+    return {
+        "shares": shares["canonical_value"] if shares else None,
+        "fin_count": fin["n"], "fin_newest": fin["newest"],
+        "ca_count": actions["n"], "ca_newest": actions["newest"],
+    }
+
+
+def get_derived_feed(
+    conn: sqlite3.Connection, company_id: str, feed_kind: str, statement_type: str, period_type: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT fingerprint, payload FROM derived_financial_feeds "
+        "WHERE company_id = ? AND feed_kind = ? AND statement_type = ? AND period_type = ?",
+        (company_id, feed_kind, statement_type, period_type),
+    ).fetchone()
+
+
+def upsert_derived_feed(
+    conn: sqlite3.Connection, company_id: str, feed_kind: str, statement_type: str, period_type: str,
+    fingerprint: str, payload: str, now: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO derived_financial_feeds (company_id, feed_kind, statement_type, period_type, fingerprint, payload, computed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(company_id, feed_kind, statement_type, period_type) DO UPDATE SET
+          fingerprint = excluded.fingerprint, payload = excluded.payload, computed_at = excluded.computed_at
+        """,
+        (company_id, feed_kind, statement_type, period_type, fingerprint, payload, now),
+    )
+    conn.commit()
+
+
+def ensure_derived_feeds_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS derived_financial_feeds (
+          company_id TEXT NOT NULL REFERENCES companies(company_id),
+          feed_kind TEXT NOT NULL, statement_type TEXT NOT NULL, period_type TEXT NOT NULL,
+          fingerprint TEXT NOT NULL, payload TEXT NOT NULL, computed_at TEXT NOT NULL,
+          PRIMARY KEY (company_id, feed_kind, statement_type, period_type)
+        )
+        """
+    )
+    conn.commit()

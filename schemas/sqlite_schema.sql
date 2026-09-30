@@ -1591,3 +1591,24 @@ CREATE TABLE IF NOT EXISTS economic_observations (
 );
 CREATE INDEX IF NOT EXISTS idx_economic_observations_series_period ON economic_observations(series_id, period);
 CREATE INDEX IF NOT EXISTS idx_economic_observations_release ON economic_observations(series_id, release_date);
+
+-- ============================================================
+-- Derived (calculated) financial feeds -- the finished Financials/Charts
+-- JSON (restated per-share rows, dividend fill, ratios) stored per company
+-- so a page load is one primary-key read instead of hundreds of queries.
+-- Calculated, NOT facts: kept apart from canonical_financials on purpose.
+-- `fingerprint` captures every input the payload depends on (calc version,
+-- latest shares outstanding, canonical_financials / corporate_actions
+-- change markers, company classification, latest price date); a mismatch
+-- means the row is stale and gets rebuilt -- see web/derived_feed_store.py.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS derived_financial_feeds (
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  feed_kind TEXT NOT NULL,          -- charts | valuation
+  statement_type TEXT NOT NULL,     -- consolidated | standalone
+  period_type TEXT NOT NULL,        -- annual | quarterly (valuation feed is always annual)
+  fingerprint TEXT NOT NULL,
+  payload TEXT NOT NULL,            -- the feed dict, JSON
+  computed_at TEXT NOT NULL,
+  PRIMARY KEY (company_id, feed_kind, statement_type, period_type)
+);

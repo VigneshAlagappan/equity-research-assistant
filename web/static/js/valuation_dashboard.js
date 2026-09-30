@@ -473,6 +473,27 @@
     return renderTableSection(section, periods, periodKeys, METRICS, currency);
   }
 
+  const INDIA_FIRST_FY = 2023;
+
+  // Keeps only periods whose fiscal year is >= firstFy, across PERIODS,
+  // PERIOD_KEYS and every metric row's values/sources (index-aligned).
+  function trimBefore(data, firstFy) {
+    const keys = data.PERIOD_KEYS || (data.YEARS || []).map((y) => [y, 0]);
+    const keep = [];
+    keys.forEach((k, i) => { if (k[0] >= firstFy) keep.push(i); });
+    if (keep.length === keys.length) return data;
+    const pick = (arr) => (arr ? keep.map((i) => arr[i]) : arr);
+    const METRICS = {};
+    Object.keys(data.METRICS).forEach((sec) => {
+      METRICS[sec] = data.METRICS[sec].map((m) => Object.assign({}, m, { values: pick(m.values), sources: pick(m.sources) }));
+    });
+    const out = Object.assign({}, data, { METRICS: METRICS });
+    if (data.PERIODS) out.PERIODS = pick(data.PERIODS);
+    if (data.PERIOD_KEYS) out.PERIOD_KEYS = pick(data.PERIOD_KEYS);
+    if (data.YEARS) out.YEARS = pick(data.YEARS);
+    return out;
+  }
+
   function init(root, periodToggleEl) {
     const baseUrl = root.dataset.url;
     const price = parseFloatOrNull(root.dataset.price);
@@ -521,6 +542,11 @@
           return r.json();
         })
         .then((data) => {
+          // Financials tab (the one with the section sidebar) shows Indian
+          // companies from FY2023 onwards only; older history is hidden.
+          // The Overview tab's snapshot widget (no sidebar) and every other
+          // consumer of this feed keep the full history.
+          if (navButtons.length && (data.CURRENCY || "INR") === "INR") data = trimBefore(data, INDIA_FIRST_FY);
           state.data = data;
           render();
         })

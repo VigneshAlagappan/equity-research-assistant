@@ -1599,3 +1599,18 @@ CREATE TABLE IF NOT EXISTS economic_observations (
 );
 CREATE INDEX IF NOT EXISTS idx_economic_observations_series_period ON economic_observations(series_id, period);
 CREATE INDEX IF NOT EXISTS idx_economic_observations_release ON economic_observations(series_id, release_date);
+
+-- ============================================================
+-- Derived (calculated) financial feeds -- see schemas/sqlite_schema.sql's
+-- identical table for the rationale.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS derived_financial_feeds (
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  feed_kind TEXT NOT NULL,
+  statement_type TEXT NOT NULL,
+  period_type TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  computed_at TEXT NOT NULL,
+  PRIMARY KEY (company_id, feed_kind, statement_type, period_type)
+);
