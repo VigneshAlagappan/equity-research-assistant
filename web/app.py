@@ -4138,7 +4138,7 @@ def create_app() -> Flask:
         action = "unhide" if case["hidden_at"] else "hide"
         (unhide_research_case if case["hidden_at"] else hide_research_case)(db, case_id)
         _cascade_to_case_result(db, case, action)
-        return _redirect_to_return_or("investigations")
+        return _redirect_to_return_or("cases")
 
     @app.route("/cases/<case_id>/delete", methods=["POST"])
     def case_delete(case_id: str):
@@ -4154,7 +4154,7 @@ def create_app() -> Flask:
             abort(404, f"No case with id={case_id!r}")
         soft_delete_research_case(db, case_id)
         _cascade_to_case_result(db, case, "delete")
-        return _redirect_to_return_or("investigations")
+        return _redirect_to_return_or("cases")
 
     @app.route("/cases/bulk-action", methods=["POST"])
     def case_bulk_action():
@@ -4177,7 +4177,7 @@ def create_app() -> Flask:
                 else:
                     soft_delete_research_case(db, case_id)
                 _cascade_to_case_result(db, case, bulk_action)
-        return _redirect_to_return_or("investigations")
+        return _redirect_to_return_or("cases")
 
     @app.route("/cases/<case_id>/tags/add", methods=["POST"])
     def case_tag_add(case_id: str):
@@ -4190,7 +4190,7 @@ def create_app() -> Flask:
             abort(404, f"No case with id={case_id!r}")
         if not add_case_company(db, case_id, company_id):
             abort(400, f"No company registered with company_id={company_id!r}")
-        return _redirect_to_return_or("investigations")
+        return _redirect_to_return_or("cases")
 
     @app.route("/cases/<case_id>/tags/remove", methods=["POST"])
     def case_tag_remove(case_id: str):
@@ -4198,7 +4198,7 @@ def create_app() -> Flask:
         if get_research_case(db, case_id) is None:
             abort(404, f"No case with id={case_id!r}")
         remove_case_company(db, case_id, (request.form.get("company_id") or "").strip())
-        return _redirect_to_return_or("investigations")
+        return _redirect_to_return_or("cases")
 
     @app.route("/investigate/generate", methods=["POST"])
     def investigate_generate():
@@ -4569,7 +4569,14 @@ def create_app() -> Flask:
         return entries
 
     @app.route("/investigations")
-    def investigations():
+    def investigations_redirect():
+        """The Cases list used to live here; kept so old links and bookmarks
+        (query filters included) still land on it."""
+        query = request.query_string.decode()
+        return redirect(url_for("cases") + (f"?{query}" if query else ""), code=301)
+
+    @app.route("/cases")
+    def cases():
         """The Cases page: every Conversation and Investigation, one list.
         research_cases is the single source (see _build_case_entries); the
         Show filter splits Conversations from Investigations, and Level
@@ -4604,7 +4611,7 @@ def create_app() -> Flask:
             for c in list_companies(get_db(), include_archived=False)
         ]
         return render_template(
-            "investigations.html",
+            "cases.html",
             entries=iv["rows"], entries_total=iv["total"],
             entries_page=iv["page"], entries_total_pages=iv["total_pages"],
             entries_query=iv_query, entries_origin_filter=iv_origin_filter,

@@ -88,7 +88,7 @@
 {% endblock %}
 
 {% block content %}
-  <form class="admin-companies-filters" method="get" action="{{ url_for('investigations') }}">
+  <form class="admin-companies-filters" method="get" action="{{ url_for('cases') }}">
     <div class="field">
       <label for="iv-search">Search</label>
       <input class="input" type="text" id="iv-search" name="iv_q" value="{{ entries_query }}"
@@ -129,7 +129,7 @@
     </div>
     <button type="submit" class="btn btn-primary">Search</button>
     {% if entries_query or entries_origin_filter or entries_status_filter or entries_level_filter or entries_show_hidden %}
-    <a class="btn btn-ghost" href="{{ url_for('investigations') }}">Clear</a>
+    <a class="btn btn-ghost" href="{{ url_for('cases') }}">Clear</a>
     {% endif %}
   </form>
 
@@ -161,10 +161,10 @@
     <span class="muted">Page {{ entries_page }} of {{ entries_total_pages }}</span>
     <div class="admin-pagination-links">
       {% if entries_page > 1 %}
-      <a class="btn btn-ghost" href="{{ url_for('investigations', iv_page=entries_page - 1, **iv_pagination_args) }}">&larr; Previous</a>
+      <a class="btn btn-ghost" href="{{ url_for('cases', iv_page=entries_page - 1, **iv_pagination_args) }}">&larr; Previous</a>
       {% endif %}
       {% if entries_page < entries_total_pages %}
-      <a class="btn btn-ghost" href="{{ url_for('investigations', iv_page=entries_page + 1, **iv_pagination_args) }}">Next &rarr;</a>
+      <a class="btn btn-ghost" href="{{ url_for('cases', iv_page=entries_page + 1, **iv_pagination_args) }}">Next &rarr;</a>
       {% endif %}
     </div>
   </div>
@@ -227,10 +227,10 @@
     <span class="muted">Page {{ entries_page }} of {{ entries_total_pages }}</span>
     <div class="admin-pagination-links">
       {% if entries_page > 1 %}
-      <a class="btn btn-ghost" href="{{ url_for('investigations', iv_page=entries_page - 1, **iv_pagination_args) }}">&larr; Previous</a>
+      <a class="btn btn-ghost" href="{{ url_for('cases', iv_page=entries_page - 1, **iv_pagination_args) }}">&larr; Previous</a>
       {% endif %}
       {% if entries_page < entries_total_pages %}
-      <a class="btn btn-ghost" href="{{ url_for('investigations', iv_page=entries_page + 1, **iv_pagination_args) }}">Next &rarr;</a>
+      <a class="btn btn-ghost" href="{{ url_for('cases', iv_page=entries_page + 1, **iv_pagination_args) }}">Next &rarr;</a>
       {% endif %}
     </div>
   </div>

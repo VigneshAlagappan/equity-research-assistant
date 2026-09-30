@@ -61,7 +61,7 @@ def test_in_progress_case_appears_on_the_cases_list(tmp_path: Path, monkeypatch)
         assert start.status_code == 202
         case_id = start.get_json()["case_id"]
 
-        page = test_client.get("/investigations")
+        page = test_client.get("/cases")
         assert page.status_code == 200
         body = page.data.decode()
         assert "How did net profit change?" in body
@@ -104,7 +104,7 @@ def test_insufficient_data_case_completes_gracefully_and_stays_on_the_cases_list
         assert "No matching evidence" in final["result"]["answer_html"]
         assert len(captured) == 1  # only Jev's classification call, never a real answer call
 
-        page = test_client.get("/investigations")
+        page = test_client.get("/cases")
         body = page.data.decode()
         assert ">Insufficient data<" in body
 
@@ -179,7 +179,7 @@ def test_case_delete_soft_deletes_a_failed_case_instead_of_erasing_it(tmp_path: 
 
     with app.test_client() as test_client:
         assert test_client.post("/cases/case-to-delete/delete").status_code == 302
-        assert "question for case-to-delete?" not in test_client.get("/investigations").data.decode()
+        assert "question for case-to-delete?" not in test_client.get("/cases").data.decode()
 
     conn = init_db(db_path=db_path)
     assert get_research_case(conn, "case-to-delete")["deleted_at"] is not None
@@ -208,8 +208,8 @@ def test_case_hide_toggles_and_cascades_to_the_saved_result(tmp_path: Path, monk
         assert get_research_case(conn, "case-h")["hidden_at"] is not None
         assert get_generated_report(conn, "th-h")["hidden_at"] is not None
         conn.close()
-        assert "q for case-h?" not in test_client.get("/investigations").data.decode()
-        assert "q for case-h?" in test_client.get("/investigations?iv_hidden=1").data.decode()
+        assert "q for case-h?" not in test_client.get("/cases").data.decode()
+        assert "q for case-h?" in test_client.get("/cases?iv_hidden=1").data.decode()
 
         test_client.post("/cases/case-h/hide")  # second click = Unhide
         conn = init_db(db_path=db_path)
@@ -267,9 +267,9 @@ def test_cases_page_splits_conversations_from_investigations_and_labels_each(tmp
     app = _build_app(db_path, tmp_path, monkeypatch)
 
     with app.test_client() as test_client:
-        everything = test_client.get("/investigations").data.decode()
-        conversations = test_client.get("/investigations?iv_origin=conversation").data.decode()
-        investigations = test_client.get("/investigations?iv_origin=investigation").data.decode()
+        everything = test_client.get("/cases").data.decode()
+        conversations = test_client.get("/cases?iv_origin=conversation").data.decode()
+        investigations = test_client.get("/cases?iv_origin=investigation").data.decode()
 
     assert "q for case-conv?" in everything and "q for case-inv?" in everything
     assert ">Conversation<" in everything
@@ -639,7 +639,7 @@ def test_finished_ask_ai_case_opens_as_a_conversation_page(tmp_path: Path, monke
         body = page.data.decode()
         assert "How did net profit change?" in body and 'id="convo-form"' in body
         # The Cases list links the row to the conversation, not the thread.
-        assert f'/conversations/{case_id}"' in test_client.get("/investigations").data.decode()
+        assert f'/conversations/{case_id}"' in test_client.get("/cases").data.decode()
 
 
 def test_follow_up_turn_answers_with_the_conversation_as_context_and_persists(tmp_path: Path, monkeypatch) -> None:
@@ -749,3 +749,18 @@ def test_companies_resolved_inside_the_background_job_are_tagged_on_the_case(tmp
     sync_case = conn.execute("SELECT case_id FROM research_cases WHERE thread_id = ?", (sync["thread_id"],)).fetchone()["case_id"]
     assert list_case_company_ids(conn, sync_case) == ["HDFCBANK"]
     conn.close()
+
+
+def test_cases_list_lives_at_cases_and_the_old_investigations_url_redirects_with_filters(tmp_path: Path, monkeypatch) -> None:
+    db_path = _seeded_db(tmp_path)
+    _answered_case(db_path, "case-conv", thread_id="th-conv", origin="conversation")
+    app = _build_app(db_path, tmp_path, monkeypatch)
+    with app.test_client() as test_client:
+        assert "q for case-conv?" in test_client.get("/cases").data.decode()
+        old = test_client.get("/investigations?iv_origin=conversation&iv_hidden=1")
+        assert old.status_code == 301
+        assert old.headers["Location"].endswith("/cases?iv_origin=conversation&iv_hidden=1")
+        assert test_client.get("/investigations").headers["Location"].endswith("/cases")
+        # Fixed /cases/... paths are unaffected by the new list route.
+        assert test_client.get("/cases/case-conv").status_code == 302
+        assert test_client.post("/cases/bulk-action", data={}).status_code == 302

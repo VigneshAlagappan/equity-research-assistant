@@ -1189,7 +1189,7 @@ def test_research_ask_appears_in_investigations_and_reuses_on_repeat(tmp_path: P
         assert first.status_code == 200
         assert len(captured) == 2  # Jev classification + one real answer LLM call
 
-        investigations_page = test_client.get("/investigations").data.decode()
+        investigations_page = test_client.get("/cases").data.decode()
         assert "How did net profit change?" in investigations_page
 
         second = test_client.post(
@@ -1546,7 +1546,7 @@ def test_generated_report_appears_in_investigations(tmp_path: Path, monkeypatch)
         )
         thread_id = generate_response.get_json()["thread_id"]
 
-        page = test_client.get("/investigations")
+        page = test_client.get("/cases")
 
     assert page.status_code == 200
     body = page.data.decode()
