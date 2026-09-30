@@ -1626,6 +1626,14 @@ def list_case_tags(conn: sqlite3.Connection) -> dict[str, list[str]]:
     return tags
 
 
+def update_case_complexity_level(conn: sqlite3.Connection, case_id: str, level: int) -> None:
+    """A case is tagged with Jev's classification when it's created, but the
+    level that actually answers it can differ (Levels 1/2 escalate) -- this
+    re-tags it with the level that really ran."""
+    conn.execute("UPDATE research_cases SET complexity_level = ? WHERE case_id = ?", (level, case_id))
+    conn.commit()
+
+
 def hide_research_case(conn: sqlite3.Connection, case_id: str) -> bool:
     cursor = conn.execute(
         "UPDATE research_cases SET hidden_at = ? WHERE case_id = ? AND deleted_at IS NULL", (utcnow_iso(), case_id)

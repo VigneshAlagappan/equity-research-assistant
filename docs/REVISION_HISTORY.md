@@ -3,6 +3,7 @@
 Newest first. Derived from git history on `feature-v3`; only the deployment marked below is confirmed against Lightsail. Earlier entries are grouped by commit date.
 
 ## 2026-09-29 — Post-deploy changes (not yet deployed)
+- A case is now tagged with the level that actually answered it, not Jev's prediction: an L1/L2 that escalates to the LLM path becomes L3, and an L1 answered at L2 becomes L2 (case and saved answer)
 - Simplified to three user-facing concepts: Cases, Conversations, Investigations (L1–L5 = investigation depth); Report/Thread/Research/Deep Dive terminology removed
 - `research_cases` is the single container: new `origin`, `hidden_at`, `deleted_at` columns and a `case_companies` company-tag table (schema applied to Neon); every question now creates a case
 - Cases page reads only cases; company pages show the same cases filtered by tag; tags editable per case; Delete is soft for every case

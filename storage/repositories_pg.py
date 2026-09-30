@@ -1374,6 +1374,12 @@ def list_case_tags(conn: DBConnection) -> dict[str, list[str]]:
     return tags
 
 
+def update_case_complexity_level(conn: DBConnection, case_id: str, level: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute("UPDATE research_cases SET complexity_level = %s WHERE case_id = %s", (level, case_id))
+    conn.commit()
+
+
 def _set_case_timestamp(conn: DBConnection, sql: str, params: tuple) -> bool:
     with conn.cursor() as cur:
         cur.execute(sql, params)

@@ -771,3 +771,56 @@ def test_old_result_urls_redirect_to_the_case_but_caseless_and_deleted_ones_are_
         assert test_client.get("/cases/case-gone").status_code == 404
         # A thread id with no case and no row falls through to the old behavior (404), not a redirect loop.
         assert test_client.get("/research/thread/no-such-thread").status_code == 404
+
+
+def _ask_with_classification(tmp_path: Path, monkeypatch, *, classified: int, deterministic):
+    """Runs one Ask AI question whose Jev classification and deterministic
+    (Level 1/2) outcome are both fixed, returns (case row, saved report)."""
+    from types import SimpleNamespace
+
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    monkeypatch.setattr("web.app.classify_and_log", lambda db, question, company_ids: SimpleNamespace(level=classified))
+    monkeypatch.setattr("web.app.attempt_deterministic_level", lambda *a, **kw: deterministic)
+    with app.test_client() as test_client:
+        case_id = test_client.post(
+            "/companies/HDFCBANK/ask-async", json={"question": "How did net profit change?"}
+        ).get_json()["case_id"]
+        assert _poll_until_done(test_client, case_id)["status"] == "done"
+
+    from storage.repositories import get_generated_report
+
+    conn = init_db(db_path=db_path)
+    case = get_research_case(conn, case_id)
+    report = get_generated_report(conn, case["thread_id"])
+    conn.close()
+    return case, report
+
+
+def test_a_level_2_case_that_escalates_to_the_llm_path_is_retagged_level_3(tmp_path: Path, monkeypatch) -> None:
+    """Jev said Level 2 (Calculate), but the deterministic path couldn't
+    resolve it and the LLM answered -- so the case and its saved answer say L3,
+    not a "Calculate" badge on an answer with inference and a confidence line."""
+    case, report = _ask_with_classification(tmp_path, monkeypatch, classified=2, deterministic=None)
+    assert case["complexity_level"] == 3 and report["complexity_level"] == 3
+
+
+def test_a_level_1_case_answered_by_level_2_is_tagged_level_2(tmp_path: Path, monkeypatch) -> None:
+    from research.routing_policy import LevelOutcome
+
+    outcome = LevelOutcome(answer="Net profit grew 7.39%.", level=2)
+    case, report = _ask_with_classification(tmp_path, monkeypatch, classified=1, deterministic=outcome)
+    assert case["complexity_level"] == 2 and report["complexity_level"] == 2
+
+
+def test_a_level_2_case_answered_deterministically_stays_level_2(tmp_path: Path, monkeypatch) -> None:
+    from research.routing_policy import LevelOutcome
+
+    case, report = _ask_with_classification(
+        tmp_path, monkeypatch, classified=2, deterministic=LevelOutcome(answer="Net profit grew 7.39%.", level=2),
+    )
+    assert case["complexity_level"] == 2 and report["complexity_level"] == 2
+
+
+def test_a_level_3_case_is_never_retagged(tmp_path: Path, monkeypatch) -> None:
+    case, report = _ask_with_classification(tmp_path, monkeypatch, classified=3, deterministic=None)
+    assert case["complexity_level"] == 3 and report["complexity_level"] == 3

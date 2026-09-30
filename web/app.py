@@ -199,6 +199,7 @@ from storage.repositories import (
     soft_delete_research_case,
     soft_delete_research_cases_for_result,
     unhide_research_case,
+    update_case_complexity_level,
     get_generated_report,
     get_investigation,
     get_investigation_cost_summary,
@@ -3383,6 +3384,22 @@ def create_app() -> Flask:
             deterministic_outcome = attempt_deterministic_level(
                 db, question, company_ids, classification, statement_type=statement_type,
             )
+
+        # Jev's level is what the case was tagged with at creation, but the level
+        # that actually answers can differ: Level 1 may escalate to 2, and a
+        # Level 1/2 that couldn't resolve (or doesn't apply, e.g. several
+        # companies) falls to the LLM path below, which is Level 3. Tag the case
+        # and its saved answer with the level that really ran, not the one
+        # predicted -- a "Calculate" badge on an LLM answer with an [INFERENCE]
+        # and a Moderate confidence line is misleading.
+        if complexity_level in (1, 2):
+            answering_level = (
+                (deterministic_outcome.level or complexity_level) if deterministic_outcome is not None else 3
+            )
+            if answering_level != complexity_level:
+                complexity_level = answering_level
+                if case_id is not None:
+                    update_case_complexity_level(db, case_id, complexity_level)
 
         if deterministic_outcome is not None:
             answer = deterministic_outcome.answer
