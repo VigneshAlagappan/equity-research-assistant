@@ -3310,6 +3310,13 @@ def create_app() -> Flask:
                 update_case_activity(db, case_id, "Understanding question")
             with sentry_span("llm.anthropic", "Company resolution"):
                 company_ids = resolve_companies(db, question).company_ids
+            if case_id is not None:
+                # The case was created (and auto-tagged) before this resolution
+                # ran, from whatever the request carried -- nothing -- so tag
+                # what the LLM fallback just found, or the case would show no
+                # company even though its answer is grounded in them.
+                for resolved_id in company_ids:
+                    add_case_company(db, case_id, resolved_id, source="auto")
 
         # Jev's complexity level (docs/ADR/023) -- computed here, after every
         # validation check above has already passed and company_ids is at
@@ -3556,8 +3563,10 @@ def create_app() -> Flask:
         except _AskRequestError as exc:
             return jsonify(error=str(exc)), exc.status
         case_id = _record_completed_case(
-            get_db(), kind="ask", question=question, company_ids=company_ids, statement_type=statement_type,
-            origin=origin, thread_id=thread_id,
+            # result["company_ids"], not the request's: it includes companies
+            # the LLM fallback resolved inside _compute_answer_question.
+            get_db(), kind="ask", question=question, company_ids=result.get("company_ids") or company_ids,
+            statement_type=statement_type, origin=origin, thread_id=thread_id,
         )
         if case_id and origin == "conversation":
             result["conversation_url"] = url_for("conversation_view", case_id=case_id)

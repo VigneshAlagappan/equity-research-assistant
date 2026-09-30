@@ -726,3 +726,26 @@ def test_a_conversation_that_is_not_finished_or_is_an_investigation_redirects_to
     with app.test_client() as test_client:
         assert test_client.get("/conversations/case-f").headers["Location"].endswith("/cases/case-f")
         assert test_client.get("/conversations/case-inv").headers["Location"].endswith("/cases/case-inv")
+
+
+def test_companies_resolved_inside_the_background_job_are_tagged_on_the_case(tmp_path: Path, monkeypatch) -> None:
+    """A question that names no company reaches the LLM resolver inside the
+    job, after the case already exists -- the case must still end up tagged
+    with what it resolved, on both the async and the sync routes."""
+    from types import SimpleNamespace
+
+    app, db_path = _seeded_app(tmp_path, monkeypatch)
+    monkeypatch.setattr("web.app.resolve_companies", lambda db, question: SimpleNamespace(company_ids=["HDFCBANK"]))
+
+    from storage.repositories import list_case_company_ids
+
+    with app.test_client() as test_client:
+        case_id = test_client.post("/chat-async", json={"question": "How did the bank's net profit change?"}).get_json()["case_id"]
+        _poll_until_done(test_client, case_id)
+        sync = test_client.post("/chat", json={"question": "How did the bank's net profit change again?"}).get_json()
+
+    conn = init_db(db_path=db_path)
+    assert list_case_company_ids(conn, case_id) == ["HDFCBANK"]
+    sync_case = conn.execute("SELECT case_id FROM research_cases WHERE thread_id = ?", (sync["thread_id"],)).fetchone()["case_id"]
+    assert list_case_company_ids(conn, sync_case) == ["HDFCBANK"]
+    conn.close()
