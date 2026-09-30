@@ -148,6 +148,17 @@ list_watchlist_activity()` to source real announcement/financial rows
 instead of the current always-empty lists, and update
 `docs/FeatureList.md`'s Watchlist row accordingly.
 
+## Docs "Other" uploads — legacy `.doc` reading (2026-09-30)
+
+The Docs tab's "Other" type accepts pdf/xls/xlsx/doc/docx. `.xls` is read via
+`xlrd` (now in `requirements.txt` / `requirements-docker.txt`, live in the
+image), `.docx`/`.xlsx` need no extra tooling. Legacy `.doc` has no
+pure-Python reader: `research/documents.py::_pages_from_doc` shells out to
+`antiword` or `catdoc` if present on the host. Neither is installed in the
+Docker image yet, so an uploaded `.doc` is stored and downloadable but not
+analyzed by the AI. Fix: add `antiword` (or `catdoc`) to the Dockerfile's
+apt install, rebuild and redeploy.
+
 ## Status
 
 Git is clean — all work described above (and everything that produced this
