@@ -54,6 +54,7 @@ from datetime import date
 
 from companies.registry import get_company
 from web.company_kind import is_financial_company
+from web.share_adjustment import restate_to_latest_share_basis, share_multiplier
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
 from storage.company_repository import select_corporate_actions
 from storage.price_repository import get_avg_volume, get_close_as_of_range
@@ -176,7 +177,17 @@ def dividends_from_corporate_actions(
     dividend action is omitted (stays blank), not reported as 0."""
     ranges = {pk: _period_date_range(fiscal_year_end_month, pk[0], pk[1]) for pk in period_keys}
     out: dict[tuple[int, int], float] = {}
-    for row in select_corporate_actions(conn, company_id):
+    actions = list(select_corporate_actions(conn, company_id))
+    # Splits/bonuses that happen AFTER a dividend but inside the same period:
+    # the period-level restatement (share_adjustment.py) only covers splits
+    # after the period ends, so such a dividend is put on the post-split
+    # basis here, by its own ex-date.
+    splits = [
+        (r["ex_date"], share_multiplier(r["action_type"], r["subject"]))
+        for r in actions
+        if r["action_type"] in ("bonus", "fv_split", "split") and r["ex_date"]
+    ]
+    for row in actions:
         if row["action_type"] != "dividend" or not row["ex_date"]:
             continue
         amount = _dividend_amount_per_share(row["subject"])
@@ -184,6 +195,9 @@ def dividends_from_corporate_actions(
             continue
         for pk, (start, end) in ranges.items():
             if start.isoformat() <= row["ex_date"] <= end.isoformat():
+                for split_ex, mult in splits:
+                    if mult and mult > 1 and row["ex_date"] < split_ex <= end.isoformat():
+                        amount /= mult
                 out[pk] = out.get(pk, 0.0) + amount
                 break
     return out
@@ -318,6 +332,10 @@ def build_charts_feed(
         if missing:
             raw["dividend_per_share"] = {**raw["dividend_per_share"], **missing}
             dividend_filled = True
+    restated: set[str] = set()
+    if company is not None and period_keys:
+        period_ends = {pk: _period_date_range(company["fiscal_year_end_month"], pk[0], pk[1])[1] for pk in period_keys}
+        restated = restate_to_latest_share_basis(conn, company_id, period_ends, raw)
     # fiscal_year/quarter text per period_key, for ROE/ROA lookups (annual
     # only) and for building the display label — reconstructed directly from
     # the sorted key rather than threading the original strings through
@@ -516,9 +534,9 @@ def build_charts_feed(
         "perShare": [
             _row("eps", "EPS (Net Profit / share)", "perShare", period_keys, eps_series, row_type="calc"),
             _row("bookValue", "Book Value (Networth based)", "perShare", period_keys, book_value_series, row_type="calc"),
-            _row("dividend", "Dividend per share", "perShare", period_keys, raw["dividend_per_share"], row_type="calc" if dividend_filled else "fact"),
+            _row("dividend", "Dividend per share", "perShare", period_keys, raw["dividend_per_share"], row_type="calc" if dividend_filled or "dividend_per_share" in restated else "fact"),
             _row("salesPerShare", "Sales (Revenue per share)", "perShare", period_keys, sales_per_share_series, row_type="calc"),
-            _row("shares", "Shares Outstanding", "sharesCount", period_keys, raw["shares_outstanding"]),
+            _row("shares", "Shares Outstanding", "sharesCount", period_keys, raw["shares_outstanding"], row_type="calc" if "shares_outstanding" in restated else "fact"),
         ],
         "profitability": [
             _row("netMargin", "Net Profit Margin", "pct", period_keys, net_margin, row_type="calc"),

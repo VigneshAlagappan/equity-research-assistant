@@ -47,7 +47,8 @@ from companies.registry import get_company
 from web.company_kind import is_financial_company
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
 from normalization.periods import fiscal_year_number
-from web.charts_feed import dividends_from_corporate_actions
+from web.charts_feed import _period_date_range, dividends_from_corporate_actions
+from web.share_adjustment import restate_to_latest_share_basis
 from storage.repositories import get_canonical_series
 
 # Rescales any unit that isn't already each currency's "big" display unit
@@ -108,6 +109,13 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
         if missing:
             raw["dividend_per_share"] = {**raw["dividend_per_share"], **missing}
             dividend_filled = True
+    restated: set[str] = set()
+    if _company is not None and years:
+        ends = {(y, 0): _period_date_range(_company["fiscal_year_end_month"], y, 0)[1] for y in years}
+        raw_by_pk = {k: {(y, 0): v for y, v in series.items()} for k, series in raw.items()}
+        restated = restate_to_latest_share_basis(conn, company_id, ends, raw_by_pk)
+        for k in restated:
+            raw[k] = {pk[0]: v for pk, v in raw_by_pk[k].items()}
 
     def ratio_series(fn, unit_scale: float = 1.0) -> dict[int, float]:
         """fn is roe_for_company/roa_for_company — needs the prior fiscal year
@@ -236,9 +244,9 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
         "perShare": [
             _row("eps", "EPS (Net Profit / share)", "perShare", years, eps_series, row_type="calc"),
             _row("bookValue", "Book Value (Networth based)", "perShare", years, book_value_series, row_type="calc"),
-            _row("dividend", "Dividend per share", "perShare", years, raw["dividend_per_share"], row_type="calc" if dividend_filled else "fact"),
+            _row("dividend", "Dividend per share", "perShare", years, raw["dividend_per_share"], row_type="calc" if dividend_filled or "dividend_per_share" in restated else "fact"),
             _row("salesPerShare", "Sales (Revenue per share)", "perShare", years, sales_per_share_series, row_type="calc"),
-            _row("shares", "Shares Outstanding", "sharesCount", years, raw["shares_outstanding"]),
+            _row("shares", "Shares Outstanding", "sharesCount", years, raw["shares_outstanding"], row_type="calc" if "shares_outstanding" in restated else "fact"),
         ],
         "profitability": [
             _row("netMargin", "Net Profit Margin", "pct", years, net_margin, row_type="calc"),

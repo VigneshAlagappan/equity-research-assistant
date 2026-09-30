@@ -170,7 +170,7 @@
   const SECTION_META = {
     balanceSheet: { title: "Balance Sheet", desc: function (p, c) { return "Core balance-sheet lines, " + periodRange(p) + ", in " + (c === "USD" ? "USD millions" : "₹ Crore") + "."; } },
     incomeStatement: { title: "Income Statement", desc: function (p, c) { return "Revenue, expenses and profit, " + periodRange(p) + ", in " + (c === "USD" ? "USD millions" : "₹ Crore") + "."; } },
-    perShare: { title: "Per-Share Metrics", desc: function () { return "EPS, book value and dividend on a per-share basis."; } },
+    perShare: { title: "Per-Share Metrics", desc: function () { return "EPS, book value and dividend on a per-share basis, restated for later splits and bonus issues."; } },
     profitability: { title: "Profitability Ratios", desc: function (p) { return "Margins and returns on capital, " + periodRange(p) + "."; } },
     bankRatios: { title: "Bank-Specific Ratios", desc: function () { return "Credit-deposit and coverage ratios specific to a banking balance sheet."; } },
     valuation: { title: "Valuation", desc: function () { return "Historical price and valuation multiples."; } },
