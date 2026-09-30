@@ -1452,6 +1452,7 @@ def set_ingestion_queue_item_status(conn: sqlite3.Connection, item_id: int, stat
 def create_research_case(
     conn: sqlite3.Connection, case_id: str, *, kind: str, question: str, company_ids: list[str],
     statement_type: str, owner_id: int | None, complexity_level: int | None = None,
+    origin: str = "investigation",
 ) -> sqlite3.Row:
     """The one write that starts a case -- research/case_runner.py calls
     this synchronously, in the real request, before handing off to a
@@ -1466,12 +1467,126 @@ def create_research_case(
     now = utcnow_iso()
     conn.execute(
         "INSERT INTO research_cases (case_id, kind, question, company_ids, statement_type, status, "
-        "current_activity, owner_id, started_at, updated_at, complexity_level) "
-        "VALUES (?, ?, ?, ?, ?, 'in_progress', 'Queued', ?, ?, ?, ?)",
-        (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now, complexity_level),
+        "current_activity, owner_id, started_at, updated_at, complexity_level, origin) "
+        "VALUES (?, ?, ?, ?, ?, 'in_progress', 'Queued', ?, ?, ?, ?, ?)",
+        (case_id, kind, question, json.dumps(company_ids), statement_type, owner_id, now, now, complexity_level, origin),
     )
+    for position, company_id in enumerate(company_ids):
+        _insert_case_company(conn, case_id, company_id, position, "auto")
     conn.commit()
     return get_research_case(conn, case_id)
+
+
+def _insert_case_company(conn: sqlite3.Connection, case_id: str, company_id: str, position: int, source: str) -> bool:
+    """Only tags a company that's actually registered (the FK to companies
+    would otherwise reject an unresolved/unknown id) -- silently skipping it
+    is right for auto-detected tags, and add_case_company below reports it
+    to the caller for manual ones."""
+    cursor = conn.execute(
+        "INSERT OR IGNORE INTO case_companies (case_id, company_id, position, source) "
+        "SELECT ?, company_id, ?, ? FROM companies WHERE company_id = ?",
+        (case_id, position, source, company_id),
+    )
+    return cursor.rowcount > 0
+
+
+def add_case_company(conn: sqlite3.Connection, case_id: str, company_id: str, *, source: str = "manual") -> bool:
+    """Tags a case with a company. False if the case or the company doesn't
+    exist (caller 404s); True even when it was already tagged."""
+    if get_research_case(conn, case_id) is None:
+        return False
+    row = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM case_companies WHERE case_id = ?", (case_id,)).fetchone()
+    _insert_case_company(conn, case_id, company_id, row["n"], source)
+    conn.commit()
+    return conn.execute(
+        "SELECT 1 FROM case_companies WHERE case_id = ? AND company_id = ?", (case_id, company_id)
+    ).fetchone() is not None
+
+
+def remove_case_company(conn: sqlite3.Connection, case_id: str, company_id: str) -> bool:
+    cursor = conn.execute("DELETE FROM case_companies WHERE case_id = ? AND company_id = ?", (case_id, company_id))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def list_case_company_ids(conn: sqlite3.Connection, case_id: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT company_id FROM case_companies WHERE case_id = ? ORDER BY position, company_id", (case_id,)
+    ).fetchall()
+    return [row["company_id"] for row in rows]
+
+
+def list_cases_for_company(conn: sqlite3.Connection, company_id: str, *, owner_id: int | None = None) -> list[sqlite3.Row]:
+    """The company page's view: every visible case tagged with this company,
+    newest first -- a filtered read of the same research_cases rows the Cases
+    list shows, never a per-company copy."""
+    sql = (
+        "SELECT rc.* FROM research_cases rc JOIN case_companies cc ON cc.case_id = rc.case_id "
+        "WHERE cc.company_id = ? AND rc.deleted_at IS NULL AND rc.hidden_at IS NULL"
+    )
+    params: list = [company_id]
+    if owner_id is not None:
+        sql += " AND rc.owner_id = ?"
+        params.append(owner_id)
+    return conn.execute(sql + " ORDER BY rc.started_at DESC", params).fetchall()
+
+
+def soft_delete_research_cases_for_result(
+    conn: sqlite3.Connection, *, thread_id: str | None = None, investigation_id: str | None = None
+) -> int:
+    """Archives every case whose saved result is this thread/investigation --
+    used when the result itself is deleted (the thread page's own Delete), so
+    its case doesn't linger in Cases pointing at nothing."""
+    cursor = conn.execute(
+        "UPDATE research_cases SET deleted_at = ? WHERE deleted_at IS NULL AND "
+        "((? IS NOT NULL AND thread_id = ?) OR (? IS NOT NULL AND investigation_id = ?))",
+        (utcnow_iso(), thread_id, thread_id, investigation_id, investigation_id),
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
+def list_research_cases(conn: sqlite3.Connection, *, owner_id: int | None = None) -> list[sqlite3.Row]:
+    """Every non-deleted case (hidden ones included -- the Cases list's own
+    "Show hidden" toggle filters those), newest first. The Cases page's one
+    source: research_cases is the container every question runs through, so
+    this replaces stitching generated_reports + investigations + the
+    non-answered cases together."""
+    sql = "SELECT * FROM research_cases WHERE deleted_at IS NULL"
+    params: list = []
+    if owner_id is not None:
+        sql += " AND owner_id = ?"
+        params.append(owner_id)
+    return conn.execute(sql + " ORDER BY started_at DESC", params).fetchall()
+
+
+def list_case_tags(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """case_id -> ordered company_ids for every tagged case, in one query
+    (the Cases list would otherwise do one lookup per row)."""
+    tags: dict[str, list[str]] = {}
+    for row in conn.execute("SELECT case_id, company_id FROM case_companies ORDER BY case_id, position, company_id"):
+        tags.setdefault(row["case_id"], []).append(row["company_id"])
+    return tags
+
+
+def hide_research_case(conn: sqlite3.Connection, case_id: str) -> bool:
+    cursor = conn.execute(
+        "UPDATE research_cases SET hidden_at = ? WHERE case_id = ? AND deleted_at IS NULL", (utcnow_iso(), case_id)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def unhide_research_case(conn: sqlite3.Connection, case_id: str) -> bool:
+    cursor = conn.execute("UPDATE research_cases SET hidden_at = NULL WHERE case_id = ?", (case_id,))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def soft_delete_research_case(conn: sqlite3.Connection, case_id: str) -> bool:
+    cursor = conn.execute("UPDATE research_cases SET deleted_at = ? WHERE case_id = ?", (utcnow_iso(), case_id))
+    conn.commit()
+    return cursor.rowcount > 0
 
 
 def get_research_case(conn: sqlite3.Connection, case_id: str) -> sqlite3.Row | None:
@@ -1559,6 +1674,7 @@ def delete_research_case(conn: sqlite3.Connection, case_id: str) -> bool:
     record, not durable content worth archiving-forever; there's no
     hidden_at/deleted_at column on this table at all. Returns False (web/
     app.py's case_delete aborts 404) if case_id doesn't exist."""
+    conn.execute("DELETE FROM case_companies WHERE case_id = ?", (case_id,))
     cursor = conn.execute("DELETE FROM research_cases WHERE case_id = ?", (case_id,))
     conn.commit()
     return cursor.rowcount > 0

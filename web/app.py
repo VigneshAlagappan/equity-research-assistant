@@ -138,10 +138,6 @@ from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
 from storage.company_repository import select_company_ids_by_index
 from storage.database import init_db, init_postgres_db
 from storage.document_store import DocumentStoreError, default_document_store
-from storage.investigation_repository import (
-    count_investigation_hypotheses,
-    select_investigations_for_company,
-)
 from storage.price_repository import (
     get_price_history,
     list_52_week_range,
@@ -167,7 +163,6 @@ from storage.repositories import (
     create_user,
     delete_company_note,
     delete_generated_report,
-    delete_research_case,
     hide_generated_report,
     hide_investigation,
     soft_delete_generated_report,
@@ -187,6 +182,16 @@ from storage.repositories import (
     get_company_list_column_settings,
     get_overview_ratio_settings,
     get_all_company_index_tags,
+    add_case_company,
+    complete_research_case,
+    hide_research_case,
+    list_case_tags,
+    list_cases_for_company,
+    list_research_cases,
+    remove_case_company,
+    soft_delete_research_case,
+    soft_delete_research_cases_for_result,
+    unhide_research_case,
     get_generated_report,
     get_investigation,
     get_investigation_cost_summary,
@@ -1404,7 +1409,7 @@ def create_app() -> Flask:
 
     def _execution_analytics_panel_context(db) -> dict:
         """Admin > Settings > Execution Analytics -- how Signal requests
-        (Ask AI, "Generate full report", Deep Dive investigation) perform
+        (Ask AI, expanded investigations, L5 investigations) perform
         across Complexity Levels 1-5 over time. Same query-param filter-bar
         convention as _audit_panel_context above (`exa_*`, not `al_*` or
         the sibling Eval Analytics panel's `ea_*`, so all three panels'
@@ -2288,7 +2293,7 @@ def create_app() -> Flask:
         tab = request.args.get("tab", "overview")
         valid_tabs = (
             "overview", "key_insights", "indicators", "charts", "financials", "valuation_model",
-            "shareholding", "commentary", "news", "notes", "docs", "threads",
+            "shareholding", "commentary", "news", "notes", "docs", "threads", "conversations",
         )
         if tab not in valid_tabs:
             abort(400, f"tab must be one of {', '.join(valid_tabs)}")
@@ -2387,41 +2392,12 @@ def create_app() -> Flask:
         # sections — see company.html), so every section's data is fetched
         # unconditionally; `tab` only picks which section is active/scrolled-to
         # on load (for old ?tab=... bookmarks and the tab bar's initial state).
-        company_threads = []
-        for generated in list_generated_reports(db):
-            if company_id not in generated["company_ids"]:
-                continue
-            other_companies = [c for c in generated["company_ids"] if c != company_id]
-            meta = extract_report_meta(generated["report_markdown"])
-            company_threads.append(
-                {
-                    "thread_id": generated["thread_id"],
-                    "kicker": "Generated · also " + ", ".join(other_companies) if other_companies else "Generated",
-                    "title": meta["title"] or generated["question"],
-                    "question": generated["question"],
-                    "confidence_tag": _confidence_tag(meta["confidence"], generated["complexity_level"])[0],
-                    "generated_at": generated["generated_at"],
-                }
-            )
-
-        # Structured 2E-2H investigations (research/investigation.py) that
-        # cover this company — looked up through the investigation_companies
-        # join table (storage/investigation_repository.py), so a cross-company
-        # investigation ("HDFC Bank vs ICICI Bank") appears under EVERY company
-        # it names, from one shared record rather than a copy per company.
-        company_investigations = []
-        for inv in select_investigations_for_company(db, company_id):
-            other_companies = [c for c in json.loads(inv["company_ids"] or "[]") if c != company_id]
-            company_investigations.append(
-                {
-                    "investigation_id": inv["investigation_id"],
-                    "question": inv["question"],
-                    "kicker": "Deep Dive · also " + ", ".join(other_companies) if other_companies else "Deep Dive",
-                    "hypothesis_count": count_investigation_hypotheses(db, inv["investigation_id"]),
-                    "as_of": inv["as_of"] if "as_of" in inv.keys() else None,
-                    "generated_at": inv["generated_at"],
-                }
-            )
+        # Company pages are filtered views of the same cases the Cases list
+        # shows: every case tagged with this company via case_companies -- one
+        # shared record, listed under each company it names, never a copy.
+        company_case_entries = _build_case_entries(db, list_cases_for_company(db, company_id))
+        company_conversations = [e for e in company_case_entries if e["origin"] == "conversation"]
+        company_investigations = [e for e in company_case_entries if e["origin"] == "investigation"]
 
         insights = None
         insights_preview = None
@@ -2559,7 +2535,7 @@ def create_app() -> Flask:
             insights_preview=insights_preview,
             insights_history=insights_history,
             notes=notes,
-            company_threads=company_threads,
+            company_conversations=company_conversations,
             company_investigations=company_investigations,
             indicator_columns=indicator_columns,
             indicator_total=indicator_total,
@@ -3510,7 +3486,38 @@ def create_app() -> Flask:
         statement_type = payload.get("statement_type", "consolidated")
         return question, company_ids, statement_type
 
-    def _answer_question_response(company_ids: list[str] | None = None):
+    def _record_completed_case(
+        db, *, kind: str, question: str, company_ids: list[str], statement_type: str,
+        origin: str, thread_id: str | None = None, investigation_id: str | None = None,
+    ) -> None:
+        """The sync (non-background) routes save their result directly and
+        never went through research_cases, so their output would be invisible
+        to the Cases list -- which reads research_cases as the one container
+        every question runs through. This records the already-finished result
+        as a completed case so those routes join the same history/company
+        tags as the async ones. Best-effort: the answer itself is already
+        saved and about to be returned, so a bookkeeping failure here must
+        never turn a successful answer into an error response."""
+        try:
+            if thread_id:
+                saved = get_generated_report(db, thread_id)
+            else:
+                saved = get_investigation(db, investigation_id)
+            level = saved["complexity_level"] if saved is not None else None
+            case_id = investigation_id or uuid.uuid4().hex[:12]
+            start_case(
+                db, case_id=case_id, kind=kind, question=question, company_ids=company_ids,
+                statement_type=statement_type, owner_id=g.user["user_id"] if g.user else None,
+                complexity_level=level, origin=origin,
+            )
+            complete_research_case(
+                db, case_id, outcome="answered", result_json=json.dumps({"thread_id": thread_id, "investigation_id": investigation_id}),
+                thread_id=thread_id, investigation_id=investigation_id,
+            )
+        except Exception:  # noqa: BLE001 -- see docstring
+            logger.exception("Could not record the completed case for thread=%s investigation=%s", thread_id, investigation_id)
+
+    def _answer_question_response(company_ids: list[str] | None = None, origin: str = "investigation"):
         """Shared by /chat, /research/ask and /companies/<id>/ask — all three are
         "ask the LLM research assistant about these companies", just reached from
         different places (the standalone company-lookup flow, the Research tab's
@@ -3539,9 +3546,13 @@ def create_app() -> Flask:
             )
         except _AskRequestError as exc:
             return jsonify(error=str(exc)), exc.status
+        _record_completed_case(
+            get_db(), kind="ask", question=question, company_ids=company_ids, statement_type=statement_type,
+            origin=origin, thread_id=thread_id,
+        )
         return jsonify(result)
 
-    def _answer_question_async_response(company_ids: list[str] | None = None):
+    def _answer_question_async_response(company_ids: list[str] | None = None, origin: str = "investigation"):
         """Async counterpart of _answer_question_response() -- validates
         input synchronously (fails fast on bad input, same checks as the
         sync path), creates a durable research_cases row (research/
@@ -3592,6 +3603,7 @@ def create_app() -> Flask:
         start_case(
             db, case_id=case_id, kind="ask", question=question, company_ids=company_ids,
             statement_type=statement_type, owner_id=owner_id, complexity_level=complexity_level,
+            origin=origin,
         )
 
         def compute(conn) -> dict:
@@ -3800,11 +3812,11 @@ def create_app() -> Flask:
         company's Threads tab, timestamped and deletable — unlike /research/ask
         and /chat, which stay ephemeral. Kept as the synchronous path for
         compatibility -- the drawer's own JS calls company_ask_async below now."""
-        return _answer_question_response(company_ids=[company_id])
+        return _answer_question_response(company_ids=[company_id], origin="conversation")
 
     @app.route("/companies/<company_id>/ask-async", methods=["POST"])
     def company_ask_async(company_id: str):
-        return _answer_question_async_response(company_ids=[company_id])
+        return _answer_question_async_response(company_ids=[company_id], origin="conversation")
 
     @app.route("/research/thread/generate", methods=["POST"])
     def research_thread_generate():
@@ -3858,6 +3870,10 @@ def create_app() -> Flask:
                     db, thread_id, question, company_ids, statement_type, answer,
                     owner_id=g.user["user_id"] if g.user else None,
                 )
+                _record_completed_case(
+                    db, kind="ask", question=question, company_ids=company_ids, statement_type=statement_type,
+                    origin="investigation", thread_id=thread_id,
+                )
                 return jsonify(thread_id=thread_id, url=url_for("research_thread", thread_id=thread_id))
 
         try:
@@ -3883,6 +3899,10 @@ def create_app() -> Flask:
             db, thread_id, question, company_ids, statement_type, result.report_markdown,
             evidence=evidence_dicts, followups=result.followups,
             owner_id=g.user["user_id"] if g.user else None,
+        )
+        _record_completed_case(
+            db, kind="ask", question=question, company_ids=company_ids, statement_type=statement_type,
+            origin="investigation", thread_id=thread_id,
         )
         return jsonify(thread_id=thread_id, url=url_for("research_thread", thread_id=thread_id))
 
@@ -3957,107 +3977,94 @@ def create_app() -> Flask:
         if not delete_generated_report(db, thread_id):
             abort(404, f"No generated thread with id={thread_id!r}")
         remove_watchlist_item(db, "thread", thread_id)
+        soft_delete_research_cases_for_result(db, thread_id=thread_id)
         return jsonify(ok=True)
 
-    @app.route("/cases/<case_type>/<case_id>/hide", methods=["POST"])
-    def case_hide(case_type: str, case_id: str):
-        """Toggles hidden_at on/off for one Cases-list entry (either table --
-        case_type is "generated" or "structured", matching the same values
-        the entry dicts in investigations() already use). Reversible by
-        design: the button that posts here relabels itself Hide/Unhide
-        based on current state, so this reads the row first rather than
-        taking a fixed direction as a form field."""
+    def _cascade_to_case_result(db, case, action: str) -> None:
+        """A case's saved report/investigation carries its own hidden_at/
+        deleted_at (other code -- e.g. semantic reuse of a saved answer --
+        reads those), so hiding or deleting a case applies to its result row
+        too. `action` is hide | unhide | delete."""
+        thread_id, investigation_id = case["thread_id"], case["investigation_id"]
+        if thread_id:
+            {"hide": hide_generated_report, "unhide": unhide_generated_report,
+             "delete": soft_delete_generated_report}[action](db, thread_id)
+        if investigation_id:
+            {"hide": hide_investigation, "unhide": unhide_investigation,
+             "delete": soft_delete_investigation}[action](db, investigation_id)
+
+    @app.route("/cases/<case_id>/hide", methods=["POST"])
+    def case_hide(case_id: str):
+        """Toggles hidden_at for one case (and its saved result). Reversible:
+        the button that posts here relabels itself Hide/Unhide from current
+        state, so this reads the row first rather than taking a direction."""
         db = get_db()
-        if case_type == "generated":
-            report = get_generated_report(db, case_id)
-            if report is None:
-                abort(404, f"No case with id={case_id!r}")
-            (unhide_generated_report if report["hidden_at"] else hide_generated_report)(db, case_id)
-        elif case_type == "structured":
-            inv = get_investigation(db, case_id)
-            if inv is None:
-                abort(404, f"No case with id={case_id!r}")
-            (unhide_investigation if inv["hidden_at"] else hide_investigation)(db, case_id)
-        else:
-            abort(400, f"Unknown case_type: {case_type!r}")
+        case = get_research_case(db, case_id)
+        if case is None or case["deleted_at"]:
+            abort(404, f"No case with id={case_id!r}")
+        action = "unhide" if case["hidden_at"] else "hide"
+        (unhide_research_case if case["hidden_at"] else hide_research_case)(db, case_id)
+        _cascade_to_case_result(db, case, action)
         return _redirect_to_return_or("investigations")
 
-    @app.route("/cases/<case_type>/<case_id>/delete", methods=["POST"])
-    def case_delete(case_type: str, case_id: str):
-        """"Archived forever" -- see soft_delete_generated_report/
-        soft_delete_investigation's own docstrings: deleted_at is set, the
-        row is never actually removed, and no route/button anywhere clears
-        it back. Deliberately not the same as research_thread_delete's real
-        DELETE above -- that pre-existing hard-delete path (the individual
-        thread page's own Delete action) is untouched.
-
-        "case" (in_progress/failed/cancelled/insufficient_data research_cases
-        rows -- investigations()'s own entries.append() call is the only
-        producer of this case_type) is a hard delete instead, via
-        delete_research_case -- there's no hidden_at/deleted_at column on
-        that table, and unlike a generated report or investigation, a
-        research_cases row isn't durable content worth archiving-forever,
-        just a job record. This branch was missing entirely until now, so
-        investigations.html's unconditional Delete button on every "case"
-        entry always 400'd."""
+    @app.route("/cases/<case_id>/delete", methods=["POST"])
+    def case_delete(case_id: str):
+        """Soft delete ("archived forever"): deleted_at is set on the case and
+        its saved result, no row is removed, and nothing in the UI clears it.
+        Applies to every case -- including failed/cancelled ones, which used to
+        be hard-deleted -- so bulk Delete never destroys data. Distinct from
+        research_thread_delete's real DELETE (the individual thread page's own
+        action), which is untouched."""
         db = get_db()
-        if case_type == "generated":
-            ok = soft_delete_generated_report(db, case_id)
-        elif case_type == "structured":
-            ok = soft_delete_investigation(db, case_id)
-        elif case_type == "case":
-            ok = delete_research_case(db, case_id)
-        else:
-            abort(400, f"Unknown case_type: {case_type!r}")
-        if not ok:
+        case = get_research_case(db, case_id)
+        if case is None or case["deleted_at"]:
             abort(404, f"No case with id={case_id!r}")
+        soft_delete_research_case(db, case_id)
+        _cascade_to_case_result(db, case, "delete")
         return _redirect_to_return_or("investigations")
 
     @app.route("/cases/bulk-action", methods=["POST"])
     def case_bulk_action():
-        """The Cases list's per-row checkboxes (investigations.html) feed
-        this instead of a loop of individual case_hide/case_delete POSTs --
-        one request, one redirect, same "select several, act once" shape as
-        any other bulk-action toolbar in this app. Each checkbox's value is
-        "<case_type>:<case_id>" (case_hide/case_delete's own two path
-        params, joined) since the three entry types on this page don't
-        share an id space.
-
-        "hide" always sets hidden_at (hide_generated_report/hide_investigation
-        are plain idempotent SETs, not a toggle -- case_hide's own toggle
-        behavior only exists because a single-row button needs to relabel
-        itself Hide/Unhide; a bulk selection has no single "current state" to
-        toggle from, and re-hiding an already-hidden row is a harmless no-op),
-        skipping "case" entries the same way the per-row UI already doesn't
-        offer a Hide button for them (no hidden_at column on research_cases).
-        "delete" reuses case_delete's own per-type dispatch exactly (soft
-        for generated/structured, hard for case).
-
-        An unchecked-everything or missing/unknown bulk_action submission is
-        a silent no-op redirect, not a 400 -- the toolbar's own JS keeps the
-        Apply button unusable until both a valid action and at least one row
-        are selected, so reaching this branch server-side means a stale or
-        hand-crafted request, not a real user action worth erroring on."""
+        """The Cases list's per-row checkboxes feed this (value = case_id) --
+        one request, one redirect, instead of a loop of per-case POSTs. Hide
+        is a plain idempotent SET here (a bulk selection has no single
+        "current state" to toggle from). An empty selection or unknown
+        bulk_action is a silent no-op redirect: the toolbar's JS keeps Apply
+        disabled until both are set, so reaching that branch means a stale or
+        hand-crafted request, not a real user action worth a 400."""
         db = get_db()
         bulk_action = request.form.get("bulk_action", "")
-        for token in request.form.getlist("selected"):
-            case_type, _, case_id = token.partition(":")
-            if not case_id:
-                continue
-            if bulk_action == "hide":
-                if case_type == "generated":
-                    hide_generated_report(db, case_id)
-                elif case_type == "structured":
-                    hide_investigation(db, case_id)
-                # "case" entries have no hidden_at column -- silently skipped,
-                # same limitation the per-row Hide button already has.
-            elif bulk_action == "delete":
-                if case_type == "generated":
-                    soft_delete_generated_report(db, case_id)
-                elif case_type == "structured":
-                    soft_delete_investigation(db, case_id)
-                elif case_type == "case":
-                    delete_research_case(db, case_id)
+        if bulk_action in ("hide", "delete"):
+            for case_id in request.form.getlist("selected"):
+                case = get_research_case(db, case_id)
+                if case is None or case["deleted_at"]:
+                    continue
+                if bulk_action == "hide":
+                    hide_research_case(db, case_id)
+                else:
+                    soft_delete_research_case(db, case_id)
+                _cascade_to_case_result(db, case, bulk_action)
+        return _redirect_to_return_or("investigations")
+
+    @app.route("/cases/<case_id>/tags/add", methods=["POST"])
+    def case_tag_add(case_id: str):
+        """Manually tags a case with a registered company (canonical
+        company_id -- never a free-text name). Auto-detected tags were set at
+        case creation; this only ever adds, so it can't undo the user's edits."""
+        db = get_db()
+        company_id = (request.form.get("company_id") or "").strip()
+        if get_research_case(db, case_id) is None:
+            abort(404, f"No case with id={case_id!r}")
+        if not add_case_company(db, case_id, company_id):
+            abort(400, f"No company registered with company_id={company_id!r}")
+        return _redirect_to_return_or("investigations")
+
+    @app.route("/cases/<case_id>/tags/remove", methods=["POST"])
+    def case_tag_remove(case_id: str):
+        db = get_db()
+        if get_research_case(db, case_id) is None:
+            abort(404, f"No case with id={case_id!r}")
+        remove_case_company(db, case_id, (request.form.get("company_id") or "").strip())
         return _redirect_to_return_or("investigations")
 
     @app.route("/investigate/generate", methods=["POST"])
@@ -4106,6 +4113,10 @@ def create_app() -> Flask:
         except anthropic.APIError as exc:
             return jsonify(error=f"The assistant request failed: {exc}"), 502
 
+        _record_completed_case(
+            db, kind="investigation", question=question, company_ids=company_ids, statement_type=statement_type,
+            origin="investigation", investigation_id=investigation.investigation_id,
+        )
         return jsonify(
             investigation_id=investigation.investigation_id,
             url=url_for("investigate_view", investigation_id=investigation.investigation_id),
@@ -4336,178 +4347,114 @@ def create_app() -> Flask:
 
     INVESTIGATIONS_PAGE_SIZE = 20
 
-    @app.route("/investigations")
-    def investigations():
-        # Generated reports (research/signals_report.py) and structured
-        # investigations (research/investigation.py) are two different tables
-        # under the hood, but from a user's perspective both are just "an
-        # investigation I ran" — merged into one entries list (one search box,
-        # one Type filter, one growing/paginated feed) instead of the two
-        # separately-searched, separately-paginated sections this page used
-        # to render side by side. The 3 hand-written EXAMPLES/THREADS fixtures
-        # (web/fixtures.py — illustrative wireframe content, not real data)
-        # deliberately don't appear here at all: mixing fabricated numbers
-        # into a feed of real investigations risked a user mistaking one for
-        # the other. They still have a real home — the Research page's own
-        # "try an example" showcase (research.html) links into the same
-        # /research/thread/<id> fixture-rendering branch.
-        # Two distinct status vocabularies sharing one filter dropdown, per
-        # instruction (kept separate, not forced into one shared label set):
-        # a Quick Answer's parsed confidence (research/signals_report.py's
-        # own _CONFIDENCE_RE: High|Moderate|Low, or "Unknown" when the
-        # model didn't follow the template) vs. a Deep Dive's strongest
-        # hypothesis verdict (Step 2G's investigation_hypotheses.verdict).
-        _VERDICT_STATUS = {
-            "SUPPORTED": ("supported", "Supported"),
-            "PARTIALLY_SUPPORTED": ("partially_supported", "Partially Supported"),
-            "REFUTED": ("refuted", "Refuted"),
-            "INSUFFICIENT_EVIDENCE": ("insufficient_evidence", "Insufficient Evidence"),
-        }
-        _STATUS_FILTER_OPTIONS = [
-            ("high", "High confidence"), ("moderate", "Moderate confidence"),
-            ("low", "Low confidence"), ("unknown", "Unknown confidence"),
-            ("direct_lookup", "Direct lookup"), ("calculated", "Calculated"),
-            ("supported", "Supported"), ("partially_supported", "Partially Supported"),
-            ("refuted", "Refuted"), ("insufficient_evidence", "Insufficient Evidence"),
-            ("no_verdict", "No verdict yet"),
-            # A third, distinct status vocabulary for research_cases entries
-            # below (case_ prefix so these can never collide with the two
-            # existing ones) -- "case_insufficient_data" for a *completed*
-            # case is intentionally its own key, not reused from
-            # "insufficient_evidence" above: that one is a per-hypothesis
-            # Deep Dive verdict (Step 2G), this one is a whole case's
-            # outcome (research/assistant.py's InsufficientEvidenceError) --
-            # genuinely different concepts that happen to share a word.
-            ("case_in_progress", "In progress"), ("case_failed", "Failed"),
-            ("case_cancelled", "Cancelled"), ("case_insufficient_data", "Insufficient data"),
-        ]
+    # Two status vocabularies share the Cases list's Status filter, kept
+    # separate (not forced into one label set): an answer's parsed confidence
+    # (High/Moderate/Low/Unknown, or Direct lookup/Calculated for Levels 1-2)
+    # vs an Investigation's strongest-hypothesis verdict. case_* keys are the
+    # job-state vocabulary for cases with no finished result to describe.
+    _VERDICT_STATUS = {
+        "SUPPORTED": ("supported", "Supported"),
+        "PARTIALLY_SUPPORTED": ("partially_supported", "Partially Supported"),
+        "REFUTED": ("refuted", "Refuted"),
+        "INSUFFICIENT_EVIDENCE": ("insufficient_evidence", "Insufficient Evidence"),
+    }
+    _CASE_STATUS_LABEL = {
+        "in_progress": ("case_in_progress", "In progress"),
+        "failed": ("case_failed", "Failed"),
+        "cancelled": ("case_cancelled", "Cancelled"),
+    }
+    _STATUS_FILTER_OPTIONS = [
+        ("high", "High confidence"), ("moderate", "Moderate confidence"),
+        ("low", "Low confidence"), ("unknown", "Unknown confidence"),
+        ("direct_lookup", "Direct lookup"), ("calculated", "Calculated"),
+        ("supported", "Supported"), ("partially_supported", "Partially Supported"),
+        ("refuted", "Refuted"), ("insufficient_evidence", "Insufficient Evidence"),
+        ("no_verdict", "No verdict yet"),
+        ("case_in_progress", "In progress"), ("case_failed", "Failed"),
+        ("case_cancelled", "Cancelled"), ("case_insufficient_data", "Insufficient data"),
+    ]
 
-        # Jev's 1-5 Signals complexity level (docs/ADR/023) is now what tags
-        # each research item, replacing the old Quick Answer/Deep Dive-only
-        # label -- a row saved before Jev-based routing existed has
-        # complexity_level=NULL and falls back to the old generic label
-        # (still meaningful: it's still either a single-pass answer or a
-        # structured investigation, just not level-tagged).
-        def _type_label(complexity_level: int | None, fallback: str) -> str:
-            if complexity_level is None:
-                return fallback
-            return f"Level {complexity_level} · {LEVEL_LABELS.get(complexity_level, '?')}"
+    def _build_case_entries(db, cases) -> list[dict]:
+        """Turns research_cases rows into the one entry shape both the Cases
+        list and a company page's Conversations/Investigations sections
+        render -- the case is the record, its saved report/investigation (if
+        it finished) only supplies title/status detail and the link target.
+        Company tags come from case_companies (canonical companies), never a
+        per-company copy."""
+        tags = list_case_tags(db)
+        names = {c["company_id"]: c["display_name"] for c in list_companies(db, include_archived=True)}
+        reports = {r["thread_id"]: r for r in list_generated_reports(db)}
+        investigations_by_id = {i["investigation_id"]: i for i in list_investigations(db)}
+        legacy_ids = [i for i, row in investigations_by_id.items() if row["strongest_verdict"] is None]
+        legacy_verdicts = get_strongest_verdict_by_investigation(db, legacy_ids) if legacy_ids else {}
 
         entries = []
-        for generated in list_generated_reports(get_db()):
-            meta = extract_report_meta(generated["report_markdown"])
-            confidence_tag, confidence_key = _confidence_tag(meta["confidence"], generated["complexity_level"])
-            entries.append(
-                {
-                    "type": "generated",
-                    "id": generated["thread_id"],
-                    "type_label": _type_label(generated["complexity_level"], "Quick Answer"),
-                    "complexity_level": generated["complexity_level"],
-                    "href": url_for("research_thread", thread_id=generated["thread_id"]),
-                    "title": meta["title"] or generated["question"],
-                    # Only shown when it adds information beyond the title.
-                    "subtitle": generated["question"] if meta["title"] else "",
-                    # company_ids can be empty for a macro-only question
-                    # (research/macro_evidence.py) — no company to list.
-                    "companies_label": ", ".join(generated["company_ids"]) or "Macro/regulatory",
-                    "right_tag": confidence_tag,
-                    "status_key": confidence_key,
-                    "generated_at": generated["generated_at"] or "",
-                    "hidden": bool(generated["hidden_at"]),
-                }
-            )
-        all_investigations = list_investigations(get_db())
-        # Batched, not one list_investigation_hypotheses() call per
-        # investigation -- see get_strongest_verdict_by_investigation's own
-        # docstring. Verdict of the strongest (synthesis-ranked) hypothesis
-        # is the Deep Dive equivalent of a Quick Answer's parsed confidence
-        # -- the two are genuinely different concepts (one's an LLM's
-        # stated confidence in its own single-pass answer, the other's
-        # Step 2G's evidence-based verdict on a specific competing
-        # explanation), kept as distinct labels rather than forced into one
-        # shared vocabulary, per instruction.
-        # strongest_verdict is now computed once at persist time and
-        # stored directly on the row (storage/database.py's
-        # _migrate_investigation_s3_columns) -- the batched live-JOIN
-        # fallback below only ever runs for investigations that predate
-        # that column, never for new ones.
-        legacy_ids = [inv["investigation_id"] for inv in all_investigations if inv["strongest_verdict"] is None]
-        verdict_by_investigation = get_strongest_verdict_by_investigation(get_db(), legacy_ids) if legacy_ids else {}
-        for inv in all_investigations:
-            company_ids = json.loads(inv["company_ids"] or "[]")
-            verdict = inv["strongest_verdict"] or verdict_by_investigation.get(inv["investigation_id"])
-            status_key, status_label = _VERDICT_STATUS.get(verdict, ("no_verdict", "No verdict yet"))
-            entries.append(
-                {
-                    "type": "structured",
-                    "id": inv["investigation_id"],
-                    "type_label": _type_label(inv["complexity_level"], "Deep Dive"),
-                    "complexity_level": inv["complexity_level"],
-                    "href": url_for("investigate_view", investigation_id=inv["investigation_id"]),
-                    "title": inv["question"],
-                    "subtitle": "",
-                    "companies_label": ", ".join(company_ids) or "Macro/regulatory",
-                    "right_tag": status_label,
-                    "status_key": status_key,
-                    "generated_at": inv["generated_at"] or "",
-                    "hidden": bool(inv["hidden_at"]),
-                }
-            )
-        # research_cases -- only the ones with no other representation in
-        # this feed (list_research_cases_for_feed already excludes
-        # status='completed' outcome='answered', which shows up as its own
-        # generated_reports row above instead -- see that function's own
-        # docstring). This is what makes "Cases is the source of truth"
-        # real for a user Browse-ing this page: an in_progress case is
-        # here immediately on submit, not just once it finishes.
-        _CASE_STATUS_LABEL = {
-            "in_progress": ("case_in_progress", "In progress"),
-            "failed": ("case_failed", "Failed"),
-            "cancelled": ("case_cancelled", "Cancelled"),
-        }
-        owner_id = g.user["user_id"] if g.user else None
-        for case in list_research_cases_for_feed(get_db(), owner_id=owner_id):
-            company_ids = json.loads(case["company_ids"] or "[]")
-            if case["status"] == "completed":  # only outcome='insufficient_data' reaches here
-                status_key, status_label = "case_insufficient_data", "Insufficient data"
+        for case in cases:
+            company_ids = tags.get(case["case_id"], [])
+            is_conversation = case["origin"] == "conversation"
+            level = case["complexity_level"]
+            entry = {
+                "id": case["case_id"],
+                "origin": case["origin"],
+                "type_label": "Conversation" if is_conversation else (
+                    f"Investigation · L{level} {LEVEL_LABELS.get(level, '?')}" if level else "Investigation"
+                ),
+                "complexity_level": None if is_conversation else level,
+                "href": url_for("case_detail", case_id=case["case_id"]),
+                "title": case["question"], "subtitle": "",
+                "company_ids": company_ids,
+                "companies": [{"company_id": c, "name": names.get(c, c)} for c in company_ids],
+                "companies_label": ", ".join(names.get(c, c) for c in company_ids) or "No company",
+                "generated_at": case["started_at"] or "",
+                "hidden": bool(case["hidden_at"]),
+                "status": case["status"],
+            }
+            if case["status"] == "completed" and case["outcome"] == "answered":
+                if case["investigation_id"] and case["investigation_id"] in investigations_by_id:
+                    inv = investigations_by_id[case["investigation_id"]]
+                    verdict = inv["strongest_verdict"] or legacy_verdicts.get(inv["investigation_id"])
+                    entry["status_key"], entry["right_tag"] = _VERDICT_STATUS.get(verdict, ("no_verdict", "No verdict yet"))
+                    entry["href"] = url_for("investigate_view", investigation_id=inv["investigation_id"])
+                    entry["as_of"] = inv["as_of"]
+                elif case["thread_id"] and case["thread_id"] in reports:
+                    report = reports[case["thread_id"]]
+                    meta = extract_report_meta(report["report_markdown"])
+                    entry["right_tag"], entry["status_key"] = _confidence_tag(meta["confidence"], report["complexity_level"])
+                    entry["title"] = meta["title"] or report["question"]
+                    entry["subtitle"] = report["question"] if meta["title"] else ""
+                    entry["href"] = url_for("research_thread", thread_id=report["thread_id"])
+                else:  # result row missing (e.g. deleted underneath) -- the case detail still renders
+                    entry["status_key"], entry["right_tag"] = "no_verdict", "Result unavailable"
+            elif case["status"] == "completed":  # outcome='insufficient_data'
+                entry["status_key"], entry["right_tag"] = "case_insufficient_data", "Insufficient data"
             else:
-                status_key, status_label = _CASE_STATUS_LABEL[case["status"]]
-            # Same label a terminal (completed/answered) row of the same
-            # kind already uses elsewhere in this feed ("Quick Answer" /
-            # "Deep Dive") -- so the label doesn't change the moment a case
-            # flips from in_progress to done, just the right_tag does.
-            kind_fallback = "Deep Dive" if case["kind"] == "investigation" else "Quick Answer"
-            entries.append(
-                {
-                    "type": "case",
-                    "id": case["case_id"],
-                    "type_label": _type_label(case["complexity_level"], kind_fallback),
-                    "complexity_level": case["complexity_level"],
-                    "href": url_for("case_detail", case_id=case["case_id"]),
-                    "title": case["question"],
-                    "subtitle": "",
-                    "companies_label": ", ".join(company_ids) or "Macro/regulatory",
-                    "right_tag": status_label,
-                    "status_key": status_key,
-                    "generated_at": case["started_at"] or "",
-                    "hidden": False,
-                }
-            )
-        entries.sort(key=lambda r: r["generated_at"], reverse=True)
+                entry["status_key"], entry["right_tag"] = _CASE_STATUS_LABEL[case["status"]]
+            entries.append(entry)
+        return entries
 
-        iv_type_filter = request.args.get("iv_type") or ""
-        if iv_type_filter:
-            entries = [r for r in entries if r["type"] == iv_type_filter]
+    @app.route("/investigations")
+    def investigations():
+        """The Cases page: every Conversation and Investigation, one list.
+        research_cases is the single source (see _build_case_entries); the
+        Show filter splits Conversations from Investigations, and Level
+        (L1-L5) is only meaningful for Investigations."""
+        owner_id = g.user["user_id"] if g.user else None
+        entries = _build_case_entries(get_db(), list_research_cases(get_db(), owner_id=owner_id))
+
+        iv_origin_filter = request.args.get("iv_origin") or ""
+        if iv_origin_filter in ("conversation", "investigation"):
+            entries = [r for r in entries if r["origin"] == iv_origin_filter]
+        else:
+            iv_origin_filter = ""
         iv_status_filter = request.args.get("iv_status") or ""
         if iv_status_filter:
             entries = [r for r in entries if r["status_key"] == iv_status_filter]
         iv_level_filter = request.args.get("iv_level") or ""
         if iv_level_filter:
             entries = [r for r in entries if str(r["complexity_level"]) == iv_level_filter]
-        # Hidden entries tucked away by default -- "Show hidden" flips this
-        # into a dedicated review mode (only hidden entries, so Unhide is
-        # findable) rather than interleaving hidden/visible together, which
-        # would make "is this hidden or not" a per-card guessing game.
+        # Hidden entries tucked away by default -- "Show hidden" is a dedicated
+        # review mode (only hidden entries) rather than interleaving hidden
+        # and visible, so Unhide is findable.
         iv_show_hidden = request.args.get("iv_hidden") == "1"
         entries = [r for r in entries if r["hidden"] == iv_show_hidden]
         iv_query = (request.args.get("iv_q") or "").strip()
@@ -4516,15 +4463,18 @@ def create_app() -> Flask:
             haystack_fn=lambda r: " ".join(filter(None, [r["title"], r["subtitle"], r["companies_label"]])).lower(),
             page_arg="iv_page", page_size=INVESTIGATIONS_PAGE_SIZE,
         )
-
+        company_options = [
+            {"company_id": c["company_id"], "name": c["display_name"]}
+            for c in list_companies(get_db(), include_archived=False)
+        ]
         return render_template(
             "investigations.html",
             entries=iv["rows"], entries_total=iv["total"],
             entries_page=iv["page"], entries_total_pages=iv["total_pages"],
-            entries_query=iv_query, entries_type_filter=iv_type_filter,
+            entries_query=iv_query, entries_origin_filter=iv_origin_filter,
             entries_status_filter=iv_status_filter, status_options=_STATUS_FILTER_OPTIONS,
             entries_level_filter=iv_level_filter, level_options=sorted(LEVEL_LABELS.items()),
-            entries_show_hidden=iv_show_hidden,
+            entries_show_hidden=iv_show_hidden, company_options=company_options,
         )
 
     def _tools_macro_context(db) -> dict:
@@ -4793,11 +4743,11 @@ def create_app() -> Flask:
 
     @app.route("/chat", methods=["POST"])
     def chat_ask():
-        return _answer_question_response()
+        return _answer_question_response(origin="conversation")
 
     @app.route("/chat-async", methods=["POST"])
     def chat_ask_async():
-        return _answer_question_async_response()
+        return _answer_question_async_response(origin="conversation")
 
     # Guarded so this runs exactly once in the process that actually serves
     # requests -- with the debug reloader on, create_app() executes once in

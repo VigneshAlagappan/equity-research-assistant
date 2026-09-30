@@ -1900,9 +1900,9 @@
         <div class="field">
           <label for="case-kind">Kind</label>
           <select class="input" id="case-kind" name="al_case_kind">
-            <option value="">Quick Answer + Deep Dive</option>
-            <option value="ask" {{ 'selected' if audit_case_kind_filter == 'ask' }}>Quick Answer</option>
-            <option value="investigation" {{ 'selected' if audit_case_kind_filter == 'investigation' }}>Deep Dive</option>
+            <option value="">All investigation depths</option>
+            <option value="ask" {{ 'selected' if audit_case_kind_filter == 'ask' }}>Single-pass (L1–L4)</option>
+            <option value="investigation" {{ 'selected' if audit_case_kind_filter == 'investigation' }}>Hypothesis-driven (L5)</option>
           </select>
         </div>
         <div class="field">
@@ -1934,7 +1934,7 @@
           {% for case in audit_case_rows %}
           <tr>
             <td><code>{{ case['case_id'] }}</code></td>
-            <td>{{ 'Deep Dive' if case['kind'] == 'investigation' else 'Quick Answer' }}</td>
+            <td>{{ 'Hypothesis-driven (L5)' if case['kind'] == 'investigation' else 'Single-pass (L1–L4)' }}</td>
             <td title="{{ case['question'] }}">{{ case['question'][:80] }}{{ '…' if case['question']|length > 80 }}</td>
             <td><span class="local-time" data-utc="{{ case['started_at'] }}">{{ case['started_at'] }}</span></td>
             <td>
@@ -2029,7 +2029,7 @@
 
     <div class="settings-panel" id="settings-panel-admin-execution_analytics" {{ 'hidden' if active_admin_panel != 'execution_analytics' }}>
       <p class="muted">
-        How Signal requests (Ask AI, "Generate full report", Deep Dive investigation) perform across
+        How Signal requests (Ask AI, Investigate, expanded investigations) perform across
         Complexity Levels 1&ndash;5 over time — total volume, latency, and success rate, so this app can
         measure which levels actually need asynchronous execution and state management before changing
         anything about how they're routed or run.

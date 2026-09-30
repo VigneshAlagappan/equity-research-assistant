@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Investigations — Signals{% endblock %}
+{% block title %}Cases — Signals{% endblock %}
 
 {% block page_class %}page-wide{% endblock %}
 
@@ -49,6 +49,13 @@
   .investigation-action-btn:hover { color: var(--ink); }
   .investigation-action-danger { color: #a33; } /* same red as .flash-error elsewhere in this app */
   .investigation-action-danger:hover { opacity: 0.75; }
+  .case-tags summary { list-style: none; cursor: pointer; }
+  .case-tags summary::-webkit-details-marker { display: none; }
+  .case-tags-body { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding-top: var(--space-2); }
+  .case-tag-chip { margin: 0; }
+  .case-tag-remove { font: inherit; background: none; border: none; cursor: pointer; padding: 0 0 0 4px; color: var(--ink-muted); }
+  .case-tag-add { display: flex; gap: var(--space-2); align-items: center; margin: 0; }
+  .case-tag-add input.input { min-height: 28px; width: 180px; }
 
   .empty-state {
     padding: var(--space-6);
@@ -88,11 +95,11 @@
              placeholder="Title, question, company&hellip;" autocomplete="off">
     </div>
     <div class="field">
-      <label for="iv-type">Type</label>
-      <select class="input" id="iv-type" name="iv_type" onchange="this.form.requestSubmit()">
-        <option value="">All types</option>
-        <option value="generated" {{ 'selected' if entries_type_filter == 'generated' }}>Quick Answer</option>
-        <option value="structured" {{ 'selected' if entries_type_filter == 'structured' }}>Deep Dive</option>
+      <label for="iv-origin">Show</label>
+      <select class="input" id="iv-origin" name="iv_origin" onchange="this.form.requestSubmit()">
+        <option value="">Conversations &amp; Investigations</option>
+        <option value="conversation" {{ 'selected' if entries_origin_filter == 'conversation' }}>Conversations</option>
+        <option value="investigation" {{ 'selected' if entries_origin_filter == 'investigation' }}>Investigations</option>
       </select>
     </div>
     <div class="field">
@@ -121,13 +128,13 @@
       </label>
     </div>
     <button type="submit" class="btn btn-primary">Search</button>
-    {% if entries_query or entries_type_filter or entries_status_filter or entries_level_filter or entries_show_hidden %}
+    {% if entries_query or entries_origin_filter or entries_status_filter or entries_level_filter or entries_show_hidden %}
     <a class="btn btn-ghost" href="{{ url_for('investigations') }}">Clear</a>
     {% endif %}
   </form>
 
   {% if entries %}
-  {% set iv_pagination_args = {'iv_q': entries_query, 'iv_type': entries_type_filter, 'iv_status': entries_status_filter, 'iv_level': entries_level_filter, 'iv_hidden': '1' if entries_show_hidden else ''} %}
+  {% set iv_pagination_args = {'iv_q': entries_query, 'iv_origin': entries_origin_filter, 'iv_status': entries_status_filter, 'iv_level': entries_level_filter, 'iv_hidden': '1' if entries_show_hidden else ''} %}
   {# The bulk-action form itself carries no checkboxes -- each row's own
      checkbox below points back at it via the HTML5 `form` attribute
      instead, so it isn't nested inside .investigation-row-link's <a>
@@ -162,16 +169,19 @@
     </div>
   </div>
   {% endif %}
+  <datalist id="case-company-options">
+    {% for c in company_options %}<option value="{{ c.company_id }}">{{ c.name }}</option>{% endfor %}
+  </datalist>
   <div class="investigations-list">
     {% for entry in entries %}
     <div class="card elev-sm investigation-row">
       <div class="investigation-row-top">
         <input type="checkbox" class="investigation-select-checkbox" form="cases-bulk-form" name="selected"
-               value="{{ entry.type }}:{{ entry.id }}" aria-label="Select {{ entry.title }}">
+               value="{{ entry.id }}" aria-label="Select {{ entry.title }}">
         <a class="investigation-row-link" href="{{ entry.href }}">
           <div class="investigation-top-row">
             <div class="card-kicker">
-              <span class="tag {{ 'tag-accent' if entry.type == 'generated' else 'tag-neutral' }}">{{ entry.type_label }}</span>
+              <span class="tag {{ 'tag-neutral' if entry.origin == 'conversation' else 'tag-accent' }}">{{ entry.type_label }}</span>
               {{ entry.companies_label }}
             </div>
             <span class="tag tag-outline">{{ entry.right_tag }}</span>
@@ -181,20 +191,33 @@
         </a>
       </div>
       <div class="investigation-actions">
-        {% if entry.type != 'case' %}
-        {# "case" (in_progress/failed/cancelled/insufficient_data research_cases rows) has no
-           hidden_at column -- case_hide only handles 'generated'/'structured', so this button
-           isn't offered for it; Delete (below) is a real hard delete for this entry type. #}
-        <form method="post" action="{{ url_for('case_hide', case_type=entry.type, case_id=entry.id) }}">
+        <form method="post" action="{{ url_for('case_hide', case_id=entry.id) }}">
           <input type="hidden" name="return_to" value="{{ request.full_path }}">
           <button type="submit" class="investigation-action-btn">{{ 'Unhide' if entry.hidden else 'Hide' }}</button>
         </form>
-        {% endif %}
-        <form method="post" action="{{ url_for('case_delete', case_type=entry.type, case_id=entry.id) }}"
-              onclick="return confirm('Delete this case? It will be permanently hidden and cannot be restored from here.');">
+        <form method="post" action="{{ url_for('case_delete', case_id=entry.id) }}"
+              onsubmit="return confirm('Delete this case? It will be archived and removed from Cases and company pages.');">
           <input type="hidden" name="return_to" value="{{ request.full_path }}">
           <button type="submit" class="investigation-action-btn investigation-action-danger">Delete</button>
         </form>
+        <details class="case-tags">
+          <summary class="investigation-action-btn">Companies ({{ entry.companies|length }})</summary>
+          <div class="case-tags-body">
+            {% for c in entry.companies %}
+            <form method="post" action="{{ url_for('case_tag_remove', case_id=entry.id) }}" class="case-tag-chip">
+              <input type="hidden" name="return_to" value="{{ request.full_path }}">
+              <input type="hidden" name="company_id" value="{{ c.company_id }}">
+              <span class="tag tag-outline">{{ c.name }}
+                <button type="submit" class="case-tag-remove" aria-label="Remove {{ c.name }}">&times;</button></span>
+            </form>
+            {% endfor %}
+            <form method="post" action="{{ url_for('case_tag_add', case_id=entry.id) }}" class="case-tag-add">
+              <input type="hidden" name="return_to" value="{{ request.full_path }}">
+              <input class="input" name="company_id" list="case-company-options" placeholder="Add company ID&hellip;" autocomplete="off" required>
+              <button type="submit" class="investigation-action-btn">Add</button>
+            </form>
+          </div>
+        </details>
       </div>
     </div>
     {% endfor %}
@@ -212,10 +235,10 @@
     </div>
   </div>
   {% endif %}
-  {% elif entries_query or entries_type_filter or entries_status_filter or entries_level_filter or entries_show_hidden %}
-  <div class="empty-state">{{ "No hidden cases." if entries_show_hidden else "No investigations match these filters." }}</div>
+  {% elif entries_query or entries_origin_filter or entries_status_filter or entries_level_filter or entries_show_hidden %}
+  <div class="empty-state">{{ "No hidden cases." if entries_show_hidden else "No cases match these filters." }}</div>
   {% else %}
-  <div class="empty-state">No investigations yet. Start one from the Research tab.</div>
+  <div class="empty-state">No cases yet. Ask a question from Investigate or Ask AI.</div>
   {% endif %}
 
   {% if entries %}
@@ -254,7 +277,7 @@
       form.addEventListener('submit', (event) => {
         if (actionSelect.value === 'delete') {
           const n = checkboxes.filter((cb) => cb.checked).length;
-          const msg = `Delete ${n} selected case${n === 1 ? '' : 's'}? This cannot be undone from here.`;
+          const msg = `Delete ${n} selected case${n === 1 ? '' : 's'}? They will be archived and removed from Cases and company pages.`;
           if (!confirm(msg)) {
             event.preventDefault();
           }

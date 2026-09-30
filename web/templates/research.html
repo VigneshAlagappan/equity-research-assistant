@@ -395,7 +395,7 @@
 
       const eyebrow = document.createElement('div');
       eyebrow.className = 'research-result-eyebrow';
-      eyebrow.textContent = 'Answered live — saved to Investigations';
+      eyebrow.textContent = 'Answered live — saved to Cases';
       resultEl.appendChild(eyebrow);
 
       const questionEl = document.createElement('div');
@@ -477,7 +477,7 @@
       if (data.thread_url) {
         const link = document.createElement('a');
         link.href = data.thread_url;
-        link.textContent = 'View in Investigations';
+        link.textContent = 'Open in Cases';
         note.appendChild(link);
         note.appendChild(document.createTextNode(
           '. Asking the same question again reuses this answer instead of a fresh model call. ' +
@@ -491,7 +491,7 @@
       const reportButton = document.createElement('button');
       reportButton.type = 'button';
       reportButton.className = 'btn btn-ghost';
-      reportButton.textContent = 'Generate full report →';
+      reportButton.textContent = 'Expand into a full investigation →';
       reportButton.addEventListener('click', () => generateFullReport(data.question, data.company_ids, reportButton));
       resultEl.appendChild(reportButton);
 
@@ -511,7 +511,7 @@
     // /research/thread/<id> URL, instead of the short tagged answer above.
     async function generateFullReport(question, companyIds, triggerButton) {
       triggerButton.disabled = true;
-      setStatus('Generating full report…');
+      setStatus('Expanding investigation…');
       try {
         const response = await fetch('/research/thread/generate', {
           method: 'POST',

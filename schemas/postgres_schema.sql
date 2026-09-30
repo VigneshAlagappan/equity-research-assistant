@@ -829,6 +829,28 @@ CREATE TABLE IF NOT EXISTS research_cases (
 CREATE INDEX IF NOT EXISTS idx_research_cases_owner ON research_cases(owner_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_research_cases_status ON research_cases(status);
 ALTER TABLE research_cases ADD COLUMN IF NOT EXISTS complexity_level INTEGER;
+ALTER TABLE research_cases ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'investigation';
+ALTER TABLE research_cases ADD COLUMN IF NOT EXISTS hidden_at TEXT;
+ALTER TABLE research_cases ADD COLUMN IF NOT EXISTS deleted_at TEXT;
+
+-- Cases / Conversations / Investigations model: research_cases is the one
+-- container every question runs through. `origin` is what the user sees it
+-- as (a Conversation = exploratory Ask AI/chat; an Investigation = structured
+-- research, depth given by complexity_level 1-5). hidden_at/deleted_at give
+-- cases the same reversible-hide / soft-delete every result table already has.
+-- case_companies is the canonical company-tag association (FK to companies,
+-- never free-text names): one case is ONE row here plus N tag rows, never
+-- duplicated per company. source records how the tag got there (auto =
+-- detected from the question, manual = added by the user), so re-detection
+-- can never clobber a user's own edits.
+CREATE TABLE IF NOT EXISTS case_companies (
+  case_id TEXT NOT NULL REFERENCES research_cases(case_id),
+  company_id TEXT NOT NULL REFERENCES companies(company_id),
+  position INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'auto',   -- auto | manual
+  PRIMARY KEY (case_id, company_id)
+);
+CREATE INDEX IF NOT EXISTS idx_case_companies_company ON case_companies(company_id);
 
 -- ============================================================
 -- Hypothesis-driven investigations (Steps 2E-2H, research/investigation.py)

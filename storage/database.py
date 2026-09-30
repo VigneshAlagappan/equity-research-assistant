@@ -44,6 +44,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_company_insights_history(conn)
     _migrate_users_theme_column(conn)
     _migrate_case_visibility_columns(conn)
+    _migrate_research_cases_container_columns(conn)
     _migrate_investigation_s3_columns(conn)
     _migrate_generated_reports_s3_columns(conn)
     _migrate_case_ownership_visibility_columns(conn)
@@ -443,6 +444,19 @@ def _migrate_case_visibility_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN hidden_at TEXT")
         if "deleted_at" not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT")
+
+
+def _migrate_research_cases_container_columns(conn: sqlite3.Connection) -> None:
+    """research_cases became the single Cases container (origin =
+    conversation | investigation, plus hidden_at/deleted_at) after it already
+    shipped -- see schemas/sqlite_schema.sql's case_companies comment. A row
+    predating this defaults to 'investigation'."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(research_cases)")}
+    if "origin" not in columns:
+        conn.execute("ALTER TABLE research_cases ADD COLUMN origin TEXT NOT NULL DEFAULT 'investigation'")
+    for name in ("hidden_at", "deleted_at"):
+        if name not in columns:
+            conn.execute(f"ALTER TABLE research_cases ADD COLUMN {name} TEXT")
 
 
 def _migrate_investigation_s3_columns(conn: sqlite3.Connection) -> None:

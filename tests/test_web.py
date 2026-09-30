@@ -1010,7 +1010,10 @@ def test_company_ask_saves_answer_as_a_thread(tmp_path: Path, monkeypatch) -> No
         assert b"How did net profit change?" in thread_page.data
 
         threads_tab = test_client.get("/companies/HDFCBANK?tab=threads").data.decode()
-    assert f'data-thread-id="{data["thread_id"]}"' in threads_tab
+    # Ask AI is a Conversation: it lands in the company page's Conversations section
+    # (a filtered view of the same case the Cases page lists), linking to its thread.
+    assert 'id="sec-conversations"' in threads_tab
+    assert f'/research/thread/{data["thread_id"]}"' in threads_tab
     assert "How did net profit change?" in threads_tab
 
 
@@ -1223,7 +1226,7 @@ def test_research_thread_delete_removes_it(tmp_path: Path, monkeypatch) -> None:
 
         assert test_client.get(f"/research/thread/{thread_id}").status_code == 404
         threads_tab = test_client.get("/companies/HDFCBANK?tab=threads").data.decode()
-    assert "No research threads yet" in threads_tab
+    assert "No conversations yet" in threads_tab
 
 
 def test_research_thread_delete_also_drops_it_from_watchlist(tmp_path: Path, monkeypatch) -> None:
@@ -1553,8 +1556,8 @@ def test_generated_report_appears_in_investigations(tmp_path: Path, monkeypatch)
     # investigations feed (web/templates/investigations.html), not
     # concatenated into one string any more. "Quick Answer" is the
     # user-facing label for a generated (single-pass) report.
-    assert ">Quick Answer<" in body
-    assert "HDFCBANK" in body
+    assert ">Investigation<" in body  # no Jev level on this legacy-shaped save
+    assert "HDFC Bank" in body
     assert f'/research/thread/{thread_id}"' in body
     # The 3 hand-written EXAMPLES/THREADS fixtures (web/fixtures.py) are
     # illustrative, not real data — deliberately not mixed into this real,
@@ -1598,13 +1601,13 @@ def test_generated_report_appears_under_every_named_companys_threads_tab(
 
     assert f'/research/thread/{thread_id}"' in hdfc_page
     assert "Compare HDFC Bank and ICICI Bank profit growth" in hdfc_page
-    assert "also ICICIBANK" in hdfc_page
+    assert "with ICICI Bank" in hdfc_page
 
     assert f'/research/thread/{thread_id}"' in icici_page
-    assert "also HDFCBANK" in icici_page
+    assert "with HDFC Bank" in icici_page
 
     assert f'/research/thread/{thread_id}"' not in unrelated_page
-    assert "No research threads yet" in unrelated_page
+    assert "No investigations yet" in unrelated_page
 
 
 def test_watchlisted_generated_report_appears_in_watchlist(tmp_path: Path, monkeypatch) -> None:
@@ -2104,12 +2107,22 @@ def _save_investigation(db_path: Path, investigation_id: str, company_ids: list[
     from storage.repositories import save_investigation
 
     conn = init_db(db_path=db_path)
+    from storage.repositories import complete_research_case, create_research_case
+
+    question = f"Why do {' and '.join(company_ids)} differ?"
     save_investigation(
         conn, investigation_id=investigation_id,
-        question=f"Why do {' and '.join(company_ids)} differ?", company_ids=company_ids,
+        question=question, company_ids=company_ids,
         statement_type="consolidated", strongest_explanation="Because of X.",
         unanswered_questions=[], additional_evidence_needed=[], **kwargs,
     )
+    # Cases are the container every listing reads, so a directly-seeded
+    # investigation needs its (completed) case to be visible anywhere.
+    create_research_case(
+        conn, investigation_id, kind="investigation", question=question, company_ids=company_ids,
+        statement_type="consolidated", owner_id=None,
+    )
+    complete_research_case(conn, investigation_id, outcome="answered", result_json="{}", investigation_id=investigation_id)
     conn.close()
 
 
@@ -2147,9 +2160,9 @@ def test_a_cross_company_investigation_appears_under_every_company_it_covers(
         hdfc = client.get("/companies/HDFCBANK").data.decode()
         icici = client.get("/companies/ICICIBANK").data.decode()
 
-    for body, other in ((hdfc, "ICICIBANK"), (icici, "HDFCBANK")):
+    for body, other in ((hdfc, "ICICI Bank"), (icici, "HDFC Bank")):
         assert "/investigate/inv_pair" in body
-        assert f"Deep Dive · also {other}" in body  # named as a shared, not duplicated, record
+        assert f"with {other}" in body  # named as a shared, not duplicated, record
 
     conn = init_db(db_path=db_path)
     assert conn.execute("SELECT COUNT(*) FROM investigations").fetchone()[0] == 1

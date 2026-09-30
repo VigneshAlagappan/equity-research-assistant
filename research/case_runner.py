@@ -99,6 +99,7 @@ def _capture_exception(exc: BaseException) -> None:
 def start_case(
     conn, *, case_id: str, kind: str, question: str, company_ids: list[str],
     statement_type: str, owner_id: int | None, complexity_level: int | None = None,
+    origin: str = "investigation",
 ):
     """Synchronous -- called in the real request, on the request's own
     connection, before the background thread starts. Returns the new
@@ -112,7 +113,7 @@ def start_case(
     (level 5 -> "investigation", everything else -> "ask")."""
     return create_research_case(
         conn, case_id, kind=kind, question=question, company_ids=company_ids,
-        statement_type=statement_type, owner_id=owner_id, complexity_level=complexity_level,
+        statement_type=statement_type, owner_id=owner_id, complexity_level=complexity_level, origin=origin,
     )
 
 

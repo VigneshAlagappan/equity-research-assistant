@@ -103,8 +103,8 @@
       </form>
       {% if generated %}
       <form method="post" action="{{ url_for('research_thread_delete', thread_id=thread_id) }}"
-            onsubmit='return confirm("Delete this thread? This can\'t be undone.");'>
-        <button type="submit" class="watchlist-toggle-btn">Delete thread</button>
+            onsubmit='return confirm("Delete this case? This can\'t be undone.");'>
+        <button type="submit" class="watchlist-toggle-btn">Delete</button>
       </form>
       {% endif %}
     </div>
@@ -112,7 +112,7 @@
 
   {% if generated %}
   <div class="thread-question-block">
-    <div class="thread-eyebrow">Research question</div>
+    <div class="thread-eyebrow">Question</div>
     <h2>{{ generated.question }}</h2>
   </div>
   <div class="signals-report-meta">Generated <span class="local-time" data-utc="{{ generated.generated_at }}">{{ generated.generated_at }}</span> · {{ generated.company_ids|join(', ') }} · {{ generated.statement_type }}</div>
@@ -170,7 +170,7 @@
       buttons.forEach((btn) => {
         btn.addEventListener('click', async () => {
           buttons.forEach((b) => (b.disabled = true));
-          status.textContent = 'Generating full report…';
+          status.textContent = 'Expanding investigation…';
           try {
             const response = await fetch('/research/thread/generate', {
               method: 'POST',
@@ -200,7 +200,7 @@
   {% else %}
 
   <div class="thread-question-block">
-    <div class="thread-eyebrow">Research question</div>
+    <div class="thread-eyebrow">Question</div>
     <h2>{{ thread.question }}</h2>
   </div>
 
