@@ -1012,7 +1012,7 @@ def test_company_ask_saves_answer_as_a_thread(tmp_path: Path, monkeypatch) -> No
         threads_tab = test_client.get("/companies/HDFCBANK?tab=threads").data.decode()
     # Ask AI is a Conversation: it lands in the company page's Conversations section
     # (a filtered view of the same case the Cases page lists), linking to its thread.
-    assert 'id="sec-conversations"' in threads_tab
+    assert 'id="sec-cases"' in threads_tab
     assert f'{data["conversation_url"]}"' in threads_tab  # opens the conversation, where follow-ups happen
     assert "How did net profit change?" in threads_tab
 
@@ -1226,7 +1226,7 @@ def test_research_thread_delete_removes_it(tmp_path: Path, monkeypatch) -> None:
 
         assert test_client.get(f"/research/thread/{thread_id}").status_code == 404
         threads_tab = test_client.get("/companies/HDFCBANK?tab=threads").data.decode()
-    assert "No conversations yet" in threads_tab
+    assert "No cases yet" in threads_tab
 
 
 def test_research_thread_delete_also_drops_it_from_watchlist(tmp_path: Path, monkeypatch) -> None:
@@ -1607,7 +1607,7 @@ def test_generated_report_appears_under_every_named_companys_threads_tab(
     assert "with HDFC Bank" in icici_page
 
     assert f'/research/thread/{thread_id}"' not in unrelated_page
-    assert "No investigations yet" in unrelated_page
+    assert "No cases yet" in unrelated_page
 
 
 def test_watchlisted_generated_report_appears_in_watchlist(tmp_path: Path, monkeypatch) -> None:
@@ -2138,7 +2138,7 @@ def test_company_page_lists_its_structured_investigations(tmp_path: Path, monkey
     with app.test_client() as client:
         body = client.get("/companies/HDFCBANK").data.decode()
 
-    assert 'id="sec-investigations"' in body
+    assert 'id="sec-cases"' in body
     assert "/investigate/inv_solo" in body
     assert "Why do HDFCBANK differ?" in body
 
@@ -2171,7 +2171,7 @@ def test_a_cross_company_investigation_appears_under_every_company_it_covers(
 
 def test_company_page_shows_an_empty_state_when_it_has_no_investigations(client) -> None:
     body = client.get("/companies/HDFCBANK").data.decode()
-    assert 'id="company-investigations-empty"' in body
+    assert 'id="company-cases-empty"' in body
 
 
 def test_a_point_in_time_investigation_is_labelled_as_of_on_both_surfaces(

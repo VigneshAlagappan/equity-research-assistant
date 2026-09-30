@@ -277,7 +277,7 @@ def test_cases_page_splits_conversations_from_investigations_and_labels_each(tmp
     assert "q for case-inv?" in investigations and "q for case-conv?" not in investigations
 
 
-def test_company_page_shows_the_same_case_under_conversations_or_investigations_by_tag(tmp_path: Path, monkeypatch) -> None:
+def test_company_page_lists_conversations_and_investigations_together_under_one_cases_header(tmp_path: Path, monkeypatch) -> None:
     db_path = _seeded_db(tmp_path)
     _answered_case(db_path, "case-conv", thread_id="th-conv", company_ids=("HDFCBANK",), origin="conversation")
     _answered_case(db_path, "case-inv", thread_id="th-inv", company_ids=("HDFCBANK", "ICICIBANK"), origin="investigation")
@@ -287,11 +287,15 @@ def test_company_page_shows_the_same_case_under_conversations_or_investigations_
         hdfc = test_client.get("/companies/HDFCBANK").data.decode()
         icici = test_client.get("/companies/ICICIBANK").data.decode()
 
-    conversations_html = hdfc.split('id="sec-conversations"')[1]
-    investigations_html = hdfc.split('id="sec-investigations"')[1].split('id="sec-conversations"')[0]
-    assert "q for case-conv?" in conversations_html
-    assert "q for case-inv?" in investigations_html
-    assert "q for case-conv?" not in icici and "q for case-inv?" in icici
+    assert hdfc.count('id="sec-cases"') == 1
+    assert 'id="sec-investigations"' not in hdfc and 'id="sec-conversations"' not in hdfc
+    cases_html = hdfc.split('id="sec-cases"')[1]
+    # Both kinds in the one list, told apart by their badge; the shared case names its other company.
+    assert "q for case-conv?" in cases_html and "q for case-inv?" in cases_html
+    assert ">Conversation<" in cases_html and ">Investigation<" in cases_html
+    assert "with ICICI Bank" in cases_html
+    # The shared investigation is one record under ICICI too; the HDFC-only conversation is not.
+    assert "q for case-inv?" in icici and "q for case-conv?" not in icici
 
 
 def test_case_tag_routes_add_and_remove_registered_companies_only(tmp_path: Path, monkeypatch) -> None:

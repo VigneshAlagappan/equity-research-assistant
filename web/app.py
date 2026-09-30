@@ -2300,7 +2300,7 @@ def create_app() -> Flask:
         tab = request.args.get("tab", "overview")
         valid_tabs = (
             "overview", "key_insights", "indicators", "charts", "financials", "valuation_model",
-            "shareholding", "commentary", "news", "notes", "docs", "threads", "conversations",
+            "shareholding", "commentary", "news", "notes", "docs", "threads", "conversations", "cases",
         )
         if tab not in valid_tabs:
             abort(400, f"tab must be one of {', '.join(valid_tabs)}")
@@ -2402,9 +2402,7 @@ def create_app() -> Flask:
         # Company pages are filtered views of the same cases the Cases list
         # shows: every case tagged with this company via case_companies -- one
         # shared record, listed under each company it names, never a copy.
-        company_case_entries = _build_case_entries(db, list_cases_for_company(db, company_id))
-        company_conversations = [e for e in company_case_entries if e["origin"] == "conversation"]
-        company_investigations = [e for e in company_case_entries if e["origin"] == "investigation"]
+        company_cases = _build_case_entries(db, list_cases_for_company(db, company_id))
 
         insights = None
         insights_preview = None
@@ -2542,8 +2540,7 @@ def create_app() -> Flask:
             insights_preview=insights_preview,
             insights_history=insights_history,
             notes=notes,
-            company_conversations=company_conversations,
-            company_investigations=company_investigations,
+            company_cases=company_cases,
             indicator_columns=indicator_columns,
             indicator_total=indicator_total,
             api_key_set=ANTHROPIC_API_KEY_SET,
