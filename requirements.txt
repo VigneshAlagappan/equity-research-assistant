@@ -1,5 +1,6 @@
 pytest>=8.0
 openpyxl>=3.1
+xlrd>=2.0  # legacy .xls reading for Docs 'Other' uploads (research/documents.py)
 flask>=3.0
 gunicorn>=23.0
 matplotlib>=3.8

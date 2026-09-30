@@ -44,6 +44,7 @@ from __future__ import annotations
 from storage.db_types import DBConnection
 
 from companies.registry import get_company
+from web.company_kind import is_financial_company
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
 from normalization.periods import fiscal_year_number
 from storage.repositories import get_canonical_series
@@ -254,5 +255,7 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
     }
 
     company = get_company(conn, company_id)
+    if not is_financial_company(company):
+        metrics["bankRatios"] = []  # Bank Ratios only apply to banks/financials
     currency = company["currency"] if company else "INR"
     return {"YEARS": years, "CURRENCY": currency, "METRICS": metrics}

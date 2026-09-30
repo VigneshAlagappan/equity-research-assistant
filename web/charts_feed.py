@@ -52,6 +52,7 @@ from storage.db_types import DBConnection
 from datetime import date
 
 from companies.registry import get_company
+from web.company_kind import is_financial_company
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
 from storage.company_repository import select_corporate_actions
 from storage.price_repository import get_avg_volume, get_close_as_of_range
@@ -496,6 +497,8 @@ def build_charts_feed(
         metrics["profitability"] = [r for r in metrics["profitability"] if r["key"] != "roe"]
         metrics["bankRatios"] = [r for r in metrics["bankRatios"] if r["key"] != "npAssets"]
 
+    if not is_financial_company(company):
+        metrics["bankRatios"] = []  # Bank Ratios only apply to banks/financials
     currency = company["currency"] if company else "INR"
     periods = [_period_label(fy_by_key[pk], quarter_by_key[pk]) for pk in period_keys]
     # PERIOD_KEYS (parallel to PERIODS, [year, quarter_num] per entry) lets a

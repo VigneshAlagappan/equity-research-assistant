@@ -422,7 +422,7 @@
       sectionRow("Income Statement") + dataRows(incomeStatementRows) +
       sectionRow("Per-Share Metrics") + dataRows(perShareRows) +
       sectionRow("Profitability Ratios") + dataRows(profitabilityRows) +
-      sectionRow("Bank Ratios") + dataRows(bankRatiosRows) +
+      (bankRatiosRows.length ? sectionRow("Bank Ratios") + dataRows(bankRatiosRows) : "") +
       sectionRow("Valuation") + dataRows(valuationRows);
 
     const walkFutureBv = lastBv !== null ? lastBv * Math.pow(1 + a.projGrowth, 10) : null;

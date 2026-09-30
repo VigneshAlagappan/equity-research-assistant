@@ -1,0 +1,144 @@
+  /* — Charts tab: pick any number of attributes to overlay on one time
+     series, x-axis always FY. Only 2 physical y-axes exist (left/right), so
+     each attribute carries an explicit side; attributes sharing a side share
+     one linear scale. See charts_overlay.js for the auto-assign heuristic
+     and the per-attribute toggle that overrides it.
+
+     Previously capped at 1040px and centered rather than stretched to the
+     page-wide (up to 1800px) container's full width -- reverted: a quarterly
+     "Max"-range chart can carry 15-17+ x-axis labels (Q# FYnnnn strings),
+     and charts_overlay.js's renderChart() now sizes its SVG viewBox to this
+     element's own measured width (see render()'s chartWidth), so a narrower
+     container was directly capping how much horizontal room existed per
+     label -- not just a cosmetic "reads better centered" choice like it was
+     when this cap was first added. Full width gives every label genuine
+     breathing room instead of the labels overlapping into unreadable
+     clutter (verified live: IDFCFIRSTB quarterly/Max was unreadable at
+     1040px, legible at full page-wide). */
+  .chart-overlay {
+    --chart-series-1: var(--color-accent-700); --chart-series-2: #2563eb;
+    --chart-series-3: #16a34a; --chart-series-4: #9333ea;
+    --chart-series-5: #dc2626; --chart-series-6: #0891b2;
+    --chart-series-7: #db2777; --chart-series-8: #64748b;
+  }
+  .chart-overlay-controls { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  /* One horizontal toolbar (period/range toggle + one dropdown pill per
+     statement section) above the chart, replacing a fixed-width left
+     sidebar — the chart below gets the page's full width instead of
+     sharing it with a permanent side column (real-estate ask: move the
+     picker from the side to the top). Each section is a <details> pill
+     that drops its checkbox list down as a floating panel (position:
+     absolute) rather than pushing the toolbar row taller when opened. */
+  .chart-overlay-toolbar {
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4);
+  }
+  /* Collapsed by default (same <details> disclosure as .insights-history)
+     — the explanation only needs reading once, not permanent vertical
+     space on every visit. */
+  .chart-overlay-hint { flex: none; }
+  .chart-overlay-hint summary {
+    cursor: pointer; list-style: none; font-size: 11px; color: var(--ink-muted);
+    display: flex; align-items: center; gap: 6px; user-select: none;
+  }
+  .chart-overlay-hint summary::-webkit-details-marker { display: none; }
+  .chart-overlay-hint summary::before { content: "▸"; font-size: 10px; transition: transform 0.15s ease; }
+  .chart-overlay-hint[open] summary::before { transform: rotate(90deg); }
+  .chart-overlay-hint summary:hover { color: var(--ink); }
+  .chart-overlay-hint p {
+    position: absolute; top: 100%; left: 0; margin: 4px 0 0; z-index: 20;
+    background: var(--surface); border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg, 0 4px 12px rgba(0,0,0,.2));
+    font-size: 12px; color: var(--ink-muted); padding: 10px 12px; width: 260px;
+  }
+  .chart-overlay-hint { position: relative; }
+  /* Each statement section is a dropdown pill, open by default only when it
+     already has a selection worth showing at a glance. */
+  .chart-overlay-section {
+    position: relative; flex: none;
+    border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+  }
+  .chart-overlay-section summary {
+    cursor: pointer; list-style: none; font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .03em; color: var(--ink-muted); padding: var(--space-2) var(--space-3);
+    display: flex; align-items: center; gap: 6px; user-select: none;
+  }
+  .chart-overlay-section summary::-webkit-details-marker { display: none; }
+  .chart-overlay-section summary::after { content: "▸"; font-size: 9px; transition: transform 0.15s ease; }
+  .chart-overlay-section[open] summary::after { transform: rotate(90deg); }
+  .chart-overlay-section summary:hover { color: var(--ink); }
+  .chart-overlay-section[open] { border-color: var(--color-accent); }
+  .chart-overlay-section-count {
+    font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: normal;
+    background: var(--color-accent-100); color: var(--color-accent-800);
+    border-radius: 999px; padding: 0 6px; line-height: 1.5;
+  }
+  .chart-overlay-section-body {
+    position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 20;
+    background: var(--surface); border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg, 0 4px 12px rgba(0,0,0,.2));
+    padding: 8px 10px; min-width: 240px; max-height: 320px; overflow-y: auto;
+  }
+  .chart-overlay-attr { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 0; white-space: nowrap; }
+  .chart-overlay-attr input[type="checkbox"] { accent-color: var(--color-accent-700); }
+  .chart-overlay-attr label { cursor: pointer; flex: 1 1 auto; }
+  .chart-overlay-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; flex: none; }
+  .chart-overlay-side-toggle { display: flex; flex: none; border: 1px solid var(--color-divider); border-radius: var(--radius-sm); overflow: hidden; }
+  .chart-overlay-side-btn {
+    font-size: 10px; font-weight: 600; padding: 1px 5px; border: none; background: transparent;
+    color: var(--ink-muted); cursor: pointer; line-height: 1.5;
+  }
+  .chart-overlay-side-btn + .chart-overlay-side-btn { border-left: 1px solid var(--color-divider); }
+  .chart-overlay-side-btn.is-active { background: var(--color-accent-700); color: #fff; }
+  .chart-overlay-chart { position: relative; }
+  .chart-overlay-tooltip {
+    position: absolute; pointer-events: none; transform: translate(-50%, -110%);
+    background: var(--ink); color: var(--surface); font-size: 12px; line-height: 1.4;
+    padding: 6px 10px; border-radius: 6px; white-space: pre-line; z-index: 30;
+    box-shadow: var(--shadow-lg, 0 4px 12px rgba(0,0,0,.2)); max-width: 220px;
+  }
+  .chart-overlay-hit { fill: transparent; cursor: pointer; }
+  .chart-overlay-svg { width: 100%; height: 320px; display: block; }
+  .chart-overlay-legend { display: flex; gap: var(--space-3); font-size: 12px; margin-top: 4px; flex-wrap: wrap; }
+  .chart-overlay-legend-item { display: flex; align-items: center; gap: 5px; }
+  .chart-overlay-legend-side { color: var(--ink-muted); }
+  .chart-overlay-gridline { stroke: var(--color-divider); stroke-width: 1; }
+  .chart-overlay-axis-label { font-size: 10px; fill: var(--ink-muted); }
+  .chart-overlay-axis-note { font-size: 9px; fill: var(--ink-muted); font-style: italic; }
+  .chart-overlay-line { fill: none; stroke-width: 2; }
+  /* Volume bars (drawSide()'s isVolumeSeries branch) — muted opacity so a
+     line/area sharing the same plot area (this app has one pane, not a
+     separate volume strip) stays legible drawn on top, same "supporting
+     detail, not the main trend" visual weight as the reference chart's own
+     grey volume bars. cursor: pointer matches .chart-overlay-hit — a bar
+     carries its own data-tooltip/click target directly, no separate hit
+     shape needed the way a thin line's dots require one. */
+  .chart-overlay-bar { opacity: 0.35; cursor: pointer; }
+  /* Corporate-action event markers (charts_overlay.js's renderChart()) — a
+     small diamond in a reserved strip above the plot area, tied to its
+     period column by a short tick line, so an event reads as "something
+     happened at this point in time" without occupying either y-axis the
+     way a plotted attribute does. */
+  .chart-overlay-corpaction-tick { stroke: var(--color-divider); stroke-width: 1; stroke-dasharray: 2,2; }
+  .chart-overlay-corpaction-marker { cursor: pointer; stroke: var(--surface); stroke-width: 1; }
+  .chart-overlay-corpaction-count { font-size: 8px; font-weight: 700; fill: var(--ink-muted); }
+  .chart-overlay-corpaction-legend { margin-top: 2px; }
+  .chart-overlay-corpaction-legend .chart-overlay-swatch { border-radius: 1px; }
+  /* Diamond swatches in the Corporate Actions dropdown (renderCorpActionsPicker())
+     — same square .chart-overlay-swatch every other checkbox row in this
+     picker uses, just rotated 45deg to match the diamond markers it toggles
+     on the chart, so the swatch shape itself hints what's being controlled. */
+  .chart-overlay-corpaction-swatch { transform: rotate(45deg); border-radius: 1px; }
+
+  .chart-overlay-empty { font-size: 13px; color: var(--ink-muted); padding: var(--space-4) 0; text-align: center; }
+
+  /* — Compare With (web/static/js/charts_overlay.js): the search dropdown
+     itself reuses .site-search-* (styles.css) verbatim — same component as
+     the top-nav company search, not a second bespoke style. */
+  .chart-compare { margin-bottom: var(--space-3); }
+  .chart-compare-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .chart-compare-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--color-divider); border-radius: 999px; font-size: 12px; background: var(--surface); }
+  .chart-compare-pill-remove { border: none; background: transparent; color: var(--ink-muted); cursor: pointer; padding: 0; line-height: 1; font-size: 14px; }
+  .chart-compare-search { position: relative; display: inline-block; }
+  .chart-compare-search .site-search-input,
+  .chart-compare-search .site-search-input:focus { width: 220px; padding-left: 10px; }
+

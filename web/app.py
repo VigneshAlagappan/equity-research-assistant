@@ -271,6 +271,7 @@ from storage.repositories import (
 )
 from research.case_runner import run_case_in_background, start_case
 from research.conversation import answer_follow_up
+from web.company_kind import is_financial_company
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
 from web.execution_analytics import build_execution_analytics_context
 from web.corporate_actions_feed import build_corporate_actions_feed
@@ -522,6 +523,9 @@ def _parse_docs_period_id(period_id: str, type_key: str) -> tuple[str, str | Non
     if not match:
         raise ValueError(f"Not a recognizable quarter: {period_id!r}")
     return f"FY{match.group(2)}", f"Q{match.group(1)}"
+
+
+_OTHER_UPLOAD_SUFFIXES = (".pdf", ".xls", ".xlsx", ".doc", ".docx")
 
 
 def create_app() -> Flask:
@@ -2514,6 +2518,7 @@ def create_app() -> Flask:
         return render_template(
             "company.html",
             company=company,
+            is_financial_company=is_financial_company(company),
             company_id=company_id,
             tab=tab,
             statement_type=statement_type,
@@ -2885,6 +2890,8 @@ def create_app() -> Flask:
             filename = secure_filename(upload.filename)
             if not filename:
                 return jsonify(error="That filename isn't valid."), 400
+            if type_key == "other" and Path(filename).suffix.lower() not in _OTHER_UPLOAD_SUFFIXES:
+                return jsonify(error="Other documents must be a PDF, Excel (.xls, .xlsx) or Word (.doc, .docx) file."), 400
             # data/documents/<COMPANY>/<timestamp>__<file> — same
             # never-overwrite, company-scoped convention admin_import_raw_file
             # uses for data/raw/, just under DOCUMENTS_DIR since these are

@@ -145,7 +145,6 @@
     { key: "major", label: "Major Holders" },
     { key: "roster", label: "Insider Roster" },
     { key: "transactions", label: "Insider Transactions" },
-    { key: "sentiment", label: "Insider Sentiment", locked: true },
   ];
 
   function init(root) {
@@ -187,8 +186,28 @@
         });
     }
 
+    // Insider Transactions is a US-only sub-tab; Insider Roster is hidden for
+    // everyone. NSE-listed (India) companies get Major Holders only.
+    function isUs() {
+      return !!state.data && state.data.nse_listed === false;
+    }
+
+    function hasInsiderData(key) {
+      const rows = state.data && state.data[key === "roster" ? "insider_roster" : "insider_transactions"];
+      return Array.isArray(rows) && rows.length > 0;
+    }
+
+    function visibleSubtabs() {
+      return SUBTABS.filter((t) => {
+        if (t.key === "major") return !isUs();
+        // Insider tabs: never for India; for US only once the feed carries
+        // data for them (state.data.insider_roster / insider_transactions).
+        return isUs() && hasInsiderData(t.key);
+      });
+    }
+
     function subtabsHtml() {
-      return SUBTABS.map((t) => {
+      return visibleSubtabs().map((t) => {
         const active = t.key === state.activeSubtab ? " is-active" : "";
         const lockIcon = t.locked ? '<span class="shp-lock" title="Not available">\u{1F512}</span>' : "";
         const disabled = t.locked ? "disabled" : "";
@@ -212,9 +231,7 @@
       const asOfBits = [`Data through ${escapeHtml(latest.label)}`];
       if (latest.submission_date) asOfBits.push(`filed ${escapeHtml(latest.submission_date)}`);
       if (latest.num_shareholders) asOfBits.push(`${latest.num_shareholders.toLocaleString()} total shareholders`);
-      const sourceLink = latest.source_url
-        ? ` &middot; <a href="${escapeHtml(latest.source_url)}" target="_blank" rel="noopener noreferrer">Latest source filing (XBRL)&nbsp;↗</a>`
-        : "";
+      const sourceLink = "";
 
       const periodToggle = `
         <div class="vm-period-toggle" data-vm-period-toggle style="margin-bottom: var(--space-3)">
@@ -275,6 +292,12 @@
         return;
       }
       if (!state.data || !state.data.quarters.length) {
+        const usTabs = isUs() ? visibleSubtabs() : [];
+        if (usTabs.length) {
+          if (!usTabs.some((t) => t.key === state.activeSubtab)) state.activeSubtab = usTabs[0].key;
+          root.innerHTML = `<div class="shp-subtabs">${subtabsHtml()}</div>${notTrackedHtml(state.activeSubtab === "roster" ? "Insider roster" : "Insider transactions")}`;
+          return;
+        }
         root.innerHTML = state.data && state.data.nse_listed === false
           ? `<div class="empty-state">Shareholding Pattern isn't applicable here &mdash; it's SEBI LODR Regulation 31, an
              NSE-listing requirement, and this company isn't listed on NSE.</div>`

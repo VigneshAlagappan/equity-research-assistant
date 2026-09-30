@@ -62,6 +62,8 @@ TYPES = [
     {"key": "transcript", "document_type": "transcript", "label": "Concall Transcript"},
     {"key": "ppt", "document_type": "investor_presentation", "label": "Concall Presentation"},
     {"key": "rec", "document_type": "concall_recording", "label": "Concall Recording"},
+    # Free-form upload (pdf/xls/xlsx/doc/docx) analyzed by the AI engine.
+    {"key": "other", "document_type": "other", "label": "Other"},
 ]
 ANNUAL_DOCUMENT_TYPE = "annual_report"
 # Every add-able type key — what web/app.py's docs/add route accepts and
@@ -144,6 +146,14 @@ def _doc_json(company_id: str, row: Row | None) -> dict | None:
     }
 
 
+def _slot_docs_json(company_id: str, doc_index: dict, others_index: dict, fy: str, q: str) -> dict:
+    out = {t["key"]: _doc_json(company_id, doc_index.get((fy, q, t["document_type"]))) for t in TYPES}
+    others = others_index.get((fy, q), [])
+    if others:
+        out["other"] = {**_doc_json(company_id, others[0]), "items": [_doc_json(company_id, r) for r in others]}
+    return out
+
+
 def build_docs_feed(conn: DBConnection, company_id: str) -> dict:
     company = get_company(conn, company_id)
     country = company["country"] if company else _DEFAULT_CALENDAR_COUNTRY
@@ -155,8 +165,13 @@ def build_docs_feed(conn: DBConnection, company_id: str) -> dict:
 
     doc_index: dict[tuple[str, str | None, str], Row] = {}
     doc_fys: set[str] = set()
-    for d in docs:
+    # "Other" is the one type that can hold several documents per slot
+    # (user-driven uploads): (fy, quarter) -> rows, newest first.
+    others_index: dict[tuple[str, str | None], list[Row]] = {}
+    for d in sorted(docs, key=lambda r: r["document_id"]):  # newest wins a shared slot
         doc_index[(d["fiscal_year"], d["quarter"], d["document_type"])] = d
+        if d["document_type"] == "other":
+            others_index.setdefault((d["fiscal_year"], d["quarter"]), []).insert(0, d)
         doc_fys.add(d["fiscal_year"])
 
     quarters_by_fy: dict[str, list[dict]] = {}
@@ -171,10 +186,7 @@ def build_docs_feed(conn: DBConnection, company_id: str) -> dict:
             "sub": f"Reported {month} {fy_num + offset}",
             "is_year_end": q == "Q4",
             "sort_key": _QUARTER_ORDER[q],
-            "docs": {
-                t["key"]: _doc_json(company_id, doc_index.get((fy, q, t["document_type"])))
-                for t in TYPES
-            },
+            "docs": _slot_docs_json(company_id, doc_index, others_index, fy, q),
         })
 
     real_fys = set(quarters_by_fy) | set(annual_years)
@@ -207,16 +219,15 @@ def build_docs_feed(conn: DBConnection, company_id: str) -> dict:
                     "sub": f"{month} {fy_num + offset}",
                     "is_year_end": q == "Q4",
                     "sort_key": _QUARTER_ORDER[q],
-                    "docs": {
-                        t["key"]: _doc_json(company_id, doc_index.get((fy, q, t["document_type"])))
-                        for t in TYPES
-                    },
+                    "docs": _slot_docs_json(company_id, doc_index, others_index, fy, q),
                 }
                 for q, (month, offset) in calendar.items()
             ]
         quarters = sorted(quarters or [], key=lambda r: r["sort_key"])
-        published = sum(1 for r in quarters for t in TYPES if r["docs"][t["key"]] is not None)
-        possible = len(quarters) * len(TYPES)
+        # "Other" is optional ad-hoc uploads, never an expected/missing slot.
+        expected = [t for t in TYPES if t["key"] != "other"]
+        published = sum(1 for r in quarters for t in expected if r["docs"][t["key"]] is not None)
+        possible = len(quarters) * len(expected)
         years.append({
             "fy": fy,
             "period_id": f"year:{fy}",
