@@ -36,6 +36,7 @@
     {% endif %}
   </div>
   <div class="site-header-actions">
+    {% if not hide_search %}
     <div class="site-search" id="site-search">
       <svg class="site-search-icon" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
         <circle cx="7" cy="7" r="5.25"></circle>
@@ -44,6 +45,7 @@
       <input type="text" class="site-search-input" id="site-search-input" placeholder="Search companies…" autocomplete="off" aria-label="Search companies">
       <div class="site-search-results" id="site-search-results" hidden></div>
     </div>
+    {% endif %}
     <details class="profile-menu">
       <summary aria-label="Account menu">
         {% if g.user %}

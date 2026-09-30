@@ -357,6 +357,13 @@ def test_home_page_is_landing(client) -> None:
     assert b'href="/research"' in response.data
 
 
+def test_home_page_has_no_company_search_box_but_the_rest_of_the_app_does(client) -> None:
+    """The landing page drops the header's company search; every other page keeps it."""
+    assert b"site-search-input" not in client.get("/").data
+    for path in ("/research", "/companies", "/cases", "/login"):
+        assert b"site-search-input" in client.get(path, follow_redirects=True).data, path
+
+
 def test_research_path_renders_the_research_page(client) -> None:
     """/research is a real page now, not a legacy redirect to "/"."""
     response = client.get("/research")

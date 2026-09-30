@@ -131,6 +131,8 @@ a:hover{color:color-mix(in srgb, var(--color-link) 75%, black)}
 <body>
 
 {% set hide_nav_links = true %}
+{# The home page is a marketing landing, not a workspace -- no company search box here (every app page keeps it). #}
+{% set hide_search = true %}
 {% include "_header.html" %}
 
 <header class="hero">
