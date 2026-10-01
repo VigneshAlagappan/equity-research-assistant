@@ -5,6 +5,7 @@ canonical_financials for that period are inserted/reconciled (a plain re-
 ingest would duplicate every other metric the same file also yields).
 
 Idempotent: re-running skips periods that already have a diluted_eps value.
+Each company is one batched insert + one reconciliation per statement type.
 Meant to be run in small batches (--companies / --limit) with a check between
 rounds, like other bulk ingestion here.
 
@@ -23,7 +24,6 @@ storage.backend_bootstrap.install()
 
 from config import settings as app_settings  # noqa: E402
 from ingestion.batch_log import BatchRun  # noqa: E402
-from ingestion.pipeline import ingest_file  # noqa: E402
 from sources.nse_xbrl import NSEXbrlAdapter  # noqa: E402
 from storage.backend_bootstrap import open_db  # noqa: E402
 from storage.company_repository import select_company_ids_by_index  # noqa: E402
@@ -62,28 +62,38 @@ def _existing_periods(conn, company_id: str) -> set[tuple[str, str, str | None, 
 
 
 def backfill_company(conn, company_id: str) -> str:
+    """Parse every on-disk NSE filing locally, keep only diluted_eps periods
+    not already in canonical_financials, then insert and reconcile them in
+    ONE batch per statement type -- a handful of DB round trips per company
+    instead of the full pipeline per filing."""
+    from companies.lifecycle import assert_active
+    from ingestion.pipeline import _publish_financial_ingestion
+    from ingestion.validation import validate_observation
+    from storage.repositories import insert_financial_observations
+
+    assert_active(conn, company_id)
     raw_dir = app_settings.RAW_DIR / company_id / "nse"
     files = sorted(raw_dir.glob("*.xml")) if raw_dir.is_dir() else []
     have = _existing_periods(conn, company_id)
-    inserted = files_used = 0
+    adapter = NSEXbrlAdapter(conn)
+
+    new_by_statement: dict[str, dict[tuple, object]] = {}
     for path in files:
         statement_type = path.stem.split("_")[1]
+        for obs in adapter.parse(path, company_id, statement_type=statement_type):
+            key = (obs.period_type, obs.fiscal_year, obs.quarter, statement_type)
+            if obs.metric_key == METRIC and key not in have and not validate_observation(obs):
+                new_by_statement.setdefault(statement_type, {})[key] = obs
 
-        def keep(obs, st=statement_type) -> bool:
-            return obs.metric_key == METRIC and (obs.period_type, obs.fiscal_year, obs.quarter, st) not in have
-
-        # Parse first (local, instant) and only run the full ingest pipeline --
-        # events + reconciliation, several DB round trips -- for files that
-        # actually have something new; most old filings have none.
-        if not any(keep(o) for o in NSEXbrlAdapter(conn).parse(path, company_id, statement_type=statement_type)):
-            continue
-        result = ingest_file(conn, path, company_id=company_id, source_id="nse",
-                             statement_type=statement_type, observation_filter=keep)
-        if result.inserted_count:
-            files_used += 1
-            inserted += result.inserted_count
-            have = _existing_periods(conn, company_id)
-    return f"files={len(files)} files_with_new_diluted_eps={files_used} inserted={inserted}"
+    inserted = reconciled = 0
+    for statement_type, by_key in new_by_statement.items():
+        valid = list(by_key.values())
+        insert_financial_observations(conn, valid)
+        inserted += len(valid)
+        reconciled += _publish_financial_ingestion(
+            conn, company_id=company_id, source_id="nse", statement_type=statement_type, valid=valid,
+        )
+    return f"files={len(files)} inserted={inserted} reconciled={reconciled}"
 
 
 def run_backfill(conn, company_ids: list[str]) -> int:
