@@ -74,7 +74,7 @@ _RAW_METRIC_KEYS = (
     "net_profit", "total_assets", "total_revenue", "other_income", "interest_expended",
     "tax", "profit_before_tax", "operating_expenses", "depreciation",
     "equity_share_capital", "reserves", "borrowings", "investments",
-    "deposits", "advances", "eps", "book_value", "dividend_per_share", "sales_per_share",
+    "deposits", "advances", "eps", "diluted_eps", "book_value", "dividend_per_share", "sales_per_share",
     "shares_outstanding", "total_shareholders_funds", "interest_earned",
 )
 
@@ -386,7 +386,8 @@ def build_charts_feed(
 
     networth = raw["reserves"]
     she = fill_missing(raw["total_shareholders_funds"], add("equity_share_capital", "reserves"))
-    eps_series = fill_missing(raw["eps"], divide("net_profit", "shares_outstanding"))
+    # Diluted EPS (XBRL) wins where reported; else the reported/basic figure; else net profit / shares.
+    eps_series = fill_missing(raw["diluted_eps"], fill_missing(raw["eps"], divide("net_profit", "shares_outstanding")))
     book_value_series = fill_missing(
         raw["book_value"],
         {
@@ -532,7 +533,7 @@ def build_charts_feed(
             _row("netProfit", "Net Profit (PAT)", "big", period_keys, raw["net_profit"], provenance=prov("net_profit")),
         ],
         "perShare": [
-            _row("eps", "EPS (Net Profit / share)", "perShare", period_keys, eps_series, row_type="calc"),
+            _row("eps", "EPS (diluted where reported)", "perShare", period_keys, eps_series, row_type="calc"),
             _row("bookValue", "Book Value (Networth based)", "perShare", period_keys, book_value_series, row_type="calc"),
             _row("dividend", "Dividend per share", "perShare", period_keys, raw["dividend_per_share"], row_type="calc" if dividend_filled or "dividend_per_share" in restated else "fact"),
             _row("salesPerShare", "Sales (Revenue per share)", "perShare", period_keys, sales_per_share_series, row_type="calc"),

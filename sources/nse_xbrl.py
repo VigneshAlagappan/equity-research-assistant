@@ -128,6 +128,8 @@ _CONSOLIDATED_ONLY_PLACEHOLDER_ZERO_TAGS = _FRACTION_TO_PERCENT_TAGS
 _PER_SHARE_TAGS = {
     "BasicEarningsPerShareBeforeExtraordinaryItems",
     "BasicEarningsLossPerShareFromContinuingAndDiscontinuedOperations",
+    "DilutedEarningsPerShareBeforeExtraordinaryItems",
+    "DilutedEarningsLossPerShareFromContinuingAndDiscontinuedOperations",
 }
 
 # shares_outstanding has no direct XBRL tag in this taxonomy — derived as

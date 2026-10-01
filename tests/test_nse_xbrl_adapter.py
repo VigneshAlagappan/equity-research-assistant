@@ -104,6 +104,7 @@ def test_parses_the_general_ind_as_taxonomy(tmp_path: Path, conn: sqlite3.Connec
             "TaxExpense": "29120000000",
             "ProfitLossForPeriod": "72490000000",
             "BasicEarningsLossPerShareFromContinuingAndDiscontinuedOperations": "17.87",
+            "DilutedEarningsLossPerShareFromContinuingAndDiscontinuedOperations": "17.80",
             "PaidUpValueOfEquityShareCapital": "20280000000",
             "FaceValueOfEquityShareCapital": "5",
         },
@@ -122,6 +123,8 @@ def test_parses_the_general_ind_as_taxonomy(tmp_path: Path, conn: sqlite3.Connec
     assert by_metric["tax"].value == pytest.approx(2912.0)
     assert by_metric["net_profit"].value == pytest.approx(7249.0)
     assert by_metric["eps"].value == pytest.approx(17.87)
+    # diluted EPS is stored as its own metric, in plain rupees (no crore rescale)
+    assert by_metric["diluted_eps"].value == pytest.approx(17.80)
     # 20,280,000,000 / 5 / 1e7 = 405.6 Cr shares
     assert by_metric["shares_outstanding"].value == pytest.approx(405.6)
 

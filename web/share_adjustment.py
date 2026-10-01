@@ -24,7 +24,7 @@ from datetime import date
 from storage.company_repository import select_corporate_actions
 from storage.db_types import DBConnection
 
-_PER_SHARE_KEYS = ("eps", "book_value", "dividend_per_share", "sales_per_share")
+_PER_SHARE_KEYS = ("eps", "diluted_eps", "book_value", "dividend_per_share", "sales_per_share")
 _BONUS = re.compile(r"bonus\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)", re.I)
 _FV = re.compile(r"from\s*(?:rs|re)\.?\s*(\d+(?:\.\d+)?).*?to\s*(?:rs|re)\.?\s*(\d+(?:\.\d+)?)", re.I | re.S)
 _FV_SHORT = re.compile(r"(?:rs|re)\.?\s*(\d+(?:\.\d+)?)\s*/?-?\s*to\s*(?:rs|re)\.?\s*(\d+(?:\.\d+)?)", re.I)

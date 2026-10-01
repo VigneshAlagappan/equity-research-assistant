@@ -39,6 +39,7 @@ DEFAULT_METRICS: list[tuple[str, str, str, str | None, str]] = [
     ("tax", "Tax", "income_statement", None, "INR_CRORE"),
     ("net_profit", "Net Profit", "income_statement", None, "INR_CRORE"),
     ("eps", "EPS", "income_statement", None, "INR"),
+    ("diluted_eps", "Diluted EPS", "income_statement", None, "INR"),
     # Balance sheet
     ("equity_share_capital", "Equity Share Capital", "balance_sheet", None, "INR_CRORE"),
     ("reserves", "Reserves", "balance_sheet", None, "INR_CRORE"),
@@ -320,6 +321,7 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
     ("nse", "TaxExpense", "tax"),
     ("nse", "ProfitLossForThePeriod", "net_profit"),
     ("nse", "BasicEarningsPerShareBeforeExtraordinaryItems", "eps"),
+    ("nse", "DilutedEarningsPerShareBeforeExtraordinaryItems", "diluted_eps"),
     ("nse", "PercentageOfGrossNpa", "gross_npa_percent"),
     ("nse", "PercentageOfNpa", "net_npa_percent"),
     ("nse", "ReturnOnAssets", "return_on_assets_percent"),
@@ -341,6 +343,7 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
     ("nse", "ProfitBeforeTax", "profit_before_tax"),
     ("nse", "ProfitLossForPeriod", "net_profit"),
     ("nse", "BasicEarningsLossPerShareFromContinuingAndDiscontinuedOperations", "eps"),
+    ("nse", "DilutedEarningsLossPerShareFromContinuingAndDiscontinuedOperations", "diluted_eps"),
     # Not a real XBRL tag — sources/nse_xbrl.py derives this row_label itself
     # (PaidUpValueOfEquityShareCapital / FaceValueOfEquityShareCapital,
     # verified against real filings on both taxonomies) since neither has a

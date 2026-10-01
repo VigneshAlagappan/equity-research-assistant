@@ -573,8 +573,12 @@
       .then((data) => {
         // Drop years in which no metric has a value, so the start/end
         // selectors and every table never land on an empty year.
+        // Indian companies also only show FY2023 onwards (same cutoff as the
+        // Financials tab, valuation_dashboard.js's INDIA_FIRST_FY).
+        const firstYear = (data.CURRENCY || "INR") === "INR" ? 2023 : -Infinity;
         const keep = [];
-        data.YEARS.forEach((_, i) => {
+        data.YEARS.forEach((y, i) => {
+          if (y < firstYear) return;
           const any = Object.keys(data.METRICS).some((sec) => data.METRICS[sec].some((m) => m.values[i] !== null && m.values[i] !== undefined && Number.isFinite(m.values[i])));
           if (any) keep.push(i);
         });
