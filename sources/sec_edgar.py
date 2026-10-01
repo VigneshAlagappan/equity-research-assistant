@@ -359,6 +359,16 @@ _ROW_LABEL_OVERRIDE = {"diluted_eps": "EarningsPerShareDiluted [diluted_eps]"}
 _UNIT_DIVISOR = 1_000_000  # raw USD -> this app's USD_MILLION "big" convention
 
 
+def _pick_unit(units: dict, concept_name: str) -> str:
+    """Which of a concept's units to read. companyfacts can list several
+    (verified: KO and WMT list "pure" BEFORE "USD/shares" for
+    EarningsPerShareDiluted, and "pure" only holds a couple of ancient rows);
+    taking the first one silently read the wrong series. Prefer the unit that
+    matches the concept's kind, falling back to the first listed."""
+    preferred = "USD/shares" if concept_name in _PER_UNIT_CONCEPTS else "USD"
+    return preferred if preferred in units else next(iter(units))
+
+
 class SECEdgarAdapter:
     source_id = "sec_edgar"
 
@@ -412,7 +422,7 @@ class SECEdgarAdapter:
             concept_name = present[0]  # for row_label/alias resolution only -- any present alias resolves to the same metric_key
             rows: list[dict] = []
             for name in present:
-                unit_key = next(iter(usgaap[name]["units"]))
+                unit_key = _pick_unit(usgaap[name]["units"], name)
                 rows.extend(usgaap[name]["units"][unit_key])
             instant = concept_name in _INSTANT_CONCEPTS
             quarterly, annual = _extract_periods(rows, fiscal_year_end_month, instant=instant)
