@@ -51,6 +51,18 @@ def _cache_alias_lookups() -> None:
 
     nf.get_metric_key_for_alias = cached
 
+    # Every observation also looks its metric up in metrics_dictionary (unit
+    # etc.) -- equally static, equally one round trip per row.
+    original_entry = nf.get_metric_dictionary_entry
+    entry_cache: dict = {}
+
+    def cached_entry(conn, metric_key):
+        if metric_key not in entry_cache:
+            entry_cache[metric_key] = original_entry(conn, metric_key)
+        return entry_cache[metric_key]
+
+    nf.get_metric_dictionary_entry = cached_entry
+
 
 def _existing_periods(conn, company_id: str) -> set[tuple[str, str, str | None, str]]:
     have = set()
