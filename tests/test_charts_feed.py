@@ -279,7 +279,7 @@ def test_dividend_amount_parses_dollar_subjects() -> None:
     assert parse("Dividend - USD 1.10 Per Share") == 1.1
 
 
-def test_eps_row_prefers_diluted_eps_over_reported_eps(company_conn: sqlite3.Connection) -> None:
+def test_diluted_eps_is_its_own_row_next_to_reported_eps(company_conn: sqlite3.Connection) -> None:
     for fy, eps, diluted in (("FY2023", 10.0, 9.5), ("FY2024", 12.0, None)):
         _insert_canonical(company_conn, "TESTCO", "eps", fy, eps)
         if diluted is not None:
@@ -287,5 +287,6 @@ def test_eps_row_prefers_diluted_eps_over_reported_eps(company_conn: sqlite3.Con
 
     feed = build_charts_feed(company_conn, "TESTCO")
 
-    row = next(r for r in feed["METRICS"]["perShare"] if r["key"] == "eps")
-    assert dict(zip(feed["PERIODS"], row["values"])) == {"FY2023": 9.5, "FY2024": 12.0}
+    rows = {r["key"]: r for r in feed["METRICS"]["perShare"]}
+    assert dict(zip(feed["PERIODS"], rows["eps"]["values"])) == {"FY2023": 10.0, "FY2024": 12.0}
+    assert dict(zip(feed["PERIODS"], rows["dilutedEps"]["values"])) == {"FY2023": 9.5, "FY2024": None}

@@ -170,7 +170,7 @@
   const SECTION_META = {
     balanceSheet: { title: "Balance Sheet", desc: function (p, c) { return "Core balance-sheet lines, " + periodRange(p) + ", in " + (c === "USD" ? "USD millions" : "₹ Crore") + "."; } },
     incomeStatement: { title: "Income Statement", desc: function (p, c) { return "Revenue, expenses and profit, " + periodRange(p) + ", in " + (c === "USD" ? "USD millions" : "₹ Crore") + "."; } },
-    perShare: { title: "Per-Share Metrics", desc: function () { return "EPS, book value and dividend on a per-share basis, restated for later splits and bonus issues."; } },
+    perShare: { title: "Per-Share Metrics", desc: function () { return "EPS, diluted EPS, book value and dividend on a per-share basis, restated for later splits and bonus issues."; } },
     profitability: { title: "Profitability Ratios", desc: function (p) { return "Margins and returns on capital, " + periodRange(p) + "."; } },
     bankRatios: { title: "Bank-Specific Ratios", desc: function () { return "Credit-deposit and coverage ratios specific to a banking balance sheet."; } },
     valuation: { title: "Valuation", desc: function () { return "Historical price and valuation multiples."; } },
@@ -226,6 +226,7 @@
   // period-end close, so it's independent of the Annual/Quarterly toggle.
   function buildRatioContext(periods, periodKeys, METRICS, currency, price, sharesOutstanding, sharesOutstandingFy) {
     const lastEps = lastVal(METRICS.perShare, "eps");
+    const lastDilutedEps = lastVal(METRICS.perShare, "dilutedEps");
     const lastBv = lastVal(METRICS.perShare, "bookValue");
     const lastDividend = lastVal(METRICS.perShare, "dividend");
     const lastSalesPerShare = lastVal(METRICS.perShare, "salesPerShare");
@@ -267,7 +268,7 @@
     return {
       periods: periods, currentPeriodLabel: currentPeriodLabel, currency: currency, price: price,
       shares: shares, sharesFy: sharesFy,
-      lastEps: lastEps, lastBv: lastBv, lastDividend: lastDividend, lastSalesPerShare: lastSalesPerShare,
+      lastEps: lastEps, lastDilutedEps: lastDilutedEps, lastBv: lastBv, lastDividend: lastDividend, lastSalesPerShare: lastSalesPerShare,
       lastNetProfit: lastNetProfit, lastRevenue: lastRevenue, lastRoe: lastRoe, lastPayout: lastPayout,
       lastNetMargin: lastNetMargin, lastTaxRate: lastTaxRate, lastRetention: lastRetention,
       lastRoa: lastRoa, lastCdRatio: lastCdRatio, lastIntCoverage: lastIntCoverage,
@@ -314,6 +315,7 @@
     dividendYield: { label: "Dividend Yield", value: (c) => fmt(c.dividendYield, "pct"), type: "calc" },
     roe: { label: "ROE", value: (c) => fmt(c.lastRoe, "pct"), type: "calc" },
     eps: { label: "EPS", value: (c) => fmt(c.lastEps, "perShare", c.currency), type: "calc" },
+    dilutedEps: { label: "Diluted EPS", value: (c) => fmt(c.lastDilutedEps, "perShare", c.currency), type: "fact" },
     priceToBook: { label: "Price to Book Value", value: (c) => fmt(c.priceToBook, "x"), type: "calc" },
     debtToEquity: { label: "Debt to Equity", value: (c) => fmt(c.debtToEquity, "x"), type: "calc" },
     payout: { label: "Dividend Payout", value: (c) => fmt(c.lastPayout, "pct"), type: "calc" },

@@ -243,6 +243,8 @@
     const roe = METRICS.profitability.find((m) => m.key === "roe");
 
     const lastEps = lastNonNull(eps.values).val;
+    const dilutedEpsRow = METRICS.perShare.find((m) => m.key === "dilutedEps");
+    const lastDilutedEps = dilutedEpsRow ? lastNonNull(dilutedEpsRow.values).val : null;
     const lastBv = lastNonNull(bv.values).val;
     const lastDividend = lastNonNull(dividend.values).val;
     const lastNetProfit = lastNonNull(netProfit.values).val;
@@ -259,6 +261,7 @@
       futureBv10: futureBv10, intrinsicValue: intrinsicValue,
       kpiNetProfit: fmt(lastNetProfit, "crore"),
       kpiEps: fmt(lastEps, "rupee"),
+      kpiDilutedEps: fmt(lastDilutedEps, "rupee"),
       kpiBookValue: fmt(lastBv, "rupee"),
       kpiRoe: fmt(lastRoe, "pct"),
       kpiPrice: fmt(a.currentPrice, "rupee"),
@@ -282,6 +285,7 @@
       '<div class="vm-kpi-grid">' +
         '<div class="card elev-sm"><div class="card-kicker">Net Profit, FY' + latestYear + '</div><div class="card-title vm-num">' + k.kpiNetProfit + '</div></div>' +
         '<div class="card elev-sm"><div class="card-kicker">EPS, FY' + latestYear + '</div><div class="card-title vm-num">' + k.kpiEps + '</div></div>' +
+        '<div class="card elev-sm"><div class="card-kicker">Diluted EPS, FY' + latestYear + '</div><div class="card-title vm-num">' + k.kpiDilutedEps + '</div></div>' +
         '<div class="card elev-sm"><div class="card-kicker">Book Value / share</div><div class="card-title vm-num">' + k.kpiBookValue + '</div></div>' +
         '<div class="card elev-sm"><div class="card-kicker">RONW / ROE</div><div class="card-title vm-num">' + k.kpiRoe + '</div></div>' +
         '<div class="card elev-sm"><div class="card-kicker">Current price</div><div class="card-title vm-num">' + k.kpiPrice + '</div></div>' +

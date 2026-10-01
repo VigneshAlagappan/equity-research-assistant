@@ -170,8 +170,7 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
     # works for years both happen to be present; on ICICI Bank, that
     # sum covered 10 years, the direct figure covers 21.
     she = fill_missing(raw["total_shareholders_funds"], add("equity_share_capital", "reserves"))
-    # Diluted EPS (XBRL) wins where reported; else the reported/basic figure; else net profit / shares.
-    eps_series = fill_missing(raw["diluted_eps"], fill_missing(raw["eps"], divide("net_profit", "shares_outstanding")))
+    eps_series = fill_missing(raw["eps"], divide("net_profit", "shares_outstanding"))
     book_value_series = fill_missing(
         raw["book_value"],
         {
@@ -243,7 +242,8 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
             _row("netProfit", "Net Profit (PAT)", "big", years, raw["net_profit"]),
         ],
         "perShare": [
-            _row("eps", "EPS (diluted where reported)", "perShare", years, eps_series, row_type="calc"),
+            _row("eps", "EPS (Net Profit / share)", "perShare", years, eps_series, row_type="calc"),
+            _row("dilutedEps", "Diluted EPS (XBRL)", "perShare", years, raw["diluted_eps"]),
             _row("bookValue", "Book Value (Networth based)", "perShare", years, book_value_series, row_type="calc"),
             _row("dividend", "Dividend per share", "perShare", years, raw["dividend_per_share"], row_type="calc" if dividend_filled or "dividend_per_share" in restated else "fact"),
             _row("salesPerShare", "Sales (Revenue per share)", "perShare", years, sales_per_share_series, row_type="calc"),

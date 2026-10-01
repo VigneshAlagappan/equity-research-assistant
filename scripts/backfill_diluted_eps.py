@@ -5,7 +5,7 @@ canonical_financials for that period are inserted/reconciled (a plain re-
 ingest would duplicate every other metric the same file also yields).
 
 Idempotent: re-running skips periods that already have a diluted_eps value.
-Each company is one batched insert + one reconciliation per statement type.
+Each company is one batched insert, then a reconcile of just the new diluted_eps keys.
 Meant to be run in small batches (--companies / --limit) with a check between
 rounds, like other bulk ingestion here.
 
@@ -31,6 +31,7 @@ from storage.repositories import get_canonical_series  # noqa: E402
 
 JOB_NAME = "diluted_eps_backfill"
 METRIC = "diluted_eps"
+FIRST_PERIOD_END = "2021-04-01"  # start of FY2022 for a March year-end
 
 
 def _cache_alias_lookups() -> None:
@@ -79,13 +80,15 @@ def backfill_company(conn, company_id: str) -> str:
     ONE batch per statement type -- a handful of DB round trips per company
     instead of the full pipeline per filing."""
     from companies.lifecycle import assert_active
-    from ingestion.pipeline import _publish_financial_ingestion
     from ingestion.validation import validate_observation
-    from storage.repositories import insert_financial_observations
+    from storage.repositories import insert_financial_observations, reconcile
 
     assert_active(conn, company_id)
     raw_dir = app_settings.RAW_DIR / company_id / "nse"
-    files = sorted(raw_dir.glob("*.xml")) if raw_dir.is_dir() else []
+    # Filenames start with the filing's period end (YYYY-MM-DD). The app only
+    # shows FY2023 onward for Indian companies; FY2022 (from 2021-04-01) is
+    # kept as one year of lead-in context, older filings are skipped.
+    files = sorted(p for p in raw_dir.glob("*.xml") if p.name[:10] >= FIRST_PERIOD_END) if raw_dir.is_dir() else []
     have = _existing_periods(conn, company_id)
     adapter = NSEXbrlAdapter(conn)
 
@@ -102,9 +105,16 @@ def backfill_company(conn, company_id: str) -> str:
         valid = list(by_key.values())
         insert_financial_observations(conn, valid)
         inserted += len(valid)
-        reconciled += _publish_financial_ingestion(
-            conn, company_id=company_id, source_id="nse", statement_type=statement_type, valid=valid,
-        )
+        # Reconcile ONLY these keys. The pipeline's own path
+        # (compute_reconciliation_keys) expands every XBRL observation to
+        # every metric in its period -- dozens of reconciles each with
+        # several round trips -- which is needed when a period first becomes
+        # XBRL-validated, but not here: these periods already are, and only
+        # diluted_eps changed.
+        for obs in valid:
+            if reconcile(conn, obs.company_id, obs.metric_key, obs.period_type, obs.fiscal_year,
+                         obs.quarter, obs.statement_type) is not None:
+                reconciled += 1
     return f"files={len(files)} inserted={inserted} reconciled={reconciled}"
 
 

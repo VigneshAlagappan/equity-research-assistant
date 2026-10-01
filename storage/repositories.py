@@ -3218,6 +3218,7 @@ OVERVIEW_RATIO_CATALOG = [
     {"key": "dividendYield", "label": "Dividend Yield", "default_enabled": True},
     {"key": "roe", "label": "ROE", "default_enabled": True},
     {"key": "eps", "label": "EPS", "default_enabled": True},
+    {"key": "dilutedEps", "label": "Diluted EPS", "default_enabled": True},
     {"key": "priceToBook", "label": "Price to Book Value", "default_enabled": True},
     {"key": "debtToEquity", "label": "Debt to Equity", "default_enabled": True},
     {"key": "payout", "label": "Dividend Payout", "default_enabled": True},

@@ -46,3 +46,11 @@ def test_backfills_only_diluted_eps_and_is_idempotent(db_conn: sqlite3.Connectio
     again = backfill.backfill_company(db_conn, "INFY")
     assert "inserted=0" in again
     assert len(get_canonical_series(db_conn, "INFY", "diluted_eps", "quarterly", "standalone")) == 1
+
+
+def test_filings_before_fy2022_are_skipped(db_conn: sqlite3.Connection, raw_dir: Path) -> None:
+    (raw_dir / "INFY" / "nse" / "2023-09-30_standalone_1.xml").rename(raw_dir / "INFY" / "nse" / "2019-09-30_standalone_1.xml")
+
+    detail = backfill.backfill_company(db_conn, "INFY")
+
+    assert "files=0" in detail and "inserted=0" in detail
