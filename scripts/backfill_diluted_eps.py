@@ -134,6 +134,8 @@ def backfill_company_us(conn, company_id: str) -> str:
     if cik is None:
         raise ValueError(f"could not resolve a SEC CIK for {company_id}")
     have = _existing_periods(conn, company_id)
+    if have:  # already backfilled; new filings arrive through the weekly EDGAR job
+        return "skipped (already has diluted_eps)"
     new_obs = {}
     for obs in SECEdgarAdapter(conn).fetch(company_id, cik, currency=company["currency"]):
         key = (obs.period_type, obs.fiscal_year, obs.quarter, "consolidated")
@@ -208,9 +210,12 @@ def main() -> None:
     elif args.index:
         ids = [r["company_id"] for r in select_company_ids_by_index(conn, args.index)]
     elif args.country:
-        from storage.company_repository import select_active_companies_by_country
+        # Only companies that actually have financials ingested -- the US
+        # universe on file is thousands of registered tickers, most with no
+        # statements at all, and each is a SEC download.
+        from storage.company_repository import select_company_ids_with_metrics
 
-        ids = [r["company_id"] for r in select_active_companies_by_country(conn, args.country)]
+        ids = [r["company_id"] for r in select_company_ids_with_metrics(conn, args.country, ("eps", "net_profit"))]
     else:
         parser.error("give --companies, --index or --country")
     if args.limit:
