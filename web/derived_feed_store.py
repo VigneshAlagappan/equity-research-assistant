@@ -94,3 +94,33 @@ def _safe_rollback(conn: DBConnection) -> None:
         conn.rollback()
     except Exception:
         pass
+
+
+def refresh_company(conn: DBConnection, company_id: str, price_conn: DBConnection | None = None) -> int:
+    """Bring every stored feed for one company up to date (charts annual/
+    quarterly and valuation, consolidated and standalone); returns how many
+    were actually rebuilt -- 0 means everything was already current."""
+    from web.charts_feed import build_charts_feed
+    from web.valuation_feed import build_valuation_feed
+
+    rebuilt = [0]
+
+    def counted(build):
+        def run():
+            rebuilt[0] += 1
+            return build()
+        return run
+
+    for statement_type in ("consolidated", "standalone"):
+        for period_type in ("annual", "quarterly"):
+            get_or_build(
+                conn, company_id, "charts", statement_type, period_type,
+                counted(lambda st=statement_type, pt=period_type: build_charts_feed(
+                    conn, company_id, statement_type=st, period_type=pt, price_conn=price_conn)),
+                price_conn=price_conn,
+            )
+        get_or_build(
+            conn, company_id, "valuation", statement_type, "annual",
+            counted(lambda st=statement_type: build_valuation_feed(conn, company_id, statement_type=st)),
+        )
+    return rebuilt[0]
