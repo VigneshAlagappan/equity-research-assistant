@@ -10,6 +10,7 @@ Meant to be run in small batches (--companies / --limit) with a check between
 rounds, like other bulk ingestion here.
 
 Usage:
+  python -m scripts.backfill_diluted_eps --country US          # EDGAR, FY2022+
   python -m scripts.backfill_diluted_eps --companies TCS,INFY,HDFCBANK
   python -m scripts.backfill_diluted_eps --index "Nifty 50" --limit 5
 """
@@ -32,6 +33,7 @@ from storage.repositories import get_canonical_series  # noqa: E402
 JOB_NAME = "diluted_eps_backfill"
 METRIC = "diluted_eps"
 FIRST_PERIOD_END = "2021-04-01"  # start of FY2022 for a March year-end
+FIRST_US_FISCAL_YEAR = 2022
 
 
 def _cache_alias_lookups() -> None:
@@ -118,6 +120,42 @@ def backfill_company(conn, company_id: str) -> str:
     return f"files={len(files)} inserted={inserted} reconciled={reconciled}"
 
 
+def backfill_company_us(conn, company_id: str) -> str:
+    """US companies: fetch SEC EDGAR companyfacts (no on-disk filings to
+    reuse here) and keep only diluted_eps rows for FY2022 onward that aren't
+    already stored; reconcile just those keys."""
+    from companies.registry import get_company
+    from ingestion.validation import validate_observation
+    from sources.sec_edgar import SECEdgarAdapter, get_cik_for_ticker
+    from storage.repositories import insert_financial_observations, reconcile
+
+    company = get_company(conn, company_id)
+    cik = get_cik_for_ticker(company["fetch_symbol"] or company_id)
+    if cik is None:
+        raise ValueError(f"could not resolve a SEC CIK for {company_id}")
+    have = _existing_periods(conn, company_id)
+    new_obs = {}
+    for obs in SECEdgarAdapter(conn).fetch(company_id, cik, currency=company["currency"]):
+        key = (obs.period_type, obs.fiscal_year, obs.quarter, "consolidated")
+        if (obs.metric_key == METRIC and int(obs.fiscal_year.removeprefix("FY")) >= FIRST_US_FISCAL_YEAR
+                and key not in have and not validate_observation(obs)):
+            new_obs[key] = obs
+    valid = list(new_obs.values())
+    insert_financial_observations(conn, valid)
+    reconciled = sum(
+        1 for o in valid
+        if reconcile(conn, o.company_id, o.metric_key, o.period_type, o.fiscal_year, o.quarter, o.statement_type) is not None
+    )
+    return f"cik={cik} inserted={len(valid)} reconciled={reconciled}"
+
+
+def _is_us(conn, company_id: str) -> bool:
+    from companies.registry import get_company
+
+    company = get_company(conn, company_id)
+    return company is not None and company["currency"] == "USD"
+
+
 def run_backfill(conn, company_ids: list[str]) -> int:
     import psycopg2
 
@@ -128,7 +166,10 @@ def run_backfill(conn, company_ids: list[str]) -> int:
             with run.item(company_id) as item:
                 for attempt in (1, 2):
                     try:
-                        item.detail = backfill_company(work_conn, company_id)
+                        item.detail = (
+                            backfill_company_us(work_conn, company_id) if _is_us(work_conn, company_id)
+                            else backfill_company(work_conn, company_id)
+                        )
                         break
                     except (psycopg2.OperationalError, psycopg2.InterfaceError):
                         # Neon's pooler drops idle/long connections now and
@@ -144,6 +185,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--companies", help="comma-separated company_id list")
     parser.add_argument("--index", help='company_index_membership index_name, e.g. "Nifty 50"')
+    parser.add_argument("--country", help='every active company of a country, e.g. "US"')
     parser.add_argument("--limit", type=int, help="only the first N companies of the selection")
     args = parser.parse_args()
     conn = open_db()
@@ -151,8 +193,12 @@ def main() -> None:
         ids = [c.strip().upper() for c in args.companies.split(",") if c.strip()]
     elif args.index:
         ids = [r["company_id"] for r in select_company_ids_by_index(conn, args.index)]
+    elif args.country:
+        from storage.company_repository import select_active_companies_by_country
+
+        ids = [r["company_id"] for r in select_active_companies_by_country(conn, args.country)]
     else:
-        parser.error("give --companies or --index")
+        parser.error("give --companies, --index or --country")
     if args.limit:
         ids = ids[: args.limit]
     run_backfill(conn, ids)

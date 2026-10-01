@@ -290,3 +290,13 @@ def test_diluted_eps_is_its_own_row_next_to_reported_eps(company_conn: sqlite3.C
     rows = {r["key"]: r for r in feed["METRICS"]["perShare"]}
     assert dict(zip(feed["PERIODS"], rows["eps"]["values"])) == {"FY2023": 10.0, "FY2024": 12.0}
     assert dict(zip(feed["PERIODS"], rows["dilutedEps"]["values"])) == {"FY2023": 9.5, "FY2024": None}
+
+
+def test_eps_row_falls_back_to_diluted_eps_when_no_reported_eps(company_conn: sqlite3.Connection) -> None:
+    _insert_canonical(company_conn, "TESTCO", "diluted_eps", "FY2024", 8.87)
+
+    feed = build_charts_feed(company_conn, "TESTCO")
+
+    rows = {r["key"]: r for r in feed["METRICS"]["perShare"]}
+    assert rows["eps"]["values"] == [8.87]
+    assert rows["dilutedEps"]["values"] == [8.87]

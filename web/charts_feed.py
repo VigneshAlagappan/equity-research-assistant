@@ -386,7 +386,8 @@ def build_charts_feed(
 
     networth = raw["reserves"]
     she = fill_missing(raw["total_shareholders_funds"], add("equity_share_capital", "reserves"))
-    eps_series = fill_missing(raw["eps"], divide("net_profit", "shares_outstanding"))
+    # reported EPS, else the XBRL diluted figure (insurers file one combined basic-and-diluted EPS), else net profit / shares
+    eps_series = fill_missing(raw["eps"], fill_missing(raw["diluted_eps"], divide("net_profit", "shares_outstanding")))
     book_value_series = fill_missing(
         raw["book_value"],
         {

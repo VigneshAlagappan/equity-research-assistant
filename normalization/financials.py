@@ -269,6 +269,7 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
     ("sec_edgar", "ProfitLoss", "net_profit"),
     ("sec_edgar", "EarningsPerShareDiluted", "eps"),
     ("sec_edgar", "EarningsPerShareBasic", "eps"),
+    ("sec_edgar", "EarningsPerShareDiluted [diluted_eps]", "diluted_eps"),
     ("sec_edgar", "InterestAndDividendIncomeOperating", "interest_earned"),
     ("sec_edgar", "InterestIncomeOperating", "interest_earned"),
     ("sec_edgar", "InterestAndFeeIncomeLoansAndLeases", "interest_earned"),
@@ -322,6 +323,10 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
     ("nse", "ProfitLossForThePeriod", "net_profit"),
     ("nse", "BasicEarningsPerShareBeforeExtraordinaryItems", "eps"),
     ("nse", "DilutedEarningsPerShareBeforeExtraordinaryItems", "diluted_eps"),
+    # Insurers' taxonomy files ONE figure labelled "Basic and Diluted" -- verified
+    # against real HDFC Life / SBI Life filings (e.g. HDFC Life Q4 FY26: 2.31 quarter,
+    # 8.87 year) -- so it is both the basic and the diluted EPS.
+    ("nse", "BasicAndDilutedEPSBeforeExtraordinaryItemsNetOfTaxExpenseForThePeriodNotToBeAnnualized", "diluted_eps"),
     ("nse", "PercentageOfGrossNpa", "gross_npa_percent"),
     ("nse", "PercentageOfNpa", "net_npa_percent"),
     ("nse", "ReturnOnAssets", "return_on_assets_percent"),

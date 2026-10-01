@@ -170,7 +170,8 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
     # works for years both happen to be present; on ICICI Bank, that
     # sum covered 10 years, the direct figure covers 21.
     she = fill_missing(raw["total_shareholders_funds"], add("equity_share_capital", "reserves"))
-    eps_series = fill_missing(raw["eps"], divide("net_profit", "shares_outstanding"))
+    # reported EPS, else the XBRL diluted figure (insurers file one combined basic-and-diluted EPS), else net profit / shares
+    eps_series = fill_missing(raw["eps"], fill_missing(raw["diluted_eps"], divide("net_profit", "shares_outstanding")))
     book_value_series = fill_missing(
         raw["book_value"],
         {

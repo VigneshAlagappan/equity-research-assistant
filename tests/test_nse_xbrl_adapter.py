@@ -353,3 +353,18 @@ def test_missing_oned_context_returns_no_observations(tmp_path: Path, conn: sqli
     adapter = NSEXbrlAdapter(conn)
 
     assert adapter.parse(path, "IDFCFIRSTB") == []
+
+
+def test_insurer_combined_basic_and_diluted_eps_maps_to_diluted_eps(tmp_path: Path, conn: sqlite3.Connection) -> None:
+    """Insurers' taxonomy files one "Basic and Diluted" EPS (real HDFC Life Q4 FY26: 2.31)."""
+    register_company(conn, "HDFCLIFE", "HDFC Life Insurance", "HDFC Life")
+    path = _make_xbrl(
+        tmp_path,
+        {"BasicAndDilutedEPSBeforeExtraordinaryItemsNetOfTaxExpenseForThePeriodNotToBeAnnualized": "2.31"},
+        namespace=_NS_CAPMKT,
+    )
+
+    observations = NSEXbrlAdapter(conn).parse(path, "HDFCLIFE", statement_type="standalone")
+
+    by_metric = {o.metric_key: o for o in observations}
+    assert by_metric["diluted_eps"].value == pytest.approx(2.31)  # plain rupees, no crore rescale

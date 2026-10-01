@@ -130,6 +130,7 @@ _PER_SHARE_TAGS = {
     "BasicEarningsLossPerShareFromContinuingAndDiscontinuedOperations",
     "DilutedEarningsPerShareBeforeExtraordinaryItems",
     "DilutedEarningsLossPerShareFromContinuingAndDiscontinuedOperations",
+    "BasicAndDilutedEPSBeforeExtraordinaryItemsNetOfTaxExpenseForThePeriodNotToBeAnnualized",
 }
 
 # shares_outstanding has no direct XBRL tag in this taxonomy — derived as

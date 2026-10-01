@@ -310,6 +310,7 @@ _CONCEPT_MAP: dict[str, list[str]] = {
     "tax": ["IncomeTaxExpenseBenefit"],
     "net_profit": ["NetIncomeLoss", "ProfitLoss"],
     "eps": ["EarningsPerShareDiluted", "EarningsPerShareBasic"],
+    "diluted_eps": ["EarningsPerShareDiluted"],
     "interest_earned": ["InterestAndDividendIncomeOperating", "InterestIncomeOperating", "InterestAndFeeIncomeLoansAndLeases"],
     "interest_expended": ["InterestExpense", "InterestExpenseOperating"],
     "total_assets": ["Assets"],
@@ -349,6 +350,11 @@ _INSTANT_CONCEPTS = frozenset({
 _PER_UNIT_CONCEPTS = frozenset({
     "EarningsPerShareDiluted", "EarningsPerShareBasic",
 })
+
+# metric_aliases maps ONE raw label to ONE metric, and "EarningsPerShareDiluted"
+# already resolves to `eps` -- so the separate diluted_eps metric is built under
+# a synthetic label of its own (see normalization/financials.py).
+_ROW_LABEL_OVERRIDE = {"diluted_eps": "EarningsPerShareDiluted [diluted_eps]"}
 
 _UNIT_DIVISOR = 1_000_000  # raw USD -> this app's USD_MILLION "big" convention
 
@@ -430,7 +436,7 @@ class SECEdgarAdapter:
                     build_observations_from_periods(
                         self._conn, company_id=company_id, source=self.source_id, source_file=source_file,
                         parser_version=PARSER_VERSION, period_type="quarterly", statement_type="consolidated",
-                        row_label=concept_name,
+                        row_label=_ROW_LABEL_OVERRIDE.get(metric_key, concept_name),
                         period_values={k: v / divisor for k, v in quarterly.items()},
                         currency=currency,
                     )
@@ -440,7 +446,7 @@ class SECEdgarAdapter:
                     build_observations_from_periods(
                         self._conn, company_id=company_id, source=self.source_id, source_file=source_file,
                         parser_version=PARSER_VERSION, period_type="annual", statement_type="consolidated",
-                        row_label=concept_name,
+                        row_label=_ROW_LABEL_OVERRIDE.get(metric_key, concept_name),
                         period_values={k: v / divisor for k, v in annual.items()},
                         currency=currency,
                     )
