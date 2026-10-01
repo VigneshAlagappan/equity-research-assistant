@@ -19,10 +19,18 @@ from __future__ import annotations
 
 import argparse
 
-from ingestion.batch_log import BatchRun
-from storage.backend_bootstrap import open_db, open_price_db
-from storage.company_repository import select_company_ids_by_index
-from web.derived_feed_store import refresh_company
+# Must run before any storage.* repository module is imported: under
+# DATABASE_BACKEND=postgres this swaps them for their _pg siblings (same
+# reason main.py calls it first). A no-op inside the web app / scheduler,
+# which already installed it.
+import storage.backend_bootstrap
+
+storage.backend_bootstrap.install()
+
+from ingestion.batch_log import BatchRun  # noqa: E402
+from storage.backend_bootstrap import open_db, open_price_db  # noqa: E402
+from storage.company_repository import select_company_ids_by_index  # noqa: E402
+from web.derived_feed_store import refresh_company  # noqa: E402
 
 JOB_NAME = "derived_feeds_refresh"
 DEFAULT_LIMIT = 100
@@ -42,8 +50,13 @@ def priority_company_ids(conn) -> list[str]:
 
 def run_derived_feeds_refresh(conn, limit: int = DEFAULT_LIMIT) -> int:
     """Returns the batch run_id, like the NSE batch runners."""
-    companies = priority_company_ids(conn)
+    # Open the price connection BEFORE querying on `conn`, and release any
+    # open transaction first: open_price_db() runs the whole schema script
+    # (DDL needing table locks), which blocks behind another connection's
+    # idle-in-transaction read locks until Neon drops that connection.
+    conn.commit()
     price_conn = open_price_db()
+    companies = priority_company_ids(conn)
     rebuilt_companies = 0
     skipped = 0
     try:
