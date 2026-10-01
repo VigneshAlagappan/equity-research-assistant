@@ -71,3 +71,13 @@ def test_storage_failure_falls_back_to_computing(conn, monkeypatch) -> None:
     monkeypatch.setattr(store.repo, "ensure_derived_feeds_table", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     feed, n = _get(conn)
     assert n == 1 and feed["PERIODS"] == ["FY2024"]
+
+
+def test_decimal_values_from_postgres_are_stored_as_numbers(conn, monkeypatch) -> None:
+    from decimal import Decimal
+
+    feed = {"METRICS": {"x": [{"values": [Decimal("12.50"), None]}]}}
+    store.get_or_build(conn, "DCO", "charts", "consolidated", "annual", lambda: feed)
+    stored = store.repo.get_derived_feed(conn, "DCO", "charts", "consolidated", "annual")
+    assert stored is not None
+    assert __import__("json").loads(stored["payload"])["METRICS"]["x"][0]["values"] == [12.5, None]

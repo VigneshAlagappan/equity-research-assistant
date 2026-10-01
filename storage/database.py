@@ -6,8 +6,10 @@ later phase. This module only owns connecting and creating the schema.
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +17,8 @@ from werkzeug.security import generate_password_hash
 
 from config import settings
 from config.settings import DEFAULT_SOURCES
+
+logger = logging.getLogger(__name__)
 
 
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
@@ -103,6 +107,8 @@ def init_postgres_db(connection_string: str | None = None, schema_path: Path | N
     import psycopg2
     import psycopg2.extras
 
+    explicit_connection_string = connection_string is not None
+
     # LOCAL_DEV_DATABASE_URL, when set, takes priority over NEON -- lets a
     # developer point DATABASE_BACKEND=postgres at the local Docker Postgres
     # (docker-compose.test.yml's "signals_dev" database, see scripts/
@@ -130,17 +136,128 @@ def init_postgres_db(connection_string: str | None = None, schema_path: Path | N
     # never fire on a live connection, short enough that a caller's own
     # reconnect-on-stale-connection retry (several scripts already have
     # one) actually gets a chance to run instead of hanging indefinitely.
+    # The schema script (a 1,600-line run of CREATE ... IF NOT EXISTS plus
+    # ALTER TABLE ... ADD COLUMN IF NOT EXISTS) costs ~0.25s and, worse, the
+    # ALTERs take table locks that queue behind any open read transaction
+    # (a script that had read company_index_membership then opened a second
+    # connection hung for 300s until Neon dropped it). So on the default
+    # (NEON / LOCAL_DEV_DATABASE_URL) path it's applied once per process per
+    # database, with a lock_timeout so it can never wait indefinitely; an
+    # explicitly passed connection_string (tests, one-off scripts) always
+    # applies it, since those point at fresh/throwaway databases.
+    explicit = explicit_connection_string
     conn = psycopg2.connect(
         connection_string, cursor_factory=psycopg2.extras.RealDictCursor,
         keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3,
     )
-    with conn.cursor() as cur:
-        # psycopg2's cursor.execute() happily runs a full script of
-        # semicolon-separated statements in one call (verified against real
-        # Neon) -- no executescript()-equivalent split-and-loop needed.
-        cur.execute(schema_sql)
-    conn.commit()
+    schema_key = (connection_string, str(schema_path))
+    if explicit or schema_key not in _SCHEMA_APPLIED:
+        _apply_postgres_schema(conn, schema_sql)
+        if not explicit:
+            _SCHEMA_APPLIED.add(schema_key)
     return conn
+
+
+#: (connection string, schema path) pairs whose schema this process already
+#: applied -- see init_postgres_db().
+_SCHEMA_APPLIED: set[tuple[str, str]] = set()
+
+_SCHEMA_LOCK_TIMEOUT = "15s"
+
+
+def _apply_postgres_schema(conn, schema_sql: str) -> None:
+    import psycopg2
+
+    with conn.cursor() as cur:
+        cur.execute(f"SET lock_timeout = '{_SCHEMA_LOCK_TIMEOUT}'")
+        try:
+            # psycopg2's cursor.execute() happily runs a full script of
+            # semicolon-separated statements in one call (verified against
+            # real Neon) -- no executescript()-equivalent split-and-loop needed.
+            cur.execute(schema_sql)
+        except psycopg2.errors.LockNotAvailable:
+            # Couldn't get a table lock within the timeout: the tables
+            # already exist (that's how we got here), so carry on without
+            # the idempotent migration rather than failing the connection.
+            conn.rollback()
+            logger.warning("Postgres schema apply skipped: lock_timeout (%s) hit; will not retry in this process",
+                           _SCHEMA_LOCK_TIMEOUT)
+        else:
+            conn.commit()
+        with conn.cursor() as reset:
+            reset.execute("RESET lock_timeout")
+    conn.commit()
+
+
+# ------------------------------------------------------------------
+# Connection pool for the web app's per-request connections (Postgres only).
+# gunicorn runs a single sync worker, so a handful of warm connections is
+# plenty; anything beyond the pool falls back to a plain connection.
+# ------------------------------------------------------------------
+
+_POOL_MAX = 4
+_pool = None
+_pool_lock = threading.Lock()
+_pooled_ids: set[int] = set()
+
+
+def acquire_postgres_connection():
+    """A ready-to-use default-database connection from a small pool (one
+    TLS handshake per connection lifetime instead of per request). A pooled
+    connection is validated with SELECT 1 first -- Neon drops idle
+    connections -- and replaced by a fresh one if dead. Pair with
+    release_postgres_connection()."""
+    global _pool
+    import psycopg2
+    import psycopg2.extras
+    import psycopg2.pool
+
+    with _pool_lock:
+        if _pool is None:
+            first = init_postgres_db()  # applies the schema once for this process
+            _pool = psycopg2.pool.ThreadedConnectionPool(
+                1, _POOL_MAX,
+                os.environ.get("LOCAL_DEV_DATABASE_URL") or os.environ["NEON"],
+                cursor_factory=psycopg2.extras.RealDictCursor,
+                keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3,
+            )
+            first.close()
+        try:
+            conn = _pool.getconn()
+        except psycopg2.pool.PoolError:
+            return init_postgres_db()  # pool exhausted: unpooled, closed on release
+        _pooled_ids.add(id(conn))
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        conn.rollback()
+        return conn
+    except Exception:  # noqa: BLE001 -- stale connection: swap for a fresh one
+        with _pool_lock:
+            _pooled_ids.discard(id(conn))
+            _pool.putconn(conn, close=True)
+        return init_postgres_db()
+
+
+def release_postgres_connection(conn) -> None:
+    """Roll back (never leave a read transaction -- and its table locks --
+    open) and return a pooled connection; close an unpooled one."""
+    with _pool_lock:
+        pooled = id(conn) in _pooled_ids
+    if not pooled:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    try:
+        if not conn.closed:
+            conn.rollback()
+    except Exception:  # noqa: BLE001
+        pass
+    with _pool_lock:
+        _pooled_ids.discard(id(conn))
+        _pool.putconn(conn, close=bool(conn.closed))
 
 
 def _migrate_companies_website_column(conn: sqlite3.Connection) -> None:

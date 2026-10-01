@@ -11,6 +11,8 @@ ingested financial data from the web UI.
 
 from __future__ import annotations
 
+import time
+
 # Must run before any other import in this file (or any module this file
 # transitively imports) touches storage.repositories/company_repository/
 # fact_store/indicator_repository/investigation_repository -- see
@@ -136,7 +138,7 @@ from scheduling.jobs import CATEGORY_ORDER, ScheduledJob, SCHEDULED_JOBS, get_jo
 from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
 from storage.company_repository import select_company_ids_by_index
-from storage.database import init_db, init_postgres_db
+from storage.database import acquire_postgres_connection, init_db, release_postgres_connection
 from storage.document_store import DocumentStoreError, default_document_store
 from storage.price_repository import (
     get_price_history,
@@ -610,7 +612,10 @@ def create_app() -> Flask:
     def _close_db(_exception: BaseException | None) -> None:
         conn: DBConnection | None = g.pop("db_conn", None)
         if conn is not None:
-            conn.close()
+            if DATABASE_BACKEND == "postgres":
+                release_postgres_connection(conn)  # rollback + back to the pool
+            else:
+                conn.close()
         price_conn: DBConnection | None = g.pop("price_db_conn", None)
         if price_conn is not None:
             price_conn.close()
@@ -626,7 +631,7 @@ def create_app() -> Flask:
         `from storage.repositories import X` resolve correctly against
         whichever backend this connection actually is)."""
         if "db_conn" not in g:
-            g.db_conn = init_postgres_db() if DATABASE_BACKEND == "postgres" else init_db()
+            g.db_conn = acquire_postgres_connection() if DATABASE_BACKEND == "postgres" else init_db()
         return g.db_conn
 
     def get_logs_db() -> DBConnection:
@@ -644,9 +649,26 @@ def create_app() -> Flask:
         return get_db()
 
     def get_price_db() -> DBConnection:
+        if DATABASE_BACKEND == "postgres":
+            # daily_prices lives in the same database: reuse the request's
+            # one connection instead of opening (and schema-applying) a second.
+            return get_db()
         if "price_db_conn" not in g:
             g.price_db_conn = storage.backend_bootstrap.open_price_db()
         return g.price_db_conn
+
+    @app.before_request
+    def _start_request_timer():
+        g._request_started = time.perf_counter()
+
+    @app.after_request
+    def _server_timing(response):
+        # Server-Timing shows up in the browser's Network tab, so slow page
+        # loads can be attributed to server time vs. network/render.
+        started = g.get("_request_started")
+        if started is not None:
+            response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - started) * 1000:.0f}"
+        return response
 
     @app.before_request
     def _require_login():

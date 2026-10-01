@@ -25,8 +25,10 @@ break because of it.
 
 from __future__ import annotations
 
+import decimal
 import hashlib
 import json
+import logging
 from pathlib import Path
 
 import storage.price_repository as price_repo
@@ -35,7 +37,16 @@ from companies.registry import get_company
 from storage.database import utcnow_iso
 from storage.db_types import DBConnection
 
+logger = logging.getLogger(__name__)
+
 _CALC_SOURCES = ("charts_feed.py", "valuation_feed.py", "share_adjustment.py")
+
+
+def _json_default(value):
+    # Postgres NUMERIC columns come back as Decimal (price rows etc.).
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def _calc_version() -> str:
@@ -78,13 +89,18 @@ def get_or_build(
         if stored is not None and stored["fingerprint"] == fp:
             return json.loads(stored["payload"])
     except Exception:
+        logger.warning("Derived feed lookup failed for %s; computing directly", company_id, exc_info=True)
         _safe_rollback(conn)
         return build()
 
     feed = build()
     try:
-        repo.upsert_derived_feed(conn, company_id, feed_kind, statement_type, period_type, fp, json.dumps(feed), utcnow_iso())
+        repo.upsert_derived_feed(
+            conn, company_id, feed_kind, statement_type, period_type, fp,
+            json.dumps(feed, default=_json_default), utcnow_iso(),
+        )
     except Exception:
+        logger.warning("Could not store derived %s feed for %s", feed_kind, company_id, exc_info=True)
         _safe_rollback(conn)
     return feed
 
