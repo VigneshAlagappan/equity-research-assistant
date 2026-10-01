@@ -726,6 +726,7 @@ every rule's hour shifts one hour early in ET terms and needs a manual
 | Documents | Document analysis | Quarterly | — (on hold) | — |
 | Documents | Investor relations documents | Quarterly | — (on hold) | — |
 | Maintenance | DB sharding | Daily | — (on hold) | — |
+| Maintenance | Stored Financials feeds refresh (Nifty 500 priority order, 100 companies/run) | Daily | 10:00 UTC (6:00am EDT), after the price jobs | `signals-app-derived-feeds-refresh-daily` |
 | Maintenance | Raw object catalog reconciliation | Weekly | Sun 5:00am | `signals-app-raw-object-reconciliation-weekly` |
 | Maintenance | Research thread reconciliation (S3 <-> Postgres) | Weekly | Sun 5:15am | `signals-app-generated-report-reconciliation-weekly` |
 
