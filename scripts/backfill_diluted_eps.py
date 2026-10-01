@@ -24,12 +24,32 @@ storage.backend_bootstrap.install()
 from config import settings as app_settings  # noqa: E402
 from ingestion.batch_log import BatchRun  # noqa: E402
 from ingestion.pipeline import ingest_file  # noqa: E402
+from sources.nse_xbrl import NSEXbrlAdapter  # noqa: E402
 from storage.backend_bootstrap import open_db  # noqa: E402
 from storage.company_repository import select_company_ids_by_index  # noqa: E402
 from storage.repositories import get_canonical_series  # noqa: E402
 
 JOB_NAME = "diluted_eps_backfill"
 METRIC = "diluted_eps"
+
+
+def _cache_alias_lookups() -> None:
+    """Parsing resolves every row label to a metric via a metric_aliases
+    query -- ~100 round trips per filing, which over a WAN link to Neon was
+    minutes per file. The alias table is static for the life of this run, so
+    memoize the lookups (script-scoped; nothing else is affected)."""
+    import normalization.financials as nf
+
+    original = nf.get_metric_key_for_alias
+    cache: dict = {}
+
+    def cached(conn, source, raw_label):
+        key = (source, raw_label)
+        if key not in cache:
+            cache[key] = original(conn, source, raw_label)
+        return cache[key]
+
+    nf.get_metric_key_for_alias = cached
 
 
 def _existing_periods(conn, company_id: str) -> set[tuple[str, str, str | None, str]]:
@@ -52,6 +72,11 @@ def backfill_company(conn, company_id: str) -> str:
         def keep(obs, st=statement_type) -> bool:
             return obs.metric_key == METRIC and (obs.period_type, obs.fiscal_year, obs.quarter, st) not in have
 
+        # Parse first (local, instant) and only run the full ingest pipeline --
+        # events + reconciliation, several DB round trips -- for files that
+        # actually have something new; most old filings have none.
+        if not any(keep(o) for o in NSEXbrlAdapter(conn).parse(path, company_id, statement_type=statement_type)):
+            continue
         result = ingest_file(conn, path, company_id=company_id, source_id="nse",
                              statement_type=statement_type, observation_filter=keep)
         if result.inserted_count:
@@ -62,10 +87,23 @@ def backfill_company(conn, company_id: str) -> str:
 
 
 def run_backfill(conn, company_ids: list[str]) -> int:
+    import psycopg2
+
+    _cache_alias_lookups()
+    work_conn = conn
     with BatchRun(conn, JOB_NAME, f"{len(company_ids)} companies") as run:
         for company_id in company_ids:
             with run.item(company_id) as item:
-                item.detail = backfill_company(conn, company_id)
+                for attempt in (1, 2):
+                    try:
+                        item.detail = backfill_company(work_conn, company_id)
+                        break
+                    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+                        # Neon's pooler drops idle/long connections now and
+                        # then; reconnect once and retry (idempotent).
+                        if attempt == 2:
+                            raise
+                        work_conn = open_db()
                 print(f"{company_id}: {item.detail}", flush=True)
     return run.run_id
 
