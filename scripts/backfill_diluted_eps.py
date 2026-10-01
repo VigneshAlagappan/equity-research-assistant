@@ -156,27 +156,41 @@ def _is_us(conn, company_id: str) -> bool:
     return company is not None and company["currency"] == "USD"
 
 
+def _alive(conn) -> bool:
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        conn.rollback()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def run_backfill(conn, company_ids: list[str]) -> int:
     import psycopg2
 
     _cache_alias_lookups()
-    work_conn = conn
     with BatchRun(conn, JOB_NAME, f"{len(company_ids)} companies") as run:
         for company_id in company_ids:
+            # Neon's pooler drops idle connections (a slow SEC download leaves
+            # this one idle for a while): check it, and reconnect -- for the
+            # audit log too -- instead of dying on the next query.
+            if not _alive(conn):
+                conn = open_db()
+                run._conn = conn
             with run.item(company_id) as item:
                 for attempt in (1, 2):
                     try:
                         item.detail = (
-                            backfill_company_us(work_conn, company_id) if _is_us(work_conn, company_id)
-                            else backfill_company(work_conn, company_id)
+                            backfill_company_us(conn, company_id) if _is_us(conn, company_id)
+                            else backfill_company(conn, company_id)
                         )
                         break
                     except (psycopg2.OperationalError, psycopg2.InterfaceError):
-                        # Neon's pooler drops idle/long connections now and
-                        # then; reconnect once and retry (idempotent).
                         if attempt == 2:
                             raise
-                        work_conn = open_db()
+                        conn = open_db()
+                        run._conn = conn
                 print(f"{company_id}: {item.detail}", flush=True)
     return run.run_id
 
