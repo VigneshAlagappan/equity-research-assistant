@@ -1,0 +1,83 @@
+{
+  "case_id": "l5_idfcfirstb_growth_sustainability",
+  "benchmark_version": "v1",
+  "question": "Is IDFC FIRST Bank's growth translating into sustainable profitability, or are credit costs, funding characteristics, asset quality, or other factors creating risks beneath the growth?",
+  "company_ids": [
+    "IDFCFIRSTB"
+  ],
+  "as_of": null,
+  "expected_edges": [
+    {
+      "edge_id": "growth_credit_cost",
+      "source_aliases": [
+        "growth",
+        "loan growth",
+        "credit growth",
+        "advances",
+        "retail"
+      ],
+      "target_aliases": [
+        "credit cost",
+        "provision",
+        "npa",
+        "asset quality"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "credit_cost_profit",
+      "source_aliases": [
+        "credit cost",
+        "provision",
+        "npa",
+        "asset quality"
+      ],
+      "target_aliases": [
+        "profit",
+        "profitability",
+        "earnings",
+        "roa",
+        "roe"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "funding_margin",
+      "source_aliases": [
+        "funding cost",
+        "deposit",
+        "casa",
+        "cost of funds"
+      ],
+      "target_aliases": [
+        "nim",
+        "margin",
+        "net interest margin",
+        "spread",
+        "profit"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "opex_profit",
+      "source_aliases": [
+        "operating cost",
+        "cost to income",
+        "opex",
+        "branch"
+      ],
+      "target_aliases": [
+        "profit",
+        "profitability",
+        "earnings"
+      ],
+      "importance": "supporting"
+    }
+  ],
+  "known_weak_explanations": [
+    "growth alone guarantees profitability"
+  ],
+  "reviewed_by": null,
+  "reviewed_on": null,
+  "authoring_note": "DRAFT authored 2026-10-02 from domain knowledge for the L5 MVP. Aliases are concept keywords, not phrases. Not a reviewed benchmark until reviewed_by/reviewed_on are filled by a named reviewer. "
+}

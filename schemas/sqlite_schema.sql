@@ -1612,3 +1612,95 @@ CREATE TABLE IF NOT EXISTS derived_financial_feeds (
   computed_at TEXT NOT NULL,
   PRIMARY KEY (company_id, feed_kind, statement_type, period_type)
 );
+
+-- ============================================================
+-- L5 causal investigation graph, metrics, feedback and golden evals
+-- (docs/L5_MVP_TASK_PLAN.md, M3). Investigation-level structure only: nothing
+-- here is durable causal knowledge. Additive; read by research/investigation_graph.py,
+-- research/investigation_metrics.py, web feedback routes and research/causal_eval.py.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS investigation_graph_nodes (
+  node_id TEXT PRIMARY KEY,                       -- '<investigation_id>:<hypothesis_id>:n<position>'
+  investigation_id TEXT NOT NULL REFERENCES investigations(investigation_id),
+  hypothesis_id TEXT NOT NULL REFERENCES investigation_hypotheses(hypothesis_id),
+  position INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  normalized_label TEXT NOT NULL,
+  node_type TEXT NOT NULL DEFAULT 'step',
+  ontology_ref TEXT                                -- NULL until an ontology exists
+);
+CREATE INDEX IF NOT EXISTS idx_igraph_nodes_inv ON investigation_graph_nodes(investigation_id);
+
+CREATE TABLE IF NOT EXISTS investigation_graph_edges (
+  edge_id TEXT PRIMARY KEY,                        -- '<investigation_id>:<hypothesis_id>:e<position>'
+  investigation_id TEXT NOT NULL REFERENCES investigations(investigation_id),
+  hypothesis_id TEXT NOT NULL REFERENCES investigation_hypotheses(hypothesis_id),
+  position INTEGER NOT NULL,
+  source_node_id TEXT NOT NULL REFERENCES investigation_graph_nodes(node_id),
+  target_node_id TEXT NOT NULL REFERENCES investigation_graph_nodes(node_id),
+  edge_key TEXT NOT NULL,                          -- normalized 'source->target', for cross-investigation matching
+  supporting_count INTEGER NOT NULL DEFAULT 0,     -- accepted evidence tagged to this edge
+  contradicting_count INTEGER NOT NULL DEFAULT 0,
+  presented INTEGER NOT NULL DEFAULT 0,
+  hypothesis_verdict TEXT,
+  ontology_ref TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_igraph_edges_inv ON investigation_graph_edges(investigation_id);
+CREATE INDEX IF NOT EXISTS idx_igraph_edges_key ON investigation_graph_edges(edge_key);
+
+CREATE TABLE IF NOT EXISTS l5_investigation_metrics (
+  investigation_id TEXT PRIMARY KEY REFERENCES investigations(investigation_id),
+  investigation_version INTEGER NOT NULL DEFAULT 1,
+  engine_version TEXT, prompt_version TEXT, config_hash TEXT, metrics_definition_version TEXT,
+  models_used TEXT,                                -- JSON list from llm_call_log
+  hypotheses_total INTEGER, hypotheses_evaluated INTEGER,
+  nodes_explored INTEGER, edges_explored INTEGER, edges_presented INTEGER,
+  supported_edges INTEGER, unsupported_edges INTEGER,
+  contradicting_evidence_items INTEGER,
+  evidence_coverage REAL, unsupported_edge_rate REAL, investigation_efficiency REAL,
+  tagging_rate REAL,
+  cross_sector_edges INTEGER,                      -- NULL in the MVP (no sector scope on nodes yet)
+  model_calls INTEGER, input_tokens INTEGER, output_tokens INTEGER, estimated_cost_usd REAL,
+  iterations INTEGER, runtime_ms REAL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS causal_feedback (
+  feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  investigation_id TEXT NOT NULL REFERENCES investigations(investigation_id),
+  investigation_version INTEGER NOT NULL DEFAULT 1,
+  hypothesis_id TEXT, path_id TEXT, edge_id TEXT,  -- path_id = hypothesis_id in the MVP
+  feedback_type TEXT NOT NULL,                     -- config/causal_feedback.py FEEDBACK_TYPES
+  company_id TEXT, sector TEXT, geography TEXT, period TEXT, regime_tag TEXT, question_type TEXT,
+  user_id INTEGER, user_class TEXT NOT NULL DEFAULT 'ordinary',
+  comment TEXT,
+  engine_version TEXT, graph_version TEXT,
+  superseded_by INTEGER,                           -- a newer vote by the same user on the same target
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_causal_feedback_inv ON causal_feedback(investigation_id);
+CREATE INDEX IF NOT EXISTS idx_causal_feedback_edge ON causal_feedback(edge_id);
+
+CREATE TABLE IF NOT EXISTS causal_eval_runs (
+  eval_run_id TEXT PRIMARY KEY,
+  benchmark_version TEXT NOT NULL,
+  engine_version TEXT, prompt_version TEXT, config_hash TEXT, metrics_definition_version TEXT,
+  cases_total INTEGER, cases_completed INTEGER,
+  golden_recall REAL, golden_precision_lower_bound REAL,
+  evidence_coverage REAL, unsupported_edge_rate REAL,
+  estimated_cost_usd REAL, runtime_ms REAL,
+  s3_key TEXT, created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS causal_eval_case_results (
+  eval_run_id TEXT NOT NULL REFERENCES causal_eval_runs(eval_run_id),
+  case_id TEXT NOT NULL,
+  investigation_id TEXT,
+  status TEXT NOT NULL,                            -- ok | failed
+  expected_essential INTEGER, matched_essential INTEGER,
+  presented_edges INTEGER, matched_presented INTEGER,
+  unmatched_presented_json TEXT,                   -- for human review
+  error_detail TEXT,
+  PRIMARY KEY (eval_run_id, case_id)
+);

@@ -717,3 +717,9 @@ def from_repo_relative(path: str) -> Path:
     or the to_repo_relative() fallback above) is returned as-is."""
     candidate = Path(path)
     return candidate if candidate.is_absolute() else BASE_DIR / candidate
+
+# L5 causal MVP (docs/L5_MVP_TASK_PLAN.md): persist each investigation's graph,
+# metrics and version stamps. Off => research/investigation.py persists exactly
+# what it did before. Any failure inside the new code is logged and swallowed
+# either way -- it must never fail an investigation.
+CAUSAL_GRAPH_ENABLED = os.environ.get("CAUSAL_GRAPH_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")

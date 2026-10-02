@@ -1,0 +1,118 @@
+{
+  "case_id": "l5_maruti_margin_movement",
+  "benchmark_version": "v1",
+  "question": "Why has Maruti Suzuki's operating margin moved recently? Evaluate input costs (steel and other commodities), volumes and demand, pricing and mix, employee and other costs, and the effect of interest rates and vehicle financing on demand.",
+  "company_ids": [
+    "MARUTI"
+  ],
+  "as_of": null,
+  "expected_edges": [
+    {
+      "edge_id": "steel_material",
+      "source_aliases": [
+        "steel",
+        "commodity",
+        "commodities",
+        "raw material",
+        "metal"
+      ],
+      "target_aliases": [
+        "material cost",
+        "input cost",
+        "cost of materials",
+        "cogs"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "material_margin",
+      "source_aliases": [
+        "material cost",
+        "input cost",
+        "cost of materials",
+        "cogs",
+        "commodity"
+      ],
+      "target_aliases": [
+        "margin",
+        "operating margin",
+        "ebitda",
+        "profitability"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "volume_margin",
+      "source_aliases": [
+        "volume",
+        "demand",
+        "sales",
+        "operating leverage"
+      ],
+      "target_aliases": [
+        "margin",
+        "operating margin",
+        "ebitda",
+        "profit",
+        "profitability"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "rates_demand",
+      "source_aliases": [
+        "interest rate",
+        "repo",
+        "financing",
+        "finance cost",
+        "lending rate"
+      ],
+      "target_aliases": [
+        "demand",
+        "volume",
+        "sales",
+        "affordability"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "pricing_mix",
+      "source_aliases": [
+        "pricing",
+        "price",
+        "mix",
+        "discount",
+        "realisation"
+      ],
+      "target_aliases": [
+        "margin",
+        "operating margin",
+        "ebitda",
+        "revenue"
+      ],
+      "importance": "supporting"
+    },
+    {
+      "edge_id": "employee_other",
+      "source_aliases": [
+        "employee",
+        "wage",
+        "other expenses",
+        "other cost"
+      ],
+      "target_aliases": [
+        "margin",
+        "operating margin",
+        "ebitda",
+        "profit"
+      ],
+      "importance": "supporting"
+    }
+  ],
+  "known_weak_explanations": [
+    "a single one-off item as the cause of the margin change"
+  ],
+  "reviewed_by": null,
+  "reviewed_on": null,
+  "authoring_note": "DRAFT authored 2026-10-02 from domain knowledge for the L5 MVP. Aliases are concept keywords, not phrases. Not a reviewed benchmark until reviewed_by/reviewed_on are filled by a named reviewer. "
+}

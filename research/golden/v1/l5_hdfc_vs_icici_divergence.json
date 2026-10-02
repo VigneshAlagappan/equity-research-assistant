@@ -1,0 +1,99 @@
+{
+  "case_id": "l5_hdfc_vs_icici_divergence",
+  "benchmark_version": "v1",
+  "question": "Why have HDFC Bank and ICICI Bank performed differently? Evaluate factors such as credit growth, deposits/funding, NIM, asset quality, operating efficiency, fee mix, profitability, and capital allocation, and distinguish company-specific factors from sector-wide effects.",
+  "company_ids": [
+    "HDFCBANK",
+    "ICICIBANK"
+  ],
+  "as_of": null,
+  "expected_edges": [
+    {
+      "edge_id": "funding_nim",
+      "source_aliases": [
+        "funding cost",
+        "deposit",
+        "casa",
+        "cost of funds",
+        "merger"
+      ],
+      "target_aliases": [
+        "nim",
+        "net interest margin",
+        "margin",
+        "spread"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "nim_profit",
+      "source_aliases": [
+        "nim",
+        "net interest margin",
+        "margin",
+        "spread"
+      ],
+      "target_aliases": [
+        "profit",
+        "profitability",
+        "earnings",
+        "roa",
+        "roe"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "asset_quality_profit",
+      "source_aliases": [
+        "asset quality",
+        "npa",
+        "provision",
+        "credit cost"
+      ],
+      "target_aliases": [
+        "profit",
+        "profitability",
+        "earnings",
+        "roa",
+        "roe"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "efficiency_profit",
+      "source_aliases": [
+        "operating efficiency",
+        "cost to income",
+        "operating cost",
+        "opex"
+      ],
+      "target_aliases": [
+        "profit",
+        "profitability",
+        "earnings"
+      ],
+      "importance": "supporting"
+    },
+    {
+      "edge_id": "growth_income",
+      "source_aliases": [
+        "credit growth",
+        "loan growth",
+        "advances"
+      ],
+      "target_aliases": [
+        "net interest income",
+        "profit",
+        "earnings",
+        "income"
+      ],
+      "importance": "supporting"
+    }
+  ],
+  "known_weak_explanations": [
+    "sector-wide effect as the sole explanation"
+  ],
+  "reviewed_by": null,
+  "reviewed_on": null,
+  "authoring_note": "DRAFT authored 2026-10-02 from domain knowledge for the L5 MVP. Aliases are concept keywords, not phrases. Not a reviewed benchmark until reviewed_by/reviewed_on are filled by a named reviewer. "
+}

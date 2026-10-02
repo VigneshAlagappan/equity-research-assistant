@@ -53,6 +53,11 @@ class EvidenceItem:
     label: str
     value: str | None = None
     citation: str | None = None
+    #: 0-based index of the causal LINK this item bears on (link i connects
+    #: chain step i to step i+1 -- research/investigation_graph.py), or None
+    #: when the model did not say or gave an out-of-range value. None means
+    #: hypothesis-level evidence; it is never guessed.
+    chain_step: int | None = None
 
 
 @dataclass
@@ -69,6 +74,9 @@ class HypothesisEvaluation:
     #: None if the model didn't return a usable one; the UI shows "Unscored"
     #: rather than a fabricated number in that case.
     confidence_score: int | None = None
+    #: Evaluation passes this hypothesis took (1 + gap-driven retries), set by
+    #: research/investigation.py's evidence loop; feeds iteration metrics only.
+    iterations: int = 1
 
 
 HYPOTHESIS_EVALUATOR_SYSTEM_PROMPT = """You independently evaluate ONE hypothesis against the evidence retrieved \
@@ -93,6 +101,9 @@ it CORRELATION even if a causal story seems plausible to you.
 is not independently verified just because it's confident.
 - If the evidence doesn't cover something this hypothesis needs, say so under missing_evidence — do not guess or \
 fill the gap from outside/training knowledge.
+- When the hypothesis lists numbered causal chain steps, set each cited item's "link" to the integer index of the \
+single causal link it bears on (link 0 connects step 0 to step 1, link 1 connects step 1 to step 2, and so on). \
+Use null when the item bears on the hypothesis as a whole or you are not sure — never guess a link.
 
 Respond with ONLY a JSON object, no other text, in exactly this shape:
 
@@ -104,10 +115,10 @@ hypothesis is true in general — a REFUTED verdict backed by strong, direct ref
 same as a SUPPORTED one backed by strong evidence; INSUFFICIENT_EVIDENCE should score low, since by definition \
 little evidence bears on it>,
   "supporting_evidence": [
-    {{"kind": "<one of: {claim_types}>", "label": "<short label>", "value": "<the figure/quote/fact>", "citation": "<source>"}}
+    {{"kind": "<one of: {claim_types}>", "label": "<short label>", "value": "<the figure/quote/fact>", "citation": "<source>", "link": <integer or null>}}
   ],
   "contradicting_evidence": [
-    {{"kind": "<one of: {claim_types}>", "label": "<short label>", "value": "<the figure/quote/fact>", "citation": "<source>"}}
+    {{"kind": "<one of: {claim_types}>", "label": "<short label>", "value": "<the figure/quote/fact>", "citation": "<source>", "link": <integer or null>}}
   ],
   "missing_evidence": ["<what would be needed to evaluate this further, but isn't available>"]
 }}"""
@@ -183,7 +194,15 @@ def _parse_confidence_score(raw: object) -> int | None:
     return score if 0 <= score <= 100 else None
 
 
-def _parse_evidence_items(raw_items: object) -> list[EvidenceItem]:
+def _parse_link(raw: object, link_count: int) -> int | None:
+    """A usable link index, else None -- an out-of-range, non-integer or
+    boolean value is dropped (hypothesis-level), never clamped or guessed."""
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return None
+    return raw if 0 <= raw < link_count else None
+
+
+def _parse_evidence_items(raw_items: object, link_count: int = 0) -> list[EvidenceItem]:
     items: list[EvidenceItem] = []
     for raw in raw_items if isinstance(raw_items, list) else []:
         if not isinstance(raw, dict):
@@ -192,7 +211,10 @@ def _parse_evidence_items(raw_items: object) -> list[EvidenceItem]:
         label = (raw.get("label") or "").strip()
         if kind not in CLAIM_TYPES or not label:
             continue  # a hallucinated kind or empty label is dropped, not stored as-is
-        items.append(EvidenceItem(kind=kind, label=label, value=raw.get("value"), citation=raw.get("citation")))
+        items.append(EvidenceItem(
+            kind=kind, label=label, value=raw.get("value"), citation=raw.get("citation"),
+            chain_step=_parse_link(raw.get("link"), link_count),
+        ))
     return items
 
 
@@ -205,10 +227,18 @@ def evaluate_hypothesis(
     # TIER_PREFERRED_MODEL[hardness.tier] (the operator's actual configured
     # policy) instead of silently overriding it on every call.
     pinned_model = model or ANTHROPIC_MODEL
+    steps = list(getattr(hypothesis, "chain_steps", None) or [])
+    link_count = max(len(steps) - 1, 0)
+    chain_block = (
+        "Causal chain steps:\n" + "\n".join(f"  {i}: {step}" for i, step in enumerate(steps)) + "\n"
+        f"(links 0..{link_count - 1}: link i connects step i to step i+1)\n\n"
+        if link_count else ""
+    )
     user_message = (
         f"Hypothesis: {hypothesis.statement}\n"
         f"Mechanism: {hypothesis.mechanism}\n"
         f"Category: {hypothesis.category}\n\n"
+        f"{chain_block}"
         f"Evidence retrieved for this hypothesis:\n{_render_plan(plan)}"
     )
 
@@ -240,8 +270,8 @@ def evaluate_hypothesis(
     return HypothesisEvaluation(
         hypothesis_id=hypothesis.hypothesis_id, verdict=verdict,
         confidence_basis=(parsed.get("confidence_basis") or "").strip(),
-        supporting_evidence=_parse_evidence_items(parsed.get("supporting_evidence")),
-        contradicting_evidence=_parse_evidence_items(parsed.get("contradicting_evidence")),
+        supporting_evidence=_parse_evidence_items(parsed.get("supporting_evidence"), link_count),
+        contradicting_evidence=_parse_evidence_items(parsed.get("contradicting_evidence"), link_count),
         missing_evidence=[str(m) for m in (parsed.get("missing_evidence") or [])],
         confidence_score=_parse_confidence_score(parsed.get("confidence_score")),
     )

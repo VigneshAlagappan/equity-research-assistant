@@ -105,10 +105,19 @@ class Investigation:
     #: now" — persisted on the investigation row so a historical conclusion
     #: states the information set it was reached under.
     as_of: str | None = None
+    #: time.monotonic() when run started -- runtime metric only, never persisted as-is.
+    started_monotonic: float | None = None
 
 
-def _persist_evidence_item(hypothesis_id: str, stance: str, item) -> dict:
-    return {"stance": stance, "kind": item.kind, "label": item.label, "value": item.value, "citation": item.citation}
+def _persist_evidence_item(hypothesis_id: str, stance: str, item, graph=None) -> dict:
+    row = {"stance": stance, "kind": item.kind, "label": item.label, "value": item.value, "citation": item.citation}
+    link = getattr(item, "chain_step", None)
+    if link is not None:
+        row["chain_step"] = link
+        edge_id = graph.edge_id_for(hypothesis_id, link) if graph is not None else None
+        if edge_id is not None:
+            row["edge_id"] = edge_id
+    return row
 
 
 def _evidence_key(plan: InvestigationPlan) -> set[tuple]:
@@ -164,6 +173,7 @@ def _investigate_hypothesis(
     for attempt in range(1, MAX_EVIDENCE_ITERATIONS + 1):
         try:
             evaluation = evaluate_hypothesis(conn, hypothesis, plan, model=model)
+            evaluation.iterations = attempt
         except HypothesisEvaluationError as exc:
             logger.warning("Hypothesis evaluation failed for %s: %s", hypothesis.hypothesis_id, exc, exc_info=True)
             return plan, None
@@ -284,6 +294,7 @@ def _run_investigation_impl(
         investigation_id=investigation_id, question=question, company_ids=company_ids, as_of=cutoff
     )
     investigation.hypotheses = hypotheses
+    investigation.started_monotonic = time.monotonic()
     deadline = time.monotonic() + INVESTIGATION_TIMEOUT_SECONDS
 
     for index, hypothesis in enumerate(hypotheses):
@@ -325,6 +336,76 @@ def _run_investigation_impl(
     return investigation
 
 
+def investigation_artifact_key(investigation_id: str, version: int = 1, name: str = "artifact.json") -> str:
+    """Versioned, write-once-per-version object key
+    (docs/L5_MVP_TASK_PLAN.md, M2): investigations/<id>/v<N>/<name>. The
+    investigations row's s3_key points at the current version's artifact.json;
+    older rows keep their legacy investigations/<id>/v1.json key and keep
+    rendering because the reader follows whatever key the row holds."""
+    return f"investigations/{investigation_id}/v{version}/{name}"
+
+
+def _build_graph_safely(investigation: Investigation):
+    """The investigation graph, or None when disabled or on any failure --
+    graph building is additive and must never fail a persist."""
+    from config import settings
+
+    if not settings.CAUSAL_GRAPH_ENABLED:
+        return None
+    try:
+        from research.investigation_graph import build_graph
+
+        return build_graph(investigation.investigation_id, investigation.hypotheses, investigation.evaluations)
+    except Exception:  # noqa: BLE001
+        logger.warning("Investigation graph build failed for %s", investigation.investigation_id, exc_info=True)
+        return None
+
+
+def _persist_causal_layer(conn: DBConnection, investigation: Investigation, graph, hypotheses_json: list[dict]) -> dict:
+    """Version stamps, graph rows, metrics row, and the extra artifact fields.
+    Returns {"artifact_fields": {...}, "companion_files": {...}}; both empty
+    when disabled or if anything fails (logged, swallowed)."""
+    empty = {"artifact_fields": {}, "companion_files": {}}
+    if graph is None:
+        return empty
+    try:
+        from config.versions import GRAPH_VERSION, version_stamp
+        from research.investigation_metrics import compute_graph_metrics
+        from storage.causal_repository import (
+            replace_investigation_graph, save_investigation_metrics, sum_llm_usage_for_investigation,
+            update_investigation_versions,
+        )
+
+        stamp = version_stamp()
+        update_investigation_versions(conn, investigation.investigation_id, stamp)
+        replace_investigation_graph(conn, investigation.investigation_id, graph.nodes, graph.edges)
+
+        metrics = compute_graph_metrics(graph, investigation.evaluations, len(investigation.hypotheses))
+        metrics["iterations"] = sum(getattr(ev, "iterations", 1) for ev in investigation.evaluations.values())
+        if investigation.started_monotonic is not None:
+            metrics["runtime_ms"] = (time.monotonic() - investigation.started_monotonic) * 1000
+        try:
+            metrics.update(sum_llm_usage_for_investigation(conn, investigation.investigation_id))
+        except Exception:  # noqa: BLE001 -- llm_call_log may live in a different store; metrics stay NULL
+            logger.info("LLM usage unavailable for metrics of %s", investigation.investigation_id, exc_info=True)
+        metrics.update(stamp)
+        save_investigation_metrics(conn, investigation.investigation_id, metrics)
+
+        metrics_json = {**metrics, "materiality_basis": "none", "graph_version": GRAPH_VERSION}
+        graph_json = {"nodes": graph.nodes, "edges": graph.edges, "graph_version": GRAPH_VERSION}
+        return {
+            "artifact_fields": {"graph": graph_json, "metrics": metrics_json, "versions": stamp},
+            "companion_files": {"graph.json": graph_json, "metrics.json": metrics_json},
+        }
+    except Exception:  # noqa: BLE001
+        logger.warning("Causal layer persist failed for %s", investigation.investigation_id, exc_info=True)
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return empty
+
+
 def _persist(
     conn: DBConnection, investigation: Investigation, statement_type: str, fact_store: FactStore,
     complexity_level: int | None = None,
@@ -354,6 +435,7 @@ def _persist(
     rank_by_id = (
         {hid: i + 1 for i, hid in enumerate(synthesis.ranked_hypothesis_ids)} if synthesis else {}
     )
+    graph = _build_graph_safely(investigation)
     hypotheses_json: list[dict] = []
     for hypothesis in investigation.hypotheses:
         evaluation = investigation.evaluations.get(hypothesis.hypothesis_id)
@@ -372,8 +454,8 @@ def _persist(
         supporting_evidence = contradicting_evidence = []
         missing_evidence: list[dict] = []
         if evaluation is not None:
-            supporting_evidence = [_persist_evidence_item(hypothesis.hypothesis_id, "supporting", item) for item in evaluation.supporting_evidence]
-            contradicting_evidence = [_persist_evidence_item(hypothesis.hypothesis_id, "contradicting", item) for item in evaluation.contradicting_evidence]
+            supporting_evidence = [_persist_evidence_item(hypothesis.hypothesis_id, "supporting", item, graph) for item in evaluation.supporting_evidence]
+            contradicting_evidence = [_persist_evidence_item(hypothesis.hypothesis_id, "contradicting", item, graph) for item in evaluation.contradicting_evidence]
             missing_evidence = [
                 {"stance": "missing", "kind": "INFERENCE", "label": item, "value": None, "citation": None}
                 for item in evaluation.missing_evidence
@@ -409,8 +491,16 @@ def _persist(
         "as_of": investigation.as_of,
         "hypotheses": hypotheses_json,
     }
-    s3_key = f"investigations/{investigation.investigation_id}/v1.json"
-    default_document_store().store(s3_key, json.dumps(artifact, indent=2).encode("utf-8"))
+    causal = _persist_causal_layer(conn, investigation, graph, hypotheses_json)
+    artifact.update(causal["artifact_fields"])
+    store = default_document_store()
+    s3_key = investigation_artifact_key(investigation.investigation_id, 1)
+    store.store(s3_key, json.dumps(artifact, indent=2).encode("utf-8"))
+    for name, payload in causal["companion_files"].items():
+        try:
+            store.store(investigation_artifact_key(investigation.investigation_id, 1, name), json.dumps(payload, indent=2).encode("utf-8"))
+        except Exception:  # noqa: BLE001 -- companions are additive, never fail the investigation
+            logger.warning("Could not store %s for investigation %s", name, investigation.investigation_id, exc_info=True)
     abstract = generate_abstract(conn, synthesis.strongest_explanation if synthesis else None)
     fact_store.update_investigation_s3_metadata(
         conn, investigation.investigation_id, s3_key=s3_key, abstract=abstract,

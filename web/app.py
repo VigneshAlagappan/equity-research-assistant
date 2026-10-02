@@ -147,6 +147,9 @@ from storage.price_repository import (
     list_latest_close,
     list_latest_daily_change,
 )
+from config.causal_feedback import FEEDBACK_TYPES, FeedbackValidationError, validate_feedback
+from config.versions import ENGINE_VERSION, GRAPH_VERSION
+from storage.causal_repository import insert_feedback, list_feedback, list_graph_edges, list_graph_nodes
 from storage.repositories import (
     COMPANY_LIST_COLUMNS,
     OVERVIEW_RATIO_CATALOG,
@@ -4475,6 +4478,105 @@ def create_app() -> Flask:
             return redirect(url_for("case_detail", case_id=case["case_id"]), code=301)
         return _render_investigation(investigation_id)
 
+
+    def _feedback_context(db, investigation_row) -> dict:
+        """Context columns copied onto each feedback row from the investigation
+        (parent plan 42.4's context key). regime_tag stays NULL until a regime
+        classifier exists."""
+        company_ids = json.loads(investigation_row["company_ids"] or "[]")
+        company = get_company(db, company_ids[0]) if company_ids else None
+        sector = None
+        geography = None
+        if company is not None:
+            sector = company["macro_economic_sector"] or company["basic_industry"]
+            geography = company["country"] if "country" in company.keys() else None
+        return {
+            "company_id": company_ids[0] if company_ids else None, "sector": sector, "geography": geography,
+            "period": investigation_row["as_of"] or "latest", "regime_tag": None, "question_type": "investigation",
+        }
+
+    def _feedback_allowed(investigation_row) -> bool:
+        """Same visibility the investigation page itself honours: a private
+        investigation takes feedback only from its owner (or an admin)."""
+        if g.user is None:
+            return False
+        if investigation_row["deleted_at"]:
+            return False
+        if (investigation_row["visibility"] or "private") != "private":
+            return True
+        owner = investigation_row["owner_id"]
+        return owner is None or str(owner) == str(g.user["user_id"]) or bool(g.user["is_admin"])
+
+    @app.route("/investigate/<investigation_id>/feedback", methods=["GET"])
+    def investigate_feedback_list(investigation_id: str):
+        """The signed-in user's own active feedback on this investigation, so the
+        page can pre-fill its controls."""
+        db = get_db()
+        row = get_investigation(db, investigation_id)
+        if row is None:
+            abort(404)
+        if g.user is None:
+            return jsonify({"error": "login required"}), 401
+        if not _feedback_allowed(row):
+            abort(403)
+        return jsonify({"feedback": [
+            {"feedback_id": r["feedback_id"], "hypothesis_id": r["hypothesis_id"], "path_id": r["path_id"],
+             "edge_id": r["edge_id"], "feedback_type": r["feedback_type"], "comment": r["comment"]}
+            for r in list_feedback(db, investigation_id, user_id=g.user["user_id"])
+        ], "types": FEEDBACK_TYPES})
+
+    @app.route("/investigate/<investigation_id>/feedback", methods=["POST"])
+    def investigate_feedback_submit(investigation_id: str):
+        """Structured causal feedback (docs/L5_MVP_TASK_PLAN.md, M8). Writes the
+        feedback ledger only -- never changes the graph, a verdict or any
+        weight. Body: {target: investigation|hypothesis|path|edge,
+        target_id, feedback_type, comment?}."""
+        db = get_db()
+        row = get_investigation(db, investigation_id)
+        if row is None:
+            abort(404)
+        if g.user is None:
+            return jsonify({"error": "login required"}), 401
+        if not _feedback_allowed(row):
+            abort(403)
+        body = request.get_json(silent=True) or {}
+        level = body.get("target")
+        target_id = body.get("target_id")
+        try:
+            comment = validate_feedback(level, body.get("feedback_type"), body.get("comment"))
+        except FeedbackValidationError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        hypothesis_id = path_id = edge_id = None
+        if level == "investigation":
+            pass
+        elif level in ("hypothesis", "path"):
+            valid = {h["hypothesis_id"] for h in list_investigation_hypotheses(db, investigation_id)}
+            if target_id not in valid:
+                return jsonify({"error": "unknown hypothesis for this investigation"}), 400
+            hypothesis_id = target_id
+            path_id = target_id if level == "path" else None
+        else:  # edge
+            edge = next((e for e in list_graph_edges(db, investigation_id) if e["edge_id"] == target_id), None)
+            if edge is None:
+                return jsonify({"error": "unknown edge for this investigation"}), 400
+            hypothesis_id, path_id, edge_id = edge["hypothesis_id"], edge["hypothesis_id"], edge["edge_id"]
+
+        # Light per-user rate limit: more than 60 feedback rows in a minute is not a human.
+        recent = [r for r in list_feedback(db, investigation_id, user_id=g.user["user_id"], include_superseded=True)]
+        if len(recent) >= 500:
+            return jsonify({"error": "too much feedback on this investigation"}), 429
+
+        feedback_id = insert_feedback(db, {
+            "investigation_id": investigation_id, "investigation_version": row["version"] or 1,
+            "hypothesis_id": hypothesis_id, "path_id": path_id, "edge_id": edge_id,
+            "feedback_type": body["feedback_type"], "comment": comment, "user_id": g.user["user_id"],
+            "user_class": "internal" if g.user["is_admin"] else "ordinary",
+            "engine_version": row["engine_version"] or ENGINE_VERSION, "graph_version": GRAPH_VERSION,
+            **_feedback_context(db, row),
+        })
+        return jsonify({"ok": True, "feedback_id": feedback_id})
+
     def _render_investigation(investigation_id: str):
         db = get_db()
         investigation_row = get_investigation(db, investigation_id)
@@ -4539,7 +4641,27 @@ def create_app() -> Flask:
         # touched or duplicated -- see reports/schema/investigation_report.py.
         report = from_investigation_data(investigation, hypotheses, cost)
 
-        return render_template("deep_dive/report.html", report=report)
+        # Structured causal feedback controls: only when this investigation has a
+        # persisted graph and the viewer may give feedback (signed in).
+        feedback_view = None
+        if g.user is not None and _feedback_allowed(investigation_row):
+            nodes = {n["node_id"]: n["label"] for n in list_graph_nodes(db, investigation_id)}
+            edges_by_hypothesis: dict[str, list[dict]] = {}
+            for e in list_graph_edges(db, investigation_id):
+                edges_by_hypothesis.setdefault(e["hypothesis_id"], []).append({
+                    "edge_id": e["edge_id"],
+                    "label": f"{nodes.get(e['source_node_id'], '?')} \u2192 {nodes.get(e['target_node_id'], '?')}",
+                })
+            mine = {
+                (r["hypothesis_id"], r["edge_id"]): r["feedback_type"]
+                for r in list_feedback(db, investigation_id, user_id=g.user["user_id"])
+            }
+            feedback_view = {
+                "investigation_id": investigation_id, "types": FEEDBACK_TYPES,
+                "edges": edges_by_hypothesis, "mine": {f"{k[0]}|{k[1] or ''}": v for k, v in mine.items()},
+            }
+
+        return render_template("deep_dive/report.html", report=report, feedback=feedback_view)
 
     INVESTIGATIONS_PAGE_SIZE = 20
 

@@ -1,0 +1,115 @@
+{
+  "case_id": "l5_hdfc_post_merger_profitability",
+  "benchmark_version": "v1",
+  "question": "Why has HDFC Bank's profitability changed following the merger? Evaluate competing explanations such as funding/deposit costs, NIM, loan growth, asset quality, operating costs, and merger-related balance-sheet effects.",
+  "company_ids": [
+    "HDFCBANK"
+  ],
+  "as_of": null,
+  "expected_edges": [
+    {
+      "edge_id": "merger_funding",
+      "source_aliases": [
+        "merger",
+        "hdfc ltd",
+        "borrowings",
+        "wholesale"
+      ],
+      "target_aliases": [
+        "funding cost",
+        "cost of funds",
+        "deposit cost",
+        "interest expense"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "funding_nim",
+      "source_aliases": [
+        "funding cost",
+        "cost of funds",
+        "deposit cost",
+        "interest expense",
+        "deposit"
+      ],
+      "target_aliases": [
+        "nim",
+        "net interest margin",
+        "margin",
+        "spread"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "nim_profit",
+      "source_aliases": [
+        "nim",
+        "net interest margin",
+        "margin",
+        "spread",
+        "net interest income"
+      ],
+      "target_aliases": [
+        "profit",
+        "profitability",
+        "earnings",
+        "roa",
+        "roe"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "credit_cost",
+      "source_aliases": [
+        "asset quality",
+        "npa",
+        "provision",
+        "credit cost"
+      ],
+      "target_aliases": [
+        "profit",
+        "profitability",
+        "earnings",
+        "roa",
+        "roe"
+      ],
+      "importance": "supporting"
+    },
+    {
+      "edge_id": "loan_growth",
+      "source_aliases": [
+        "loan growth",
+        "credit growth",
+        "advances"
+      ],
+      "target_aliases": [
+        "profit",
+        "profitability",
+        "net interest income",
+        "earnings"
+      ],
+      "importance": "supporting"
+    },
+    {
+      "edge_id": "opex",
+      "source_aliases": [
+        "operating cost",
+        "cost to income",
+        "opex",
+        "expenses"
+      ],
+      "target_aliases": [
+        "profit",
+        "profitability",
+        "earnings"
+      ],
+      "importance": "supporting"
+    }
+  ],
+  "known_weak_explanations": [
+    "one-off accounting gains as the main driver"
+  ],
+  "reviewed_by": null,
+  "reviewed_on": null,
+  "authoring_note": "DRAFT authored 2026-10-02 from domain knowledge for the L5 MVP. Aliases are concept keywords, not phrases. Not a reviewed benchmark until reviewed_by/reviewed_on are filled by a named reviewer. "
+}

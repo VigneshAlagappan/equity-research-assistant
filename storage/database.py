@@ -64,6 +64,7 @@ def init_db(db_path: Path | None = None, schema_path: Path | None = None) -> sql
     _migrate_investigations_as_of_column(conn)
     _migrate_complexity_level_columns(conn)
     _migrate_investigation_hypotheses_scoring_columns(conn)
+    _migrate_causal_mvp_columns(conn)
     _migrate_investigation_companies(conn)
     _migrate_document_chunks_embedding_columns(conn)
     _migrate_generated_reports_question_embedding_columns(conn)
@@ -574,6 +575,30 @@ def _migrate_research_cases_container_columns(conn: sqlite3.Connection) -> None:
     for name in ("hidden_at", "deleted_at"):
         if name not in columns:
             conn.execute(f"ALTER TABLE research_cases ADD COLUMN {name} TEXT")
+
+
+def _migrate_causal_mvp_columns(conn: sqlite3.Connection) -> None:
+    """L5 causal MVP (docs/L5_MVP_TASK_PLAN.md, M3): version stamps on
+    `investigations` and per-edge evidence tags on
+    `investigation_hypothesis_evidence`. All nullable/defaulted, so every
+    older row keeps working untouched. (Postgres gets the same columns from
+    schemas/postgres_schema.sql directly.)"""
+    for table, columns in (
+        ("investigations", (
+            ("engine_version", "TEXT"), ("prompt_version", "TEXT"), ("config_hash", "TEXT"),
+            ("metrics_definition_version", "TEXT"),
+        )),
+        ("investigation_hypothesis_evidence", (
+            ("chain_step", "INTEGER"), ("edge_id", "TEXT"), ("source_tier", "TEXT"),
+            ("accepted", "INTEGER NOT NULL DEFAULT 1"),
+        )),
+    ):
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue
+        for name, ddl in columns:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
 
 def _migrate_investigation_s3_columns(conn: sqlite3.Connection) -> None:

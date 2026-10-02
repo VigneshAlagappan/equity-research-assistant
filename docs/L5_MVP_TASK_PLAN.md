@@ -324,3 +324,23 @@ Causal Knowledge Service, durable assertions and lifecycle, ontology and sector 
 ## 12. First action on your go-ahead
 
 Start with **M2 + M1** (about 2–4 days): they are independent, low risk, and fix the artifact-overwrite issue. I'd report at checkpoint C1 before touching schemas.
+
+---
+
+## 13. Implementation status (2026-10-02)
+
+Built and tested locally (1,257 tests passing, 30 skipped); **not deployed, Neon schema not yet applied, no real investigation run yet.**
+
+| Task | Status | Notes / deviations from the plan |
+|---|---|---|
+| M1 version registry | Done | `config/versions.py` |
+| M2 versioned artifacts | Done (reduced value) | New keys `investigations/<id>/v1/artifact.json` plus `graph.json`, `metrics.json`. **Finding:** the "overwrite on regeneration" risk does not occur in normal flows: each run uses a fresh uuid and `save_investigation` INSERTs, so a duplicate id would raise. The versioned layout is still in place for the companion files and for future versions |
+| M3 schema | Done | Additive, both schemas + SQLite migration |
+| M4 repositories | Done | New module pair `storage/causal_repository(.py/_pg.py)` swapped by `backend_bootstrap` (not via `FactStore`, which would have touched three files for no benefit). The Postgres twin is untested against a live database |
+| M5 evidence tags | Done | Evaluator prompt/parser emit optional `link`; out-of-range or missing values stay hypothesis-level |
+| M6 graph builder | Done | `research/investigation_graph.py`, wired into `_persist`, behind `CAUSAL_GRAPH_ENABLED`; failures are logged and never fail an investigation |
+| M7 metrics | Done | `research/investigation_metrics.py`; cost/tokens joined from `llm_call_log` when available |
+| M8 feedback | Done | `POST/GET /investigate/<id>/feedback`, controls in the deep-dive report (signed-in viewers, graph present). Light rate limit; admin feedback is tagged `internal` |
+| M9 golden mini-set | Done, **drafts** | 5 cases in `research/golden/v1/` (3 bank cases, Maruti, Tata Steel), deterministic matcher, `scripts/run_causal_eval.py` (`--list`, `--score-existing`, full run). **Deviation:** not registered as a scheduled job (the scheduler has no enabled/manual-only flag), CLI only, on purpose. Cases are unreviewed drafts until a named reviewer fills `reviewed_by` / `reviewed_on` |
+
+Next, each needing your go-ahead because it touches shared systems or spends money: (1) apply the additive schema to Neon, (2) run **one** real investigation locally to verify the graph, tags and metrics on real data (checkpoint C2), (3) a first golden run with its cost reported.

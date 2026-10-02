@@ -1876,9 +1876,11 @@ def save_investigation_hypothesis_evidence(
     plain dicts, not a dataclass, same reasoning save_report_evidence()
     already gives for research_thread_evidence."""
     conn.executemany(
-        "INSERT INTO investigation_hypothesis_evidence (hypothesis_id, stance, kind, label, value, citation) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        [(hypothesis_id, e["stance"], e["kind"], e["label"], e.get("value"), e.get("citation")) for e in evidence],
+        "INSERT INTO investigation_hypothesis_evidence (hypothesis_id, stance, kind, label, value, citation, "
+        "chain_step, edge_id, source_tier, accepted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(hypothesis_id, e["stance"], e["kind"], e["label"], e.get("value"), e.get("citation"),
+          e.get("chain_step"), e.get("edge_id"), e.get("source_tier"), 1 if e.get("accepted", 1) else 0)
+         for e in evidence],
     )
     conn.commit()
 
