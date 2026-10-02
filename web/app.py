@@ -124,12 +124,12 @@ from ingestion.pipeline import ingest_file
 from research.abstracts import generate_abstract
 from research.assistant import answer_question, sentry_span
 from research.company_resolver import resolve_companies
+from research.scope_resolver import resolve_scope
 from llm.complexity import ComplexityClassification
 from research.routing_policy import LEVEL_LABELS, attempt_deterministic_level, case_type_for_level, classify_and_log
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
-from retrieval.tag_resolver import resolve_tags_in_text
 from research.investment_advice_guard import REJECTION_MESSAGE as _INVESTMENT_ADVICE_REJECTION_MESSAGE
 from research.investment_advice_guard import is_investment_decision_question
 from research.signals_report import extract_report_meta, generate_signals_report
@@ -3554,7 +3554,7 @@ def create_app() -> Flask:
             # _compute_answer_question's docstring on why that path must
             # never widen past the company it was opened on.
             if not company_ids and question:
-                company_ids = resolve_tags_in_text(get_db(), question)
+                company_ids = resolve_scope(get_db(), question).company_ids
         statement_type = payload.get("statement_type", "consolidated")
         return question, company_ids, statement_type
 
@@ -3958,9 +3958,8 @@ def create_app() -> Flask:
             return jsonify(error="Ask a question first."), 400
 
         db = get_db()
-        company_ids = resolve_tags_in_text(db, question)
-        if not company_ids:
-            company_ids = resolve_companies(db, question).company_ids
+        scope = resolve_scope(db, question)
+        company_ids = scope.company_ids
 
         companies = [get_company(db, company_id) for company_id in company_ids]
         company_labels = [c["display_name"] for c in companies if c is not None]
@@ -3971,6 +3970,7 @@ def create_app() -> Flask:
         return jsonify(
             company_ids=company_ids,
             company_labels=company_labels,
+            scope_source=scope.source,
             complexity_level=level,
             complexity_label=LEVEL_LABELS[level],
             complexity_reason=classification.reason,
@@ -4016,7 +4016,7 @@ def create_app() -> Flask:
         # companies...") with "Select at least one company" the way the
         # other two flows used to before this was wired in everywhere.
         if not company_ids and question:
-            company_ids = resolve_tags_in_text(get_db(), question)
+            company_ids = resolve_scope(get_db(), question).company_ids
         statement_type = payload.get("statement_type", "consolidated")
 
         if not ANTHROPIC_API_KEY_SET:
@@ -4277,7 +4277,7 @@ def create_app() -> Flask:
         # tag_resolver.py's own docstring for why a tag mention alongside
         # an explicit selection is left alone rather than widening it).
         if not company_ids and question:
-            company_ids = resolve_tags_in_text(get_db(), question)
+            company_ids = resolve_scope(get_db(), question).company_ids
         statement_type = payload.get("statement_type", "consolidated")
         # Optional point-in-time cutoff (research/temporal.py) — a "could this
         # have been detected at the time?" question runs with every evidence
@@ -4340,7 +4340,7 @@ def create_app() -> Flask:
         question = (payload.get("question") or "").strip()
         company_ids = payload.get("company_ids") or []
         if not company_ids and question:
-            company_ids = resolve_tags_in_text(get_db(), question)
+            company_ids = resolve_scope(get_db(), question).company_ids
         statement_type = payload.get("statement_type", "consolidated")
         as_of = (payload.get("as_of") or "").strip() or None
 
