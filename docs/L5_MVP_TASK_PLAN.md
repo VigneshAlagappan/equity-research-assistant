@@ -388,3 +388,19 @@ Findings that change the plan:
 3. The tagger roughly matches the evaluator where both tag and is cheaper than a Sonnet evaluation, but offers no gain in tagging rate here, so it is not worth wiring in yet.
 
 Recommendation: do not wire the tagger in. Next, pursue link-targeted evidence retrieval (query per chain link using the macro and company series on file) and redefine the metric. Test rows from this run were deleted from Neon.
+
+## 16. Options A, B and F built (2026-10-02)
+
+| Piece | What it does | Where | LLM cost |
+|---|---|---|---|
+| **F** honest accounting | Metrics definition `mvp-2` splits "unsupported" over presented edges into **untested** (no evidence either way), **contradicted** and **contested**, and counts evidence by origin (computed vs gap-fill). `unsupported_edge_rate` keeps its old meaning for continuity | `research/investigation_metrics.py`, `config/versions.py`, `l5_investigation_metrics` columns | none |
+| **A** data-first link checks | For each chain link whose two ends map to measurable concepts (material / employee / other cost as % of revenue, gross and EBITDA margin, revenue, net profit; US uses cost of revenue and SG&A+R&D), test from `canonical_financials` whether both ends moved as the chain states over the last up-to-4 fiscal years. Both as stated = supporting `CALCULATION` item; either opposite = contradicting; flat or unmeasurable = nothing. Narrow keyword matching, proxies labelled, banks skipped | `research/link_evidence.py` | none |
+| **B** gap-fill pass | For each presented link still untested after A: one targeted retrieval (query = the link's own wording) and one small model call judging only that link; at most 4 links per investigation, stops at the shared deadline, items tagged `RETRIEVED` | `research/link_gap_fill.py` | about $0.003 per call on Haiku |
+
+All three are additive and behind settings (`LINK_EVIDENCE_ENABLED`, `LINK_GAPFILL_ENABLED`, `LINK_GAPFILL_MAX_LINKS`, part of `config_hash`); a failure in any is logged and never fails an investigation. Verdicts are not recomputed. Full suite: 1,288 passed.
+
+**Real-data check, Maruti, Haiku:** A added 4 computed items (e.g. material cost 73.4% to 72.3% of revenue and gross margin 26.6% to 27.7%, FY2023-FY2026, supporting the "input cost falls, gross margin expands" link; one contradicting item where revenue rose while EBITDA margin... per the check), B added 3 retrieved items from one call. Edge status: 3 presented edges, 0 untested, 0 contradicted, evidence coverage 100%, cost $0.15 (vs $0.48 on Sonnet before the change).
+
+**Read with care:** this run presented only 3 edges (the Haiku evaluator refuted 3 of 6 hypotheses and found 2 insufficient), so "100% coverage" is over a tiny base, and one run is not a trend. Golden recall stays 0 of 4 because the draft aliases are narrow. What the run does show is that the pipeline now produces link-specific evidence (computed and retrieved) where before it produced none, and that the new accounting reports gaps as gaps.
+
+Concept matching deliberately omits vague phrases ("cost base", "fixed cost", "discounting"): an early version mapped them as proxies and produced a misleading contradiction for Maruti, so precision was preferred to recall.
