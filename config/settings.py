@@ -726,8 +726,9 @@ CAUSAL_GRAPH_ENABLED = os.environ.get("CAUSAL_GRAPH_ENABLED", "true").strip().lo
 
 # Model for the L5 hypothesis-EVALUATION step (research/hypothesis_evaluator.py),
 # the dominant LLM cost of an investigation (~85% in the first measured run).
-# Haiku during the MVP stage to keep golden-eval and trial runs cheap; set
-# CAUSAL_EVALUATION_MODEL="" to fall back to ANTHROPIC_MODEL / the tier chain
-# (previously Sonnet-class for the deep tier). Compare quality before changing it
-# for production -- it is part of config_hash so runs stay comparable.
+# The default is claude-haiku-4-5 and is meant to STAY that way: the owner decided
+# (2026-10-02) to keep it as the standing default, not just for the MVP stage.
+# Override with the CAUSAL_EVALUATION_MODEL env var; "" falls back to
+# ANTHROPIC_MODEL / the tier chain. It is part of config_hash, so runs on
+# different models stay distinguishable in the metrics.
 CAUSAL_EVALUATION_MODEL = os.environ.get("CAUSAL_EVALUATION_MODEL", "claude-haiku-4-5").strip()
