@@ -9,6 +9,15 @@ Related existing documents this plan builds on and must not contradict: ADR-006 
 
 ---
 
+## Decisions recorded (2026-10-02)
+
+1. **Neo4j is the production graph backend.** Verified: the Lightsail deployment runs `GRAPH_BACKEND=neo4j` against a cloud (Aura-style `neo4j+s://`) instance. Consequences: causal traversal targets Neo4j first; the SQL traversal in Section 14/11 is kept only as a test and local-development fallback, not a production requirement; the "Neo4j turns out to be required" schedule risk in Section 33A is retired.
+2. **The human reviewer workflow is deferred.** Build the *templates and plumbing* now (lifecycle states, review-record tables, an empty review queue shape, feedback fields), but do not build a pre-promotion approval gate. Review is invoked later as part of a **feedback process whose purpose is to adjust confidence weights**: reviewer verdicts (agree / disagree / not sure, plus a reason) become labelled data for calibrating the weights in Section 18. Until that exists, promotion above EVIDENCE_BACKED is **automatic-by-rule or simply not performed**, and nothing is made universal. See the revised Section 19.
+3. **The `CausalAssertion` design stays as the baseline**, and Section 41 compares it with the alternatives you asked about.
+
+---
+
+
 ## 1. Executive Summary
 
 Signal already has most of an L5 *pipeline* and almost none of an L5 *knowledge base or measurement system*.
@@ -216,7 +225,7 @@ Reuse `context/graph_neo4j.py`'s pattern: Postgres + versioned seed files are th
 - **Edge properties (kept separate, per brief):** `direction/polarity`, `confidence`, `effect_strength` (magnitude), `typical_lag_min/max/unit`, `mechanism_id`, `scope` (JSON), `conditions`, `status`, `version`, `provenance_type`, timestamps. `confidence` never encodes magnitude.
 - **Projection of L4:** optional `(:Investigation)-[:ACTIVATED]->(:CausalAssertion)` so "which prior investigations used this edge" is one query — useful for replication evidence and for reuse (`context/reuse.py` already reuses prior investigations).
 - **Rebuild:** `sync_causal_graph()` from Postgres tables + ontology/sector-pack files; deterministic, idempotent, snapshotted to S3 with `graph_version`.
-- **Backend parity.** Neo4j is optional today (`GRAPH_BACKEND=sqlite` fallback). Causal traversal over `causal_assertions` rows must work in SQL (recursive CTE, bounded depth) so tests and non-Neo4j environments keep working, mirroring `_find_multi_hop_claims_sqlite`.
+- **Backend parity.** Production runs `GRAPH_BACKEND=neo4j` (verified 2026-10-02), so Neo4j is the primary target. Traversal over `causal_assertions` rows should also work in SQL (recursive CTE, bounded depth), but only as a test and local-development fallback, mirroring `_find_multi_hop_claims_sqlite`; it is not a production requirement.
 
 ---
 
@@ -372,6 +381,8 @@ confidence = clamp( prior(status, provenance)
 
 ## 19. Knowledge Promotion Lifecycle
 
+> **Revised 2026-10-02 (decision 2).** The reviewer is not a gate in the first releases. The lifecycle states, history table and a review-record table (`review_feedback`: edge or investigation, reviewer, verdict agree/disagree/not-sure, reason, created_at) are built as **templates**, but nothing waits on them. The feedback is consumed by a later **weight-calibration step** (Section 18, P3): it compares reviewer verdicts with computed confidence and proposes new weights as a new `confidence_algorithm_version`. Until then the VALIDATED → PROMOTED transition below is taken by rule only, scoped to sector level, and "universal" scope is simply not offered.
+
 ```
 CANDIDATE -> OBSERVED -> EVIDENCE_BACKED -> VALIDATED -> PROMOTED
                     \-> DEPRECATED (from any state)
@@ -383,7 +394,7 @@ CANDIDATE -> OBSERVED -> EVIDENCE_BACKED -> VALIDATED -> PROMOTED
 | CANDIDATE → OBSERVED | Seen in ≥2 independent investigations or ≥2 independent sources | Code |
 | OBSERVED → EVIDENCE_BACKED | ≥1 accepted primary/quantitative entry, no uncontested contradiction, confidence ≥ θ1 | Code |
 | EVIDENCE_BACKED → VALIDATED | ≥1 SUPPORT validation event from an *out-of-sample future* observation (Section 21), across ≥2 periods or ≥2 companies | Code |
-| VALIDATED → PROMOTED | Generalizes across ≥N companies and ≥M periods inside its scope; **human review** | Code proposes, human approves |
+| VALIDATED → PROMOTED | Generalizes across ≥N companies and ≥M periods inside its scope; rule-based for sector scope; universal scope not offered until the feedback process exists | Code |
 | any → DEPRECATED | Sustained CONTRADICT validations or source retraction; or manual | Code or human; keeps history |
 
 - Scope widens only with evidence: company-specific → sector → universal, each step a separate promotion; "universal" requires human approval always.
@@ -573,7 +584,7 @@ Existing investigation pages keep working off the current tables during migratio
 ## 32. Security and Governance
 
 - **LLM write permissions:** none on durable causal knowledge; candidate creation and evidence attachment only through the service (Section 14).
-- **Promotion:** deterministic gates; top tiers human-approved; every transition immutable-logged.
+- **Promotion:** deterministic gates; no human gate in early releases, reviewer feedback arrives later and tunes weights, not individual promotions; every transition immutable-logged.
 - **Provenance & integrity:** evidence entries carry `raw_object_id` content hashes (ADR-022); the ledger rejects entries whose source cannot be resolved.
 - **Audit/versioning/rollback:** append-only history, deprecate-never-delete, manual override recorded with actor and reason.
 - **Tenancy:** the repo has owner/visibility on cases, not a tenant model. Investigation graphs inherit the investigation's `visibility`/`owner_id`; **promoted knowledge is global** and must be derived only from evidence that is not private (user-uploaded private documents must not leak into shared causal knowledge — add an explicit `shareable` flag on evidence; default false for uploaded documents).
@@ -616,7 +627,7 @@ For every item: WHY / WHAT / WHERE / classification / dependencies / risk / effo
 | P2.1 Golden Investigations | 12 cases, evaluator, `causal_eval_runs`, S3 benchmark versions; reuse `signals_eval` job/runner conventions | EXTEND | L |
 | P2.2 Expectation/Observation/Validation primitive | Section 20–22 tables + method registry; guidance and forecast validation first (no LLM) | NEW | L |
 | P2.3 Temporal validation job | Section 23, scheduled, disabled until reviewed | NEW | M |
-| P2.4 Promotion lifecycle | Section 19 gates + review queue UI | NEW | L |
+| P2.4 Promotion lifecycle (rules + review-record templates, no reviewer gate) | Section 19 gates, `review_feedback` table, empty queue shape | NEW | M |
 | P2.5 Admin analytics tab | Section 30 | EXTEND | M |
 | P2.6 Sector packs: Banking, NBFC, Auto first | Section 8 | NEW (data) | L |
 
@@ -659,12 +670,12 @@ Sequencing note: **P0.4 and P0.3 are independent and cheap; do them first regard
 | P2 | P2.1 Golden Investigations (framework 8–12 + 12 cases 6–10) | 14 | 22 | Case authoring needs expert review time on top |
 | P2 | P2.2 Expectation/Observation/Validation primitive | 8 | 12 | Guidance + forecast validation first |
 | P2 | P2.3 Temporal validation job | 5 | 8 | |
-| P2 | P2.4 Promotion lifecycle + review queue | 8 | 12 | |
+| P2 | P2.4 Promotion lifecycle (rules + review templates; no reviewer UI) | 5 | 8 | Reduced from 8–12 by decision 2 |
 | P2 | P2.5 Admin analytics tab | 4 | 6 | |
 | P2 | P2.6 Sector packs: Banking, NBFC, Auto | 12 | 18 | 4–6 each; needs domain review |
-| | **P2 total** | **51** | **78** | |
+| | **P2 total** | **48** | **74** | After the P2.4 reduction |
 | P3 | Empirical effects/lags, calibration, assisted ontology growth, wider sector coverage | — | — | Order of magnitude 30–60+ days; scope only after P2 data exists |
-| | **P0 + P1 + P2** | **104** | **162** | |
+| | **P0 + P1 + P2** | **101** | **158** | |
 
 ### Calendar timeline, one engineer
 
@@ -673,7 +684,7 @@ Sequencing note: **P0.4 and P0.3 are independent and cheap; do them first regard
 | **MVP** (Section 38) | 19–30 | 5–8 weeks | 5–8 weeks |
 | P0 complete | 17–28 | 4–7 weeks | 4–7 weeks |
 | P1 complete (L5 usable) | 36–56 | 9–14 weeks | 13–21 weeks |
-| P2 complete (evaluation + learning) | 51–78 | 13–20 weeks | 26–41 weeks |
+| P2 complete (evaluation + learning) | 48–74 | 12–19 weeks | 25–40 weeks |
 
 MVP breakdown (19–30 days): P0.3 (1–2) + P0.4 (1–2) + P0.2 subset (3–5) + P1.1 (6–9) + P1.7 (2–3) + five golden cases with deterministic matching (6–9). The MVP overlaps P0/P1 rather than adding to them, so MVP effort is **not** additional to the phase totals above.
 
@@ -690,8 +701,8 @@ Track B's first two items need only the schema subset, so B can start in week 1.
 
 ### What would change these numbers
 
-- **Longer:** Neo4j turns out to be required in production rather than optional (open question 3); the expert-review turnaround for golden cases exceeds about a week; confidence weights need several tuning rounds against goldens; a per-investigation cost ceiling forces redesign of the contradiction search (open question 6).
-- **Shorter:** drop P1.8 (reuse the existing report component for the first release); defer P2.4 promotion until validation data exists; start sector packs with Banking only.
+- **Longer:** the expert-review turnaround for golden cases exceeds about a week; confidence weights need several tuning rounds against goldens; a per-investigation cost ceiling forces redesign of the contradiction search (open question 6).
+- **Shorter:** drop P1.8 (reuse the existing report component for the first release); defer P2.4 entirely until validation data exists; start sector packs with Banking only.
 - **Hard external dependencies:** a named reviewer for goldens and promotion; a decision on guidance validation as a product feature (open question 5); an LLM budget for weekly golden runs (each Level-5 run is minutes of real spend, per `scripts/run_signals_eval.py`).
 
 ### Recommended commitment
@@ -733,9 +744,9 @@ New (both schemas): `causal_assertions`, `mechanisms`, `causal_assertion_history
 
 ## 37. Open Questions
 
-1. Promotion at the top tier: who is the human reviewer, and is review in-app (a queue) or by PR to a seed file? (Plan assumes in-app queue for EVIDENCE_BACKED→VALIDATED→PROMOTED; confirm.)
-2. Is `CausalAssertion` Phase 2 of the economic-graph plan still the intended model, or has your thinking moved? This plan assumes **yes**, and only extends it (lifecycle, ledger independence, validation history).
-3. Neo4j in production: is it running on Lightsail/Neon-adjacent infra today, or still `GRAPH_BACKEND=sqlite`? Affects whether P0.5 can rely on Neo4j for anything beyond tests.
+1. ~~Promotion reviewer~~ **Resolved (decision 2):** later, as a feedback process that tunes weights; templates only now.
+2. ~~Is `CausalAssertion` still the model?~~ **Resolved (decision 3):** kept as the baseline; Section 41 compares alternatives. Still open: whether to adopt the argumentation-style evaluation layer recommended there.
+3. ~~Neo4j in production?~~ **Resolved (decision 1):** yes, cloud instance, `GRAPH_BACKEND=neo4j`.
 4. Scope of "expert-reviewed" goldens: who reviews, and what is the acceptable turnaround? The benchmark's value depends on reviewer quality more than on quantity.
 5. Guidance validation: is management-guidance accuracy a product feature you want surfaced to users, or an internal quality signal only? Changes Section 22's priority.
 6. Cost budget for L5: ADR-018 governs depth but this plan adds contradiction search and evidence classification calls. Is there a per-investigation dollar ceiling to design against?
@@ -757,7 +768,7 @@ Why this boundary: it makes edges *countable and evidenced*, which is the precon
 
 ## 39. Recommended Next Step
 
-Approve (or amend) the MVP boundary above, answer open questions 1–3 and 8, and I will turn the MVP into a task-level implementation plan with schema DDL drafts for review (still no code until you approve). Independently of that decision, I recommend authorising P0.4 (immutable artifacts) as a stand-alone fix.
+Approve (or amend) the MVP boundary above, choose the Section 41 design option, answer the remaining open questions (4–8), and I will turn the MVP into a task-level implementation plan with schema DDL drafts for review (still no code until you approve). Independently of that decision, I recommend authorising P0.4 (immutable artifacts) as a stand-alone fix.
 
 ## 40. Target Architecture Diagram
 
@@ -793,6 +804,25 @@ Approve (or amend) the MVP boundary above, answer open questions 1–3 and 8, an
                    | snapshots    |        +-----------------------------+
                    +--------------+
 ```
+
+---
+
+## 41. Alternative Causal-Knowledge Designs (comparison)
+
+The baseline (Sections 9–14, from the economic-graph plan) is **reified assertions**: each causal claim is its own node (`CausalAssertion`) between its cause and effect, linked to mechanism nodes, with evidence held in Postgres. These are the realistic alternatives.
+
+| Option | What it is | Strengths here | Weaknesses here | Fit |
+|---|---|---|---|---|
+| **A. Reified assertions** (baseline) | One node per claim with status, polarity, scope, lags, provenance; evidence in Postgres | Lifecycle, history and per-claim evidence are natural; matches ADR-009 and the economic-graph plan; already designed | More nodes and Cypher complexity than plain edges | **High**, already aligned with the repo |
+| **B. Plain relationship properties** | A single Neo4j relationship `(cause)-[:INCREASES {confidence, lag, ...}]->(effect)` | Simplest; fastest traversal; least to build | Weak history/versioning; one claim cannot carry several scopes or evidence sets cleanly; Neo4j relationships can't be the target of other relationships | Medium; fine for a throwaway prototype, outgrown quickly |
+| **C. Structural causal model / Bayesian network** | A DAG with conditional probability or structural equations; supports interventions and counterfactuals | Formal answers to "what if"; principled handling of confounders | Needs substantial data to parameterise; hard to build from heterogeneous text and filings; weak provenance; large modelling burden per sector | Low for now; useful later for **effect estimation** (P3) on a few well-measured mechanisms |
+| **D. Argumentation framework** | Claims as arguments; evidence **supports**, rival claims and contradictions **attack**; acceptability computed by rule | Maps directly onto the brief: contradiction search, confounders, alternatives, UNRESOLVED; auditable; explains "why this wins" | A reasoning method, not a storage model; needs a defined semantics and test set | **High as a layer** over the ledger |
+| **E. Mechanism templates** | Reusable parameterised patterns (e.g. "input cost pass-through": cost, share of COGS, pricing power) instantiated per company | Strong scaling story; low LLM dependence; direct link to quantitative tests | Needs careful template design; may be too rigid for novel causes | **High as part of L1/L2** (already implied by Sections 6–8) |
+| **F. LLM-only knowledge (no durable graph)** | Model proposes chains each time | Zero build | Violates the brief's core principle; no learning, no validation, no cost control | Rejected |
+
+**Recommendation.** Keep **A** for storage and lifecycle. Add **D** as the evaluation logic: treat each ledger entry as support or attack on a claim and each rival hypothesis as an attacker, and compute the verdict (SUPPORTED / PLAUSIBLE / WEAK / CONTRADICTED / UNRESOLVED) by deterministic rule. Use **E** inside the L1/L2 layers to scale across sectors. Defer **C** to P3 for selected mechanisms where the Income Statement and macro series give enough history. Choosing **B** instead would save roughly 5–8 developer-days in P0 but would force a migration once lifecycle, history or multi-scope claims are needed.
+
+**Cost impact of adopting D.** Small: it changes how the P1.5/P1.6 logic is expressed, not the schema, adding roughly 2–4 developer-days to P1 for the argument-evaluation function and its tests.
 
 ---
 
