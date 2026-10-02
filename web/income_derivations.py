@@ -7,9 +7,13 @@ tag for them, so both common conventions are provided, clearly labelled:
   operating (excl. other income)
       EBITDA = revenue from operations - (total expenses - finance costs - depreciation)
       EBIT   = EBITDA - depreciation
-  incl. other income (the bottom-up / textbook route)
-      EBITDA = profit before tax + finance costs + depreciation
-      EBIT   = profit before tax + finance costs        (a.k.a. PBIT)
+  incl. other income
+      EBITDA / EBIT above + other income
+
+Exceptional items are excluded from BOTH (they sit between "expenses" and
+profit before tax; e.g. TCS FY2026's one-off ~Rs 4,500 Cr charge), so the two
+differ by exactly other income. PBT is shown as its own row and does include
+them.
 
 "Total expenses" in the filing already INCLUDES finance costs and depreciation
 (Reliance Q1 FY27: materials + purchases + inventory change + employee +
@@ -45,14 +49,14 @@ def derive_income_rows(raw: dict[str, Series], keys: list[Hashable]) -> dict[str
         opex = raw["operating_expenses"].get(k)
         fin = raw["interest_expended"].get(k)
         dep = raw["depreciation"].get(k)
-        pbt = raw["profit_before_tax"].get(k)
+        other_income = raw["other_income"].get(k)
         if None not in (rev, opex, fin, dep):
             ebitda = rev - (opex - fin - dep)
             out["ebitda"][k] = ebitda
             out["ebit"][k] = ebitda - dep
-        if None not in (pbt, fin, dep):
-            out["ebitdaInclOther"][k] = pbt + fin + dep
-            out["ebitInclOther"][k] = pbt + fin
+            if other_income is not None:
+                out["ebitdaInclOther"][k] = ebitda + other_income
+                out["ebitInclOther"][k] = ebitda - dep + other_income
         parts = [raw[m].get(k) for m in ("cost_of_materials_consumed", "purchases_of_stock_in_trade", "changes_in_inventories")]
         if parts[0] is not None or parts[1] is not None:
             out["materialsCost"][k] = sum(p for p in parts if p is not None)
@@ -71,13 +75,13 @@ ADDED_KEYS = NON_FINANCIAL_ONLY_KEYS | {"profitBeforeTax", "taxExpense"}
 
 
 def finalize_income_rows(rows: list[dict], is_financial: bool) -> list[dict]:
-    """Drop added rows that don't apply (financial company) or are empty;
+    """Drop added rows that don't apply (financial company) or hold no non-zero value;
     the original rows are never touched."""
     kept = []
     for r in rows:
         if r["key"] in NON_FINANCIAL_ONLY_KEYS and is_financial:
             continue
-        if r["key"] in ADDED_KEYS and not any(v is not None for v in r["values"]):
+        if r["key"] in ADDED_KEYS and not any(v for v in r["values"]):  # all blank or all zero
             continue
         kept.append(r)
     return kept

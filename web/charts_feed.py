@@ -559,7 +559,7 @@ def build_charts_feed(
             _row("ebitdaInclOther", "EBITDA incl. other income", "big", period_keys, derived_income["ebitdaInclOther"], row_type="calc"),
             _row("depreciation", "Depreciation", "big", period_keys, raw["depreciation"], provenance=prov("depreciation")),
             _row("ebit", "EBIT (operating, excl. other income)", "big", period_keys, derived_income["ebit"], row_type="calc"),
-            _row("ebitInclOther", "EBIT incl. other income (PBIT)", "big", period_keys, derived_income["ebitInclOther"], row_type="calc"),
+            _row("ebitInclOther", "EBIT incl. other income", "big", period_keys, derived_income["ebitInclOther"], row_type="calc"),
             _row("interestOutgo", "Interest Out-go", "big", period_keys, raw["interest_expended"], provenance=prov("interest_expended")),
             _row("otherIncome", "Other Income", "big", period_keys, raw["other_income"], provenance=prov("other_income")),
             _row("profitBeforeTax", "Profit before Tax (PBT)", "big", period_keys, raw["profit_before_tax"], provenance=prov("profit_before_tax")),

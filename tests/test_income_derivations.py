@@ -12,14 +12,14 @@ from web.valuation_feed import build_valuation_feed
 # Reliance Industries, consolidated Q1 FY27 (NSE XBRL), in crore.
 RELIANCE_Q1 = {
     "total_revenue": 311850.0, "operating_expenses": 287770.0, "interest_expended": 8337.0,
-    "depreciation": 15100.0, "profit_before_tax": 30630.0, "other_expenses": 45252.0,
+    "depreciation": 15100.0, "profit_before_tax": 30630.0, "other_expenses": 45252.0, "other_income": 6550.0,
     "cost_of_materials_consumed": 129857.0, "purchases_of_stock_in_trade": 82833.0, "changes_in_inventories": -1326.0,
 }
 
 
 def _raw(values: dict[str, float], key="Q1") -> dict[str, dict]:
     keys = ("total_revenue", "operating_expenses", "interest_expended", "depreciation", "profit_before_tax",
-            "other_expenses", "cost_of_materials_consumed", "purchases_of_stock_in_trade", "changes_in_inventories")
+            "other_expenses", "other_income", "cost_of_materials_consumed", "purchases_of_stock_in_trade", "changes_in_inventories")
     return {k: ({key: values[k]} if k in values else {}) for k in keys}
 
 
@@ -28,9 +28,18 @@ def test_reliance_ebitda_ebit_and_materials_cost_both_conventions() -> None:
 
     assert out["ebitda"]["Q1"] == pytest.approx(47517.0)          # operating, excl. other income
     assert out["ebit"]["Q1"] == pytest.approx(32417.0)
-    assert out["ebitdaInclOther"]["Q1"] == pytest.approx(54067.0)  # PBT + finance + depreciation
-    assert out["ebitInclOther"]["Q1"] == pytest.approx(38967.0)    # PBT + finance
+    assert out["ebitdaInclOther"]["Q1"] == pytest.approx(54067.0)  # operating + other income (6,550)
+    assert out["ebitInclOther"]["Q1"] == pytest.approx(38967.0)
     assert out["materialsCost"]["Q1"] == pytest.approx(211364.0)   # materials + purchases + inventory change
+
+
+def test_exceptional_items_do_not_leak_into_either_ebitda() -> None:
+    """TCS FY2026: a one-off charge sits between expenses and PBT. PBT drops, EBITDA must not."""
+    base = derive_income_rows(_raw(RELIANCE_Q1), ["Q1"])
+    with_exceptional = derive_income_rows(_raw({**RELIANCE_Q1, "profit_before_tax": 30630.0 - 4500.0}), ["Q1"])
+
+    assert with_exceptional == base
+    assert base["ebitdaInclOther"]["Q1"] - base["ebitda"]["Q1"] == pytest.approx(6550.0)  # exactly other income
 
 
 def test_legacy_period_without_the_xbrl_only_line_gets_no_derived_rows() -> None:
@@ -55,6 +64,7 @@ def test_finalize_hides_non_financial_rows_for_banks_and_empty_added_rows() -> N
         {"key": "earnings", "values": [None]},   # original row: kept even when empty
         {"key": "ebitda", "values": [1.0]},
         {"key": "employeeCost", "values": [None]},
+        {"key": "materialsCost", "values": [0.0, 0.0]},   # a services company: all-zero row hidden
         {"key": "profitBeforeTax", "values": [5.0]},
         {"key": "taxExpense", "values": [None]},
     ]

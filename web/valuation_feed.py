@@ -248,7 +248,7 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
             _row("ebitdaInclOther", "EBITDA incl. other income", "big", years, derived_income["ebitdaInclOther"], row_type="calc"),
             _row("depreciation", "Depreciation", "big", years, raw["depreciation"]),
             _row("ebit", "EBIT (operating, excl. other income)", "big", years, derived_income["ebit"], row_type="calc"),
-            _row("ebitInclOther", "EBIT incl. other income (PBIT)", "big", years, derived_income["ebitInclOther"], row_type="calc"),
+            _row("ebitInclOther", "EBIT incl. other income", "big", years, derived_income["ebitInclOther"], row_type="calc"),
             _row("interestOutgo", "Interest Out-go", "big", years, raw["interest_expended"]),
             _row("otherIncome", "Other Income", "big", years, raw["other_income"]),
             _row("profitBeforeTax", "Profit before Tax (PBT)", "big", years, raw["profit_before_tax"]),
