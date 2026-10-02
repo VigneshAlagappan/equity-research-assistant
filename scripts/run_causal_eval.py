@@ -32,92 +32,12 @@ from config.versions import version_stamp  # noqa: E402
 from research.causal_eval import (  # noqa: E402
     DEFAULT_BENCHMARK_VERSION, GoldenCase, aggregate, format_report, load_cases, score_case,
 )
+from research.resilient_connection import ReconnectingConnection  # noqa: E402,F401
 from storage.backend_bootstrap import open_db  # noqa: E402
 from storage.causal_repository import (  # noqa: E402
     get_investigation_metrics, insert_eval_case_result, insert_eval_run, list_graph_edges, list_graph_nodes,
 )
 from storage.document_store import default_document_store  # noqa: E402
-
-
-class ReconnectingConnection:
-    """For long runs from a host whose idle connections to Neon get dropped (a
-    local Docker/NAT path; the Lightsail app does not see this). An L5
-    investigation holds one connection across minutes of LLM calls, so the
-    first statement after an idle stretch can hit a dead socket. This proxy
-    reconnects and retries THAT statement once. Safe only because the drop is
-    seen on the first statement of a transaction, before anything has been
-    written in it; it is a local-run convenience, not a general wrapper."""
-
-    def __init__(self, open_fn):
-        self._open = open_fn
-        self._conn = open_fn()
-
-    def _reconnect(self):
-        try:
-            self._conn.close()
-        except Exception:  # noqa: BLE001
-            pass
-        self._conn = self._open()
-
-    def cursor(self, *args, **kwargs):
-        return _ReconnectingCursor(self, args, kwargs)
-
-    def commit(self):
-        try:
-            self._conn.commit()
-        except Exception as exc:  # noqa: BLE001
-            if not _is_connection_error(exc):
-                raise
-            self._reconnect()
-
-    def rollback(self):
-        try:
-            self._conn.rollback()
-        except Exception as exc:  # noqa: BLE001
-            if not _is_connection_error(exc):
-                raise
-            self._reconnect()
-
-    def __getattr__(self, name):
-        return getattr(self._conn, name)
-
-
-def _is_connection_error(exc: Exception) -> bool:
-    import psycopg2
-
-    return isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError))
-
-
-class _ReconnectingCursor:
-    def __init__(self, owner: ReconnectingConnection, args, kwargs):
-        self._owner, self._args, self._kwargs = owner, args, kwargs
-        self._cur = owner._conn.cursor(*args, **kwargs)
-
-    def execute(self, *a, **k):
-        try:
-            return self._cur.execute(*a, **k)
-        except Exception as exc:  # noqa: BLE001
-            if not _is_connection_error(exc):
-                raise
-            self._owner._reconnect()
-            self._cur = self._owner._conn.cursor(*self._args, **self._kwargs)
-            return self._cur.execute(*a, **k)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        try:
-            self._cur.close()
-        except Exception:  # noqa: BLE001
-            pass
-        return False
-
-    def __iter__(self):
-        return iter(self._cur)
-
-    def __getattr__(self, name):
-        return getattr(self._cur, name)
 
 
 def score_investigation(conn, case: GoldenCase, investigation_id: str) -> dict:

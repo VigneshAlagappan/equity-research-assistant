@@ -138,3 +138,41 @@ def test_reconnecting_connection_retries_first_statement_after_a_dead_socket():
     with pytest.raises(ValueError):
         with proxy.cursor() as cur:
             cur.execute("x")
+
+
+def test_reconnecting_connection_does_not_replay_after_a_write():
+    """A dropped connection takes uncommitted writes with it; replaying only
+    the last statement would silently lose the rest, so the error must surface."""
+    import psycopg2
+
+    from research.resilient_connection import ReconnectingConnection
+
+    class Cur:
+        def __init__(self, conn): self.conn = conn
+        def execute(self, sql, params=None):
+            if self.conn.dead:
+                raise psycopg2.OperationalError("SSL SYSCALL error: EOF detected")
+        def close(self): pass
+
+    class Conn:
+        opened = 0
+        def __init__(self): Conn.opened += 1; self.dead = False
+        def cursor(self, *a, **k): return Cur(self)
+        def commit(self): pass
+        def rollback(self): pass
+        def close(self): pass
+
+    proxy = ReconnectingConnection(Conn)
+    with proxy.cursor() as cur:
+        cur.execute("UPDATE t SET a = 1")
+    proxy._conn.dead = True
+    with pytest.raises(psycopg2.OperationalError):
+        with proxy.cursor() as cur:
+            cur.execute("SELECT 1")
+    assert Conn.opened == 1
+    proxy.rollback()  # transaction abandoned; connection is replaced
+    assert Conn.opened == 1
+    proxy._conn.dead = True
+    with proxy.cursor() as cur:
+        cur.execute("SELECT 1")  # clean transaction: reconnect and retry
+    assert Conn.opened == 2

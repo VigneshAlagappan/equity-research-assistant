@@ -41,6 +41,7 @@ from contextlib import contextmanager
 from typing import Callable
 
 from research.assistant import CaseCancelledError, InsufficientEvidenceError
+from research.resilient_connection import ReconnectingConnection
 from storage.repositories import (
     cancel_research_case,
     complete_research_case,
@@ -138,7 +139,7 @@ def run_case_in_background(
     updates and the sufficiency/cancellation checks actually fire."""
 
     def _run() -> None:
-        conn = open_conn()
+        conn = ReconnectingConnection(open_conn)
         try:
             with _sentry_transaction(case_id, kind):
                 try:
@@ -170,7 +171,18 @@ def run_case_in_background(
                     # (a harmless no-op on SQLite when there's nothing to
                     # roll back) so the failure actually gets recorded.
                     _rollback(conn)
-                    fail_research_case(conn, case_id, f"{type(exc).__name__}: {exc}")
+                    try:
+                        fail_research_case(conn, case_id, f"{type(exc).__name__}: {exc}")
+                    except Exception:  # noqa: BLE001 -- Neon dropped the idle connection mid-run
+                        # ("SSL SYSCALL error: EOF" / "connection already closed"): the
+                        # case would otherwise poll as "running" forever. Record the
+                        # failure on a fresh connection.
+                        logger.warning("Case %s: original connection dead, recording failure on a new one", case_id)
+                        fresh = open_conn()
+                        try:
+                            fail_research_case(fresh, case_id, f"{type(exc).__name__}: {exc}")
+                        finally:
+                            fresh.close()
                 else:
                     complete_research_case(
                         conn, case_id, outcome="answered", result_json=json.dumps(result),
