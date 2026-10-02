@@ -149,20 +149,41 @@ def _corporate_actions_by_period(
 _DIVIDEND_AMOUNT = re.compile(r"(?:\b(?:rs|re|usd)\.?\s*|\$\s*)(\d+(?:\.\d+)?)(?=[^\d.]|$)")
 
 
+# A dividend amount written with no currency prefix at all -- real NSE rows:
+# "Special Dividend- 130 Per Share" (Abbott India), "Dividend 12.50/-+Special
+# Dividend 0.50/-". Not a percentage ("Dividend 185%" is percent of face value).
+_BARE_AMOUNT = re.compile(r"dividend\s*[-:]?\s*(\d+(?:\.\d+)?)(?!\s*%)(?=[^\d.]|$)")
+_PER_SHARE_AFTER = re.compile(r"^[\s/\-]*per\s+(?:equity\s+)?sh")
+
+
 def _dividend_amount_per_share(subject: str) -> float | None:
     """Rupees per share out of NSE's free-text dividend subject --
     "Dividend - Rs 13 Per Share", "Interim Dividend - Re 0.70 Per Share",
     "Annual General Meeting/Dividend - Rs 2.50 Per Share", older
-    "Agm/Div-Rs.12/- Per Share". A subject naming several per-share amounts
-    (e.g. a regular plus a special dividend in one row) sums them; one with
-    no "Rs/Re/$ <amount>" at all (the old "Div185%" percent-of-face-value
-    style) returns None rather than guessing."""
+    "Agm/Div-Rs.12/- Per Share". A subject naming several amounts (a regular
+    plus a special dividend in one row -- "Rs 525 Per Share & Special
+    Dividend Rs 131", "Rs 145 Per Share/Special Dividend- 130 Per Share")
+    sums them: an amount counts when "Per [Equity] Share" follows it, when it
+    is written as a special dividend, or when it follows the word "dividend"
+    with no currency prefix. One with no recognisable amount at all (the old
+    "Div185%" percent-of-face-value style) returns None rather than
+    guessing."""
     s = subject.lower()
-    amounts = [float(m.group(1)) for m in _DIVIDEND_AMOUNT.finditer(s)]
-    if not amounts:
+    matches = list(_DIVIDEND_AMOUNT.finditer(s))
+    bare = list(_BARE_AMOUNT.finditer(s))
+    if not matches and not bare:
         return None
-    per_share = [float(m.group(1)) for m in _DIVIDEND_AMOUNT.finditer(s) if s[m.end():].lstrip(" /-").startswith("per sh")]
-    return sum(per_share) if per_share else amounts[0]
+
+    def qualified(m: re.Match) -> bool:
+        return bool(_PER_SHARE_AFTER.match(s[m.end():])) or bool(re.search(r"special\s+dividend\s*[-:]?\s*$", s[:m.start()]))
+
+    counted = [float(m.group(1)) for m in matches if qualified(m)]
+    # a bare amount is the same figure as an "Rs" match when "Rs" sits between
+    # the word and the digits -- the patterns can't overlap, so just add them
+    counted += [float(m.group(1)) for m in bare]
+    if counted:
+        return sum(counted)
+    return float(matches[0].group(1))
 
 
 def dividends_from_corporate_actions(

@@ -300,3 +300,37 @@ def test_eps_row_falls_back_to_diluted_eps_when_no_reported_eps(company_conn: sq
     rows = {r["key"]: r for r in feed["METRICS"]["perShare"]}
     assert rows["eps"]["values"] == [8.87]
     assert rows["dilutedEps"]["values"] == [8.87]
+
+
+@pytest.mark.parametrize(
+    "subject, expected",
+    [
+        # real Abbott India corporate-action subjects (NSE)
+        ("Dividend - Rs 525 Per Share & Special Dividend Rs 131 Per Share", 656.0),
+        ("Dividend - Rs 475 Per Share", 475.0),
+        ("Dividend - Rs 180 Per Share/ Special Dividend Rs 145 Per Share", 325.0),
+        ("Annual General Meeting/Dividend - Rs 145 Per Share/Special Dividend- 130 Per Share", 275.0),
+        ("Annual General Meeting/Dividend - Rs 120 Per Share Special Dividend 155 Per Share", 275.0),
+        ("Annual General Meeting/Dividend - Rs 107 Per Share And Special Dividend - Rs 143 Per Share", 250.0),
+        ("Annual General Meeting/ Final Dividend - Rs 50 Per Share/ Special Dividend - Rs 15 Per Share", 65.0),
+        ("Annual General Meeting/Dividend Rs 40/- Per Share", 40.0),
+    ],
+)
+def test_dividend_amount_includes_special_dividends(subject: str, expected: float) -> None:
+    from web.charts_feed import _dividend_amount_per_share as parse
+
+    assert parse(subject) == expected
+
+
+@pytest.mark.parametrize(
+    "subject, expected",
+    [
+        ("Annual General Meeting / Dividend Rs.2/- Per Equity Share + Special Dividend Re.1/- Equity Share", 3.0),
+        ("Annual General Meeting/Dividend 12.50/-+Special Dividend 0.50/- Per Share", 13.0),
+        ("Div185%", None),
+    ],
+)
+def test_dividend_amount_edge_formats(subject: str, expected: float | None) -> None:
+    from web.charts_feed import _dividend_amount_per_share as parse
+
+    assert parse(subject) == expected
