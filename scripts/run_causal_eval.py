@@ -39,6 +39,87 @@ from storage.causal_repository import (  # noqa: E402
 from storage.document_store import default_document_store  # noqa: E402
 
 
+class ReconnectingConnection:
+    """For long runs from a host whose idle connections to Neon get dropped (a
+    local Docker/NAT path; the Lightsail app does not see this). An L5
+    investigation holds one connection across minutes of LLM calls, so the
+    first statement after an idle stretch can hit a dead socket. This proxy
+    reconnects and retries THAT statement once. Safe only because the drop is
+    seen on the first statement of a transaction, before anything has been
+    written in it; it is a local-run convenience, not a general wrapper."""
+
+    def __init__(self, open_fn):
+        self._open = open_fn
+        self._conn = open_fn()
+
+    def _reconnect(self):
+        try:
+            self._conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        self._conn = self._open()
+
+    def cursor(self, *args, **kwargs):
+        return _ReconnectingCursor(self, args, kwargs)
+
+    def commit(self):
+        try:
+            self._conn.commit()
+        except Exception as exc:  # noqa: BLE001
+            if not _is_connection_error(exc):
+                raise
+            self._reconnect()
+
+    def rollback(self):
+        try:
+            self._conn.rollback()
+        except Exception as exc:  # noqa: BLE001
+            if not _is_connection_error(exc):
+                raise
+            self._reconnect()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def _is_connection_error(exc: Exception) -> bool:
+    import psycopg2
+
+    return isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError))
+
+
+class _ReconnectingCursor:
+    def __init__(self, owner: ReconnectingConnection, args, kwargs):
+        self._owner, self._args, self._kwargs = owner, args, kwargs
+        self._cur = owner._conn.cursor(*args, **kwargs)
+
+    def execute(self, *a, **k):
+        try:
+            return self._cur.execute(*a, **k)
+        except Exception as exc:  # noqa: BLE001
+            if not _is_connection_error(exc):
+                raise
+            self._owner._reconnect()
+            self._cur = self._owner._conn.cursor(*self._args, **self._kwargs)
+            return self._cur.execute(*a, **k)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            self._cur.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    def __iter__(self):
+        return iter(self._cur)
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
 def score_investigation(conn, case: GoldenCase, investigation_id: str) -> dict:
     """Score one persisted investigation against one case. No LLM."""
     labels = {n["node_id"]: n["label"] for n in list_graph_nodes(conn, investigation_id)}
@@ -108,6 +189,8 @@ def main() -> None:
     parser.add_argument("--list", action="store_true", help="list cases and exit (no LLM, no database)")
     parser.add_argument("--score-existing", metavar="INVESTIGATION_ID:CASE_ID",
                         help="score an investigation already on file against a case (no LLM)")
+    parser.add_argument("--resilient", action="store_true",
+                        help="reconnect on dropped idle connections (for runs from a host whose Neon connections get dropped)")
     args = parser.parse_args()
 
     if args.list:
@@ -115,7 +198,7 @@ def main() -> None:
             print(f"{c.case_id:45s} {','.join(c.company_ids):22s} edges={len(c.expected_edges)} "
                   f"{'reviewed' if c.reviewed else 'DRAFT'}")
         return
-    conn = open_db()
+    conn = ReconnectingConnection(open_db) if args.resilient else open_db()
     if args.score_existing:
         inv_id, case_id = args.score_existing.split(":", 1)
         case = next(c for c in load_cases(args.benchmark) if c.case_id == case_id)

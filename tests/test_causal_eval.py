@@ -102,3 +102,39 @@ def test_run_stores_run_and_case_rows_and_survives_a_failed_case(conn, monkeypat
     assert rows["l5_maruti_margin_movement"]["status"] == "ok"
     assert rows["l5_tatasteel_cross_sector_margin"]["status"] == "failed"
     assert "model unavailable" in rows["l5_tatasteel_cross_sector_margin"]["error_detail"]
+
+
+def test_reconnecting_connection_retries_first_statement_after_a_dead_socket():
+    import psycopg2
+
+    from scripts.run_causal_eval import ReconnectingConnection
+
+    class Cur:
+        def __init__(self, dead): self.dead, self.rows = dead, [1]
+        def execute(self, sql, params=None):
+            if self.dead:
+                raise psycopg2.OperationalError("SSL connection has been closed unexpectedly")
+            self.last = sql
+        def fetchall(self): return self.rows
+        def close(self): pass
+
+    class Conn:
+        opened = 0
+        def __init__(self): Conn.opened += 1; self.dead = Conn.opened == 1
+        def cursor(self, *a, **k): return Cur(self.dead)
+        def commit(self): pass
+        def close(self): pass
+
+    proxy = ReconnectingConnection(Conn)
+    with proxy.cursor() as cur:
+        cur.execute("SELECT 1")
+        assert cur.fetchall() == [1]
+    assert Conn.opened == 2  # reconnected once, statement retried on the fresh connection
+
+    class Boom(Cur):
+        def execute(self, *a, **k): raise ValueError("not a connection problem")
+
+    proxy._conn.cursor = lambda *a, **k: Boom(False)
+    with pytest.raises(ValueError):
+        with proxy.cursor() as cur:
+            cur.execute("x")
