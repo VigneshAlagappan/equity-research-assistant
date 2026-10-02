@@ -454,7 +454,10 @@
           (r.type === "calc" ? "CALC" : "FACT") + "</span></td>" +
           '<td><svg viewBox="0 0 100 28" class="vm-spark"><path d="' + r.sparkPath +
           '" fill="none" stroke="var(--color-accent-700)" stroke-width="1.6"></path></svg></td>' +
-          r.valuesFmt.map((v, i) => '<td class="vm-num">' + v + provTag(r.sources, i) + "</td>").join("") +
+          // The per-cell source letter (provTag) is deliberately not rendered in the
+          // Financials table; the feed still carries "sources" and provTag() is kept
+          // so it can be switched back on by appending it here.
+          r.valuesFmt.map((v) => '<td class="vm-num">' + v + "</td>").join("") +
           '<td class="vm-num">' + r.cagrFmt + "</td></tr>"
       )
       .join("");
