@@ -344,3 +344,25 @@ Built and tested locally (1,257 tests passing, 30 skipped); **not deployed, Neon
 | M9 golden mini-set | Done, **drafts** | 5 cases in `research/golden/v1/` (3 bank cases, Maruti, Tata Steel), deterministic matcher, `scripts/run_causal_eval.py` (`--list`, `--score-existing`, full run). **Deviation:** not registered as a scheduled job (the scheduler has no enabled/manual-only flag), CLI only, on purpose. Cases are unreviewed drafts until a named reviewer fills `reviewed_by` / `reviewed_on` |
 
 Next, each needing your go-ahead because it touches shared systems or spends money: (1) apply the additive schema to Neon, (2) run **one** real investigation locally to verify the graph, tags and metrics on real data (checkpoint C2), (3) a first golden run with its cost reported.
+
+## 14. Measured results (2026-10-02, Maruti golden case, n = 1 per row)
+
+| Run | Evaluation model | Cost | Hypothesis verdicts | Edges presented | Evidence coverage | **Tagging rate** | Golden recall (essential) |
+|---|---|---|---|---|---|---|---|
+| 1 | Sonnet (pre-change default) | $0.48 | 5 partial, 1 insufficient | 15 | 87% | **88%** | 2 / 4 |
+| 2 | Haiku | $0.15 | 2 partial, 3 insufficient, 1 refuted | 6 | 50% | **25%** | 0 / 4 |
+| 3 | Haiku + tightened tagging prompt | $0.16 | 2 partial, 2 insufficient, 2 refuted | 6 | 67% | **33%** | 0 / 4 |
+
+Reading, with the caveat that each row is one stochastic run with different generated hypotheses (so differences are indicative, not statistically established):
+
+- Haiku cuts the run cost by about 68%, as intended. `CAUSAL_EVALUATION_MODEL` stays `claude-haiku-4-5` by owner decision.
+- Haiku tags evidence to causal links far less often (25–33% against 88%), so edge-level metrics are weaker under Haiku. A tighter prompt moved it only from 25% to 33%.
+- Haiku is also harsher on verdicts (more INSUFFICIENT_EVIDENCE / REFUTED), so fewer edges are "presented" and recall against the golden edges is lower. Golden recall of 0 is partly the draft aliases and partly this.
+- Golden aliases are unreviewed drafts and too narrow: both Maruti runs presented sensible edges (SUV mix, fixed-cost absorption, price realisation) that match no alias.
+
+Options that keep Haiku (not yet built; each needs a go-ahead):
+1. **A narrow tagging pass:** after evaluation, one short Haiku call that only assigns each evidence item to a link. Estimated $0.01–0.02 per investigation; keeps the evaluator unchanged.
+2. **Deterministic tagging:** match an item's label/value to chain-step labels by keyword overlap. Free, but crude.
+3. **Accept the low rate:** keep reporting `tagging_rate` and treat Haiku edge metrics as low-confidence.
+
+Test rows from all three runs were deleted from Neon (the eval-run rows remain as a record). An earlier Haiku attempt hung for about 48 minutes between two model calls and was stopped; the cause was not diagnosed.

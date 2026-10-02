@@ -101,9 +101,13 @@ it CORRELATION even if a causal story seems plausible to you.
 is not independently verified just because it's confident.
 - If the evidence doesn't cover something this hypothesis needs, say so under missing_evidence — do not guess or \
 fill the gap from outside/training knowledge.
-- When the hypothesis lists numbered causal chain steps, set each cited item's "link" to the integer index of the \
-single causal link it bears on (link 0 connects step 0 to step 1, link 1 connects step 1 to step 2, and so on). \
-Use null when the item bears on the hypothesis as a whole or you are not sure — never guess a link.
+- When the hypothesis lists numbered causal chain steps, EVERY cited item must carry a "link" value: the integer \
+index of the single causal link it bears on (link 0 connects step 0 to step 1, link 1 connects step 1 to step 2, \
+and so on — so N steps give links 0..N-2). Pick the link whose cause or effect the item most directly measures. \
+Example: with steps 0 "Steel prices rise", 1 "Material cost per unit rises", 2 "Operating margin falls" there are \
+two links — a steel price figure bears on link 0, a cost-of-materials figure on link 0 (it measures that link's \
+effect), and an operating-margin figure on link 1. Use null ONLY when the item genuinely bears on the hypothesis \
+as a whole and on no single link; never leave "link" out and never use an index outside the range.
 
 Respond with ONLY a JSON object, no other text, in exactly this shape:
 
