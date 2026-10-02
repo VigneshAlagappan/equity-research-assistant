@@ -49,18 +49,23 @@ def quarter_index_from_month(month_idx: int) -> int:
     return (month_idx // 12) * 4 + (month_idx % 12) // 3
 
 
-def fiscal_quarter_index(fiscal_year: str, quarter: str) -> int | None:
-    """March-year-end (India) fiscal quarter -> calendar quarter index of its end.
-    FY2024 Q1 ends June 2023, Q4 ends March 2024."""
+def fiscal_quarter_index(fiscal_year: str, quarter: str, fye_month: int = 3) -> int | None:
+    """Fiscal quarter -> calendar quarter index of the month it ENDS in.
+
+    The fiscal-year label is the calendar year in which the fiscal year ends
+    (the app's convention for India and for the SEC adapter), and Q4 ends in
+    `fye_month`; Qk ends 3 * (4 - k) months earlier. India (March year-end):
+    FY2024 Q1 ends June 2023, Q4 ends March 2024. A December year-end US company:
+    FY2024 Q1 ends March 2024."""
     try:
         fy = int(fiscal_year.removeprefix("FY"))
         q = int(quarter.removeprefix("Q"))
     except ValueError:
         return None
-    end_month, end_year = {1: (6, fy - 1), 2: (9, fy - 1), 3: (12, fy - 1), 4: (3, fy)}.get(q, (None, None))
-    if end_month is None:
+    if q not in (1, 2, 3, 4) or not 1 <= fye_month <= 12:
         return None
-    return end_year * 4 + (end_month - 1) // 3
+    end_month_idx = fy * 12 + (fye_month - 1) - 3 * (4 - q)
+    return quarter_index_from_month(end_month_idx)
 
 
 def aggregate_mean(points: list[tuple[str, float]], freq: str) -> dict[int, float]:
@@ -121,9 +126,11 @@ def _pearson(x: np.ndarray, y: np.ndarray) -> float | None:
 
 def lagged_panel_test(
     cause: dict[int, float], effects: dict[str, dict[int, float]], lags: list[int], expected_sign: int,
-    n_perm: int = 2000, seed: int = 0,
+    n_perm: int = 2000, seed: int = 0, exclude: tuple[int, int] | None = None,
 ) -> EdgeTestResult:
-    """Pooled lagged correlation with a lag-search-aware circular-shift permutation p-value."""
+    """Pooled lagged correlation with a lag-search-aware circular-shift permutation p-value.
+    `exclude=(lo, hi)` drops EFFECT periods in that inclusive index range (a robustness
+    check, e.g. the 2020-21 shock); the cause series is left intact."""
     pts_t: list[int] = []
     pts_y: list[float] = []
     for series in effects.values():
@@ -135,6 +142,8 @@ def lagged_panel_test(
             continue
         mean = values.mean()
         for t, v in series.items():
+            if exclude is not None and exclude[0] <= t <= exclude[1]:
+                continue
             pts_t.append(t)
             pts_y.append((v - mean) / std)
     periods = sorted(set(pts_t))
@@ -218,6 +227,7 @@ class Candidate:
     effect_companies: tuple[str, ...] = ()
     effect_metric: str = ""  # canonical metric key, or "margin" (net_profit / total_revenue)
     lags: tuple[int, ...] = ()
+    region: str = "IN"  # "IN" (RBI + Indian filings) or "US" (FRED + SEC filings)
 
 
 CANDIDATES: list[Candidate] = [
@@ -258,8 +268,60 @@ CANDIDATES: list[Candidate] = [
 ]
 
 
+US_BANKS = ["JPM", "BAC", "WFC", "C", "USB"]
+US_HOMEBUILDERS = ["DHI", "LEN", "PHM", "NVR"]
+US_HOME_RETAIL = ["HD", "LOW"]
+US_AIRLINES = ["DAL", "UAL", "LUV"]
+US_OIL = ["COP", "OXY", "CVX"]
+US_MULTINATIONALS = ["KO", "PG", "MMM", "CAT"]
+US_AUTOS = ["F", "GM"]
+US_RETAIL = ["WMT", "COST", "HD", "LOW"]
+US_INDUSTRIAL = ["CAT", "MMM"]
+_MLAGS = tuple(range(0, 13))
+_QLAGS = tuple(range(0, 7))
+
+
+def _us_macro(edge_id, cause, sign, mech, effect):
+    return Candidate(edge_id, cause, sign, mech, "macro", effect_macro=effect, lags=_MLAGS, region="US")
+
+
+def _us_co(edge_id, cause, sign, mech, companies, metric):
+    return Candidate(edge_id, cause, sign, mech, "company", effect_companies=tuple(companies), effect_metric=metric,
+                     lags=_QLAGS, region="US")
+
+
+US_CANDIDATES: list[Candidate] = [
+    # --- macro -> macro, monthly ---
+    _us_macro("us_fedfunds_to_dgs2", MacroSpec("fedfunds", "diff"), +1, "Policy rate anchors 2Y Treasury yields", MacroSpec("dgs2", "diff")),
+    _us_macro("us_fedfunds_to_mortgage", MacroSpec("fedfunds", "diff"), +1, "Policy rate feeds mortgage rates", MacroSpec("mortgage30us", "diff")),
+    _us_macro("us_dgs10_to_mortgage", MacroSpec("dgs10", "diff"), +1, "Mortgage rates price off the 10Y Treasury", MacroSpec("mortgage30us", "diff")),
+    _us_macro("us_fedfunds_to_loans", MacroSpec("fedfunds", "diff"), -1, "Dearer money slows bank lending", MacroSpec("totll", "pct")),
+    _us_macro("us_fedfunds_to_housing_starts", MacroSpec("fedfunds", "diff"), -1, "Higher rates depress housing starts", MacroSpec("houst", "pct")),
+    _us_macro("us_oil_to_cpi", MacroSpec("dcoilwtico", "pct"), +1, "Energy prices feed consumer inflation", MacroSpec("cpiaucsl", "pct")),
+    # --- macro -> company panels, quarterly (SEC filings, ~66 quarters of YoY history) ---
+    _us_co("us_fedfunds_to_bank_interest_expense", MacroSpec("fedfunds", "diff"), +1, "Higher policy rate raises banks' funding cost", US_BANKS, "interest_expended"),
+    _us_co("us_fedfunds_to_bank_interest_income", MacroSpec("fedfunds", "diff"), +1, "Higher policy rate raises banks' asset yields", US_BANKS, "interest_earned"),
+    _us_co("us_curve_to_bank_profit", MacroSpec("t10y2y", "diff"), +1, "A steeper curve widens bank net interest margins", US_BANKS, "net_profit"),
+    _us_co("us_mortgage_to_homebuilder_revenue", MacroSpec("mortgage30us", "diff"), -1, "Higher mortgage rates cut homebuyer demand", US_HOMEBUILDERS, "total_revenue"),
+    _us_co("us_mortgage_to_home_retail_revenue", MacroSpec("mortgage30us", "diff"), -1, "Housing turnover drives home-improvement spend", US_HOME_RETAIL, "total_revenue"),
+    _us_co("us_oil_to_airline_margin", MacroSpec("dcoilwtico", "pct"), -1, "Fuel is an airline's largest variable cost", US_AIRLINES, "margin"),
+    _us_co("us_oil_to_producer_revenue", MacroSpec("dcoilwtico", "pct"), +1, "Producers' revenue follows crude prices", US_OIL, "total_revenue"),
+    _us_co("us_dollar_to_multinational_revenue", MacroSpec("dtwexbgs", "pct"), -1, "A stronger dollar shrinks translated foreign revenue", US_MULTINATIONALS, "total_revenue"),
+    _us_co("us_fedfunds_to_auto_revenue", MacroSpec("fedfunds", "diff"), -1, "Dearer auto loans dampen vehicle demand", US_AUTOS, "total_revenue"),
+    _us_co("us_sentiment_to_retail_revenue", MacroSpec("umcsent", "pct"), +1, "Consumer sentiment leads discretionary spend", US_RETAIL, "total_revenue"),
+    _us_co("us_indpro_to_industrial_revenue", MacroSpec("indpro", "pct"), +1, "Industrial output drives equipment and materials demand", US_INDUSTRIAL, "total_revenue"),
+    _us_co("us_cpi_to_retail_revenue", MacroSpec("cpiaucsl", "pct"), +1, "Inflation lifts nominal retail revenue", ["WMT", "COST"], "total_revenue"),
+]
+
+
+def covid_window(kind: str) -> tuple[int, int]:
+    """Indices of Jan 2020 - Dec 2021 for monthly (macro) or quarterly (company) tests."""
+    return (2020 * 12, 2021 * 12 + 11) if kind == "macro" else (2020 * 4, 2021 * 4 + 3)
+
+
 def run_candidate(candidate: Candidate, macro_points: dict[str, list[tuple[str, float]]],
-                  company_series: dict[tuple[str, str], dict[int, float]], n_perm: int = 2000) -> EdgeTestResult:
+                  company_series: dict[tuple[str, str], dict[int, float]], n_perm: int = 2000,
+                  exclude: tuple[int, int] | None = None) -> EdgeTestResult:
     """macro_points: series_key -> [(date, value)]; company_series: (company, metric) -> {quarter_idx: value}."""
     freq = "M" if candidate.kind == "macro" else "Q"
     periods_per_year = 12 if freq == "M" else 4
@@ -279,13 +341,27 @@ def run_candidate(candidate: Candidate, macro_points: dict[str, list[tuple[str, 
                 effects[company] = yoy(base, 4, "diff")
             else:
                 effects[company] = yoy(company_series.get((company, candidate.effect_metric), {}), 4, "pct")
-    return lagged_panel_test(cause, effects, list(candidate.lags), candidate.expected_sign, n_perm=n_perm)
+    return lagged_panel_test(cause, effects, list(candidate.lags), candidate.expected_sign, n_perm=n_perm, exclude=exclude)
 
 
-def format_report(results: list[tuple[Candidate, EdgeTestResult]], generated_on: str) -> str:
+def _table(rows: list[tuple[Candidate, EdgeTestResult, EdgeTestResult | None]]) -> list[str]:
     def cell(v, fmt):
         return "n/a" if v is None else format(v, fmt)
 
+    out = ["| Edge | Expected | Periods | Best lag | r | p (adj.) | Result | Ex-2020/21: r | Ex-2020/21 result |",
+           "|---|---|---|---|---|---|---|---|---|"]
+    for cand, res, alt in rows:
+        unit = "mo" if cand.kind == "macro" else "qtr"
+        lag = "n/a" if res.best_lag is None else f"{res.best_lag} {unit}"
+        out.append(
+            f"| {cand.edge_id} | {'+' if cand.expected_sign > 0 else '−'} | {res.n_periods} | {lag} | "
+            f"{cell(res.r_best, '+.2f')} | {cell(res.p_adjusted, '.3f')} | {res.classification} | "
+            f"{cell(alt.r_best if alt else None, '+.2f')} | {alt.classification if alt else 'n/a'} |"
+        )
+    return out
+
+
+def format_report(results: list[tuple[Candidate, EdgeTestResult, EdgeTestResult | None]], generated_on: str) -> str:
     lines = [
         "# Macro edge pilot results", "",
         f"Generated {generated_on} by `python -m scripts.macro_edge_pilot` (read-only; no database writes, no LLM). "
@@ -296,18 +372,19 @@ def format_report(results: list[tuple[Candidate, EdgeTestResult]], generated_on:
         "lag; best lag by |r|; p-value from a circular-shift permutation test that repeats the lag search "
         "(so it already accounts for lag-picking and autocorrelation). Classified at p < 0.05; INSUFFICIENT_DATA "
         f"below {MIN_PERIODS} distinct periods.", "",
-        "| Edge | Expected | Periods | Pairs | Best lag | r | p (adj.) | Result |",
-        "|---|---|---|---|---|---|---|---|",
     ]
-    for cand, res in results:
-        unit = "mo" if cand.kind == "macro" else "qtr"
-        lag = "n/a" if res.best_lag is None else f"{res.best_lag} {unit}"
-        lines.append(
-            f"| {cand.edge_id} | {'+' if cand.expected_sign > 0 else '−'} | {res.n_periods} | {res.n_pairs} | {lag} | "
-            f"{cell(res.r_best, '+.2f')} | {cell(res.p_adjusted, '.3f')} | {res.classification} |"
-        )
-    lines += ["", "## Mechanisms", ""]
+    for region, title in (("IN", "India (RBI series + Indian filings, FY2023 onward: 9-17 quarters)"), ("US", "United States (FRED series + SEC filings, FY2008 onward: ~66 quarters)")):
+        rows = [x for x in results if x[0].region == region]
+        if rows:
+            lines += ["", f"## {title}", ""] + _table(rows)
+    lines += [
+        "", "## Reading the 'Ex-2020/21' columns", "",
+        "The same test with effect periods in 2020-21 dropped. A common shock (COVID: demand, oil and rates all "
+        "collapsing and rebounding together) can create a strong association between series with no mechanism "
+        "linking them, so an edge that is SUPPORTED or CONTRADICTED only with 2020-21 included deserves suspicion. "
+        "Wrong-signed results that disappear ex-2020/21 are most likely this artefact, not evidence against the "
+        "mechanism.", "", "## Mechanisms", ""]
     lines += [f"- **{c.edge_id}**: {c.mechanism} ({c.cause.series} → "
               f"{c.effect_macro.series if c.effect_macro else ', '.join(c.effect_companies) + ' ' + c.effect_metric})"
-              for c, _ in results]
+              for c, _, _ in results]
     return "\n".join(lines) + "\n"

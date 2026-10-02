@@ -49,3 +49,14 @@ def test_period_helpers():
     assert m == {2024 * 12: 3.0, 2024 * 12 + 1: 10.0}
     assert abs(yoy({0: 100.0, 12: 110.0}, 12, "pct")[12] - 10.0) < 1e-9
     assert yoy({0: 5.0, 4: 6.5}, 4, "diff") == {4: 1.5}
+
+
+def test_fiscal_quarter_index_generalises_to_other_year_ends():
+    # December year-end (typical US): FY2024 Q1 ends March 2024, Q4 ends Dec 2024
+    assert fiscal_quarter_index("FY2024", "Q1", 12) == 2024 * 4 + 0
+    assert fiscal_quarter_index("FY2024", "Q4", 12) == 2024 * 4 + 3
+    # January year-end (e.g. Walmart, Home Depot): FY2027 Q4 ends Jan 2027 (calendar Q1 2027)
+    assert fiscal_quarter_index("FY2027", "Q4", 1) == 2027 * 4 + 0
+    # default still March year-end
+    assert fiscal_quarter_index("FY2024", "Q1") == 2023 * 4 + 1
+    assert fiscal_quarter_index("FY2024", "Q4", 13) is None

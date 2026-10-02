@@ -17,7 +17,7 @@ import storage.backend_bootstrap
 storage.backend_bootstrap.install()
 
 from research.macro_edge_pilot import (  # noqa: E402
-    CANDIDATES, fiscal_quarter_index, format_report, run_candidate,
+    CANDIDATES, US_CANDIDATES, covid_window, fiscal_quarter_index, format_report, run_candidate,
 )
 from storage.backend_bootstrap import open_db  # noqa: E402
 
@@ -38,6 +38,10 @@ def load_macro(conn, series_keys: set[str]) -> dict[str, list[tuple[str, float]]
 
 def load_company_quarterly(conn, pairs: set[tuple[str, str]]) -> dict[tuple[str, str], dict[int, float]]:
     out: dict[tuple[str, str], dict[int, float]] = {}
+    fye: dict[str, int] = {}
+    for company in {c for c, _ in pairs}:
+        row = _rows(conn, "SELECT fiscal_year_end_month FROM companies WHERE company_id = %s", (company,))
+        fye[company] = (row[0]["fiscal_year_end_month"] if row and row[0]["fiscal_year_end_month"] else 3)
     for company, metric in pairs:
         series: dict[int, float] = {}
         for r in _rows(
@@ -46,7 +50,7 @@ def load_company_quarterly(conn, pairs: set[tuple[str, str]]) -> dict[tuple[str,
             "AND metric_key = %s AND period_type = 'quarterly' AND statement_type = 'consolidated'",
             (company, metric),
         ):
-            idx = fiscal_quarter_index(r["fiscal_year"], r["quarter"])
+            idx = fiscal_quarter_index(r["fiscal_year"], r["quarter"], fye[company])
             if idx is not None:
                 series[idx] = r["canonical_value"]
         out[(company, metric)] = series
@@ -60,10 +64,11 @@ def main() -> None:
     args = parser.parse_args()
 
     conn = open_db()
-    series_keys = {c.cause.series for c in CANDIDATES} | {c.effect_macro.series for c in CANDIDATES if c.effect_macro}
+    candidates = CANDIDATES + US_CANDIDATES
+    series_keys = {c.cause.series for c in candidates} | {c.effect_macro.series for c in candidates if c.effect_macro}
     pairs = {
         (company, metric)
-        for c in CANDIDATES if c.kind == "company"
+        for c in candidates if c.kind == "company"
         for company in c.effect_companies
         for metric in (("net_profit", "total_revenue") if c.effect_metric == "margin" else (c.effect_metric,))
     }
@@ -73,10 +78,11 @@ def main() -> None:
     if empty:
         print("warning: no macro data for", empty, flush=True)
     results = []
-    for cand in CANDIDATES:
+    for cand in candidates:
         res = run_candidate(cand, macro, company, n_perm=args.perm)
-        results.append((cand, res))
-        print(f"{cand.edge_id:34s} periods={res.n_periods:3d} lag={res.best_lag} r={res.r_best} p={res.p_adjusted} {res.classification}", flush=True)
+        alt = run_candidate(cand, macro, company, n_perm=args.perm, exclude=covid_window(cand.kind))
+        results.append((cand, res, alt))
+        print(f"{cand.edge_id:38s} all: {res.classification:22s} ex-2020/21: {alt.classification}", flush=True)
     Path(args.out).write_text(format_report(results, date.today().isoformat()))
     print(f"wrote {args.out}", flush=True)
 
