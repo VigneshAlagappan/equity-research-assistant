@@ -1659,6 +1659,9 @@ CREATE TABLE IF NOT EXISTS l5_investigation_metrics (
   supported_edges INTEGER, unsupported_edges INTEGER,
   contradicting_evidence_items INTEGER,
   evidence_coverage REAL, unsupported_edge_rate REAL, investigation_efficiency REAL,
+  edges_untested INTEGER, edges_contradicted INTEGER, edges_contested INTEGER,
+  untested_edge_rate REAL, contradicted_edge_rate REAL,
+  link_items_calculated INTEGER, link_items_gapfill INTEGER,
   tagging_rate REAL,
   cross_sector_edges INTEGER,                      -- NULL in the MVP (no sector scope on nodes yet)
   model_calls INTEGER, input_tokens INTEGER, output_tokens INTEGER, estimated_cost_usd REAL,

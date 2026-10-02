@@ -588,6 +588,11 @@ def _migrate_causal_mvp_columns(conn: sqlite3.Connection) -> None:
             ("engine_version", "TEXT"), ("prompt_version", "TEXT"), ("config_hash", "TEXT"),
             ("metrics_definition_version", "TEXT"),
         )),
+        ("l5_investigation_metrics", (
+            ("edges_untested", "INTEGER"), ("edges_contradicted", "INTEGER"), ("edges_contested", "INTEGER"),
+            ("untested_edge_rate", "REAL"), ("contradicted_edge_rate", "REAL"),
+            ("link_items_calculated", "INTEGER"), ("link_items_gapfill", "INTEGER"),
+        )),
         ("investigation_hypothesis_evidence", (
             ("chain_step", "INTEGER"), ("edge_id", "TEXT"), ("source_tier", "TEXT"),
             ("accepted", "INTEGER NOT NULL DEFAULT 1"),

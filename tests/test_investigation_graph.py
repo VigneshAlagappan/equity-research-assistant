@@ -66,3 +66,23 @@ def test_metrics_basic_and_empty():
 
     empty = compute_graph_metrics(build_graph("inv", [], {}), {}, 0)
     assert empty["evidence_coverage"] is None and empty["tagging_rate"] is None and empty["edges_explored"] == 0
+
+
+def test_unsupported_is_split_into_untested_contradicted_and_contested():
+    hyps = [H("h1", ["a", "b", "c", "d", "e"])]
+    ev = Ev("SUPPORTED", [item(0), item(2)], [item(2), item(1)])
+    # links: 0 supported, 1 contradicted only, 2 contested, 3 untested
+    g = build_graph("inv", hyps, {"h1": ev})
+    m = compute_graph_metrics(g, {"h1": ev}, 1)
+    assert (m["edges_presented"], m["supported_edges"], m["unsupported_edges"]) == (4, 2, 2)
+    assert (m["edges_untested"], m["edges_contradicted"], m["edges_contested"]) == (1, 1, 1)
+    assert m["untested_edge_rate"] == 0.25 and m["contradicted_edge_rate"] == 0.25
+
+
+def test_origin_counts_for_calculated_and_gapfill_items():
+    hyps = [H("h1", ["a", "b"])]
+    calc = EvidenceItem(kind="CALCULATION", label="c", chain_step=0, source_tier="CALCULATED")
+    gap = EvidenceItem(kind="FACT", label="g", chain_step=0, source_tier="RETRIEVED")
+    ev = Ev("SUPPORTED", [calc, gap, item(0)])
+    m = compute_graph_metrics(build_graph("inv", hyps, {"h1": ev}), {"h1": ev}, 1)
+    assert (m["link_items_calculated"], m["link_items_gapfill"]) == (1, 1)

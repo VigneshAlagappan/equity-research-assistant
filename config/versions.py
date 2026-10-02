@@ -27,7 +27,7 @@ import hashlib
 import json
 
 ENGINE_VERSION = "l5-0.1"
-METRICS_DEFINITION_VERSION = "mvp-1"
+METRICS_DEFINITION_VERSION = "mvp-2"
 #: Placeholder until a durable graph exists (parent plan, graph_version).
 GRAPH_VERSION = "mvp-0"
 
@@ -60,6 +60,8 @@ def config_hash() -> str:
         "max_evidence_iterations": investigation.MAX_EVIDENCE_ITERATIONS,
         "timeout_seconds": investigation.INVESTIGATION_TIMEOUT_SECONDS,
         "evaluation_model": settings.CAUSAL_EVALUATION_MODEL,
+        "link_evidence": settings.LINK_EVIDENCE_ENABLED,
+        "link_gapfill": [settings.LINK_GAPFILL_ENABLED, settings.LINK_GAPFILL_MAX_LINKS],
         "level_model_chain": {str(k): v for k, v in sorted(settings.LEVEL_MODEL_CHAIN.items())},
     }, sort_keys=True))
 

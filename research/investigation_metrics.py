@@ -3,6 +3,20 @@ definitions version "mvp-1" in config/versions.py). Computed only from the
 persisted graph and evidence rows -- no LLM, no database access in the pure
 functions here.
 
+Definitions version "mvp-2" splits "unsupported" so metrics stop blaming the model
+for gaps in the data. Over PRESENTED edges (research/investigation_graph.py):
+  supported     supporting evidence tagged to the edge, none against
+  contested     supporting AND contradicting evidence tagged to it
+  contradicted  contradicting evidence only
+  untested      no evidence tagged to it either way (a coverage gap: the data
+                may not exist, may not have been retrieved, or may be untagged --
+                this metric cannot tell which, and says so)
+`unsupported_edges` / `unsupported_edge_rate` keep their mvp-1 meaning
+(supporting count = 0, i.e. contradicted + untested) for continuity;
+`untested_edge_rate` and `contradicted_edge_rate` are the new honest split.
+Evidence added by the data-first link checks (research/link_evidence.py) and the
+gap-fill pass (research/link_gap_fill.py) is counted separately by origin.
+
 Honest limits, repeated in every artifact's metrics block:
   - edge evidence counts only include items the evaluator tagged to a link;
     `tagging_rate` says how much that is. A low rate means edge-level numbers
@@ -32,6 +46,14 @@ def compute_graph_metrics(graph, evaluations: dict, hypotheses_total: int) -> di
         all_items.extend(evaluation.contradicting_evidence)
     tagged = [i for i in all_items if getattr(i, "chain_step", None) is not None]
     contradicting_items = sum(len(ev.contradicting_evidence) for ev in evaluations.values())
+    untested = [e for e in presented if e["supporting_count"] == 0 and e["contradicting_count"] == 0]
+    contradicted = [e for e in presented if e["supporting_count"] == 0 and e["contradicting_count"] > 0]
+    contested = [e for e in presented if e["supporting_count"] > 0 and e["contradicting_count"] > 0]
+    by_origin = {"CALCULATED": 0, "RETRIEVED": 0}
+    for item in all_items:
+        origin = getattr(item, "source_tier", None)
+        if origin in by_origin:
+            by_origin[origin] += 1
 
     return {
         "hypotheses_total": hypotheses_total,
@@ -46,5 +68,12 @@ def compute_graph_metrics(graph, evaluations: dict, hypotheses_total: int) -> di
         "unsupported_edge_rate": _ratio(len(presented) - len(supported), len(presented)),
         "investigation_efficiency": _ratio(len(supported), len(edges)),
         "tagging_rate": _ratio(len(tagged), len(all_items)),
+        "edges_untested": len(untested),
+        "edges_contradicted": len(contradicted),
+        "edges_contested": len(contested),
+        "untested_edge_rate": _ratio(len(untested), len(presented)),
+        "contradicted_edge_rate": _ratio(len(contradicted), len(presented)),
+        "link_items_calculated": by_origin["CALCULATED"],
+        "link_items_gapfill": by_origin["RETRIEVED"],
         "cross_sector_edges": None,  # no sector scope on nodes in the MVP
     }

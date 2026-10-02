@@ -82,7 +82,9 @@ _METRIC_COLUMNS = (
     "investigation_version", "engine_version", "prompt_version", "config_hash", "metrics_definition_version",
     "models_used", "hypotheses_total", "hypotheses_evaluated", "nodes_explored", "edges_explored", "edges_presented",
     "supported_edges", "unsupported_edges", "contradicting_evidence_items", "evidence_coverage",
-    "unsupported_edge_rate", "investigation_efficiency", "tagging_rate", "cross_sector_edges", "model_calls",
+    "unsupported_edge_rate", "investigation_efficiency", "tagging_rate", "edges_untested", "edges_contradicted",
+    "edges_contested", "untested_edge_rate", "contradicted_edge_rate", "link_items_calculated", "link_items_gapfill",
+    "cross_sector_edges", "model_calls",
     "input_tokens", "output_tokens", "estimated_cost_usd", "iterations", "runtime_ms",
 )
 

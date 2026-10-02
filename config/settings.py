@@ -732,3 +732,14 @@ CAUSAL_GRAPH_ENABLED = os.environ.get("CAUSAL_GRAPH_ENABLED", "true").strip().lo
 # ANTHROPIC_MODEL / the tier chain. It is part of config_hash, so runs on
 # different models stay distinguishable in the metrics.
 CAUSAL_EVALUATION_MODEL = os.environ.get("CAUSAL_EVALUATION_MODEL", "claude-haiku-4-5").strip()
+
+# Data-first link checks (research/link_evidence.py): compute supporting/contradicting
+# evidence for chain links straight from canonical_financials, no LLM. Additive;
+# failures are logged and never fail an investigation.
+LINK_EVIDENCE_ENABLED = os.environ.get("LINK_EVIDENCE_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# Gap-fill pass (research/link_gap_fill.py): for presented causal links still
+# untested after the data-first checks, one targeted retrieval + one small model
+# call each. Bounded per investigation.
+LINK_GAPFILL_ENABLED = os.environ.get("LINK_GAPFILL_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+LINK_GAPFILL_MAX_LINKS = int(os.environ.get("LINK_GAPFILL_MAX_LINKS", "4"))

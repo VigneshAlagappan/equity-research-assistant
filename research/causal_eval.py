@@ -106,6 +106,8 @@ def aggregate(results: list[dict]) -> dict:
     presented = sum(r["presented_edges"] for r in ok)
     covs = [r["evidence_coverage"] for r in ok if r.get("evidence_coverage") is not None]
     unsup = [r["unsupported_edge_rate"] for r in ok if r.get("unsupported_edge_rate") is not None]
+    untested = [r["untested_edge_rate"] for r in ok if r.get("untested_edge_rate") is not None]
+    contradicted = [r["contradicted_edge_rate"] for r in ok if r.get("contradicted_edge_rate") is not None]
     return {
         "cases_total": len(results),
         "cases_completed": len(ok),
@@ -113,6 +115,8 @@ def aggregate(results: list[dict]) -> dict:
         "golden_precision_lower_bound": (sum(r["matched_presented"] for r in ok) / presented) if presented else None,
         "evidence_coverage": (sum(covs) / len(covs)) if covs else None,
         "unsupported_edge_rate": (sum(unsup) / len(unsup)) if unsup else None,
+        "untested_edge_rate": (sum(untested) / len(untested)) if untested else None,
+        "contradicted_edge_rate": (sum(contradicted) / len(contradicted)) if contradicted else None,
         "estimated_cost_usd": sum(r.get("estimated_cost_usd") or 0 for r in ok),
         "runtime_ms": sum(r.get("runtime_ms") or 0 for r in ok),
     }
@@ -132,7 +136,9 @@ def format_report(run_id: str, benchmark_version: str, results: list[dict], agg:
         lines.append(
             f"- {r['case_id']}: recall {r['matched_essential']}/{r['expected_essential']} essential"
             f" (explored: {r['matched_essential_explored']}), presented {r['matched_presented']}/{r['presented_edges']} matched,"
-            f" coverage {pct(r.get('evidence_coverage'))}, unsupported {pct(r.get('unsupported_edge_rate'))}{draft}"
+            f" coverage {pct(r.get('evidence_coverage'))}, untested {pct(r.get('untested_edge_rate'))},"
+            f" contradicted {pct(r.get('contradicted_edge_rate'))}"
+            f" (computed items {r.get('link_items_calculated') or 0}, gap-fill {r.get('link_items_gapfill') or 0}){draft}"
         )
         if r["missed_essential_ids"]:
             lines.append(f"    missed essential: {', '.join(r['missed_essential_ids'])}")
@@ -140,7 +146,8 @@ def format_report(run_id: str, benchmark_version: str, results: list[dict], agg:
             lines.append(f"    presented but unmatched (review): {'; '.join(r['unmatched_presented'][:8])}")
     lines += [
         "", f"Recall {pct(agg['golden_recall'])} | precision (lower bound) {pct(agg['golden_precision_lower_bound'])}"
-        f" | coverage {pct(agg['evidence_coverage'])} | unsupported {pct(agg['unsupported_edge_rate'])}",
+        f" | coverage {pct(agg['evidence_coverage'])} | untested {pct(agg['untested_edge_rate'])}"
+        f" | contradicted {pct(agg['contradicted_edge_rate'])}",
         f"Cases {agg['cases_completed']}/{agg['cases_total']} | cost ${agg['estimated_cost_usd']:.2f}"
         f" | runtime {agg['runtime_ms'] / 1000:.0f}s",
     ]

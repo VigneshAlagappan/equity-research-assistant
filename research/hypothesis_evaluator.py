@@ -58,6 +58,11 @@ class EvidenceItem:
     #: when the model did not say or gave an out-of-range value. None means
     #: hypothesis-level evidence; it is never guessed.
     chain_step: int | None = None
+    #: Where the item came from: None = the evaluator's own citation of retrieved
+    #: evidence; "CALCULATED" = computed from canonical financials by
+    #: research/link_evidence.py; "RETRIEVED" = found by the gap-fill pass
+    #: (research/link_gap_fill.py). Metrics report each origin separately.
+    source_tier: str | None = None
 
 
 @dataclass

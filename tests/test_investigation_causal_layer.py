@@ -47,6 +47,10 @@ _SYNTHESIS = json.dumps({
 })
 
 
+_GAPFILL = json.dumps({"stance": "supporting", "items": [
+    {"kind": "FACT", "label": "gap-fill finding", "value": "v", "citation": "doc p.4"}]})
+
+
 class _Messages:
     def create(self, **kwargs):
         system = kwargs.get("system", "")
@@ -58,6 +62,8 @@ class _Messages:
             text = _SYNTHESIS
         elif system.startswith(ABSTRACT_SYSTEM_PROMPT[:40]):
             text = "abstract"
+        elif system.startswith("You judge whether retrieved evidence"):
+            text = _GAPFILL
         else:
             raise AssertionError(system[:60])
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)], stop_reason="end_turn")
@@ -103,11 +109,13 @@ def test_graph_metrics_versions_and_artifact_layout(conn):
     assert metrics["edges_explored"] == 2 and metrics["edges_presented"] == 2
     assert metrics["supported_edges"] == 1 and metrics["unsupported_edges"] == 1
     assert metrics["evidence_coverage"] == 0.5
+    assert (metrics["edges_untested"], metrics["edges_contradicted"], metrics["edges_contested"]) == (0, 1, 0)
+    assert metrics["untested_edge_rate"] == 0.0 and metrics["contradicted_edge_rate"] == 0.5
     assert metrics["tagging_rate"] == 0.25  # 2 of 8 items tagged (h2 has a one-step chain: nothing to tag)
     assert metrics["iterations"] == 2 and metrics["runtime_ms"] is not None
 
     row = get_investigation(conn, _ID)
-    assert row["engine_version"] and row["prompt_version"] and row["metrics_definition_version"] == "mvp-1"
+    assert row["engine_version"] and row["prompt_version"] and row["metrics_definition_version"] == "mvp-2"
     assert row["s3_key"] == f"investigations/{_ID}/v1/artifact.json"
 
     store = default_document_store()
@@ -160,3 +168,50 @@ def test_evaluation_model_is_part_of_config_hash(monkeypatch):
     a = config_hash()
     monkeypatch.setattr("config.settings.CAUSAL_EVALUATION_MODEL", "claude-sonnet-5")
     assert config_hash() != a
+
+
+def test_computed_link_items_are_appended_tagged_and_counted(conn, monkeypatch):
+    from research.hypothesis_evaluator import EvidenceItem
+
+    def fake(c, hypothesis, statement_type, fact_store):
+        if hypothesis.hypothesis_id != _H1:
+            return []
+        return [("supporting", EvidenceItem(kind="CALCULATION", label="computed check of link 1", value="a -> b",
+                                            citation="canonical_financials", chain_step=1, source_tier="CALCULATED"))]
+
+    monkeypatch.setattr("research.link_evidence.link_items_for_hypothesis", fake)
+    run_investigation(conn, "Why did margins decline?", ["HDFCBANK"])
+    rows = [r for r in list_investigation_hypothesis_evidence(conn, _H1) if r["label"] == "computed check of link 1"]
+    assert len(rows) == 1 and rows[0]["source_tier"] == "CALCULATED" and rows[0]["edge_id"] == f"{_ID}:{_H1}:e1"
+    metrics = get_investigation_metrics(conn, _ID)
+    assert metrics["link_items_calculated"] == 1
+    e1 = next(e for e in list_graph_edges(conn, _ID) if e["edge_id"].endswith(":e1"))
+    assert (e1["supporting_count"], e1["contradicting_count"]) == (1, 1)  # the evaluator's item + the computed one
+    assert metrics["edges_contested"] == 1 and metrics["edges_contradicted"] == 0
+
+
+def test_link_evidence_failure_does_not_fail_the_investigation(conn, monkeypatch):
+    monkeypatch.setattr("research.link_evidence.link_items_for_hypothesis", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    investigation = run_investigation(conn, "Why did margins decline?", ["HDFCBANK"])
+    assert investigation.synthesis is not None and list_graph_edges(conn, _ID)
+
+
+def test_gap_fill_adds_retrieved_items_for_untested_presented_links(conn, monkeypatch):
+    untagged = json.dumps({"verdict": "SUPPORTED", "confidence_basis": "ok", "confidence_score": 70,
+                           "supporting_evidence": [{"kind": "FACT", "label": "generic", "value": "x", "citation": "c"}],
+                           "contradicting_evidence": [], "missing_evidence": []})
+    monkeypatch.setitem(globals(), "_EVALUATION", untagged)  # nothing tagged to any link -> every link untested
+    monkeypatch.setattr("research.link_gap_fill.plan_and_gather", lambda *a, **k: object())
+    monkeypatch.setattr("research.link_gap_fill._render_plan", lambda plan: "some retrieved evidence")
+    run_investigation(conn, "Why did margins decline?", ["HDFCBANK"])
+    rows = [r for r in list_investigation_hypothesis_evidence(conn, _H1) if r["label"] == "gap-fill finding"]
+    assert rows and all(r["source_tier"] == "RETRIEVED" for r in rows)
+    metrics = get_investigation_metrics(conn, _ID)
+    assert metrics["link_items_gapfill"] >= 1
+
+
+def test_gap_fill_disabled_by_flag(conn, monkeypatch):
+    monkeypatch.setattr("config.settings.LINK_GAPFILL_ENABLED", False)
+    monkeypatch.setattr("research.link_gap_fill.plan_and_gather", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
+    run_investigation(conn, "Why did margins decline?", ["HDFCBANK"])
+    assert get_investigation_metrics(conn, _ID)["link_items_gapfill"] == 0

@@ -134,6 +134,10 @@ def score_investigation(conn, case: GoldenCase, investigation_id: str) -> dict:
         "case_id": case.case_id, "investigation_id": investigation_id, "status": "ok",
         "evidence_coverage": metrics["evidence_coverage"] if metrics else None,
         "unsupported_edge_rate": metrics["unsupported_edge_rate"] if metrics else None,
+        "untested_edge_rate": metrics["untested_edge_rate"] if metrics else None,
+        "contradicted_edge_rate": metrics["contradicted_edge_rate"] if metrics else None,
+        "link_items_calculated": metrics["link_items_calculated"] if metrics else None,
+        "link_items_gapfill": metrics["link_items_gapfill"] if metrics else None,
         "estimated_cost_usd": metrics["estimated_cost_usd"] if metrics else None,
         "runtime_ms": metrics["runtime_ms"] if metrics else None,
     })

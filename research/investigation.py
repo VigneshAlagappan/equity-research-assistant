@@ -117,6 +117,9 @@ def _persist_evidence_item(hypothesis_id: str, stance: str, item, graph=None) ->
         edge_id = graph.edge_id_for(hypothesis_id, link) if graph is not None else None
         if edge_id is not None:
             row["edge_id"] = edge_id
+    tier = getattr(item, "source_tier", None)
+    if tier:
+        row["source_tier"] = tier
     return row
 
 
@@ -316,6 +319,9 @@ def _run_investigation_impl(
     if not investigation.evaluations:
         raise InvestigationError("every hypothesis's evaluation failed — nothing to synthesize")
 
+    _enrich_with_link_evidence(conn, investigation, statement_type, fs)
+    _gap_fill_untested_links(conn, investigation, question, caps, fs, model, deadline)
+
     if case_id is not None:
         from storage.repositories import update_case_activity
 
@@ -343,6 +349,53 @@ def investigation_artifact_key(investigation_id: str, version: int = 1, name: st
     older rows keep their legacy investigations/<id>/v1.json key and keep
     rendering because the reader follows whatever key the row holds."""
     return f"investigations/{investigation_id}/v{version}/{name}"
+
+
+def _enrich_with_link_evidence(conn: DBConnection, investigation: Investigation, statement_type: str, fact_store: FactStore) -> None:
+    """Data-first link checks (research/link_evidence.py): append computed
+    supporting/contradicting items, tagged to their chain link, to each
+    evaluated hypothesis. Verdicts are NOT recomputed -- the evaluator's judgment
+    stands; these items give the graph edges evidence the retrieval never
+    fetched. Additive: any failure is logged and the investigation continues."""
+    from config import settings
+
+    if not settings.CAUSAL_GRAPH_ENABLED or not settings.LINK_EVIDENCE_ENABLED:
+        return
+    from research.link_evidence import link_items_for_hypothesis
+
+    for hypothesis in investigation.hypotheses:
+        evaluation = investigation.evaluations.get(hypothesis.hypothesis_id)
+        if evaluation is None:
+            continue
+        try:
+            for stance, item in link_items_for_hypothesis(conn, hypothesis, statement_type, fact_store):
+                (evaluation.supporting_evidence if stance == "supporting" else evaluation.contradicting_evidence).append(item)
+        except Exception:  # noqa: BLE001
+            logger.warning("Link evidence failed for %s", hypothesis.hypothesis_id, exc_info=True)
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _gap_fill_untested_links(conn: DBConnection, investigation: Investigation, question: str, capabilities, fact_store: FactStore,
+                             model: str | None, deadline: float) -> None:
+    """Option B (research/link_gap_fill.py): one targeted retrieval + one small
+    model call per presented link still untested after the data-first checks,
+    capped per investigation. Additive; failures are logged and swallowed."""
+    from config import settings
+
+    if not settings.CAUSAL_GRAPH_ENABLED or not settings.LINK_GAPFILL_ENABLED:
+        return
+    try:
+        from research.link_gap_fill import gap_fill_investigation
+
+        gap_fill_investigation(
+            conn, investigation, question, capabilities=capabilities, fact_store=fact_store, deadline=deadline,
+            max_links=settings.LINK_GAPFILL_MAX_LINKS, model=model,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Gap-fill pass failed for %s", investigation.investigation_id, exc_info=True)
 
 
 def _build_graph_safely(investigation: Investigation):
