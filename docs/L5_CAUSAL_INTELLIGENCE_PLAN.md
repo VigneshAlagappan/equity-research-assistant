@@ -14,6 +14,7 @@ Related existing documents this plan builds on and must not contradict: ADR-006 
 1. **Neo4j is the production graph backend.** Verified: the Lightsail deployment runs `GRAPH_BACKEND=neo4j` against a cloud (Aura-style `neo4j+s://`) instance. Consequences: causal traversal targets Neo4j first; the SQL traversal in Section 14/11 is kept only as a test and local-development fallback, not a production requirement; the "Neo4j turns out to be required" schedule risk in Section 33A is retired.
 2. **The human reviewer workflow is deferred.** Build the *templates and plumbing* now (lifecycle states, review-record tables, an empty review queue shape, feedback fields), but do not build a pre-promotion approval gate. Review is invoked later as part of a **feedback process whose purpose is to adjust confidence weights**: reviewer verdicts (agree / disagree / not sure, plus a reason) become labelled data for calibrating the weights in Section 18. Until that exists, promotion above EVIDENCE_BACKED is **automatic-by-rule or simply not performed**, and nothing is made universal. See the revised Section 19.
 3. **The `CausalAssertion` design stays as the baseline**, and Section 41 compares it with the alternatives you asked about.
+4. **Additional requirement (2026-10-02): feedback-adaptive persistent causal graph.** The graph's *structure* is durable; its *confidence and contextual relevance* adapt through three separate signals (evidence validation, outcome validation, human feedback) under controlled, versioned rules. User feedback never mutates global confidence directly. Full design in **Section 42**; consequences for the gap analysis, schema, storage, evaluation, lifecycle, roadmap and estimates are listed in 42.12. This refines decision 2: reviewer feedback is now a first-class, structured input from the start of the MVP (captured, not yet acted on).
 
 ---
 
@@ -24,7 +25,7 @@ Signal already has most of an L5 *pipeline* and almost none of an L5 *knowledge 
 
 **What exists.** Jev classifies every question into levels 1–5 (`llm/complexity.py`, `research/routing_policy.py`). Level 5 runs `research/investigation.py`: generate competing hypotheses → plan and gather evidence through capability seams → evaluate each hypothesis independently → rank and synthesize, with an evidence-sufficiency loop (`MAX_EVIDENCE_ITERATIONS = 2`) and a wall-clock budget (`INVESTIGATION_TIMEOUT_SECONDS = 180`). Hypotheses, their verdicts and their evidence are persisted per investigation. Neo4j is a rebuildable projection of Postgres. A separate, carefully reasoned design for evidence-aware causal edges (`CausalAssertion`) and an economic-indicator registry exists in `docs/economic-graph/PLAN.md`, and the registry tables are already in the schema.
 
-**What does not exist.**
+**What does not exist.** (Plus, per Section 42: no structured feedback and no adaptation of confidence or relevance.)
 1. Durable, structured causal knowledge. The only causal edges in Neo4j are 12 hand-written `AFFECTS` tuples with a single `strength` number (`config/knowledge_graph_seed.py`) — exactly the "A → B = 0.82" form this brief rejects. `CausalAssertion`, `Mechanism` and `causal_evidence` are designed but not built.
 2. A graph-shaped investigation. A hypothesis today carries `chain_steps` (a JSON list of labels) and prose; there is no graph of nodes and edges per investigation, so edges cannot be counted, evidenced, scored or validated.
 3. Contradiction search, confounder analysis and alternative-comparison as explicit steps. The evaluator separates supporting / contradicting / missing evidence, which is a good base, but nothing hunts for contradictions or confounders deliberately.
@@ -109,6 +110,11 @@ Classification key used throughout: **REUSE / EXTEND / NEW / REPLACE / NOT NEEDE
 | G14 | Versioning of engine/model/prompt/ontology/graph/confidence/benchmark | `investigations.version` constant 1; no others | Version registry |
 | G15 | Reproducibility artifacts | One JSON per investigation, overwritten on re-run | Immutable versioned artifacts |
 | G16 | Governance: LLMs cannot write durable knowledge | Not enforced: `macro_knowledge_builder` writes LLM relationships directly | Service boundary + write permissions |
+| G18 | Structured feedback at investigation / hypothesis / path / edge level | None. The Indicator Framework's `indicator_feedback` (Agree / Disagree / Not Sure) is a documented, unbuilt pattern in `docs/pendingList.md` | Feedback taxonomy, ledger, capture UI (Section 42) |
+| G19 | Contextual relevance separate from global confidence | Single `strength` on 12 seed edges; model-reported per-hypothesis score | Context representation + relevance statistics (42.4) |
+| G20 | Controlled adaptation from evidence, outcomes and feedback | None; nothing learns from any signal | Learning ledger, adaptation engine, versioning, rollback (42.6–42.7) |
+| G21 | Exploration-preserving path ranking | Planner routes deterministically per hypothesis category; no ranking of candidate causal paths | Ranking with exploration floor (42.5) |
+| G22 | Learning KPIs, incl. Repeat Error Rate | None | KPI definitions and storage (42.8) |
 | G17 | Graph-friendly API DTOs | HTML report with `reports/components/causal_chain.html` (linear chain) | Library-neutral graph DTO |
 
 ---
@@ -605,6 +611,7 @@ For every item: WHY / WHAT / WHERE / classification / dependencies / risk / effo
 | P0.3 Version registry | G14 | The seven version ids, stamped into new rows | `config/`, `research/investigation.py` | NEW (small) | none | Low | S |
 | P0.4 S3 immutability fix | G15 | Versioned write-once investigation artifacts | `research/investigation.py`, `storage/document_store.py`, `storage/repositories*.py` | EXTEND | none | Existing readers expect `v1.json` | S |
 | P0.5 Causal Knowledge Service (read side + candidate/attach writes) | G16 | In-process module + Protocol; SQL recursive-CTE traversal + Neo4j implementation | new `causal/`; mirror `context/knowledge_graph.py` dispatch | NEW (thin) | P0.2 | Dual-backend parity | M |
+| P0.7 Feedback taxonomy, feedback ledger, context representation (templates only) | G18/G19 | Controlled feedback types, `causal_feedback` table, `edge_context_stats` shape, context-key definition | schemas, repositories, `config/` | NEW | P0.2 | Taxonomy churn | M |
 | P0.6 Migrate 12 seed `AFFECTS` edges to assertions | Retire the `strength`-only form | One-off, `CURATED_RESEARCH`, status HYPOTHESIZED | `config/knowledge_graph_seed.py` → seed loader | REPLACE (data) | P0.2 | Existing `context/graph.py` consumers | S |
 
 ### P1 — L5 usable
@@ -619,6 +626,8 @@ For every item: WHY / WHAT / WHERE / classification / dependencies / risk / effo
 | P1.6 Deterministic confidence v1 | Section 18, replace displayed `confidence_score` | `causal/confidence.py` | NEW | S–M |
 | P1.7 Per-investigation metrics (loop A) | `l5_investigation_metrics` populated at persist | `research/investigation.py` | NEW | S |
 | P1.8 Graph DTO + report component | Section 31 | `web/`, `reports/components/causal_chain.html` | EXTEND | M |
+| P1.9 Feedback capture UI (investigation, hypothesis, path, edge) | Structured taxonomy + optional comment; writes the ledger only, changes nothing | `web/templates/investigation.html`, `web/app.py` | EXTEND | M |
+| P1.10 Path ranking v1 with exploration (no learning yet) | Rank candidate paths by global confidence, evidence, materiality; reserved exploration slots | traversal module | NEW | S–M |
 
 ### P2 — Evaluation and learning
 
@@ -629,6 +638,9 @@ For every item: WHY / WHAT / WHERE / classification / dependencies / risk / effo
 | P2.3 Temporal validation job | Section 23, scheduled, disabled until reviewed | NEW | M |
 | P2.4 Promotion lifecycle (rules + review-record templates, no reviewer gate) | Section 19 gates, `review_feedback` table, empty queue shape | NEW | M |
 | P2.5 Admin analytics tab | Section 30 | EXTEND | M |
+| P2.7 Learning ledger + adaptation engine | Candidate generation, thresholds, versioned application, rollback (Section 42.6–42.7) | NEW | L |
+| P2.8 Learning KPIs incl. Repeat Error Rate; feedback-derived golden regression cases | Section 42.8 | NEW | M |
+| P2.9 Adaptive path ranking (contextual relevance + history) | Section 42.5 | EXTEND | M |
 | P2.6 Sector packs: Banking, NBFC, Auto first | Section 8 | NEW (data) | L |
 
 ### P3 — Advanced
@@ -657,7 +669,8 @@ Sequencing note: **P0.4 and P0.3 are independent and cheap; do them first regard
 | P0 | P0.4 S3 immutability fix | 1 | 2 | Verify current behaviour first (open question 8) |
 | P0 | P0.5 Causal Knowledge Service | 6 | 9 | SQL traversal + Neo4j parity |
 | P0 | P0.6 Seed-edge migration | 1 | 2 | |
-| | **P0 total** | **17** | **28** | |
+| P0 | P0.7 Feedback taxonomy, ledger, context templates | 4 | 6 | |
+| | **P0 total** | **21** | **34** | Includes P0.7 |
 | P1 | P1.1 Persisted investigation graph | 6 | 9 | |
 | P1 | P1.2 Knowledge-grounded hypotheses | 3 | 5 | |
 | P1 | P1.3 Quantitative decomposition | 5 | 8 | Reuses the new Income Statement rows |
@@ -666,27 +679,32 @@ Sequencing note: **P0.4 and P0.3 are independent and cheap; do them first regard
 | P1 | P1.6 Deterministic confidence v1 | 3 | 5 | |
 | P1 | P1.7 Per-investigation metrics | 2 | 3 | |
 | P1 | P1.8 Graph DTO + report component | 5 | 8 | |
-| | **P1 total** | **36** | **56** | |
+| P1 | P1.9 Feedback capture UI | 6 | 9 | |
+| P1 | P1.10 Path ranking v1 with exploration | 4 | 6 | |
+| | **P1 total** | **46** | **71** | Includes P1.9, P1.10 |
 | P2 | P2.1 Golden Investigations (framework 8–12 + 12 cases 6–10) | 14 | 22 | Case authoring needs expert review time on top |
 | P2 | P2.2 Expectation/Observation/Validation primitive | 8 | 12 | Guidance + forecast validation first |
 | P2 | P2.3 Temporal validation job | 5 | 8 | |
 | P2 | P2.4 Promotion lifecycle (rules + review templates; no reviewer UI) | 5 | 8 | Reduced from 8–12 by decision 2 |
 | P2 | P2.5 Admin analytics tab | 4 | 6 | |
 | P2 | P2.6 Sector packs: Banking, NBFC, Auto | 12 | 18 | 4–6 each; needs domain review |
-| | **P2 total** | **48** | **74** | After the P2.4 reduction |
+| P2 | P2.7 Learning ledger + adaptation engine | 10 | 15 | |
+| P2 | P2.8 Learning KPIs + feedback-derived regression cases | 6 | 9 | Similarity matching for Repeat Error Rate |
+| P2 | P2.9 Adaptive path ranking | 5 | 8 | |
+| | **P2 total** | **69** | **106** | After the P2.4 reduction; includes P2.7–P2.9 |
 | P3 | Empirical effects/lags, calibration, assisted ontology growth, wider sector coverage | — | — | Order of magnitude 30–60+ days; scope only after P2 data exists |
-| | **P0 + P1 + P2** | **101** | **158** | |
+| | **P0 + P1 + P2** | **136** | **211** | |
 
 ### Calendar timeline, one engineer
 
 | Milestone | Dev-days | Calendar | Cumulative |
 |---|---|---|---|
-| **MVP** (Section 38) | 19–30 | 5–8 weeks | 5–8 weeks |
-| P0 complete | 17–28 | 4–7 weeks | 4–7 weeks |
-| P1 complete (L5 usable) | 36–56 | 9–14 weeks | 13–21 weeks |
-| P2 complete (evaluation + learning) | 48–74 | 12–19 weeks | 25–40 weeks |
+| **MVP** (Section 38) | 23–36 | 6–9 weeks | 6–9 weeks |
+| P0 complete | 21–34 | 5–9 weeks | 5–9 weeks |
+| P1 complete (L5 usable) | 46–71 | 12–18 weeks | 17–27 weeks |
+| P2 complete (evaluation + learning + adaptation) | 69–106 | 17–27 weeks | 34–53 weeks |
 
-MVP breakdown (19–30 days): P0.3 (1–2) + P0.4 (1–2) + P0.2 subset (3–5) + P1.1 (6–9) + P1.7 (2–3) + five golden cases with deterministic matching (6–9). The MVP overlaps P0/P1 rather than adding to them, so MVP effort is **not** additional to the phase totals above.
+MVP breakdown (23–36 days): P0.3 (1–2) + P0.4 (1–2) + P0.2 subset (3–5) + P1.1 (6–9) + P1.7 (2–3) + five golden cases with deterministic matching (6–9) + minimal feedback capture on the persisted graph, ledger only (4–6; a slice of P0.7 and P1.9). The MVP overlaps P0/P1 rather than adding to them, so MVP effort is **not** additional to the phase totals above.
 
 After the MVP ships, allow **2–3 calendar weeks of real investigations** before deciding what to build next; that data is the decision input and cannot be compressed.
 
@@ -697,7 +715,7 @@ Two natural, low-conflict tracks:
 - **Track A, knowledge and reasoning:** P0.1, P0.2, P0.5, P1.2–P1.6, P2.4, P2.6.
 - **Track B, measurement and validation:** P0.3, P0.4, P1.1, P1.7, P1.8, P2.1, P2.2, P2.3, P2.5.
 
-Track B's first two items need only the schema subset, so B can start in week 1. The critical path runs through Track A: ontology → schema → service → gated traversal → contradiction/confounder → promotion. Expected: **P0+P1 in about 8–13 weeks, P0–P2 in about 16–26 weeks** (not half of the single-engineer figure, because of integration work, shared schema changes and review).
+Track B's first two items need only the schema subset, so B can start in week 1. The critical path runs through Track A: ontology → schema → service → gated traversal → contradiction/confounder → promotion. Expected: **P0+P1 in about 10–16 weeks, P0–P2 in about 20–33 weeks** (not half of the single-engineer figure, because of integration work, shared schema changes and review).
 
 ### What would change these numbers
 
@@ -707,7 +725,7 @@ Track B's first two items need only the schema subset, so B can start in week 1.
 
 ### Recommended commitment
 
-Commit now to **the MVP only: 5–8 weeks, one engineer**, with a review gate afterwards. Treat P1 as a conditional second commitment (9–14 further weeks) decided on the MVP's metrics, and P2 as a third, decided on P1's. Do not commit a date for P3.
+Commit now to **the MVP only: 6–9 weeks, one engineer**, with a review gate afterwards. Treat P1 as a conditional second commitment (about 11–18 further weeks) decided on the MVP's metrics, and P2 as a third, decided on P1's. Do not commit a date for P3.
 
 ---
 
@@ -719,7 +737,7 @@ Commit now to **the MVP only: 5–8 weeks, one engineer**, with a review gate af
 
 ## 35. Database / Schema Changes Likely Required
 
-New (both schemas): `causal_assertions`, `mechanisms`, `causal_assertion_history`, `evidence_ledger` (superseding/extending `investigation_hypothesis_evidence` and absorbing the plan's `causal_evidence`), `investigation_graph_nodes`, `investigation_graph_edges`, `edge_confidence_history`, `expectations`, `validations`, `l5_investigation_metrics`, `causal_eval_runs`, `causal_eval_case_results`, `eval_judge_log`, `engine_version_registry` (or config-only). Altered: `investigations` (version columns, real `version`), `investigation_hypotheses` (link to graph edge, store model-reported vs computed confidence), `knowledge_relationships` (**unchanged**, per economic-graph plan §5). A `sectors` first-class node requires only a Neo4j projection change; the table exists.
+New (both schemas): `causal_assertions`, `mechanisms`, `causal_assertion_history`, `evidence_ledger` (superseding/extending `investigation_hypothesis_evidence` and absorbing the plan's `causal_evidence`), `investigation_graph_nodes`, `investigation_graph_edges`, `edge_confidence_history`, `expectations`, `validations`, `l5_investigation_metrics`, `causal_eval_runs`, `causal_eval_case_results`, `eval_judge_log`, `engine_version_registry` (or config-only), and, for Section 42, `causal_feedback`, `edge_context_stats`, `learning_ledger`, `adaptation_events`, `feedback_reliability` (P3). Altered: `investigations` (version columns, real `version`), `investigation_hypotheses` (link to graph edge, store model-reported vs computed confidence), `knowledge_relationships` (**unchanged**, per economic-graph plan §5). A `sectors` first-class node requires only a Neo4j projection change; the table exists.
 
 ---
 
@@ -742,6 +760,8 @@ New (both schemas): `causal_assertions`, `mechanisms`, `causal_assertion_history
 | **Scope creep into a "complete economy model"** | Mechanisms not companies; sector packs; MVP boundary below |
 | **Existing UIs/readers break** | Additive schema, mapping table for verdicts, keep current pages until P1.8 |
 
+Feedback-adaptive risks (Section 42): **popularity feedback loop** (favoured edges crowd out alternatives; mitigated by exploration slots and a rank floor), **noisy or adversarial feedback** (distinct-user thresholds, reliability, rate limits, corroboration), **context sparsity** (hierarchical back-off, UNKNOWN is neutral), **false "learning"** (Repeat Error Rate on feedback-derived regression cases, not on raw feedback volume), **taxonomy fatigue** (default to one-click choices, comment optional).
+
 ## 37. Open Questions
 
 1. ~~Promotion reviewer~~ **Resolved (decision 2):** later, as a feedback process that tunes weights; templates only now.
@@ -752,6 +772,8 @@ New (both schemas): `causal_assertions`, `mechanisms`, `causal_assertion_history
 6. Cost budget for L5: ADR-018 governs depth but this plan adds contradiction search and evidence classification calls. Is there a per-investigation dollar ceiling to design against?
 7. Should US and India share one ontology and graph (recommended — the primitives are universal) with `scope.geography` separating regimes?
 8. Verify during P0.4: whether the investigation artifact overwrite described in ADR-022 still holds in current code (I read the ADR, not every call site).
+9. Feedback audience: who may give feedback in the first release (any signed-in user, or a named internal group)? The governance in Section 42.6 works either way, but expert/ordinary classes need a source of truth (the `users` table has no role beyond ownership today).
+10. Similarity for Repeat Error Rate: confirm the deterministic context key in 42.4 (sector + geography + regime + question type) as the definition of "sufficiently similar".
 
 ## 38. Recommended MVP Boundary
 
@@ -760,9 +782,10 @@ The smallest slice that proves the idea and is worth shipping alone:
 1. **P0.3 + P0.4** — version registry and immutable versioned artifacts (small, fixes a live issue).
 2. **P0.2 (subset)** — `investigation_graph_nodes/edges` and the evidence-ledger fields on existing evidence rows, plus `l5_investigation_metrics`.
 3. **P1.1 + P1.7** — persist the investigation graph from the existing loop; compute the deterministic per-investigation metrics (evidence coverage, unsupported-edge rate, efficiency, cost, latency).
-4. **P2.1 (mini)** — **5 golden cases** (reuse the 3 existing L5 cases + 1 auto, 1 cross-sector) with deterministic exact/alias matching only, no LLM-judge yet.
+4. **Minimal feedback capture (slice of P0.7 + P1.9)** — structured feedback on investigation / hypothesis / path / edge written to the ledger, **no adaptation**. Starting capture in the MVP means feedback data accumulates while later phases are built; it costs little and cannot be recovered retroactively.
+5. **P2.1 (mini)** — **5 golden cases** (reuse the 3 existing L5 cases + 1 auto, 1 cross-sector) with deterministic exact/alias matching only, no LLM-judge yet.
 
-**Explicitly out of the MVP:** promotion lifecycle, durable causal knowledge writes, the Causal Knowledge Service, Neo4j changes, sector packs, validation automation, admin analytics, learned anything.
+**Explicitly out of the MVP:** adaptation engine, adaptive ranking, promotion lifecycle, durable causal knowledge writes, the Causal Knowledge Service, Neo4j changes, sector packs, validation automation, admin analytics, learned anything.
 
 Why this boundary: it makes edges *countable and evidenced*, which is the precondition for every KPI in the brief, and it changes no user-facing behaviour or durable knowledge. If after 2–3 weeks of data the per-investigation metrics are not informative, the larger investment is not justified; if they are, they tell us which of P1.2–P1.6 matters most.
 
@@ -823,6 +846,179 @@ The baseline (Sections 9–14, from the economic-graph plan) is **reified assert
 **Recommendation.** Keep **A** for storage and lifecycle. Add **D** as the evaluation logic: treat each ledger entry as support or attack on a claim and each rival hypothesis as an attacker, and compute the verdict (SUPPORTED / PLAUSIBLE / WEAK / CONTRADICTED / UNRESOLVED) by deterministic rule. Use **E** inside the L1/L2 layers to scale across sectors. Defer **C** to P3 for selected mechanisms where the Income Statement and macro series give enough history. Choosing **B** instead would save roughly 5–8 developer-days in P0 but would force a migration once lifecycle, history or multi-scope claims are needed.
 
 **Cost impact of adopting D.** Small: it changes how the P1.5/P1.6 logic is expressed, not the schema, adding roughly 2–4 developer-days to P1 for the argument-evaluation function and its tests.
+
+---
+
+## 42. Feedback-Adaptive Persistent Causal Graph
+
+> Persistent causal **structure**, with controlled, evidence-backed adaptation of **confidence** and **contextual relevance**. The graph is neither static nor freely rewritten by an LLM or by one user's click.
+
+```
+Persistent Causal Graph --> Dynamic L5 Investigation --> Hypotheses / Causal Paths
+        ^                                                        |
+        |                                                Evidence testing
+ Controlled Adaptation <-- Learning Ledger <-- Structured User Feedback
+        ^                        ^                  (also: evidence validation,
+        |                        |                   outcome validation)
+        +------------------------+
+```
+
+### 42.1 Four separate quantities (never one "weight")
+
+| Quantity | Question it answers | Scope | Changed by |
+|---|---|---|---|
+| **Global confidence** | Is A → B a credible causal relationship at all? | The edge | Evidence validation and outcome validation (computed, Section 18). **Never** by a single feedback item |
+| **Contextual relevance** | How much does A → B matter for this sector / geography / regime / question type? | Edge × context | Repeated contextual feedback, plus evidence and outcome results in that context |
+| **Effect strength** | How large is the effect? | Edge (optionally per context) | Quantitative estimation (P3), or an OVERSTATED / UNDERSTATED re-estimation task |
+| **Lag** | How long does it take? | Edge (optionally per context) | Quantitative estimation (P3), or a WRONG_TIMING re-estimation task |
+
+These are four fields on the edge (or its context row), with four different update rules. The existing Section 9 edge definition already separates confidence, magnitude and lag; contextual relevance is the addition.
+
+**Rule that follows:** "NOT_RELEVANT in one investigation" lowers nothing globally. It is one observation about relevance in that investigation's context.
+
+### 42.2 Structured feedback
+
+Granularity: an investigation, a hypothesis (`hypothesis_id` already exists), a causal path (new `path_id`), or an individual edge. Prefer the lowest level the user is willing to give.
+
+Controlled taxonomy (initial; extending it is an ontology-version change):
+
+| Type | Applies to | Meaning | What it can trigger (never an immediate weight change) |
+|---|---|---|---|
+| CORRECT | any | Useful and right | Positive observation for relevance in this context |
+| NOT_RELEVANT | path, edge | True in general, not important here | Contextual-relevance observation |
+| WRONG_RELATIONSHIP | edge | The link does not hold | A targeted contradiction re-test of the edge |
+| MISSING_DRIVER | investigation, hypothesis | An important cause is absent | A CANDIDATE edge or driver; a candidate golden case |
+| MISSING_MEDIATOR | path | An intermediate step is absent | A CANDIDATE mediator on the path |
+| OVERSTATED / UNDERSTATED | edge | Effect size is off | An effect-strength re-estimation task |
+| WRONG_TIMING | edge | Lag is off | A lag re-estimation task |
+| INSUFFICIENT_EVIDENCE | edge, hypothesis | Not enough support shown | A request for more evidence retrieval; counts toward Evidence Coverage |
+
+Free text is allowed but optional and secondary: it is stored with the structured type, never in place of it, and is **not parsed into updates**. A background step may cluster free text to *suggest* new taxonomy values or to help a human reader; suggestions go through ontology versioning.
+
+### 42.3 Feedback ledger and learning ledger
+
+Two tables with different jobs, so raw input is never confused with decisions:
+
+- **`causal_feedback`** (append-only, immutable): `feedback_id`, `investigation_id`, `hypothesis_id`, `path_id`, `edge_id`, `feedback_type`, `company_id`, `sector`, `geography`, `period`, `regime_tag`, `question_type`, `user_id`, `user_class` (ordinary / expert / internal), `comment`, `created_at`, `engine_version`, `graph_version`. Reuses the existing patterns: `investigation_*` tables for the anchor, `users` for identity, the planned `indicator_feedback` shape for the verdict idea, `llm_call_log.investigation_id` for traceability.
+- **`learning_ledger`** (append-only): every learning input from any of the three signals, normalised to one row shape: `signal` (EVIDENCE | OUTCOME | FEEDBACK), `edge_id`, `context_key`, `direction` (SUPPORTS / WEAKENS / NEUTRAL), `authority_class`, `source_ref`, `weight_at_ingest` (from the versioned rule), `created_at`. Feedback enters this ledger only through the governance ladder in 42.6, never straight from the UI.
+
+**Receiving feedback mutates nothing in the graph.**
+
+### 42.4 Contextual learning without duplicating the graph
+
+Simplest scalable representation: **sparse statistics keyed by (edge, context), not weights and not graph copies.**
+
+```
+edge_context_stats(edge_id, context_dimension, context_value,
+                   n_investigations, n_relevant, n_not_relevant,
+                   n_evidence_support, n_evidence_contradict,
+                   n_outcome_support, n_outcome_contradict, updated_at, rule_version)
+```
+
+- **One dimension per row** (sector, sub-sector, geography, regime, company-archetype, investigation type). There is **no cross-product**: combining dimensions is done at read time, by taking the most specific row with enough data and backing off to its parent (company → sub-sector → sector → global).
+- **Relevance is derived, ordinal and lazy:** HIGH / MEDIUM / LOW / UNKNOWN, computed from the counts by a versioned rule with minimum sample sizes. **UNKNOWN is the default and is neutral**; the initial release does not need numeric weights anywhere.
+- **Regimes** are a deterministic, versioned classification from macro data (for example rate regime high / neutral / low from the policy-rate series) so they are not model opinions.
+- **Context key** for similarity (used by Repeat Error Rate): sector + geography + regime + question type, with company archetype added later.
+- Worked example: `Interest Rates → Auto Demand` has one global confidence (HIGH, from evidence and outcomes) and rows such as `(sub-sector: entry-level auto) HIGH`, `(luxury) MEDIUM`, `(fleet) LOW`, `(regime: high-rate) HIGH`, `(regime: low-rate) LOW`. No second copy of the edge exists.
+
+### 42.5 Adaptive path ranking that preserves exploration
+
+```
+Question -> Determine context -> Retrieve candidate paths -> Apply historical learning
+        -> Rank -> Investigate highest-value paths (+ reserved exploration) -> Test
+```
+
+- **Ranking orders; gates decide.** The Section 16 gates (materiality, evidence available, temporal fit) still decide whether a path may be expanded. Ranking only decides **order and budget** among paths that pass.
+- **Composite score**, kept inspectable: question-specific materiality and evidence (dominant) × global confidence prior × a **bounded** relevance multiplier (for example 0.5–1.5) × a small historical-validation term. Feedback history enters only through relevance and validation, never as its own large term.
+- **Exploration is structural, not hoped for:**
+  1. At least one slot (or about 20% of the branch budget, whichever is larger) is reserved for under-tested edges, CANDIDATE edges and edges with UNKNOWN relevance, chosen by uncertainty (few tests means a higher chance of selection).
+  2. A **rank floor**: no learned adjustment can push an edge below the multiplier floor, so nothing is permanently suppressed.
+  3. **Strong question-specific evidence overrides history**: if the decomposition shows a branch explains a material share of the observed change, it is investigated regardless of its learned relevance.
+  4. Log "challenger" outcomes: when an exploration slot wins on evidence, that is a positive learning signal and a Missing-Driver-rate input.
+- Initial release (P1.10) ranks without learning; adaptive ranking arrives in P2.9, after there is data.
+
+### 42.6 Three learning signals, different authority
+
+| Signal | Examples | Authority | May change |
+|---|---|---|---|
+| **Evidence validation** | Financial / macro observations, filings, quantitative tests, contradictions | **High**, but in-sample for the investigation that found it | Global confidence (within the Section 18 formula), via de-duplicated ledger entries |
+| **Outcome validation** | Expectation → future observation → SUPPORT / CONTRADICT / NEUTRAL / PARTIAL | **Highest**: out-of-sample, hard to game | Global confidence, lifecycle state (VALIDATED), contextual relevance in the context observed |
+| **Human feedback** | The taxonomy in 42.2 | **Lowest direct authority**, highest for *relevance in context* and for *what to re-test* | Contextual relevance (after thresholds); creates re-test tasks and candidates. **Never directly alters global confidence** |
+
+Governance ladder for feedback:
+
+```
+single feedback
+   -> feedback observation (stored; no effect)
+repeated contextual feedback (>= N distinct users, >= M investigations, similar context, recent)
+   -> context-relevance adjustment CANDIDATE
+candidate + corroborating evidence and/or outcome validation
+   -> stronger adaptation candidate (applied automatically only for contextual relevance, bounded to one ordinal step per version)
+anything touching global confidence
+   -> only through evidence / outcome validation in the Section 18 formula; feedback may raise the *priority of re-testing*, nothing more
+```
+
+Safeguards:
+- **Reliability and class:** ordinary / expert / internal user classes, plus a feedback-reliability score learned later (P3) from how often a user's feedback agrees with later validation. Expert feedback counts for more but **cannot act alone**.
+- **Conflicting feedback:** when verdicts split beyond a threshold, no adaptation occurs and the item is flagged for later review.
+- **Noise and abuse:** one vote per user per edge and context (later votes replace earlier), rate limits, distinct-user thresholds, and corroboration required for anything beyond relevance.
+- **Minimum sample sizes and recency:** thresholds set per rule version; recency decay with a configurable half-life so old context does not dominate.
+- **Context similarity:** only feedback with a matching context key (or its parent, discounted) counts toward a context row.
+- **Rollback and audit:** each application writes an `adaptation_events` row (before, after, triggering ledger rows, rule version, actor = engine) and bumps `graph_version`; rollback is a new event restoring the prior value, never a deletion. Every adaptation is explainable from its ledger rows.
+- This composes with decision 2: the human reviewer workflow is not a gate; a reviewer's input arrives as high-authority feedback in the same ledger and later calibrates thresholds and weights.
+
+### 42.7 Adaptation engine
+
+A scheduled, idempotent job (registered in `SCHEDULED_JOBS`, disabled until reviewed, following ADR-015/016): reads new `learning_ledger` rows since a watermark, updates `edge_context_stats`, evaluates candidate rules, writes `adaptation_events`, and snapshots the graph version. Everything it applies is a deterministic function of the ledger and a versioned rule set, so a run can be replayed to the same result.
+
+### 42.8 Learning KPIs
+
+In addition to Section 24:
+
+| KPI | Definition | Direction |
+|---|---|---|
+| **Feedback Agreement Rate** | Feedback items matching the system's own verdict ÷ feedback items on edges with a verdict | Context-dependent; track alongside, never optimise alone |
+| **Repeated Rejection Rate** | Edges rejected (NOT_RELEVANT / WRONG_RELATIONSHIP) ≥ 2 times in similar contexts that were presented again ÷ such edges | Down |
+| **Missing Driver Rate** | Investigations with MISSING_DRIVER or MISSING_MEDIATOR ÷ investigations with any feedback | Down |
+| **Path Relevance Rate** | Paths rated CORRECT ÷ paths rated | Up |
+| **Feedback Resolution Rate** | Feedback items reaching a disposition (applied, rejected, re-tested, converted to a candidate) ÷ items received | Up |
+| **Repeat Error Rate** | In investigations whose context key matches a context with a previously confirmed mistake, the share that **repeat** the same mistake (the same edge presented, or the same driver still missing) | **Down** |
+
+Repeat Error Rate is the headline proof that the system **learns rather than merely stores**. Measurement design: (1) a confirmed mistake (by threshold or reviewer) is converted into a **golden regression case** with its context key; (2) every later investigation whose context key matches is checked deterministically for the same edge or omission; (3) report the rate with the sample size and the number of distinct mistakes. Without the regression-case step the metric would only reflect volume, so it is part of P2.8, not optional.
+
+### 42.9 Storage responsibilities (additions)
+
+| Data | Neon/Postgres | Neo4j | S3 | Qdrant |
+|---|---|---|---|---|
+| Feedback, learning ledger, context stats, adaptation events | **truth** | Derived read-only properties on assertions for traversal: `relevance_by_context` summary, `global_confidence`, `graph_version` | Per-investigation `feedback.json` in the artifact; graph snapshots include adapted values | Optional: free-text comment embeddings for clustering only |
+
+Neo4j holds the *current* adapted summary for fast traversal and ranking; Postgres holds the full history. Neo4j stays a rebuildable projection (ADR-014), now including adapted values.
+
+### 42.10 Evaluation architecture (additions)
+
+- **Loop A (every investigation):** record the context key, candidate paths, ranking scores, which exploration slots were used, and which presented edges later received feedback.
+- **Loop B (golden):** feedback-derived regression cases join the benchmark under a separate tag so base-benchmark trends stay comparable. Compare engine versions with and without adaptation on the same cases to confirm adaptation helps, not just changes.
+- **Loop C (temporal validation):** outcome validations feed `learning_ledger` as OUTCOME rows.
+- **Counterfactual check for the ranking:** periodically run an investigation with ranking disabled and compare; a large recall drop signals suppression.
+
+### 42.11 Learning lifecycle
+
+The Section 19 lifecycle (CANDIDATE → … → PROMOTED) governs **edges**. Adaptation adds a parallel, simpler lifecycle for **context-relevance rows and re-estimation tasks**: `OBSERVATION → CANDIDATE → APPLIED → (ROLLED_BACK | SUPERSEDED)`. Applied rows are versioned and reversible. Feedback that implies a structural change (MISSING_DRIVER / MISSING_MEDIATOR) creates a **CANDIDATE edge** and starts at the bottom of the Section 19 lifecycle, so structure changes still need evidence and outcome validation.
+
+### 42.12 What this changes elsewhere in the plan
+
+- **Executive summary and gap analysis:** G18–G22 added; the "no loop that learns" gap now has a concrete design.
+- **Causal schema (Sections 9, 35):** edges carry global confidence, effect strength and lag; context relevance lives in `edge_context_stats`; new tables `causal_feedback`, `learning_ledger`, `adaptation_events`, `edge_context_stats` (and `feedback_reliability` in P3).
+- **Storage (Section 13):** see 42.9.
+- **Evaluation (Sections 24, 25, 26):** learning KPIs and regression cases added; `l5_investigation_metrics` gains context key and ranking fields.
+- **Lifecycle (Section 19):** parallel adaptation lifecycle in 42.11.
+- **Roadmap and estimates:** P0.7, P1.9, P1.10, P2.7, P2.8, P2.9 added; totals updated in Section 33A (P0 21–34, P1 46–71, P2 69–106 developer-days; MVP 23–36). P3 gains feedback-reliability scoring and weight calibration.
+- **MVP (Section 38):** adds feedback capture only (ledger, no adaptation).
+- **Risks and open questions:** extended in Sections 36 and 37.
+
+### 42.13 Planning-only note
+
+Nothing in this section is implemented. The single recommendation worth acting on early is **capturing structured feedback from the first investigation-graph release**: it is cheap, it needs no adaptation logic, and the data cannot be reconstructed afterwards.
 
 ---
 
