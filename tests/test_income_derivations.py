@@ -118,3 +118,27 @@ def test_financial_companies_do_not_get_ebitda_rows(conn: sqlite3.Connection) ->
 
     assert "ebitda" not in rows and "materialsCost" not in rows
     assert rows["profitBeforeTax"] == [30630.0]  # PBT stays for everyone
+
+
+def test_us_gaap_period_derives_ebit_ebitda_and_other_income():
+    from web.income_derivations import derive_income_rows
+
+    k = (2024, 0)
+    raw = {m: {} for m in (
+        "total_revenue", "operating_expenses", "interest_expended", "depreciation", "other_income", "other_expenses",
+        "cost_of_materials_consumed", "purchases_of_stock_in_trade", "changes_in_inventories", "cost_of_revenue",
+        "selling_general_admin", "research_and_development", "depreciation_amortization", "operating_profit",
+        "profit_before_tax")}
+    raw["total_revenue"][k] = 1000.0
+    raw["operating_profit"][k] = 300.0
+    raw["cost_of_revenue"][k] = 600.0
+    raw["depreciation_amortization"][k] = 50.0
+    raw["profit_before_tax"][k] = 290.0
+    raw["interest_expended"][k] = 20.0
+    out = derive_income_rows(raw, [k])
+    assert out["ebit"][k] == 300.0
+    assert out["ebitda"][k] == 350.0
+    assert out["expenses"][k] == 700.0
+    assert out["otherIncome"][k] == 10.0  # 290 - 300 + 20
+    assert out["ebitInclOther"][k] == 310.0
+    assert out["ebitdaInclOther"][k] == 360.0

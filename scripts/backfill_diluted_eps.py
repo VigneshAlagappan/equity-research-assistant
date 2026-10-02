@@ -42,6 +42,13 @@ INCOME_STATEMENT_METRICS = (
     "employee_benefit_expense", "other_expenses", "current_tax", "deferred_tax",
 )
 
+#: US-GAAP counterparts (SEC EDGAR) for the same Income Statement rows --
+#: expense lines by function, D&A, current/deferred tax, interest.
+US_INCOME_STATEMENT_METRICS = (
+    "cost_of_revenue", "selling_general_admin", "research_and_development", "depreciation_amortization",
+    "current_tax", "deferred_tax", "interest_expended",
+)
+
 #: Which metrics the NSE (India) path loads this run; set from --metrics.
 ACTIVE_METRICS: tuple[str, ...] = (METRIC,)
 
@@ -145,13 +152,14 @@ def backfill_company_us(conn, company_id: str) -> str:
     cik = get_cik_for_ticker(company["fetch_symbol"] or company_id)
     if cik is None:
         raise ValueError(f"could not resolve a SEC CIK for {company_id}")
-    have = {k[1:] for k in _existing_periods(conn, company_id, (METRIC,))}
-    if have:  # already backfilled; new filings arrive through the weekly EDGAR job
+    metrics = US_INCOME_STATEMENT_METRICS if ACTIVE_METRICS == INCOME_STATEMENT_METRICS else (METRIC,)
+    have = _existing_periods(conn, company_id, metrics)
+    if metrics == (METRIC,) and have:  # already backfilled; new filings arrive through the weekly EDGAR job
         return "skipped (already has diluted_eps)"
     new_obs = {}
     for obs in SECEdgarAdapter(conn).fetch(company_id, cik, currency=company["currency"]):
-        key = (obs.period_type, obs.fiscal_year, obs.quarter, "consolidated")
-        if (obs.metric_key == METRIC and int(obs.fiscal_year.removeprefix("FY")) >= FIRST_US_FISCAL_YEAR
+        key = (obs.metric_key, obs.period_type, obs.fiscal_year, obs.quarter, "consolidated")
+        if (obs.metric_key in metrics and int(obs.fiscal_year.removeprefix("FY")) >= FIRST_US_FISCAL_YEAR
                 and key not in have and not validate_observation(obs)):
             new_obs[key] = obs
     valid = list(new_obs.values())

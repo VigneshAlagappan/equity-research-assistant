@@ -36,13 +36,46 @@ from typing import Hashable
 
 Series = dict[Hashable, float]
 
-DERIVED_KEYS = ("ebitda", "ebitdaInclOther", "ebit", "ebitInclOther", "materialsCost")
+DERIVED_KEYS = ("ebitda", "ebitdaInclOther", "ebit", "ebitInclOther", "materialsCost", "expenses", "otherIncome")
+
+
+def _derive_us(raw: dict[str, Series], k: Hashable, out: dict[str, Series]) -> None:
+    """US-GAAP (SEC) companies report expenses by function and an operating
+    income line, so: EBIT = operating income; EBITDA = EBIT + D&A; Expenses =
+    revenue - operating income (operating costs, before interest and non-
+    operating items); other income = what lies between operating income and
+    pre-tax income apart from interest expense, so EBIT/EBITDA incl. other
+    income are the pre-interest pre-tax figures. India's own path (below) only
+    runs for periods carrying the Ind-AS `other_expenses` line, so the two never
+    overlap."""
+    op = raw.get("operating_profit", {}).get(k)
+    by_function = any(k in raw.get(m, {}) for m in ("cost_of_revenue", "selling_general_admin", "research_and_development"))
+    if op is None or not by_function:
+        return
+    rev = raw["total_revenue"].get(k)
+    da = raw.get("depreciation_amortization", {}).get(k)
+    if da is None:
+        da = raw["depreciation"].get(k)
+    pbt = raw["profit_before_tax"].get(k)
+    interest = raw["interest_expended"].get(k)
+    out["ebit"][k] = op
+    if rev is not None:
+        out["expenses"][k] = rev - op
+    if da is not None:
+        out["ebitda"][k] = op + da
+    if None not in (pbt, interest):
+        other = pbt - op + interest
+        out["otherIncome"][k] = other
+        out["ebitInclOther"][k] = op + other
+        if da is not None:
+            out["ebitdaInclOther"][k] = op + da + other
 
 
 def derive_income_rows(raw: dict[str, Series], keys: list[Hashable]) -> dict[str, Series]:
     out: dict[str, Series] = {k: {} for k in DERIVED_KEYS}
     other_expenses = raw.get("other_expenses", {})
     for k in keys:
+        _derive_us(raw, k, out)
         if k not in other_expenses:
             continue
         rev = raw["total_revenue"].get(k)
@@ -69,7 +102,7 @@ def derive_income_rows(raw: dict[str, Series], keys: list[Hashable]) -> dict[str
 #: EBITDA is not a meaningful bank measure).
 NON_FINANCIAL_ONLY_KEYS = frozenset(
     ("ebitda", "ebitdaInclOther", "ebit", "ebitInclOther", "materialsCost", "employeeCost", "otherExpenses",
-     "currentTax", "deferredTax")
+     "currentTax", "deferredTax", "costOfRevenue", "sellingGeneralAdmin", "researchAndDevelopment")
 )
 ADDED_KEYS = NON_FINANCIAL_ONLY_KEYS | {"profitBeforeTax", "taxExpense"}
 

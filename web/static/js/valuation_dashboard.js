@@ -211,6 +211,8 @@
     const cagrVal = first.idx < 0 || first.idx === last.idx ? null
       : cagr(first.val, last.val, elapsedYears(periodKeys[first.idx], periodKeys[last.idx]));
     return {
+      key: metric.key,
+      values: metric.values,
       label: metric.label,
       type: metric.type || "fact",
       valuesFmt: metric.values.map((v) => fmt(v, metric.unit, currency)),
@@ -446,20 +448,62 @@
     // (base.html), reused here rather than a new badge design. Row-level,
     // not per-cell: web/charts_feed.py's _row() docstring explains why a
     // fallback-derived row is "calc" for its whole column.
+    // Parent rows with a collapsible breakdown: each part is shown with its
+    // share of the parent in brackets. Expenses also gets a remainder row
+    // (finance cost, depreciation) so its shares add up to 100%.
+    const GROUPS = sectionId === "incomeStatement"
+      ? { expenses: ["costOfRevenue", "sellingGeneralAdmin", "researchAndDevelopment", "materialsCost", "employeeCost", "otherExpenses"], taxExpense: ["currentTax", "deferredTax"],
+          ebitda: ["otherIncome", "ebitdaInclOther"], ebit: ["ebitInclOther"] }
+      : {};
+    const SHARE_PARENTS = { expenses: true, taxExpense: true }; // others are variants, not a split
+    const byKey = {};
+    rows.forEach((r) => { byKey[r.key] = r; });
+    // A part only nests under a parent that is actually shown (financial
+    // companies have no EBITDA row, so their Other Income stays a plain line).
+    const parentOf = {};
+    Object.keys(GROUPS).forEach((p) => { if (byKey[p]) GROUPS[p].forEach((c) => { parentOf[c] = p; }); });
+    const num = (v) => v !== null && v !== undefined && Number.isFinite(v);
+    const shareFmt = (r, parent) => r.valuesFmt.map((f, i) => {
+      const v = r.values[i], t = parent.values[i];
+      return num(v) && num(t) && t !== 0 ? f + ' <span class="vm-share">(' + Math.round((v / t) * 100) + "%)</span>" : f;
+    });
+    const rowHtml = (r, parentKey, extra) => {
+      const parent = parentKey && byKey[parentKey];
+      const cells = parent && SHARE_PARENTS[parentKey] ? shareFmt(r, parent) : r.valuesFmt;
+      return (
+        "<tr" + (parent ? ' class="vm-part-of-' + parentKey + '" hidden' : "") + "><td" + (parent ? ' class="vm-sub-label"' : "") + ">" +
+        escapeHtml(r.label) +
+        (GROUPS[r.key] && GROUPS[r.key].some((c) => byKey[c])
+          ? ' <button type="button" class="vm-expense-toggle" data-group="' + r.key + '" aria-expanded="false" title="Show breakdown / variant">+</button>' : "") +
+        "</td>" +
+        '<td><span class="tag ' + (r.type === "calc" ? "tag-calculation" : "tag-fact") + '">' +
+        (r.type === "calc" ? "CALC" : "FACT") + "</span></td>" +
+        '<td><svg viewBox="0 0 100 28" class="vm-spark"><path d="' + r.sparkPath +
+        '" fill="none" stroke="var(--color-accent-700)" stroke-width="1.6"></path></svg></td>' +
+        // The per-cell source letter (provTag) is deliberately not rendered in the
+        // Financials table; the feed still carries "sources" and provTag() is kept
+        // so it can be switched back on by appending it here.
+        cells.map((v) => '<td class="vm-num">' + v + "</td>").join("") +
+        '<td class="vm-num">' + r.cagrFmt + "</td></tr>"
+      );
+    };
+    // Remainder of Expenses not covered by the three breakdown lines.
+    let remainderRow = null;
+    const exp = byKey.expenses;
+    if (exp && GROUPS.expenses && GROUPS.expenses.some((k) => byKey[k])) {
+      const vals = exp.values.map((t, i) => {
+        const parts = GROUPS.expenses.map((k) => byKey[k] && byKey[k].values[i]).filter(num);
+        return num(t) && parts.length ? t - parts.reduce((a, b) => a + b, 0) : null;
+      });
+      if (vals.some(num)) {
+        remainderRow = buildRow({ key: "expensesRemainder", label: byKey.costOfRevenue || byKey.sellingGeneralAdmin || byKey.researchAndDevelopment ? "Other operating cost" : "Finance cost, depreciation & other", type: "calc", unit: exp.unit, values: vals }, periodKeys, currency);
+        remainderRow.values = vals;
+        byKey.expensesRemainder = remainderRow;
+      }
+    }
+    const lastExpensePart = GROUPS.expenses ? GROUPS.expenses.filter((k) => byKey[k]).pop() : null;
     const bodyRows = rows
-      .map(
-        (r) =>
-          "<tr><td>" + escapeHtml(r.label) + '</td>' +
-          '<td><span class="tag ' + (r.type === "calc" ? "tag-calculation" : "tag-fact") + '">' +
-          (r.type === "calc" ? "CALC" : "FACT") + "</span></td>" +
-          '<td><svg viewBox="0 0 100 28" class="vm-spark"><path d="' + r.sparkPath +
-          '" fill="none" stroke="var(--color-accent-700)" stroke-width="1.6"></path></svg></td>' +
-          // The per-cell source letter (provTag) is deliberately not rendered in the
-          // Financials table; the feed still carries "sources" and provTag() is kept
-          // so it can be switched back on by appending it here.
-          r.valuesFmt.map((v) => '<td class="vm-num">' + v + "</td>").join("") +
-          '<td class="vm-num">' + r.cagrFmt + "</td></tr>"
-      )
+      .map((r) => rowHtml(r, parentOf[r.key]) + (remainderRow && r.key === lastExpensePart ? rowHtml(remainderRow, "expenses") : ""))
       .join("");
 
     return (
@@ -537,6 +581,16 @@
         state.activeSection, periods, periodKeys, METRICS, currency, price, sharesOutstanding, sharesOutstandingFy, ratioKeys
       );
     }
+
+    contentEl.addEventListener("click", (ev) => {
+      const btn = ev.target.closest && ev.target.closest(".vm-expense-toggle");
+      if (!btn) return;
+      const group = btn.getAttribute("data-group");
+      const open = btn.getAttribute("aria-expanded") !== "true";
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      btn.textContent = open ? "\u2212" : "+";
+      contentEl.querySelectorAll(".vm-part-of-" + group).forEach((tr) => { tr.hidden = !open; });
+    });
 
     function load() {
       const url = baseUrl + (baseUrl.indexOf("?") >= 0 ? "&" : "?") + "period_type=" + state.periodType;

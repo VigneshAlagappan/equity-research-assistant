@@ -216,6 +216,83 @@
     valuation: { title: "Valuation", desc: function () { return "Historical price multiples from the model, plus live multiples at the current price above."; } },
   };
 
+  // Collapsible Income Statement groups (same layout as the Financials tab):
+  // a parent row with a +/- toggle and its parts indented underneath. Expenses
+  // and Tax parts show their share of the parent in brackets; EBITDA / EBIT
+  // children are variants (other income bridge), so they show no share.
+  const INCOME_GROUPS = {
+    expenses: ["costOfRevenue", "sellingGeneralAdmin", "researchAndDevelopment", "materialsCost", "employeeCost", "otherExpenses", "expensesRemainder"],
+    taxExpense: ["currentTax", "deferredTax"],
+    ebitda: ["otherIncome", "ebitdaInclOther"],
+    ebit: ["ebitInclOther"],
+  };
+  const SHARE_PARENTS = { expenses: true, taxExpense: true };
+  const openGroups = {}; // group key -> expanded; survives the re-render on every input
+
+  function numOk(v) { return v !== null && v !== undefined && Number.isFinite(v); }
+
+  // Adds the "finance cost, depreciation & other" remainder so the Expenses
+  // shares add up to 100%.
+  function withRemainder(metrics) {
+    const exp = metrics.find((m) => m.key === "expenses");
+    const parts = INCOME_GROUPS.expenses.map((k) => metrics.find((m) => m.key === k)).filter(Boolean);
+    if (!exp || !parts.length) return metrics;
+    const values = exp.values.map((t, i) => {
+      const got = parts.map((m) => m.values[i]).filter(numOk);
+      return numOk(t) && got.length ? t - got.reduce((x, y) => x + y, 0) : null;
+    });
+    if (!values.some(numOk)) return metrics;
+    const out = metrics.slice();
+    out.splice(out.indexOf(parts[parts.length - 1]) + 1, 0,
+      { key: "expensesRemainder", label: parts.some((m) => ["costOfRevenue", "sellingGeneralAdmin", "researchAndDevelopment"].indexOf(m.key) >= 0) ? "Other operating cost" : "Finance cost, depreciation & other", type: "calc", unit: exp.unit, values: values });
+    return out;
+  }
+
+  function makeGrouping(metrics) {
+    const byKey = {};
+    metrics.forEach((m) => { byKey[m.key] = m; });
+    const parentOf = {}, hasChildren = {};
+    Object.keys(INCOME_GROUPS).forEach((p) => {
+      if (!byKey[p]) return; // e.g. banks have no EBITDA row: parts stay plain lines
+      INCOME_GROUPS[p].forEach((c) => { if (byKey[c]) { parentOf[c] = p; hasChildren[p] = true; } });
+    });
+    return { byKey: byKey, parentOf: parentOf, hasChildren: hasChildren };
+  }
+
+  function groupRowAttrs(g, key) {
+    const p = g && g.parentOf[key];
+    return p ? ' class="vm-part-of-' + p + '"' + (openGroups[p] ? "" : " hidden") : "";
+  }
+
+  function groupLabelCell(g, r) {
+    const p = g && g.parentOf[r.key];
+    const open = g && g.hasChildren[r.key] && openGroups[r.key];
+    return "<td" + (p ? ' class="vm-sub-label"' : "") + ">" + escapeHtml(r.label) +
+      (g && g.hasChildren[r.key]
+        ? ' <button type="button" class="vm-expense-toggle" data-group="' + r.key + '" aria-expanded="' + (open ? "true" : "false") +
+          '" title="Show breakdown / variant">' + (open ? "\u2212" : "+") + "</button>"
+        : "") + "</td>";
+  }
+
+  // Historical cells, with "(NN%)" of the parent for share groups.
+  function groupCells(g, r, formatted) {
+    const p = g && g.parentOf[r.key];
+    const parent = p && SHARE_PARENTS[p] ? g.byKey[p] : null;
+    return formatted.map((f, i) => {
+      const v = r.vals && r.vals[i], t = parent && parent.values[i];
+      return numOk(v) && numOk(t) && t !== 0 ? f + ' <span class="vm-share">(' + Math.round((v / t) * 100) + "%)</span>" : f;
+    });
+  }
+
+  function toggleGroup(root, btn) {
+    const group = btn.getAttribute("data-group");
+    const open = !openGroups[group];
+    openGroups[group] = open;
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    btn.textContent = open ? "\u2212" : "+";
+    root.querySelectorAll(".vm-part-of-" + group).forEach((tr) => { tr.hidden = !open; });
+  }
+
   function buildRow(metric, years, startYear, endYear, projGrowth) {
     const idxStart = years.indexOf(startYear);
     const idxEnd = years.indexOf(endYear);
@@ -226,6 +303,8 @@
     const showProj = metric.unit === "crore" || metric.unit === "rupee";
     const proj10 = showProj && last.val !== null ? last.val * Math.pow(1 + projGrowth, 10) : null;
     return {
+      key: metric.key,
+      vals: metric.values,
       label: metric.label,
       startValFmt: fmt(startVal, metric.unit),
       endValFmt: fmt(endVal, metric.unit),
@@ -336,6 +415,8 @@
         ? years10.map((y, i) => last * Math.pow(1 + a.projGrowth, i + 1))
         : years10.map(() => null);
       return {
+        key: metric.key,
+        vals: metric.values,
         label: metric.label,
         type: metric.type || "fact",
         unit: metric.unit,
@@ -406,15 +487,15 @@
         "</td>"
       );
     }
-    function dataRows(rows) {
+    function dataRows(rows, g) {
       return rows
         .map(
           (r) =>
-            "<tr><td>" + escapeHtml(r.label) + "</td>" +
+            "<tr" + groupRowAttrs(g, r.key) + ">" + groupLabelCell(g, r) +
             '<td><span class="tag ' + (r.type === "calc" ? "tag-calculation" : "tag-fact") + '">' +
             (r.type === "calc" ? "CALC" : "FACT") + "</span></td>" +
             trendCell(r) +
-            r.historical.map((v) => '<td class="vm-num">' + v + "</td>").join("") +
+            groupCells(g, r, r.historical).map((v) => '<td class="vm-num">' + v + "</td>").join("") +
             '<td class="vm-num vm-cagr-cell">' + r.cagr + "</td>" +
             r.forecast.map((v) => '<td class="vm-num vm-forecast-cell">' + v + "</td>").join("") +
             "</tr>"
@@ -423,7 +504,7 @@
     }
     const bodyRows =
       sectionRow("Balance Sheet") + dataRows(balanceSheetRows) +
-      sectionRow("Income Statement") + dataRows(incomeStatementRows) +
+      sectionRow("Income Statement") + dataRows(incomeStatementRows, makeGrouping(METRICS.incomeStatement)) +
       sectionRow("Per-Share Metrics") + dataRows(perShareRows) +
       sectionRow("Profitability Ratios") + dataRows(profitabilityRows) +
       (bankRatiosRows.length ? sectionRow("Bank Ratios") + dataRows(bankRatiosRows) : "") +
@@ -468,6 +549,7 @@
 
   function renderTableSection(sectionId, a, YEARS, METRICS) {
     const meta = SECTION_META[sectionId];
+    const g = sectionId === "incomeStatement" ? makeGrouping(METRICS[sectionId]) : null;
     const rows = METRICS[sectionId].map((m) => buildRow(m, YEARS, a.evalStartYear, a.evalEndYear, a.projGrowth));
 
     let kpiHtml = "";
@@ -489,7 +571,7 @@
     const bodyRows = rows
       .map(
         (r) =>
-          "<tr><td>" + escapeHtml(r.label) + '</td><td class="text-muted vm-num">' + r.startValFmt + '</td><td class="vm-num">' + r.endValFmt +
+          "<tr" + groupRowAttrs(g, r.key) + ">" + groupLabelCell(g, r) + '<td class="text-muted vm-num">' + r.startValFmt + '</td><td class="vm-num">' + r.endValFmt +
           '</td><td class="vm-num">' + r.cagrFmt + '</td><td><svg viewBox="0 0 100 28" class="vm-spark"><path d="' + r.sparkPath +
           '" fill="none" stroke="var(--color-accent-700)" stroke-width="1.6"></path></svg></td><td class="text-muted vm-num">' + r.proj10Fmt + "</td></tr>"
       )
@@ -549,12 +631,17 @@
       if (!state.data) return;
       const a = currentAssumptions();
       const YEARS = state.data.YEARS;
-      const METRICS = state.data.METRICS;
+      const METRICS = Object.assign({}, state.data.METRICS, { incomeStatement: withRemainder(state.data.METRICS.incomeStatement) });
       const latestYear = YEARS[YEARS.length - 1];
       const result = renderSection(state.activeSection, a, YEARS, METRICS, latestYear);
       contentEl.innerHTML = result.content;
       walkEl.innerHTML = result.walk;
     }
+
+    contentEl.addEventListener("click", (ev) => {
+      const btn = ev.target.closest && ev.target.closest(".vm-expense-toggle");
+      if (btn) toggleGroup(contentEl, btn);
+    });
 
     navButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
