@@ -37,6 +37,17 @@ DEFAULT_METRICS: list[tuple[str, str, str, str | None, str]] = [
     ("provisions_and_contingencies", "Provisions & Contingencies", "income_statement", '["bank","nbfc"]', "INR_CRORE"),
     ("profit_before_tax", "Profit before Tax", "income_statement", None, "INR_CRORE"),
     ("tax", "Tax", "income_statement", None, "INR_CRORE"),
+    # Ind-AS (Schedule III) expense lines by nature -- general (non-bank)
+    # NSE XBRL taxonomy only. Feed EBITDA/EBIT and the materials-cost (COGS
+    # proxy) rows in web/charts_feed.py; there is no SG&A tag in the
+    # taxonomy ("other expenses" mixes factory and selling/admin costs).
+    ("cost_of_materials_consumed", "Cost of Materials Consumed", "income_statement", None, "INR_CRORE"),
+    ("purchases_of_stock_in_trade", "Purchases of Stock-in-Trade", "income_statement", None, "INR_CRORE"),
+    ("changes_in_inventories", "Changes in Inventories of FG, WIP & Stock-in-Trade", "income_statement", None, "INR_CRORE"),
+    ("employee_benefit_expense", "Employee Benefit Expense", "income_statement", None, "INR_CRORE"),
+    ("other_expenses", "Other Expenses", "income_statement", None, "INR_CRORE"),
+    ("current_tax", "Current Tax", "income_statement", None, "INR_CRORE"),
+    ("deferred_tax", "Deferred Tax", "income_statement", None, "INR_CRORE"),
     ("net_profit", "Net Profit", "income_statement", None, "INR_CRORE"),
     ("eps", "EPS", "income_statement", None, "INR"),
     ("diluted_eps", "Diluted EPS", "income_statement", None, "INR"),
@@ -344,6 +355,18 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
     # documented above for "proprietary"'s deliberately-unmapped rows.
     ("nse", "RevenueFromOperations", "total_revenue"),
     ("nse", "Expenses", "operating_expenses"),
+    # NOTE "Expenses" above is the filing's TOTAL: it already includes the
+    # finance-cost and depreciation lines below (verified: Reliance Q1 FY27
+    # materials + purchases + inventory change + employee + finance +
+    # depreciation + other = Expenses to the rupee).
+    ("nse", "FinanceCosts", "interest_expended"),
+    ("nse", "CostOfMaterialsConsumed", "cost_of_materials_consumed"),
+    ("nse", "PurchasesOfStockInTrade", "purchases_of_stock_in_trade"),
+    ("nse", "ChangesInInventoriesOfFinishedGoodsWorkInProgressAndStockInTrade", "changes_in_inventories"),
+    ("nse", "EmployeeBenefitExpense", "employee_benefit_expense"),
+    ("nse", "OtherExpenses", "other_expenses"),
+    ("nse", "CurrentTax", "current_tax"),
+    ("nse", "DeferredTax", "deferred_tax"),
     ("nse", "DepreciationDepletionAndAmortisationExpense", "depreciation"),
     ("nse", "ProfitBeforeTax", "profit_before_tax"),
     ("nse", "ProfitLossForPeriod", "net_profit"),

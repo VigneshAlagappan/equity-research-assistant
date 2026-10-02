@@ -45,6 +45,7 @@ from storage.db_types import DBConnection
 
 from companies.registry import get_company
 from web.company_kind import is_financial_company
+from web.income_derivations import derive_income_rows, finalize_income_rows
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
 from normalization.periods import fiscal_year_number
 from web.charts_feed import _period_date_range, dividends_from_corporate_actions
@@ -69,6 +70,7 @@ _RAW_METRIC_KEYS = (
     "equity_share_capital", "reserves", "borrowings", "investments",
     "deposits", "advances", "eps", "diluted_eps", "book_value", "dividend_per_share", "sales_per_share",
     "shares_outstanding", "total_shareholders_funds", "interest_earned",
+    "cost_of_materials_consumed", "purchases_of_stock_in_trade", "changes_in_inventories", "employee_benefit_expense", "other_expenses", "current_tax", "deferred_tax",
 )
 
 
@@ -224,6 +226,8 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
     # scale word are chosen client-side (valuation_dashboard.js's fmt())
     # from CURRENCY below, same value regardless of which currency a company
     # reports in.
+    derived_income = derive_income_rows(raw, years)
+
     metrics = {
         "balanceSheet": [
             _row("networth", "Networth (reserves only)", "big", years, networth),
@@ -236,10 +240,21 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
         ],
         "incomeStatement": [
             _row("earnings", "Earnings (Total Income)", "big", years, raw["total_revenue"], row_type="calc"),
+            _row("materialsCost", "Materials cost (COGS proxy)", "big", years, derived_income["materialsCost"], row_type="calc"),
+            _row("employeeCost", "Employee benefit expense", "big", years, raw["employee_benefit_expense"]),
+            _row("otherExpenses", "Other expenses", "big", years, raw["other_expenses"]),
             _row("expenses", "Expenses", "big", years, raw["operating_expenses"]),
+            _row("ebitda", "EBITDA (operating, excl. other income)", "big", years, derived_income["ebitda"], row_type="calc"),
+            _row("ebitdaInclOther", "EBITDA incl. other income", "big", years, derived_income["ebitdaInclOther"], row_type="calc"),
+            _row("depreciation", "Depreciation", "big", years, raw["depreciation"]),
+            _row("ebit", "EBIT (operating, excl. other income)", "big", years, derived_income["ebit"], row_type="calc"),
+            _row("ebitInclOther", "EBIT incl. other income (PBIT)", "big", years, derived_income["ebitInclOther"], row_type="calc"),
             _row("interestOutgo", "Interest Out-go", "big", years, raw["interest_expended"]),
             _row("otherIncome", "Other Income", "big", years, raw["other_income"]),
-            _row("depreciation", "Depreciation", "big", years, raw["depreciation"]),
+            _row("profitBeforeTax", "Profit before Tax (PBT)", "big", years, raw["profit_before_tax"]),
+            _row("taxExpense", "Tax", "big", years, raw["tax"]),
+            _row("currentTax", "Current tax", "big", years, raw["current_tax"]),
+            _row("deferredTax", "Deferred tax", "big", years, raw["deferred_tax"]),
             _row("netProfit", "Net Profit (PAT)", "big", years, raw["net_profit"]),
         ],
         "perShare": [
@@ -274,6 +289,7 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
     }
 
     company = get_company(conn, company_id)
+    metrics["incomeStatement"] = finalize_income_rows(metrics["incomeStatement"], is_financial_company(company))
     if not is_financial_company(company):
         metrics["bankRatios"] = []  # Bank Ratios only apply to banks/financials
         # Likewise the lending-book lines -- deposits/borrowings/advances

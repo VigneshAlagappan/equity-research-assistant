@@ -35,6 +35,16 @@ METRIC = "diluted_eps"
 FIRST_PERIOD_END = "2021-04-01"  # start of FY2022 for a March year-end
 FIRST_US_FISCAL_YEAR = 2022
 
+#: Ind-AS expense/tax lines (general taxonomy) behind the EBITDA / EBIT /
+#: materials-cost rows -- see web/income_derivations.py. `--metrics income`.
+INCOME_STATEMENT_METRICS = (
+    "interest_expended", "cost_of_materials_consumed", "purchases_of_stock_in_trade", "changes_in_inventories",
+    "employee_benefit_expense", "other_expenses", "current_tax", "deferred_tax",
+)
+
+#: Which metrics the NSE (India) path loads this run; set from --metrics.
+ACTIVE_METRICS: tuple[str, ...] = (METRIC,)
+
 
 def _cache_alias_lookups() -> None:
     """Parsing resolves every row label to a metric via a metric_aliases
@@ -67,20 +77,22 @@ def _cache_alias_lookups() -> None:
     nf.get_metric_dictionary_entry = cached_entry
 
 
-def _existing_periods(conn, company_id: str) -> set[tuple[str, str, str | None, str]]:
+def _existing_periods(conn, company_id: str, metrics: tuple[str, ...] | None = None) -> set[tuple]:
+    """(metric, period_type, fiscal_year, quarter, statement_type) already in canonical_financials."""
     have = set()
-    for statement_type in ("consolidated", "standalone"):
-        for period_type in ("annual", "quarterly"):
-            for row in get_canonical_series(conn, company_id, METRIC, period_type, statement_type):
-                have.add((period_type, row["fiscal_year"], row["quarter"], statement_type))
+    for metric in metrics or ACTIVE_METRICS:
+        for statement_type in ("consolidated", "standalone"):
+            for period_type in ("annual", "quarterly"):
+                for row in get_canonical_series(conn, company_id, metric, period_type, statement_type):
+                    have.add((metric, period_type, row["fiscal_year"], row["quarter"], statement_type))
     return have
 
 
 def backfill_company(conn, company_id: str) -> str:
-    """Parse every on-disk NSE filing locally, keep only diluted_eps periods
-    not already in canonical_financials, then insert and reconcile them in
-    ONE batch per statement type -- a handful of DB round trips per company
-    instead of the full pipeline per filing."""
+    """Parse every on-disk NSE filing locally, keep only the ACTIVE_METRICS
+    periods not already in canonical_financials, then insert and reconcile
+    them in ONE batch per statement type -- a handful of DB round trips per
+    company instead of the full pipeline per filing."""
     from companies.lifecycle import assert_active
     from ingestion.validation import validate_observation
     from storage.repositories import insert_financial_observations, reconcile
@@ -98,8 +110,8 @@ def backfill_company(conn, company_id: str) -> str:
     for path in files:
         statement_type = path.stem.split("_")[1]
         for obs in adapter.parse(path, company_id, statement_type=statement_type):
-            key = (obs.period_type, obs.fiscal_year, obs.quarter, statement_type)
-            if obs.metric_key == METRIC and key not in have and not validate_observation(obs):
+            key = (obs.metric_key, obs.period_type, obs.fiscal_year, obs.quarter, statement_type)
+            if obs.metric_key in ACTIVE_METRICS and key not in have and not validate_observation(obs):
                 new_by_statement.setdefault(statement_type, {})[key] = obs
 
     inserted = reconciled = 0
@@ -133,7 +145,7 @@ def backfill_company_us(conn, company_id: str) -> str:
     cik = get_cik_for_ticker(company["fetch_symbol"] or company_id)
     if cik is None:
         raise ValueError(f"could not resolve a SEC CIK for {company_id}")
-    have = _existing_periods(conn, company_id)
+    have = {k[1:] for k in _existing_periods(conn, company_id, (METRIC,))}
     if have:  # already backfilled; new filings arrive through the weekly EDGAR job
         return "skipped (already has diluted_eps)"
     new_obs = {}
@@ -203,6 +215,10 @@ def main() -> None:
     parser.add_argument("--index", help='company_index_membership index_name, e.g. "Nifty 50"')
     parser.add_argument("--country", help='every active company of a country, e.g. "US"')
     parser.add_argument("--limit", type=int, help="only the first N companies of the selection")
+    parser.add_argument("--metrics", choices=("diluted", "income"), default="diluted",
+                        help="diluted = diluted_eps (default); income = Ind-AS expense/tax lines (India only)")
+    parser.add_argument("--skip-financial", action="store_true",
+                        help="drop banks/NBFCs/insurers (sector Financial Services) from the selection")
     args = parser.parse_args()
     conn = open_db()
     if args.companies:
@@ -218,8 +234,16 @@ def main() -> None:
         ids = [r["company_id"] for r in select_company_ids_with_metrics(conn, args.country, ("eps", "net_profit"))]
     else:
         parser.error("give --companies, --index or --country")
+    if args.skip_financial:
+        from companies.registry import get_company
+        from web.company_kind import is_financial_company
+
+        ids = [c for c in ids if not is_financial_company(get_company(conn, c))]
     if args.limit:
         ids = ids[: args.limit]
+    if args.metrics == "income":
+        global ACTIVE_METRICS
+        ACTIVE_METRICS = INCOME_STATEMENT_METRICS
     run_backfill(conn, ids)
 
 
