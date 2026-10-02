@@ -366,3 +366,25 @@ Options that keep Haiku (not yet built; each needs a go-ahead):
 3. **Accept the low rate:** keep reporting `tagging_rate` and treat Haiku edge metrics as low-confidence.
 
 Test rows from all three runs were deleted from Neon (the eval-run rows remain as a record). An earlier Haiku attempt hung for about 48 minutes between two model calls and was stopped; the cause was not diagnosed.
+
+## 15. Link-tagger proof of concept (2026-10-02)
+
+`research/link_tagger.py` assigns evidence to causal links in one small call per hypothesis on Jev's model chain (`JEV_CLASSIFIER_MODEL_CHAIN`, via `route_explicit_chain`; the free-tier Gemma first, Haiku as fallback; both were used). `scripts/tagger_poc.py` compares it with the evaluator's own tags. Not wired into the pipeline.
+
+Maruti case, Haiku evaluation, 48 evidence items across 6 hypotheses:
+
+| | Items tagged |
+|---|---|
+| Evaluator (Haiku) | 19 (40%) |
+| Tagger | 13-14 (27-29%), 12 of its 13-14 agreeing with the evaluator |
+
+Cost: 6 calls, about 4,500 input and 700 output tokens, under $0.01 even if all on Haiku (Gemma is free-tier).
+
+Spot-check of the 13 tags from the first run (judged by me against the chain steps; **not** an independent expert review): about 9 clearly right, 3-4 defensible but ambiguous (e.g. "maximised production despite shortage" tagged to the procurement-cost link; "infrastructure investment" tagged to the cost-base link), and none clearly wrong. Where the tagger left an item untagged but the evaluator tagged it (6 items), most were generic financial evidence (ROA/ROE, net profit growth) that bears on the hypothesis as a whole, so null is arguably right; one clear miss (green-vehicle penetration to link 0).
+
+Findings that change the plan:
+1. **Tagging rate is the wrong target.** Most untagged evidence is generic (profit CAGR, ROA, ROE) and correctly belongs to no single link. A higher rate can mean over-tagging (Sonnet's 88% may include some). The metric should count evidence that supports a *specific link*, judged for correctness, and be validated against a labelled sample.
+2. **The tagger is not the bottleneck; evidence retrieval is.** Across 6 hypotheses almost no retrieved evidence concerns the mechanisms themselves (steel prices, material cost, discounts, interest rates to demand). Edges stay "unsupported" because link-specific evidence is never fetched, not because it was mis-tagged.
+3. The tagger roughly matches the evaluator where both tag and is cheaper than a Sonnet evaluation, but offers no gain in tagging rate here, so it is not worth wiring in yet.
+
+Recommendation: do not wire the tagger in. Next, pursue link-targeted evidence retrieval (query per chain link using the macro and company series on file) and redefine the metric. Test rows from this run were deleted from Neon.
