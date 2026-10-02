@@ -95,6 +95,102 @@ def _existing_periods(conn, company_id: str, metrics: tuple[str, ...] | None = N
     return have
 
 
+def _reconcile_new(conn, observations) -> int:
+    """Reconcile the just-inserted observations. On Postgres, keys whose every
+    observation comes from ONE source (the usual case for these new lines: only
+    NSE XBRL / only SEC EDGAR report them) are decided in bulk -- same choice
+    and reason strings as storage.repositories_pg.reconcile -- instead of ~8
+    round trips and a commit each, which over the WAN to Neon dominated the
+    runtime (~1 min per company). Anything else (several sources, an existing
+    canonical row) still goes through the real reconcile()."""
+    from storage.repositories import reconcile
+
+    obs = list(observations)
+    try:
+        import psycopg2
+        import psycopg2.extras
+
+        is_pg = isinstance(conn, psycopg2.extensions.connection)
+    except ImportError:  # pragma: no cover
+        is_pg = False
+    if not is_pg or not obs:
+        return sum(
+            1 for o in obs
+            if reconcile(conn, o.company_id, o.metric_key, o.period_type, o.fiscal_year, o.quarter, o.statement_type) is not None
+        )
+
+    from storage.repositories_pg import NORMALIZATION_VERSION, XBRL_SOURCE_ID, _utcnow_iso
+
+    company_id = obs[0].company_id
+    wanted = {(o.metric_key, o.period_type, o.fiscal_year, o.quarter, o.statement_type) for o in obs}
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT fo.observation_id, fo.metric_key, fo.period_type, fo.fiscal_year, fo.quarter, fo.statement_type,
+                   fo.value, fo.unit, fo.source, fo.retrieved_at
+            FROM financial_observations fo
+            WHERE fo.company_id = %s AND fo.metric_key = ANY(%s)
+            """,
+            (company_id, sorted({k[0] for k in wanted})),
+        )
+        rows = cur.fetchall()
+        cur.execute(
+            "SELECT metric_key, period_type, fiscal_year, quarter, statement_type FROM canonical_financials "
+            "WHERE company_id = %s AND metric_key = ANY(%s)",
+            (company_id, sorted({k[0] for k in wanted})),
+        )
+        have_canonical = {(r["metric_key"], r["period_type"], r["fiscal_year"], r["quarter"], r["statement_type"]) for r in cur.fetchall()}
+    by_key: dict[tuple, list] = {}
+    for r in rows:
+        key = (r["metric_key"], r["period_type"], r["fiscal_year"], r["quarter"], r["statement_type"])
+        if key in wanted:
+            by_key.setdefault(key, []).append(r)
+
+    fast, slow = [], []
+    for key in wanted:
+        group = by_key.get(key, [])
+        if group and key not in have_canonical and len({r["source"] for r in group}) == 1:
+            fast.append((key, max(group, key=lambda r: (r["retrieved_at"], r["observation_id"]))))
+        else:
+            slow.append(key)
+
+    now = _utcnow_iso()
+    if fast:
+        with conn.cursor() as cur:
+            ids = psycopg2.extras.execute_values(
+                cur,
+                """
+                INSERT INTO canonical_financials (
+                    company_id, metric_key, period_type, fiscal_year, quarter, statement_type,
+                    canonical_value, unit, chosen_observation_id, reconciliation_reason,
+                    normalization_version, decided_at
+                ) VALUES %s RETURNING canonical_id, chosen_observation_id
+                """,
+                [
+                    (company_id, k[0], k[1], k[2], k[3], k[4], r["value"], r["unit"], r["observation_id"],
+                     f"source '{r['source']}' — period validated on NSE XBRL" if r["source"] == XBRL_SOURCE_ID
+                     else "only source available",
+                     NORMALIZATION_VERSION, now)
+                    for k, r in fast
+                ],
+                fetch=True,
+            )
+            reason_by_obs = {r["observation_id"]: (f"source '{r['source']}' — period validated on NSE XBRL"
+                                                    if r["source"] == XBRL_SOURCE_ID else "only source available")
+                             for _, r in fast}
+            psycopg2.extras.execute_values(
+                cur,
+                "INSERT INTO reconciliation_log (canonical_id, observation_id, considered_at, was_chosen, note) VALUES %s",
+                [(i["canonical_id"], i["chosen_observation_id"], now, 1, reason_by_obs[i["chosen_observation_id"]]) for i in ids],
+            )
+        conn.commit()
+    done = len(fast)
+    for key in slow:
+        if reconcile(conn, company_id, *key) is not None:
+            done += 1
+    return done
+
+
 def backfill_company(conn, company_id: str) -> str:
     """Parse every on-disk NSE filing locally, keep only the ACTIVE_METRICS
     periods not already in canonical_financials, then insert and reconcile
@@ -132,10 +228,7 @@ def backfill_company(conn, company_id: str) -> str:
         # several round trips -- which is needed when a period first becomes
         # XBRL-validated, but not here: these periods already are, and only
         # diluted_eps changed.
-        for obs in valid:
-            if reconcile(conn, obs.company_id, obs.metric_key, obs.period_type, obs.fiscal_year,
-                         obs.quarter, obs.statement_type) is not None:
-                reconciled += 1
+        reconciled += _reconcile_new(conn, valid)
     return f"files={len(files)} inserted={inserted} reconciled={reconciled}"
 
 
@@ -164,10 +257,7 @@ def backfill_company_us(conn, company_id: str) -> str:
             new_obs[key] = obs
     valid = list(new_obs.values())
     insert_financial_observations(conn, valid)
-    reconciled = sum(
-        1 for o in valid
-        if reconcile(conn, o.company_id, o.metric_key, o.period_type, o.fiscal_year, o.quarter, o.statement_type) is not None
-    )
+    reconciled = _reconcile_new(conn, valid)
     return f"cik={cik} inserted={len(valid)} reconciled={reconciled}"
 
 
