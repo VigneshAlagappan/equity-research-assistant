@@ -723,3 +723,11 @@ def from_repo_relative(path: str) -> Path:
 # what it did before. Any failure inside the new code is logged and swallowed
 # either way -- it must never fail an investigation.
 CAUSAL_GRAPH_ENABLED = os.environ.get("CAUSAL_GRAPH_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# Model for the L5 hypothesis-EVALUATION step (research/hypothesis_evaluator.py),
+# the dominant LLM cost of an investigation (~85% in the first measured run).
+# Haiku during the MVP stage to keep golden-eval and trial runs cheap; set
+# CAUSAL_EVALUATION_MODEL="" to fall back to ANTHROPIC_MODEL / the tier chain
+# (previously Sonnet-class for the deep tier). Compare quality before changing it
+# for production -- it is part of config_hash so runs stay comparable.
+CAUSAL_EVALUATION_MODEL = os.environ.get("CAUSAL_EVALUATION_MODEL", "claude-haiku-4-5").strip()

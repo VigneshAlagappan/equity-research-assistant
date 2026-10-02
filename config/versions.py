@@ -59,6 +59,7 @@ def config_hash() -> str:
     return _short_hash(json.dumps({
         "max_evidence_iterations": investigation.MAX_EVIDENCE_ITERATIONS,
         "timeout_seconds": investigation.INVESTIGATION_TIMEOUT_SECONDS,
+        "evaluation_model": settings.CAUSAL_EVALUATION_MODEL,
         "level_model_chain": {str(k): v for k, v in sorted(settings.LEVEL_MODEL_CHAIN.items())},
     }, sort_keys=True))
 

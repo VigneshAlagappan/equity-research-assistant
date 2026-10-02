@@ -226,7 +226,9 @@ def evaluate_hypothesis(
     # leaving this unset lets llm/router.py respect
     # TIER_PREFERRED_MODEL[hardness.tier] (the operator's actual configured
     # policy) instead of silently overriding it on every call.
-    pinned_model = model or ANTHROPIC_MODEL
+    from config import settings
+
+    pinned_model = model or settings.CAUSAL_EVALUATION_MODEL or ANTHROPIC_MODEL
     steps = list(getattr(hypothesis, "chain_steps", None) or [])
     link_count = max(len(steps) - 1, 0)
     chain_block = (

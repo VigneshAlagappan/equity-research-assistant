@@ -134,3 +134,29 @@ def test_causal_failure_never_fails_the_investigation(conn, monkeypatch):
     investigation = run_investigation(conn, "Why did margins decline?", ["HDFCBANK"])
     assert investigation.synthesis is not None
     assert get_investigation(conn, _ID)["s3_key"]
+
+
+def test_evaluation_step_is_pinned_to_the_configured_model(conn, monkeypatch):
+    seen = []
+    import llm.router as router
+
+    original = router.route
+
+    def spy(*args, **kwargs):
+        seen.append((kwargs.get("system", "")[:20], kwargs.get("pinned_model")))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr("research.hypothesis_evaluator.route", spy)
+    monkeypatch.setattr("config.settings.CAUSAL_EVALUATION_MODEL", "claude-haiku-4-5")
+    run_investigation(conn, "Why did margins decline?", ["HDFCBANK"])
+    eval_calls = [m for s, m in seen if s.startswith(HYPOTHESIS_EVALUATOR_SYSTEM_PROMPT[:20])]
+    assert eval_calls and set(eval_calls) == {"claude-haiku-4-5"}
+
+
+def test_evaluation_model_is_part_of_config_hash(monkeypatch):
+    from config.versions import config_hash
+
+    monkeypatch.setattr("config.settings.CAUSAL_EVALUATION_MODEL", "claude-haiku-4-5")
+    a = config_hash()
+    monkeypatch.setattr("config.settings.CAUSAL_EVALUATION_MODEL", "claude-sonnet-5")
+    assert config_hash() != a
