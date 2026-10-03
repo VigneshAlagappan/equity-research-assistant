@@ -170,7 +170,7 @@
   const SECTION_META = {
     balanceSheet: { title: "Balance Sheet", desc: function (p, c) { return "Core balance-sheet lines, " + periodRange(p) + ", in " + (c === "USD" ? "USD millions" : "₹ Crore") + "."; } },
     incomeStatement: { title: "Income Statement", desc: function (p, c) { return "Revenue, expenses and profit, " + periodRange(p) + ", in " + (c === "USD" ? "USD millions" : "₹ Crore") + "."; } },
-    perShare: { title: "Per-Share Metrics", desc: function () { return "EPS, book value and dividend on a per-share basis."; } },
+    perShare: { title: "Per-Share Metrics", desc: function () { return "EPS, diluted EPS, book value and dividend on a per-share basis, restated for later splits and bonus issues."; } },
     profitability: { title: "Profitability Ratios", desc: function (p) { return "Margins and returns on capital, " + periodRange(p) + "."; } },
     bankRatios: { title: "Bank-Specific Ratios", desc: function () { return "Credit-deposit and coverage ratios specific to a banking balance sheet."; } },
     valuation: { title: "Valuation", desc: function () { return "Historical price and valuation multiples."; } },
@@ -206,10 +206,13 @@
   }
 
   function buildRow(metric, periodKeys, currency) {
-    const startVal = metric.values[0];
-    const endVal = metric.values[metric.values.length - 1];
-    const cagrVal = cagr(startVal, endVal, elapsedYears(periodKeys[0], periodKeys[periodKeys.length - 1]));
+    const first = firstNonNull(metric.values);
+    const last = lastNonNull(metric.values);
+    const cagrVal = first.idx < 0 || first.idx === last.idx ? null
+      : cagr(first.val, last.val, elapsedYears(periodKeys[first.idx], periodKeys[last.idx]));
     return {
+      key: metric.key,
+      values: metric.values,
       label: metric.label,
       type: metric.type || "fact",
       valuesFmt: metric.values.map((v) => fmt(v, metric.unit, currency)),
@@ -225,6 +228,7 @@
   // period-end close, so it's independent of the Annual/Quarterly toggle.
   function buildRatioContext(periods, periodKeys, METRICS, currency, price, sharesOutstanding, sharesOutstandingFy) {
     const lastEps = lastVal(METRICS.perShare, "eps");
+    const lastDilutedEps = lastVal(METRICS.perShare, "dilutedEps");
     const lastBv = lastVal(METRICS.perShare, "bookValue");
     const lastDividend = lastVal(METRICS.perShare, "dividend");
     const lastSalesPerShare = lastVal(METRICS.perShare, "salesPerShare");
@@ -266,7 +270,7 @@
     return {
       periods: periods, currentPeriodLabel: currentPeriodLabel, currency: currency, price: price,
       shares: shares, sharesFy: sharesFy,
-      lastEps: lastEps, lastBv: lastBv, lastDividend: lastDividend, lastSalesPerShare: lastSalesPerShare,
+      lastEps: lastEps, lastDilutedEps: lastDilutedEps, lastBv: lastBv, lastDividend: lastDividend, lastSalesPerShare: lastSalesPerShare,
       lastNetProfit: lastNetProfit, lastRevenue: lastRevenue, lastRoe: lastRoe, lastPayout: lastPayout,
       lastNetMargin: lastNetMargin, lastTaxRate: lastTaxRate, lastRetention: lastRetention,
       lastRoa: lastRoa, lastCdRatio: lastCdRatio, lastIntCoverage: lastIntCoverage,
@@ -313,6 +317,7 @@
     dividendYield: { label: "Dividend Yield", value: (c) => fmt(c.dividendYield, "pct"), type: "calc" },
     roe: { label: "ROE", value: (c) => fmt(c.lastRoe, "pct"), type: "calc" },
     eps: { label: "EPS", value: (c) => fmt(c.lastEps, "perShare", c.currency), type: "calc" },
+    dilutedEps: { label: "Diluted EPS", value: (c) => fmt(c.lastDilutedEps, "perShare", c.currency), type: "fact" },
     priceToBook: { label: "Price to Book Value", value: (c) => fmt(c.priceToBook, "x"), type: "calc" },
     debtToEquity: { label: "Debt to Equity", value: (c) => fmt(c.debtToEquity, "x"), type: "calc" },
     payout: { label: "Dividend Payout", value: (c) => fmt(c.lastPayout, "pct"), type: "calc" },
@@ -398,7 +403,24 @@
         '<div class="empty-state">No data for this view yet — try the other Annual/Quarterly toggle.</div>'
       );
     }
-    const sectionRows = sectionId === "valuation" ? valuationSection(METRICS) : METRICS[sectionId];
+    const allRows = sectionId === "valuation" ? valuationSection(METRICS) : METRICS[sectionId];
+    // Drop period columns where no row has a real value — a blank column
+    // tells the reader nothing, and leaving them in also blanked the
+    // Growth column (CAGR was taken from values[0] / values[last]).
+    const keepIdx = [];
+    periods.forEach((_, i) => {
+      if (allRows.some((m) => m.values[i] !== null && m.values[i] !== undefined && Number.isFinite(m.values[i]))) keepIdx.push(i);
+    });
+    if (!keepIdx.length) {
+      return (
+        "<h2>" + escapeHtml(meta.title) + "</h2>" +
+        '<div class="empty-state">No data for this view yet — try the other Annual/Quarterly toggle.</div>'
+      );
+    }
+    const pick = (arr) => (arr ? keepIdx.map((i) => arr[i]) : arr);
+    periods = pick(periods);
+    periodKeys = pick(periodKeys);
+    const sectionRows = allRows.map((m) => Object.assign({}, m, { values: pick(m.values), sources: pick(m.sources) }));
     const rows = sectionRows.map((m) => buildRow(m, periodKeys, currency));
 
     let kpiHtml = "";
@@ -426,17 +448,62 @@
     // (base.html), reused here rather than a new badge design. Row-level,
     // not per-cell: web/charts_feed.py's _row() docstring explains why a
     // fallback-derived row is "calc" for its whole column.
+    // Parent rows with a collapsible breakdown: each part is shown with its
+    // share of the parent in brackets. Expenses also gets a remainder row
+    // (finance cost, depreciation) so its shares add up to 100%.
+    const GROUPS = sectionId === "incomeStatement"
+      ? { expenses: ["costOfRevenue", "sellingGeneralAdmin", "researchAndDevelopment", "materialsCost", "employeeCost", "otherExpenses"], taxExpense: ["currentTax", "deferredTax"],
+          ebitda: ["otherIncome", "ebitdaInclOther"], ebit: ["ebitInclOther"] }
+      : {};
+    const SHARE_PARENTS = { expenses: true, taxExpense: true }; // others are variants, not a split
+    const byKey = {};
+    rows.forEach((r) => { byKey[r.key] = r; });
+    // A part only nests under a parent that is actually shown (financial
+    // companies have no EBITDA row, so their Other Income stays a plain line).
+    const parentOf = {};
+    Object.keys(GROUPS).forEach((p) => { if (byKey[p]) GROUPS[p].forEach((c) => { parentOf[c] = p; }); });
+    const num = (v) => v !== null && v !== undefined && Number.isFinite(v);
+    const shareFmt = (r, parent) => r.valuesFmt.map((f, i) => {
+      const v = r.values[i], t = parent.values[i];
+      return num(v) && num(t) && t !== 0 ? f + ' <span class="vm-share">(' + Math.round((v / t) * 100) + "%)</span>" : f;
+    });
+    const rowHtml = (r, parentKey, extra) => {
+      const parent = parentKey && byKey[parentKey];
+      const cells = parent && SHARE_PARENTS[parentKey] ? shareFmt(r, parent) : r.valuesFmt;
+      return (
+        "<tr" + (parent ? ' class="vm-part-of-' + parentKey + '" hidden' : "") + "><td" + (parent ? ' class="vm-sub-label"' : "") + ">" +
+        escapeHtml(r.label) +
+        (GROUPS[r.key] && GROUPS[r.key].some((c) => byKey[c])
+          ? ' <button type="button" class="vm-expense-toggle" data-group="' + r.key + '" aria-expanded="false" title="Show breakdown / variant">+</button>' : "") +
+        "</td>" +
+        '<td><span class="tag ' + (r.type === "calc" ? "tag-calculation" : "tag-fact") + '">' +
+        (r.type === "calc" ? "CALC" : "FACT") + "</span></td>" +
+        '<td><svg viewBox="0 0 100 28" class="vm-spark"><path d="' + r.sparkPath +
+        '" fill="none" stroke="var(--color-accent-700)" stroke-width="1.6"></path></svg></td>' +
+        // The per-cell source letter (provTag) is deliberately not rendered in the
+        // Financials table; the feed still carries "sources" and provTag() is kept
+        // so it can be switched back on by appending it here.
+        cells.map((v) => '<td class="vm-num">' + v + "</td>").join("") +
+        '<td class="vm-num">' + r.cagrFmt + "</td></tr>"
+      );
+    };
+    // Remainder of Expenses not covered by the three breakdown lines.
+    let remainderRow = null;
+    const exp = byKey.expenses;
+    if (exp && GROUPS.expenses && GROUPS.expenses.some((k) => byKey[k])) {
+      const vals = exp.values.map((t, i) => {
+        const parts = GROUPS.expenses.map((k) => byKey[k] && byKey[k].values[i]).filter(num);
+        return num(t) && parts.length ? t - parts.reduce((a, b) => a + b, 0) : null;
+      });
+      if (vals.some(num)) {
+        remainderRow = buildRow({ key: "expensesRemainder", label: byKey.costOfRevenue || byKey.sellingGeneralAdmin || byKey.researchAndDevelopment ? "Other operating cost" : "Finance cost, depreciation & other", type: "calc", unit: exp.unit, values: vals }, periodKeys, currency);
+        remainderRow.values = vals;
+        byKey.expensesRemainder = remainderRow;
+      }
+    }
+    const lastExpensePart = GROUPS.expenses ? GROUPS.expenses.filter((k) => byKey[k]).pop() : null;
     const bodyRows = rows
-      .map(
-        (r) =>
-          "<tr><td>" + escapeHtml(r.label) + '</td>' +
-          '<td><span class="tag ' + (r.type === "calc" ? "tag-calculation" : "tag-fact") + '">' +
-          (r.type === "calc" ? "CALC" : "FACT") + "</span></td>" +
-          '<td><svg viewBox="0 0 100 28" class="vm-spark"><path d="' + r.sparkPath +
-          '" fill="none" stroke="var(--color-accent-700)" stroke-width="1.6"></path></svg></td>' +
-          r.valuesFmt.map((v, i) => '<td class="vm-num">' + v + provTag(r.sources, i) + "</td>").join("") +
-          '<td class="vm-num">' + r.cagrFmt + "</td></tr>"
-      )
+      .map((r) => rowHtml(r, parentOf[r.key]) + (remainderRow && r.key === lastExpensePart ? rowHtml(remainderRow, "expenses") : ""))
       .join("");
 
     return (
@@ -453,6 +520,27 @@
   function renderSection(section, periods, periodKeys, METRICS, currency, price, sharesOutstanding, sharesOutstandingFy, ratioKeys) {
     if (section === "overview") return renderOverview(periods, periodKeys, METRICS, currency, price, sharesOutstanding, sharesOutstandingFy, ratioKeys);
     return renderTableSection(section, periods, periodKeys, METRICS, currency);
+  }
+
+  const INDIA_FIRST_FY = 2023;
+
+  // Keeps only periods whose fiscal year is >= firstFy, across PERIODS,
+  // PERIOD_KEYS and every metric row's values/sources (index-aligned).
+  function trimBefore(data, firstFy) {
+    const keys = data.PERIOD_KEYS || (data.YEARS || []).map((y) => [y, 0]);
+    const keep = [];
+    keys.forEach((k, i) => { if (k[0] >= firstFy) keep.push(i); });
+    if (keep.length === keys.length) return data;
+    const pick = (arr) => (arr ? keep.map((i) => arr[i]) : arr);
+    const METRICS = {};
+    Object.keys(data.METRICS).forEach((sec) => {
+      METRICS[sec] = data.METRICS[sec].map((m) => Object.assign({}, m, { values: pick(m.values), sources: pick(m.sources) }));
+    });
+    const out = Object.assign({}, data, { METRICS: METRICS });
+    if (data.PERIODS) out.PERIODS = pick(data.PERIODS);
+    if (data.PERIOD_KEYS) out.PERIOD_KEYS = pick(data.PERIOD_KEYS);
+    if (data.YEARS) out.YEARS = pick(data.YEARS);
+    return out;
   }
 
   function init(root, periodToggleEl) {
@@ -494,6 +582,16 @@
       );
     }
 
+    contentEl.addEventListener("click", (ev) => {
+      const btn = ev.target.closest && ev.target.closest(".vm-expense-toggle");
+      if (!btn) return;
+      const group = btn.getAttribute("data-group");
+      const open = btn.getAttribute("aria-expanded") !== "true";
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      btn.textContent = open ? "\u2212" : "+";
+      contentEl.querySelectorAll(".vm-part-of-" + group).forEach((tr) => { tr.hidden = !open; });
+    });
+
     function load() {
       const url = baseUrl + (baseUrl.indexOf("?") >= 0 ? "&" : "?") + "period_type=" + state.periodType;
       contentEl.innerHTML = '<p class="muted">Loading model&hellip;</p>';
@@ -503,6 +601,11 @@
           return r.json();
         })
         .then((data) => {
+          // Financials tab (the one with the section sidebar) shows Indian
+          // companies from FY2023 onwards only; older history is hidden.
+          // The Overview tab's snapshot widget (no sidebar) and every other
+          // consumer of this feed keep the full history.
+          if (navButtons.length && (data.CURRENCY || "INR") === "INR") data = trimBefore(data, INDIA_FIRST_FY);
           state.data = data;
           render();
         })

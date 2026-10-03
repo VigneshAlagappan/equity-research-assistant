@@ -1,0 +1,80 @@
+{#
+  Structured causal feedback (docs/L5_MVP_TASK_PLAN.md, M8). A collapsed
+  <details> per hypothesis: one control for the hypothesis as a whole and one
+  per causal link (edge). Writes the feedback ledger only -- nothing here
+  changes a verdict, a graph or a weight. Rendered only for signed-in viewers
+  of an investigation that has a persisted graph (`feedback` is None otherwise).
+#}
+{% macro causal_feedback(h, feedback) %}
+{% if feedback %}
+{% set edges = feedback.edges.get(h.hypothesis_id, []) %}
+<details class="causal-feedback" data-investigation="{{ feedback.investigation_id }}">
+  <summary class="signal-section-label" style="cursor:pointer;">Give feedback on this explanation</summary>
+  <div class="causal-feedback-body">
+    <div class="causal-feedback-row" data-target="hypothesis" data-target-id="{{ h.hypothesis_id }}">
+      <span class="causal-feedback-label">This hypothesis</span>
+      <select class="causal-feedback-type" aria-label="Feedback on hypothesis">
+        <option value="">—</option>
+        {% for key, label in feedback.types.items() if key in ("CORRECT", "NOT_RELEVANT", "MISSING_DRIVER", "INSUFFICIENT_EVIDENCE") %}
+        <option value="{{ key }}"{{ ' selected' if feedback.mine.get(h.hypothesis_id ~ '|') == key }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% for e in edges %}
+    <div class="causal-feedback-row" data-target="edge" data-target-id="{{ e.edge_id }}">
+      <span class="causal-feedback-label">{{ e.label }}</span>
+      <select class="causal-feedback-type" aria-label="Feedback on link {{ e.label }}">
+        <option value="">—</option>
+        {% for key, label in feedback.types.items() if key not in ("MISSING_DRIVER", "MISSING_MEDIATOR") %}
+        <option value="{{ key }}"{{ ' selected' if feedback.mine.get(h.hypothesis_id ~ '|' ~ e.edge_id) == key }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endfor %}
+    <textarea class="causal-feedback-comment" rows="2" maxlength="2000" placeholder="Optional comment (does not replace the choices above)"></textarea>
+    <button type="button" class="causal-feedback-save">Save feedback</button>
+    <span class="causal-feedback-status" role="status" aria-live="polite"></span>
+  </div>
+</details>
+{% endif %}
+{% endmacro %}
+
+{% macro causal_feedback_script(feedback) %}
+{% if feedback %}
+<style>
+  .causal-feedback { margin: 10px 0; }
+  .causal-feedback-body { display: grid; gap: 6px; padding-top: 8px; }
+  .causal-feedback-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .causal-feedback-label { font-size: 0.9em; }
+  .causal-feedback-comment { width: 100%; box-sizing: border-box; }
+  .causal-feedback-status { margin-left: 8px; font-size: 0.85em; opacity: 0.8; }
+</style>
+<script>
+(function () {
+  document.querySelectorAll(".causal-feedback").forEach(function (box) {
+    var inv = box.getAttribute("data-investigation");
+    var status = box.querySelector(".causal-feedback-status");
+    box.querySelector(".causal-feedback-save").addEventListener("click", function () {
+      var rows = Array.prototype.slice.call(box.querySelectorAll(".causal-feedback-row")).filter(function (r) {
+        return r.querySelector(".causal-feedback-type").value;
+      });
+      if (!rows.length) { status.textContent = "Choose at least one option."; return; }
+      var comment = box.querySelector(".causal-feedback-comment").value;
+      status.textContent = "Saving…";
+      Promise.all(rows.map(function (r, i) {
+        return fetch("/investigate/" + encodeURIComponent(inv) + "/feedback", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            target: r.getAttribute("data-target"), target_id: r.getAttribute("data-target-id"),
+            feedback_type: r.querySelector(".causal-feedback-type").value,
+            comment: i === 0 ? comment : ""   // the comment rides on the first item only
+          })
+        }).then(function (resp) { if (!resp.ok) throw new Error("HTTP " + resp.status); });
+      })).then(function () { status.textContent = "Saved. Thank you."; })
+        .catch(function () { status.textContent = "Could not save feedback."; });
+    });
+  });
+})();
+</script>
+{% endif %}
+{% endmacro %}

@@ -478,6 +478,22 @@ def select_company_ids_by_status(conn: DBConnection, status: str) -> list[Row]:
         cur.execute("SELECT company_id FROM companies WHERE status = %s ORDER BY company_id", (status,))
         return cur.fetchall()
 
+def select_company_ids_with_metrics(conn: DBConnection, country: str, metric_keys: tuple[str, ...]) -> list[Row]:
+    """company_id of every `country` company that has at least one
+    canonical_financials row for any of `metric_keys` (i.e. financials are
+    actually ingested, not just the company registered)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT c.company_id FROM companies c
+            JOIN canonical_financials f ON f.company_id = c.company_id
+            WHERE c.country = %s AND f.metric_key = ANY(%s)
+            ORDER BY c.company_id
+            """,
+            (country, list(metric_keys)),
+        )
+        return cur.fetchall()
+
 
 def select_active_companies_by_country(conn: DBConnection, country: str) -> list[Row]:
     """company_id for every active company registered under `country`

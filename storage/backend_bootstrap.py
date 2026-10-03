@@ -36,6 +36,8 @@ import sys
 from config.settings import DATABASE_BACKEND
 
 _WHOLESALE_SWAP_MODULES = (
+    ("storage.causal_graph_repository", "storage.causal_graph_repository_pg"),
+    ("storage.causal_repository", "storage.causal_repository_pg"),
     ("storage.company_repository", "storage.company_repository_pg"),
     ("storage.fact_store", "storage.fact_store_pg"),
     ("storage.indicator_repository", "storage.indicator_repository_pg"),

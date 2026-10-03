@@ -1,0 +1,102 @@
+{
+  "case_id": "l5_tatasteel_cross_sector_margin",
+  "benchmark_version": "v1",
+  "question": "Why has Tata Steel's margin moved recently? Evaluate coking coal and iron ore costs, steel prices and realisations, volumes, and demand from construction and auto customers.",
+  "company_ids": [
+    "TATASTEEL"
+  ],
+  "as_of": null,
+  "expected_edges": [
+    {
+      "edge_id": "coal_ore_cost",
+      "source_aliases": [
+        "coking coal",
+        "iron ore",
+        "coal",
+        "raw material",
+        "energy"
+      ],
+      "target_aliases": [
+        "cost",
+        "input cost",
+        "material cost",
+        "cogs",
+        "margin"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "cost_margin",
+      "source_aliases": [
+        "cost",
+        "input cost",
+        "material cost",
+        "cogs",
+        "raw material"
+      ],
+      "target_aliases": [
+        "margin",
+        "ebitda",
+        "profit",
+        "profitability"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "price_margin",
+      "source_aliases": [
+        "steel price",
+        "realisation",
+        "price",
+        "spread"
+      ],
+      "target_aliases": [
+        "margin",
+        "ebitda",
+        "revenue",
+        "profit"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "demand_volume",
+      "source_aliases": [
+        "demand",
+        "construction",
+        "auto",
+        "infrastructure",
+        "customer"
+      ],
+      "target_aliases": [
+        "volume",
+        "sales",
+        "steel demand",
+        "shipments",
+        "price"
+      ],
+      "importance": "essential"
+    },
+    {
+      "edge_id": "volume_margin",
+      "source_aliases": [
+        "volume",
+        "shipments",
+        "utilisation",
+        "capacity"
+      ],
+      "target_aliases": [
+        "margin",
+        "ebitda",
+        "profit",
+        "operating leverage"
+      ],
+      "importance": "supporting"
+    }
+  ],
+  "known_weak_explanations": [
+    "currency moves as the main driver"
+  ],
+  "reviewed_by": null,
+  "reviewed_on": null,
+  "authoring_note": "DRAFT authored 2026-10-02 from domain knowledge for the L5 MVP. Aliases are concept keywords, not phrases. Not a reviewed benchmark until reviewed_by/reviewed_on are filled by a named reviewer. Cross-sector case: the steel demand link crosses into construction and auto."
+}

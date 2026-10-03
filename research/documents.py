@@ -221,6 +221,95 @@ def _extract_pdf_text_from_bytes(data: bytes) -> str | None:
         return None
 
 
+#: Formats the Docs tab's "Other" type accepts, beyond PDF.
+OFFICE_SUFFIXES = (".xls", ".xlsx", ".doc", ".docx")
+ANALYZABLE_SUFFIXES = (".pdf",) + OFFICE_SUFFIXES
+#: A sheet/section is split so one huge workbook doesn't become one chunk.
+_ROWS_PER_PAGE = 200
+
+
+def _pages_from_xlsx(data: bytes) -> list[str]:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(BytesIO(data), read_only=True, data_only=True)
+    return _sheet_pages((ws.title, ws.iter_rows(values_only=True)) for ws in wb.worksheets)
+
+
+def _pages_from_xls(data: bytes) -> list[str]:
+    import xlrd  # optional dependency; ImportError is handled by the caller
+
+    book = xlrd.open_workbook(file_contents=data)
+    return _sheet_pages(
+        (sh.name, (sh.row_values(i) for i in range(sh.nrows))) for sh in book.sheets()
+    )
+
+
+def _sheet_pages(sheets) -> list[str]:
+    pages: list[str] = []
+    for title, rows in sheets:
+        lines: list[str] = []
+        for row in rows:
+            cells = ["" if c is None else str(c).strip() for c in row]
+            if any(cells):
+                lines.append(" | ".join(cells).rstrip(" |"))
+        for start in range(0, len(lines), _ROWS_PER_PAGE):
+            pages.append(f"[Sheet: {title}]\n" + "\n".join(lines[start:start + _ROWS_PER_PAGE]))
+    return pages
+
+
+def _pages_from_docx(data: bytes) -> list[str]:
+    import zipfile
+    from xml.etree import ElementTree
+
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        root = ElementTree.fromstring(zf.read("word/document.xml"))
+    paragraphs = []
+    for para in root.iter(f"{ns}p"):
+        text = "".join(t.text or "" for t in para.iter(f"{ns}t")).strip()
+        if text:
+            paragraphs.append(text)
+    return ["\n".join(paragraphs[i:i + _ROWS_PER_PAGE]) for i in range(0, len(paragraphs), _ROWS_PER_PAGE)]
+
+
+def _pages_from_doc(data: bytes) -> list[str]:
+    """Legacy .doc has no pure-Python reader; uses antiword or catdoc if
+    installed on the host, otherwise the file is stored but not analyzable."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    tool = shutil.which("antiword") or shutil.which("catdoc")
+    if tool is None:
+        return []
+    with tempfile.NamedTemporaryFile(suffix=".doc") as tmp:
+        tmp.write(data)
+        tmp.flush()
+        out = subprocess.run([tool, tmp.name], capture_output=True, timeout=60, check=True).stdout
+    lines = out.decode("utf-8", errors="replace").splitlines()
+    return ["\n".join(lines[i:i + _ROWS_PER_PAGE * 2]) for i in range(0, len(lines), _ROWS_PER_PAGE * 2)]
+
+
+_OFFICE_READERS = {".xlsx": _pages_from_xlsx, ".xls": _pages_from_xls, ".docx": _pages_from_docx, ".doc": _pages_from_doc}
+
+
+def _office_pages(data: bytes, suffix: str) -> list[str] | None:
+    try:
+        pages = [p for p in _OFFICE_READERS[suffix](data) if p.strip()]
+    except Exception:  # corrupt/encrypted/unsupported file or missing optional dep: skip, don't crash the batch
+        return None
+    return pages or None
+
+
+def _document_suffix(row: Row) -> str:
+    key = row["storage_object_key"] or row["raw_file_path"]
+    if key:
+        return Path(key).suffix.lower()
+    if row["source_url"]:
+        return Path(urlparse(row["source_url"]).path).suffix.lower()
+    return ""
+
+
 def _looks_like_pdf_url(url: str) -> bool:
     return urlparse(url).path.lower().endswith(".pdf")
 
@@ -258,7 +347,7 @@ def _fetch_document_bytes(row: Row) -> bytes | None:
     (non-PDF, missing/unfetchable file or link)."""
     key = row["storage_object_key"] or row["raw_file_path"]
     if key:
-        if Path(key).suffix.lower() != ".pdf":
+        if Path(key).suffix.lower() not in ANALYZABLE_SUFFIXES:
             return None
         store = default_document_store()
         if not store.exists(key):
@@ -267,7 +356,7 @@ def _fetch_document_bytes(row: Row) -> bytes | None:
             return store.retrieve(key)
         except DocumentStoreError:
             return None
-    if row["source_url"] and _looks_like_pdf_url(row["source_url"]):
+    if row["source_url"] and _document_suffix(row) in ANALYZABLE_SUFFIXES:
         return _fetch_url_bytes(row["source_url"])
     return None
 
@@ -301,7 +390,13 @@ def document_text(row: Row) -> str | None:
     if cache_key in _DOCUMENT_TEXT_CACHE:
         return _DOCUMENT_TEXT_CACHE[cache_key]
     data = _fetch_document_bytes(row)
-    text = None if data is None else _extract_pdf_text_from_bytes(data)
+    if data is None:
+        text = None
+    elif _document_suffix(row) in OFFICE_SUFFIXES:
+        pages = _office_pages(data, _document_suffix(row))
+        text = "\n".join(pages).strip() or None if pages else None
+    else:
+        text = _extract_pdf_text_from_bytes(data)
     _DOCUMENT_TEXT_CACHE[cache_key] = text
     return text
 
@@ -318,6 +413,8 @@ def document_pages(row: Row) -> list[str] | None:
     data = _fetch_document_bytes(row)
     if data is None:
         return None
+    if _document_suffix(row) in OFFICE_SUFFIXES:
+        return _office_pages(data, _document_suffix(row))
     try:
         return _with_timeout(
             lambda: _pages_from_reader(PdfReader(BytesIO(data))), seconds=PDF_EXTRACTION_TIMEOUT_SECONDS

@@ -37,8 +37,26 @@ DEFAULT_METRICS: list[tuple[str, str, str, str | None, str]] = [
     ("provisions_and_contingencies", "Provisions & Contingencies", "income_statement", '["bank","nbfc"]', "INR_CRORE"),
     ("profit_before_tax", "Profit before Tax", "income_statement", None, "INR_CRORE"),
     ("tax", "Tax", "income_statement", None, "INR_CRORE"),
+    # Ind-AS (Schedule III) expense lines by nature -- general (non-bank)
+    # NSE XBRL taxonomy only. Feed EBITDA/EBIT and the materials-cost (COGS
+    # proxy) rows in web/charts_feed.py; there is no SG&A tag in the
+    # taxonomy ("other expenses" mixes factory and selling/admin costs).
+    ("cost_of_materials_consumed", "Cost of Materials Consumed", "income_statement", None, "INR_CRORE"),
+    ("purchases_of_stock_in_trade", "Purchases of Stock-in-Trade", "income_statement", None, "INR_CRORE"),
+    ("changes_in_inventories", "Changes in Inventories of FG, WIP & Stock-in-Trade", "income_statement", None, "INR_CRORE"),
+    ("employee_benefit_expense", "Employee Benefit Expense", "income_statement", None, "INR_CRORE"),
+    ("other_expenses", "Other Expenses", "income_statement", None, "INR_CRORE"),
+    ("current_tax", "Current Tax", "income_statement", None, "INR_CRORE"),
+    ("deferred_tax", "Deferred Tax", "income_statement", None, "INR_CRORE"),
+    # US-GAAP expense lines by function (SEC EDGAR only): feed the US Expenses
+    # breakdown and EBITDA in web/income_derivations.py.
+    ("cost_of_revenue", "Cost of Revenue", "income_statement", None, "INR_CRORE"),
+    ("selling_general_admin", "Selling, General & Administrative", "income_statement", None, "INR_CRORE"),
+    ("research_and_development", "Research & Development", "income_statement", None, "INR_CRORE"),
+    ("depreciation_amortization", "Depreciation & Amortization", "income_statement", None, "INR_CRORE"),
     ("net_profit", "Net Profit", "income_statement", None, "INR_CRORE"),
     ("eps", "EPS", "income_statement", None, "INR"),
+    ("diluted_eps", "Diluted EPS", "income_statement", None, "INR"),
     # Balance sheet
     ("equity_share_capital", "Equity Share Capital", "balance_sheet", None, "INR_CRORE"),
     ("reserves", "Reserves", "balance_sheet", None, "INR_CRORE"),
@@ -268,11 +286,22 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
     ("sec_edgar", "ProfitLoss", "net_profit"),
     ("sec_edgar", "EarningsPerShareDiluted", "eps"),
     ("sec_edgar", "EarningsPerShareBasic", "eps"),
+    ("sec_edgar", "EarningsPerShareDiluted [diluted_eps]", "diluted_eps"),
     ("sec_edgar", "InterestAndDividendIncomeOperating", "interest_earned"),
     ("sec_edgar", "InterestIncomeOperating", "interest_earned"),
     ("sec_edgar", "InterestAndFeeIncomeLoansAndLeases", "interest_earned"),
     ("sec_edgar", "InterestExpense", "interest_expended"),
     ("sec_edgar", "InterestExpenseOperating", "interest_expended"),
+    ("sec_edgar", "InterestExpenseNonoperating", "interest_expended"),
+    ("sec_edgar", "CostOfRevenue", "cost_of_revenue"),
+    ("sec_edgar", "CostOfGoodsAndServicesSold", "cost_of_revenue"),
+    ("sec_edgar", "CostOfGoodsSold", "cost_of_revenue"),
+    ("sec_edgar", "SellingGeneralAndAdministrativeExpense", "selling_general_admin"),
+    ("sec_edgar", "ResearchAndDevelopmentExpense", "research_and_development"),
+    ("sec_edgar", "DepreciationDepletionAndAmortization", "depreciation_amortization"),
+    ("sec_edgar", "DepreciationAndAmortization", "depreciation_amortization"),
+    ("sec_edgar", "CurrentIncomeTaxExpenseBenefit", "current_tax"),
+    ("sec_edgar", "DeferredIncomeTaxExpenseBenefit", "deferred_tax"),
     ("sec_edgar", "Assets", "total_assets"),
     ("sec_edgar", "StockholdersEquity", "total_shareholders_funds"),
     ("sec_edgar", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "total_shareholders_funds"),
@@ -320,6 +349,11 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
     ("nse", "TaxExpense", "tax"),
     ("nse", "ProfitLossForThePeriod", "net_profit"),
     ("nse", "BasicEarningsPerShareBeforeExtraordinaryItems", "eps"),
+    ("nse", "DilutedEarningsPerShareBeforeExtraordinaryItems", "diluted_eps"),
+    # Insurers' taxonomy files ONE figure labelled "Basic and Diluted" -- verified
+    # against real HDFC Life / SBI Life filings (e.g. HDFC Life Q4 FY26: 2.31 quarter,
+    # 8.87 year) -- so it is both the basic and the diluted EPS.
+    ("nse", "BasicAndDilutedEPSBeforeExtraordinaryItemsNetOfTaxExpenseForThePeriodNotToBeAnnualized", "diluted_eps"),
     ("nse", "PercentageOfGrossNpa", "gross_npa_percent"),
     ("nse", "PercentageOfNpa", "net_npa_percent"),
     ("nse", "ReturnOnAssets", "return_on_assets_percent"),
@@ -337,10 +371,23 @@ DEFAULT_METRIC_ALIASES = DEFAULT_METRIC_ALIASES + [
     # documented above for "proprietary"'s deliberately-unmapped rows.
     ("nse", "RevenueFromOperations", "total_revenue"),
     ("nse", "Expenses", "operating_expenses"),
+    # NOTE "Expenses" above is the filing's TOTAL: it already includes the
+    # finance-cost and depreciation lines below (verified: Reliance Q1 FY27
+    # materials + purchases + inventory change + employee + finance +
+    # depreciation + other = Expenses to the rupee).
+    ("nse", "FinanceCosts", "interest_expended"),
+    ("nse", "CostOfMaterialsConsumed", "cost_of_materials_consumed"),
+    ("nse", "PurchasesOfStockInTrade", "purchases_of_stock_in_trade"),
+    ("nse", "ChangesInInventoriesOfFinishedGoodsWorkInProgressAndStockInTrade", "changes_in_inventories"),
+    ("nse", "EmployeeBenefitExpense", "employee_benefit_expense"),
+    ("nse", "OtherExpenses", "other_expenses"),
+    ("nse", "CurrentTax", "current_tax"),
+    ("nse", "DeferredTax", "deferred_tax"),
     ("nse", "DepreciationDepletionAndAmortisationExpense", "depreciation"),
     ("nse", "ProfitBeforeTax", "profit_before_tax"),
     ("nse", "ProfitLossForPeriod", "net_profit"),
     ("nse", "BasicEarningsLossPerShareFromContinuingAndDiscontinuedOperations", "eps"),
+    ("nse", "DilutedEarningsLossPerShareFromContinuingAndDiscontinuedOperations", "diluted_eps"),
     # Not a real XBRL tag — sources/nse_xbrl.py derives this row_label itself
     # (PaidUpValueOfEquityShareCapital / FaceValueOfEquityShareCapital,
     # verified against real filings on both taxonomies) since neither has a

@@ -717,3 +717,55 @@ def from_repo_relative(path: str) -> Path:
     or the to_repo_relative() fallback above) is returned as-is."""
     candidate = Path(path)
     return candidate if candidate.is_absolute() else BASE_DIR / candidate
+
+# L5 causal MVP (docs/L5_MVP_TASK_PLAN.md): persist each investigation's graph,
+# metrics and version stamps. Off => research/investigation.py persists exactly
+# what it did before. Any failure inside the new code is logged and swallowed
+# either way -- it must never fail an investigation.
+CAUSAL_GRAPH_ENABLED = os.environ.get("CAUSAL_GRAPH_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# Model for the L5 hypothesis-EVALUATION step (research/hypothesis_evaluator.py),
+# the dominant LLM cost of an investigation (~85% in the first measured run).
+# The default is claude-haiku-4-5 and is meant to STAY that way: the owner decided
+# (2026-10-02) to keep it as the standing default, not just for the MVP stage.
+# Override with the CAUSAL_EVALUATION_MODEL env var; "" falls back to
+# ANTHROPIC_MODEL / the tier chain. It is part of config_hash, so runs on
+# different models stay distinguishable in the metrics.
+CAUSAL_EVALUATION_MODEL = os.environ.get("CAUSAL_EVALUATION_MODEL", "claude-haiku-4-5").strip()
+
+# Data-first link checks (research/link_evidence.py): compute supporting/contradicting
+# evidence for chain links straight from canonical_financials, no LLM. Additive;
+# failures are logged and never fail an investigation.
+LINK_EVIDENCE_ENABLED = os.environ.get("LINK_EVIDENCE_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# Gap-fill pass (research/link_gap_fill.py): for presented causal links still
+# untested after the data-first checks, one targeted retrieval + one small model
+# call each. Bounded per investigation.
+LINK_GAPFILL_ENABLED = os.environ.get("LINK_GAPFILL_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+LINK_GAPFILL_MAX_LINKS = int(os.environ.get("LINK_GAPFILL_MAX_LINKS", "4"))
+
+# Dynamic causal-chain traversal (research/dynamic_chain.py): builds the smallest
+# set of material, evidence-tested causal paths for ONE question from the
+# persistent causal graph (causal_graph/service.py). Every bound below is a hard
+# limit; the investigation never writes to persistent edge confidence.
+CHAIN_MAX_DEPTH = int(os.environ.get("CHAIN_MAX_DEPTH", "5"))
+CHAIN_MAX_BRANCHES_PER_NODE = int(os.environ.get("CHAIN_MAX_BRANCHES_PER_NODE", "4"))
+CHAIN_MAX_NODES = int(os.environ.get("CHAIN_MAX_NODES", "40"))
+CHAIN_MAX_EDGES = int(os.environ.get("CHAIN_MAX_EDGES", "60"))
+CHAIN_MAX_CROSS_SECTOR_HOPS = int(os.environ.get("CHAIN_MAX_CROSS_SECTOR_HOPS", "2"))
+CHAIN_MAX_ITERATIONS = int(os.environ.get("CHAIN_MAX_ITERATIONS", "2"))
+CHAIN_PATHS_PER_ITERATION = int(os.environ.get("CHAIN_PATHS_PER_ITERATION", "4"))
+CHAIN_MAX_RETAINED_PATHS = int(os.environ.get("CHAIN_MAX_RETAINED_PATHS", "4"))
+CHAIN_MIN_EDGE_CONFIDENCE = float(os.environ.get("CHAIN_MIN_EDGE_CONFIDENCE", "0.3"))
+CHAIN_MIN_PATH_SCORE = float(os.environ.get("CHAIN_MIN_PATH_SCORE", "0.35"))
+CHAIN_CROSS_SECTOR_MIN_MATERIALITY = float(os.environ.get("CHAIN_CROSS_SECTOR_MIN_MATERIALITY", "0.3"))
+CHAIN_MAX_NARRATIVE_QUERIES = int(os.environ.get("CHAIN_MAX_NARRATIVE_QUERIES", "6"))
+
+# Dynamic causal-chain stage inside the L5 investigation (research/causal_chain_stage.py).
+# Reads the persistent causal graph (Neo4j) and the stored data; failure-soft -- if the
+# graph is unreachable or empty the investigation runs exactly as before. Independent of
+# GRAPH_BACKEND. Evidence found by the stage is attached to graph edges as references
+# (Postgres) only when CAUSAL_CHAIN_ATTACH_EVIDENCE is on; it is off by default so an
+# investigation never leaves anything on the persistent graph's evidence record.
+CAUSAL_CHAIN_ENABLED = os.environ.get("CAUSAL_CHAIN_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+CAUSAL_CHAIN_ATTACH_EVIDENCE = os.environ.get("CAUSAL_CHAIN_ATTACH_EVIDENCE", "false").strip().lower() in ("1", "true", "yes", "on")

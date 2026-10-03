@@ -310,8 +310,15 @@ _CONCEPT_MAP: dict[str, list[str]] = {
     "tax": ["IncomeTaxExpenseBenefit"],
     "net_profit": ["NetIncomeLoss", "ProfitLoss"],
     "eps": ["EarningsPerShareDiluted", "EarningsPerShareBasic"],
+    "diluted_eps": ["EarningsPerShareDiluted"],
     "interest_earned": ["InterestAndDividendIncomeOperating", "InterestIncomeOperating", "InterestAndFeeIncomeLoansAndLeases"],
-    "interest_expended": ["InterestExpense", "InterestExpenseOperating"],
+    "interest_expended": ["InterestExpense", "InterestExpenseOperating", "InterestExpenseNonoperating"],
+    "cost_of_revenue": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
+    "selling_general_admin": ["SellingGeneralAndAdministrativeExpense"],
+    "research_and_development": ["ResearchAndDevelopmentExpense"],
+    "depreciation_amortization": ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization"],
+    "current_tax": ["CurrentIncomeTaxExpenseBenefit"],
+    "deferred_tax": ["DeferredIncomeTaxExpenseBenefit"],
     "total_assets": ["Assets"],
     "total_shareholders_funds": ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
     "shares_outstanding": ["CommonStockSharesOutstanding", "CommonStockSharesIssued"],
@@ -350,7 +357,22 @@ _PER_UNIT_CONCEPTS = frozenset({
     "EarningsPerShareDiluted", "EarningsPerShareBasic",
 })
 
+# metric_aliases maps ONE raw label to ONE metric, and "EarningsPerShareDiluted"
+# already resolves to `eps` -- so the separate diluted_eps metric is built under
+# a synthetic label of its own (see normalization/financials.py).
+_ROW_LABEL_OVERRIDE = {"diluted_eps": "EarningsPerShareDiluted [diluted_eps]"}
+
 _UNIT_DIVISOR = 1_000_000  # raw USD -> this app's USD_MILLION "big" convention
+
+
+def _pick_unit(units: dict, concept_name: str) -> str:
+    """Which of a concept's units to read. companyfacts can list several
+    (verified: KO and WMT list "pure" BEFORE "USD/shares" for
+    EarningsPerShareDiluted, and "pure" only holds a couple of ancient rows);
+    taking the first one silently read the wrong series. Prefer the unit that
+    matches the concept's kind, falling back to the first listed."""
+    preferred = "USD/shares" if concept_name in _PER_UNIT_CONCEPTS else "USD"
+    return preferred if preferred in units else next(iter(units))
 
 
 class SECEdgarAdapter:
@@ -406,7 +428,7 @@ class SECEdgarAdapter:
             concept_name = present[0]  # for row_label/alias resolution only -- any present alias resolves to the same metric_key
             rows: list[dict] = []
             for name in present:
-                unit_key = next(iter(usgaap[name]["units"]))
+                unit_key = _pick_unit(usgaap[name]["units"], name)
                 rows.extend(usgaap[name]["units"][unit_key])
             instant = concept_name in _INSTANT_CONCEPTS
             quarterly, annual = _extract_periods(rows, fiscal_year_end_month, instant=instant)
@@ -430,7 +452,7 @@ class SECEdgarAdapter:
                     build_observations_from_periods(
                         self._conn, company_id=company_id, source=self.source_id, source_file=source_file,
                         parser_version=PARSER_VERSION, period_type="quarterly", statement_type="consolidated",
-                        row_label=concept_name,
+                        row_label=_ROW_LABEL_OVERRIDE.get(metric_key, concept_name),
                         period_values={k: v / divisor for k, v in quarterly.items()},
                         currency=currency,
                     )
@@ -440,7 +462,7 @@ class SECEdgarAdapter:
                     build_observations_from_periods(
                         self._conn, company_id=company_id, source=self.source_id, source_file=source_file,
                         parser_version=PARSER_VERSION, period_type="annual", statement_type="consolidated",
-                        row_label=concept_name,
+                        row_label=_ROW_LABEL_OVERRIDE.get(metric_key, concept_name),
                         period_values={k: v / divisor for k, v in annual.items()},
                         currency=currency,
                     )

@@ -177,6 +177,9 @@
       ds.PERIOD_KEYS.forEach((pk, i) => {
         const k = periodKeyStr(pk);
         if (seen[k]) return;
+        // Skip a period in which none of this company's attributes has a
+        // real value -- an all-blank axis slot / table column is noise.
+        if (ds.attributes && !ds.attributes.some((a) => a.values[i] !== null && a.values[i] !== undefined && Number.isFinite(a.values[i]))) return;
         seen[k] = true;
         merged.push({ key: pk, label: ds.PERIODS[i] });
       });
@@ -274,6 +277,18 @@
   // box while under the cap. Search dropdown reuses .site-search-* verbatim
   // (styles.css) — same visual component as the top-nav company search.
   function renderCompareBar(state) {
+    if (state.shared) {
+      // Compare page: the company set is Quick Comparison's own selection,
+      // so there's nothing to add/remove here.
+      return (
+        '<div class="chart-compare">' +
+          '<div class="card-kicker">Companies</div>' +
+          '<div class="chart-compare-row">' +
+            state.companies.map((c) => '<span class="chart-compare-pill">' + escapeHtml(c.name) + "</span>").join("") +
+          "</div>" +
+        "</div>"
+      );
+    }
     const pills = state.companies.slice(1).map((c) => {
       return (
         '<span class="chart-compare-pill">' + escapeHtml(c.name) +
@@ -665,11 +680,15 @@
     const searchUrl = root.dataset.searchUrl;
     const primaryId = root.dataset.primaryId;
     const primaryName = root.dataset.primaryName;
-    if (!urlTemplate || !primaryId) return;
+    // Compare page mode (data-mode="quick"): no primary company; the company
+    // set mirrors Quick Comparison's selection via window.CompareShared.
+    const shared = root.dataset.mode === "quick";
+    if (!urlTemplate || (!primaryId && !shared)) return;
 
     const state = {
+      shared: shared,
       cache: {},                // "companyId|periodType" -> {PERIODS, PERIOD_KEYS, CURRENCY, attributes, byId}
-      companies: [{ id: primaryId, name: primaryName }],  // index 0 = primary, never removed
+      companies: shared ? [] : [{ id: primaryId, name: primaryName }],  // index 0 = primary, never removed (empty in shared mode)
       periodType: "annual",
       range: DEFAULT_RANGE.annual,
       order: [],                 // selected attribute ids, in selection order (drives color) — shared across companies
@@ -745,7 +764,14 @@
       const loaded = state.companies
         .map((c) => ({ company: c, ds: state.cache[cacheKey(c.id, state.periodType)] }))
         .filter((x) => x.ds);
-      if (loaded.length === 0) return;
+      if (loaded.length === 0) {
+        if (shared) {
+          root.innerHTML = state.companies.length
+            ? '<p class="muted">Loading chart&hellip;</p>'
+            : '<div class="chart-overlay-empty">Select companies in Quick Comparison to chart them here.</div>';
+        }
+        return;
+      }
 
       const union = unionPeriods(loaded.map((x) => x.ds));
       const unionIndexByKey = {};
@@ -794,7 +820,8 @@
       // downstream consumer (hasCorpActions, renderChart's marker/legend
       // drawing) already only sees the types the user left checked.
       const corpActionsUnion = union.PERIODS.map(() => []);
-      const primaryLoaded = loaded.find((x) => x.company.id === state.companies[0].id);
+      // (Not drawn on the Compare page: no single primary company there.)
+      const primaryLoaded = shared ? null : loaded.find((x) => x.company.id === state.companies[0].id);
       const presentCorpActionTypes = new Set();
       if (primaryLoaded && primaryLoaded.ds.CORPORATE_ACTIONS) {
         primaryLoaded.ds.CORPORATE_ACTIONS.forEach((list, i) => {
@@ -841,7 +868,7 @@
         renderCompareBar(state) +
         '<div class="chart-overlay-toolbar">' +
           renderControls(state.periodType, state.range) +
-          renderCorpActionsPicker(availableCorpActionTypes, state.hiddenCorpActionTypes, state.openSectionId) +
+          (shared ? "" : renderCorpActionsPicker(availableCorpActionTypes, state.hiddenCorpActionTypes, state.openSectionId)) +
           renderPicker(unionAttrs, state.order, state.sides, colorOf, state.openSectionId) +
         "</div>" +
         '<div class="chart-overlay-chart">' +
@@ -1060,6 +1087,33 @@
       }
     });
 
+    if (shared) {
+      const MAX_SHARED = MAX_COMPARISONS + 1;
+      const syncFromQuick = (list) => {
+        state.companies = list.slice(0, MAX_SHARED).map((c) => ({ id: c.id, name: c.name }));
+        render();
+        state.companies.slice().forEach((c) => {
+          loadCompany(c.id, state.periodType)
+            .then((ds) => {
+              if (state.order.length === 0) pickDefaults(ds);
+              render();
+            })
+            .catch(() => {
+              state.companies = state.companies.filter((x) => x.id !== c.id);
+              render();
+            });
+        });
+      };
+      // The chart sizes itself to its container's measured width, which is 0
+      // while this tab is hidden -- redraw once the tab is actually shown.
+      document.addEventListener("compare:tab-shown", (e) => {
+        if (e.detail === "charts") render();
+      });
+      window.CompareShared.subscribeQuickCompanies(syncFromQuick);
+      syncFromQuick(window.CompareShared.getQuickCompanies());
+      return;
+    }
+
     loadCompany(primaryId, "annual")
       .then((ds) => {
         pickDefaults(ds);
@@ -1073,6 +1127,9 @@
   document.addEventListener("DOMContentLoaded", function () {
     const root = document.getElementById("charts-overlay");
     if (root) init(root);
+    // Compare page's Charts tab (web/templates/compare.html).
+    const compareRoot = document.getElementById("cmp-charts-overlay");
+    if (compareRoot) init(compareRoot);
   });
 
   // Minimal export surface for web/static/js/compare.js's Detailed

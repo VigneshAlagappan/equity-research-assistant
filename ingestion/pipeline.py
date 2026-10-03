@@ -7,6 +7,8 @@ normalization/financials.py; this module owns validate -> store -> reconcile.)
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import json
 import logging
 from storage.db_types import DBConnection
@@ -138,8 +140,14 @@ def ingest_file(
     company_id: str | None = None,
     source_id: str | None = None,
     statement_type: str = "consolidated",
+    observation_filter: Callable[[NormalizedObservation], bool] | None = None,
 ) -> IngestionResult:
     """Run one raw file through the full pipeline.
+
+    `observation_filter`, when given, keeps only the parsed observations it
+    returns True for -- lets a backfill ingest one newly-mapped metric from
+    already-stored raw files without re-inserting every other metric the
+    same file also yields.
 
     company_id/source_id are inferred from the file's path
     (data/raw/<COMPANY>/<source>/<file>) unless given explicitly. company_id
@@ -164,6 +172,8 @@ def ingest_file(
     adapter = adapter_cls(conn)
 
     parsed = adapter.parse(file_path, company_id, statement_type=statement_type)
+    if observation_filter is not None:
+        parsed = [obs for obs in parsed if observation_filter(obs)]
 
     result = IngestionResult(company_id=company_id, source_id=source_id, file_path=str(file_path))
     result.parsed_count = len(parsed)

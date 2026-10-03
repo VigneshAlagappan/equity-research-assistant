@@ -1,0 +1,37 @@
+{#
+  Dynamic causal chain (research/dynamic_chain.py), shown beside the hypotheses
+  of a Level-5 investigation: the paths read from the persistent causal graph
+  that held up against stored data, and the competing paths that did not, each
+  with why. Rendered only when the investigation has a chain result with a
+  status of "ok"; any other status shows a one-line note.
+#}
+{% macro dynamic_chain(chain) %}
+{% if chain %}
+<p class="signal-section-label">Causal chain from the knowledge graph</p>
+{% if chain.status != 'ok' %}
+<p class="signal-muted">Not available for this investigation ({{ chain.status }}{% if chain.reason %}: {{ chain.reason }}{% endif %}).</p>
+{% else %}
+{% for w in chain.warnings %}<p class="signal-muted">{{ w }}</p>{% endfor %}
+{% set hyps = chain.hypotheses %}
+{% for h in hyps if h.retained %}
+<div class="signal-hypothesis">
+  <p><strong>[{{ h.status }}]</strong> {{ h.labels|join(' → ') }}</p>
+  <p class="signal-muted">{{ h.why_selected }}</p>
+  <ul>
+    {% for f in h.supporting %}<li>Supports: {{ f.label }}</li>{% endfor %}
+    {% for f in h.contradicting %}<li>Contradicts: {{ f.label }}</li>{% endfor %}
+    {% if not h.supporting and not h.contradicting %}<li>No stored data could test this path.</li>{% endif %}
+  </ul>
+</div>
+{% else %}
+<p class="signal-muted">No path in the graph held up against the available data.</p>
+{% endfor %}
+{% set rejected = hyps|rejectattr('retained')|list %}
+{% if rejected %}
+<details><summary class="signal-muted" style="cursor:pointer;">Paths considered and rejected ({{ rejected|length }})</summary>
+  <ul>{% for h in rejected %}<li>{{ h.labels|join(' → ') }} — {{ h.rejection_reason }}</li>{% endfor %}</ul>
+</details>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endmacro %}

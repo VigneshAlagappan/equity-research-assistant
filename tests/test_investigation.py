@@ -412,3 +412,42 @@ def test_timeout_stops_the_loop_without_a_retry(
     eval_calls = [c for c in captured if c.get("system", "").startswith(_EVALUATOR_PREFIX)]
     assert len(eval_calls) == 2  # one per hypothesis, no retries
     assert investigation.evaluations[_H1].verdict == "INSUFFICIENT_EVIDENCE"
+
+
+def test_l5_pipeline_runs_the_causal_chain_stage_and_persists_its_result(
+    company_conn: sqlite3.Connection, pinned_investigation_id: str, monkeypatch
+) -> None:
+    import json
+
+    from storage.document_store import default_document_store
+
+    calls: list = []
+
+    def fake_stage(conn, question, company_ids, investigation_id, **kw):
+        calls.append((question, company_ids, investigation_id))
+        return {"status": "ok", "investigation_id": investigation_id, "retained_paths": [], "hypotheses": []}
+
+    monkeypatch.setattr("research.causal_chain_stage.run_causal_chain_stage", fake_stage)
+    monkeypatch.setattr("llm.providers.anthropic_provider.anthropic.Anthropic", lambda *a, **kw: _DispatchClient([]))
+
+    investigation = run_investigation(company_conn, "Why did margins decline?", ["HDFCBANK"])
+
+    assert calls == [("Why did margins decline?", ["HDFCBANK"], pinned_investigation_id)]
+    assert investigation.causal_chain["status"] == "ok"
+    row = get_investigation(company_conn, investigation.investigation_id)
+    artifact = json.loads(default_document_store().retrieve(row["s3_key"]))
+    assert artifact["dynamic_chain"]["investigation_id"] == pinned_investigation_id
+    assert len(artifact["hypotheses"]) == 2  # the existing output is unchanged beside it
+
+
+def test_a_failing_causal_chain_stage_never_fails_the_investigation(
+    company_conn: sqlite3.Connection, pinned_investigation_id: str, monkeypatch
+) -> None:
+    monkeypatch.setattr("config.settings.CAUSAL_CHAIN_ENABLED", True)
+    monkeypatch.setattr("research.causal_chain_stage._open_service", lambda conn: (_ for _ in ()).throw(RuntimeError("neo4j down")))
+    monkeypatch.setattr("llm.providers.anthropic_provider.anthropic.Anthropic", lambda *a, **kw: _DispatchClient([]))
+
+    investigation = run_investigation(company_conn, "Why did margins decline?", ["HDFCBANK"])
+
+    assert investigation.causal_chain["status"] == "error"
+    assert investigation.synthesis is not None and len(investigation.evaluations) == 2

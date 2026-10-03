@@ -43,6 +43,7 @@ from scripts.fetch_investor_relations import run_investor_relations_batch, SUPPO
 from scripts.process_pending_documents_batch import run_document_processing_batch
 from scripts.reconcile_generated_reports import run_generated_report_reconciliation
 from scripts.reconcile_raw_objects import run_raw_object_reconciliation
+from scripts.refresh_derived_feeds import JOB_NAME as DERIVED_FEEDS_JOB_NAME, run_derived_feeds_refresh
 from scripts.run_signals_eval import run_signals_eval
 from storage.company_repository import select_active_companies_by_country, select_company_ids_by_index
 
@@ -280,6 +281,10 @@ def _run_db_shard(conn) -> int:
     return run_db_shard_job(conn)
 
 
+def _run_derived_feeds_refresh(conn) -> int:
+    return run_derived_feeds_refresh(conn)
+
+
 def _run_execution_metrics_cleanup(conn) -> int:
     return run_execution_metrics_cleanup(conn)
 
@@ -433,6 +438,8 @@ SCHEDULED_JOBS: list[ScheduledJob] = [
                  "Maintenance", "raw_object_reconciliation", None, _run_raw_object_reconciliation),
     ScheduledJob("generated_report_reconciliation", "Research thread reconciliation (S3 <-> Postgres)", "Weekly",
                  "Maintenance", "generated_report_reconciliation", None, _run_generated_report_reconciliation),
+    ScheduledJob("derived_feeds_refresh", "Stored Financials feeds refresh (Nifty 500, 100 companies/run)", "Daily",
+                 "Maintenance", DERIVED_FEEDS_JOB_NAME, None, _run_derived_feeds_refresh),
     ScheduledJob("execution_metrics_cleanup", "Execution Analytics retention (roll up + prune old runs)", "Daily",
                  "Maintenance", "execution_metrics_cleanup", None, _run_execution_metrics_cleanup),
 ]

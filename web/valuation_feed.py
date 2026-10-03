@@ -44,8 +44,12 @@ from __future__ import annotations
 from storage.db_types import DBConnection
 
 from companies.registry import get_company
+from web.company_kind import is_financial_company
+from web.income_derivations import derive_income_rows, finalize_income_rows
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
 from normalization.periods import fiscal_year_number
+from web.charts_feed import _period_date_range, dividends_from_corporate_actions
+from web.share_adjustment import restate_to_latest_share_basis
 from storage.repositories import get_canonical_series
 
 # Rescales any unit that isn't already each currency's "big" display unit
@@ -64,8 +68,10 @@ _RAW_METRIC_KEYS = (
     "net_profit", "total_assets", "total_revenue", "other_income", "interest_expended",
     "tax", "profit_before_tax", "operating_expenses", "depreciation",
     "equity_share_capital", "reserves", "borrowings", "investments",
-    "deposits", "advances", "eps", "book_value", "dividend_per_share", "sales_per_share",
+    "deposits", "advances", "eps", "diluted_eps", "book_value", "dividend_per_share", "sales_per_share",
     "shares_outstanding", "total_shareholders_funds", "interest_earned",
+    "operating_profit", "cost_of_revenue", "selling_general_admin", "research_and_development", "depreciation_amortization",
+    "cost_of_materials_consumed", "purchases_of_stock_in_trade", "changes_in_inventories", "employee_benefit_expense", "other_expenses", "current_tax", "deferred_tax",
 )
 
 
@@ -98,6 +104,21 @@ def _row(
 def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: str = "consolidated") -> dict:
     raw = {key: _series_by_year(conn, company_id, key, statement_type) for key in _RAW_METRIC_KEYS}
     years = sorted({year for series in raw.values() for year in series})
+    dividend_filled = False
+    _company = get_company(conn, company_id)
+    if _company is not None:
+        from_actions = dividends_from_corporate_actions(conn, company_id, _company["fiscal_year_end_month"], [(y, 0) for y in years])
+        missing = {pk[0]: v for pk, v in from_actions.items() if pk[0] not in raw["dividend_per_share"]}
+        if missing:
+            raw["dividend_per_share"] = {**raw["dividend_per_share"], **missing}
+            dividend_filled = True
+    restated: set[str] = set()
+    if _company is not None and years:
+        ends = {(y, 0): _period_date_range(_company["fiscal_year_end_month"], y, 0)[1] for y in years}
+        raw_by_pk = {k: {(y, 0): v for y, v in series.items()} for k, series in raw.items()}
+        restated = restate_to_latest_share_basis(conn, company_id, ends, raw_by_pk)
+        for k in restated:
+            raw[k] = {pk[0]: v for pk, v in raw_by_pk[k].items()}
 
     def ratio_series(fn, unit_scale: float = 1.0) -> dict[int, float]:
         """fn is roe_for_company/roa_for_company — needs the prior fiscal year
@@ -152,7 +173,8 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
     # works for years both happen to be present; on ICICI Bank, that
     # sum covered 10 years, the direct figure covers 21.
     she = fill_missing(raw["total_shareholders_funds"], add("equity_share_capital", "reserves"))
-    eps_series = fill_missing(raw["eps"], divide("net_profit", "shares_outstanding"))
+    # reported EPS, else the XBRL diluted figure (insurers file one combined basic-and-diluted EPS), else net profit / shares
+    eps_series = fill_missing(raw["eps"], fill_missing(raw["diluted_eps"], divide("net_profit", "shares_outstanding")))
     book_value_series = fill_missing(
         raw["book_value"],
         {
@@ -205,6 +227,8 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
     # scale word are chosen client-side (valuation_dashboard.js's fmt())
     # from CURRENCY below, same value regardless of which currency a company
     # reports in.
+    derived_income = derive_income_rows(raw, years)
+
     metrics = {
         "balanceSheet": [
             _row("networth", "Networth (reserves only)", "big", years, networth),
@@ -217,18 +241,33 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
         ],
         "incomeStatement": [
             _row("earnings", "Earnings (Total Income)", "big", years, raw["total_revenue"], row_type="calc"),
-            _row("expenses", "Expenses", "big", years, raw["operating_expenses"]),
-            _row("interestOutgo", "Interest Out-go", "big", years, raw["interest_expended"]),
-            _row("otherIncome", "Other Income", "big", years, raw["other_income"]),
+            _row("expenses", "Expenses", "big", years, {**raw["operating_expenses"], **derived_income["expenses"]}),
+            _row("costOfRevenue", "Cost of revenue", "big", years, raw["cost_of_revenue"]),
+            _row("sellingGeneralAdmin", "SG&A", "big", years, raw["selling_general_admin"]),
+            _row("researchAndDevelopment", "R&D", "big", years, raw["research_and_development"]),
+            _row("materialsCost", "Material cost", "big", years, derived_income["materialsCost"], row_type="calc"),
+            _row("employeeCost", "Employee cost", "big", years, raw["employee_benefit_expense"]),
+            _row("otherExpenses", "Other cost", "big", years, raw["other_expenses"]),
+            _row("ebitda", "EBITDA (operating, excl. other income)", "big", years, derived_income["ebitda"], row_type="calc"),
+            _row("otherIncome", "Other Income", "big", years, {**derived_income["otherIncome"], **raw["other_income"]}),
+            _row("ebitdaInclOther", "EBITDA incl. other income", "big", years, derived_income["ebitdaInclOther"], row_type="calc"),
             _row("depreciation", "Depreciation", "big", years, raw["depreciation"]),
+            _row("ebit", "EBIT (operating, excl. other income)", "big", years, derived_income["ebit"], row_type="calc"),
+            _row("ebitInclOther", "EBIT incl. other income", "big", years, derived_income["ebitInclOther"], row_type="calc"),
+            _row("interestOutgo", "Interest Out-go", "big", years, raw["interest_expended"]),
+            _row("profitBeforeTax", "Profit before Tax (PBT)", "big", years, raw["profit_before_tax"]),
+            _row("taxExpense", "Tax", "big", years, raw["tax"]),
+            _row("currentTax", "Current tax", "big", years, raw["current_tax"]),
+            _row("deferredTax", "Deferred tax", "big", years, raw["deferred_tax"]),
             _row("netProfit", "Net Profit (PAT)", "big", years, raw["net_profit"]),
         ],
         "perShare": [
             _row("eps", "EPS (Net Profit / share)", "perShare", years, eps_series, row_type="calc"),
+            _row("dilutedEps", "Diluted EPS (XBRL)", "perShare", years, raw["diluted_eps"]),
             _row("bookValue", "Book Value (Networth based)", "perShare", years, book_value_series, row_type="calc"),
-            _row("dividend", "Dividend per share", "perShare", years, raw["dividend_per_share"]),
+            _row("dividend", "Dividend per share", "perShare", years, raw["dividend_per_share"], row_type="calc" if dividend_filled or "dividend_per_share" in restated else "fact"),
             _row("salesPerShare", "Sales (Revenue per share)", "perShare", years, sales_per_share_series, row_type="calc"),
-            _row("shares", "Shares Outstanding", "sharesCount", years, raw["shares_outstanding"]),
+            _row("shares", "Shares Outstanding", "sharesCount", years, raw["shares_outstanding"], row_type="calc" if "shares_outstanding" in restated else "fact"),
         ],
         "profitability": [
             _row("netMargin", "Net Profit Margin", "pct", years, net_margin, row_type="calc"),
@@ -254,5 +293,11 @@ def build_valuation_feed(conn: DBConnection, company_id: str, statement_type: st
     }
 
     company = get_company(conn, company_id)
+    metrics["incomeStatement"] = finalize_income_rows(metrics["incomeStatement"], is_financial_company(company))
+    if not is_financial_company(company):
+        metrics["bankRatios"] = []  # Bank Ratios only apply to banks/financials
+        # Likewise the lending-book lines -- deposits/borrowings/advances
+        # are a bank balance-sheet shape, not a corporate one.
+        metrics["balanceSheet"] = [r for r in metrics["balanceSheet"] if r["key"] not in ("deposits", "borrowings", "advances")]
     currency = company["currency"] if company else "INR"
     return {"YEARS": years, "CURRENCY": currency, "METRICS": metrics}

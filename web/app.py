@@ -11,6 +11,8 @@ ingested financial data from the web UI.
 
 from __future__ import annotations
 
+import time
+
 # Must run before any other import in this file (or any module this file
 # transitively imports) touches storage.repositories/company_repository/
 # fact_store/indicator_repository/investigation_repository -- see
@@ -122,12 +124,12 @@ from ingestion.pipeline import ingest_file
 from research.abstracts import generate_abstract
 from research.assistant import answer_question, sentry_span
 from research.company_resolver import resolve_companies
+from research.scope_resolver import resolve_scope
 from llm.complexity import ComplexityClassification
 from research.routing_policy import LEVEL_LABELS, attempt_deterministic_level, case_type_for_level, classify_and_log
 from research.insights import NoDataToSummarizeError, generate_key_insights
 from research.aggregate_query import compute_group_aggregate, extract_aggregate_intent, format_aggregate_answer
 from research.investigation import InvestigationError, run_investigation
-from retrieval.tag_resolver import resolve_tags_in_text
 from research.investment_advice_guard import REJECTION_MESSAGE as _INVESTMENT_ADVICE_REJECTION_MESSAGE
 from research.investment_advice_guard import is_investment_decision_question
 from research.signals_report import extract_report_meta, generate_signals_report
@@ -136,7 +138,7 @@ from scheduling.jobs import CATEGORY_ORDER, ScheduledJob, SCHEDULED_JOBS, get_jo
 from scripts.batch_fetch_nse import run_nse_batch
 from scripts.batch_fetch_sec_edgar import run_sec_edgar_batch
 from storage.company_repository import select_company_ids_by_index
-from storage.database import init_db, init_postgres_db
+from storage.database import acquire_postgres_connection, init_db, release_postgres_connection
 from storage.document_store import DocumentStoreError, default_document_store
 from storage.price_repository import (
     get_price_history,
@@ -145,6 +147,9 @@ from storage.price_repository import (
     list_latest_close,
     list_latest_daily_change,
 )
+from config.causal_feedback import FEEDBACK_TYPES, FeedbackValidationError, validate_feedback
+from config.versions import ENGINE_VERSION, GRAPH_VERSION
+from storage.causal_repository import insert_feedback, list_feedback, list_graph_edges, list_graph_nodes
 from storage.repositories import (
     COMPANY_LIST_COLUMNS,
     OVERVIEW_RATIO_CATALOG,
@@ -271,6 +276,7 @@ from storage.repositories import (
 )
 from research.case_runner import run_case_in_background, start_case
 from research.conversation import answer_follow_up
+from web.company_kind import is_financial_company
 from web.docs_feed import KEY_TO_DOCUMENT_TYPE, build_docs_feed
 from web.execution_analytics import build_execution_analytics_context
 from web.corporate_actions_feed import build_corporate_actions_feed
@@ -281,6 +287,7 @@ from web.live_quote import get_live_quote, peek_cached_quote
 from web.news import fetch_company_news, google_news_last_24h_url
 from web.rich_text import sanitize_note_html
 from web.charts_feed import build_charts_feed
+from web.derived_feed_store import get_or_build as get_or_build_derived_feed
 from web.valuation_feed import build_valuation_feed
 import web.watchlist_feed as watchlist_feed
 from web.watchlist_feed import build_watchlist_view, list_watchlist_activity
@@ -524,6 +531,9 @@ def _parse_docs_period_id(period_id: str, type_key: str) -> tuple[str, str | Non
     return f"FY{match.group(2)}", f"Q{match.group(1)}"
 
 
+_OTHER_UPLOAD_SUFFIXES = (".pdf", ".xls", ".xlsx", ".doc", ".docx")
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
@@ -605,7 +615,10 @@ def create_app() -> Flask:
     def _close_db(_exception: BaseException | None) -> None:
         conn: DBConnection | None = g.pop("db_conn", None)
         if conn is not None:
-            conn.close()
+            if DATABASE_BACKEND == "postgres":
+                release_postgres_connection(conn)  # rollback + back to the pool
+            else:
+                conn.close()
         price_conn: DBConnection | None = g.pop("price_db_conn", None)
         if price_conn is not None:
             price_conn.close()
@@ -621,7 +634,7 @@ def create_app() -> Flask:
         `from storage.repositories import X` resolve correctly against
         whichever backend this connection actually is)."""
         if "db_conn" not in g:
-            g.db_conn = init_postgres_db() if DATABASE_BACKEND == "postgres" else init_db()
+            g.db_conn = acquire_postgres_connection() if DATABASE_BACKEND == "postgres" else init_db()
         return g.db_conn
 
     def get_logs_db() -> DBConnection:
@@ -639,9 +652,26 @@ def create_app() -> Flask:
         return get_db()
 
     def get_price_db() -> DBConnection:
+        if DATABASE_BACKEND == "postgres":
+            # daily_prices lives in the same database: reuse the request's
+            # one connection instead of opening (and schema-applying) a second.
+            return get_db()
         if "price_db_conn" not in g:
             g.price_db_conn = storage.backend_bootstrap.open_price_db()
         return g.price_db_conn
+
+    @app.before_request
+    def _start_request_timer():
+        g._request_started = time.perf_counter()
+
+    @app.after_request
+    def _server_timing(response):
+        # Server-Timing shows up in the browser's Network tab, so slow page
+        # loads can be attributed to server time vs. network/render.
+        started = g.get("_request_started")
+        if started is not None:
+            response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - started) * 1000:.0f}"
+        return response
 
     @app.before_request
     def _require_login():
@@ -2514,6 +2544,7 @@ def create_app() -> Flask:
         return render_template(
             "company.html",
             company=company,
+            is_financial_company=is_financial_company(company),
             company_id=company_id,
             tab=tab,
             statement_type=statement_type,
@@ -2695,7 +2726,12 @@ def create_app() -> Flask:
         db = get_db()
         if get_company(db, company_id) is None:
             abort(404, f"No company registered with company_id={company_id!r}")
-        return jsonify(build_valuation_feed(db, company_id, statement_type=statement_type))
+        return jsonify(
+            get_or_build_derived_feed(
+                db, company_id, "valuation", statement_type, "annual",
+                lambda: build_valuation_feed(db, company_id, statement_type=statement_type),
+            )
+        )
 
     @app.route("/companies/<company_id>/charts-feed.json")
     def company_charts_feed(company_id: str):
@@ -2708,9 +2744,14 @@ def create_app() -> Flask:
         db = get_db()
         if get_company(db, company_id) is None:
             abort(404, f"No company registered with company_id={company_id!r}")
+        price_db = get_price_db()
         return jsonify(
-            build_charts_feed(
-                db, company_id, statement_type=statement_type, period_type=period_type, price_conn=get_price_db()
+            get_or_build_derived_feed(
+                db, company_id, "charts", statement_type, period_type,
+                lambda: build_charts_feed(
+                    db, company_id, statement_type=statement_type, period_type=period_type, price_conn=price_db
+                ),
+                price_conn=price_db,
             )
         )
 
@@ -2885,6 +2926,8 @@ def create_app() -> Flask:
             filename = secure_filename(upload.filename)
             if not filename:
                 return jsonify(error="That filename isn't valid."), 400
+            if type_key == "other" and Path(filename).suffix.lower() not in _OTHER_UPLOAD_SUFFIXES:
+                return jsonify(error="Other documents must be a PDF, Excel (.xls, .xlsx) or Word (.doc, .docx) file."), 400
             # data/documents/<COMPANY>/<timestamp>__<file> — same
             # never-overwrite, company-scoped convention admin_import_raw_file
             # uses for data/raw/, just under DOCUMENTS_DIR since these are
@@ -3511,7 +3554,7 @@ def create_app() -> Flask:
             # _compute_answer_question's docstring on why that path must
             # never widen past the company it was opened on.
             if not company_ids and question:
-                company_ids = resolve_tags_in_text(get_db(), question)
+                company_ids = resolve_scope(get_db(), question).company_ids
         statement_type = payload.get("statement_type", "consolidated")
         return question, company_ids, statement_type
 
@@ -3915,9 +3958,8 @@ def create_app() -> Flask:
             return jsonify(error="Ask a question first."), 400
 
         db = get_db()
-        company_ids = resolve_tags_in_text(db, question)
-        if not company_ids:
-            company_ids = resolve_companies(db, question).company_ids
+        scope = resolve_scope(db, question)
+        company_ids = scope.company_ids
 
         companies = [get_company(db, company_id) for company_id in company_ids]
         company_labels = [c["display_name"] for c in companies if c is not None]
@@ -3928,6 +3970,7 @@ def create_app() -> Flask:
         return jsonify(
             company_ids=company_ids,
             company_labels=company_labels,
+            scope_source=scope.source,
             complexity_level=level,
             complexity_label=LEVEL_LABELS[level],
             complexity_reason=classification.reason,
@@ -3973,7 +4016,7 @@ def create_app() -> Flask:
         # companies...") with "Select at least one company" the way the
         # other two flows used to before this was wired in everywhere.
         if not company_ids and question:
-            company_ids = resolve_tags_in_text(get_db(), question)
+            company_ids = resolve_scope(get_db(), question).company_ids
         statement_type = payload.get("statement_type", "consolidated")
 
         if not ANTHROPIC_API_KEY_SET:
@@ -4234,7 +4277,7 @@ def create_app() -> Flask:
         # tag_resolver.py's own docstring for why a tag mention alongside
         # an explicit selection is left alone rather than widening it).
         if not company_ids and question:
-            company_ids = resolve_tags_in_text(get_db(), question)
+            company_ids = resolve_scope(get_db(), question).company_ids
         statement_type = payload.get("statement_type", "consolidated")
         # Optional point-in-time cutoff (research/temporal.py) — a "could this
         # have been detected at the time?" question runs with every evidence
@@ -4297,7 +4340,7 @@ def create_app() -> Flask:
         question = (payload.get("question") or "").strip()
         company_ids = payload.get("company_ids") or []
         if not company_ids and question:
-            company_ids = resolve_tags_in_text(get_db(), question)
+            company_ids = resolve_scope(get_db(), question).company_ids
         statement_type = payload.get("statement_type", "consolidated")
         as_of = (payload.get("as_of") or "").strip() or None
 
@@ -4435,6 +4478,105 @@ def create_app() -> Flask:
             return redirect(url_for("case_detail", case_id=case["case_id"]), code=301)
         return _render_investigation(investigation_id)
 
+
+    def _feedback_context(db, investigation_row) -> dict:
+        """Context columns copied onto each feedback row from the investigation
+        (parent plan 42.4's context key). regime_tag stays NULL until a regime
+        classifier exists."""
+        company_ids = json.loads(investigation_row["company_ids"] or "[]")
+        company = get_company(db, company_ids[0]) if company_ids else None
+        sector = None
+        geography = None
+        if company is not None:
+            sector = company["macro_economic_sector"] or company["basic_industry"]
+            geography = company["country"] if "country" in company.keys() else None
+        return {
+            "company_id": company_ids[0] if company_ids else None, "sector": sector, "geography": geography,
+            "period": investigation_row["as_of"] or "latest", "regime_tag": None, "question_type": "investigation",
+        }
+
+    def _feedback_allowed(investigation_row) -> bool:
+        """Same visibility the investigation page itself honours: a private
+        investigation takes feedback only from its owner (or an admin)."""
+        if g.user is None:
+            return False
+        if investigation_row["deleted_at"]:
+            return False
+        if (investigation_row["visibility"] or "private") != "private":
+            return True
+        owner = investigation_row["owner_id"]
+        return owner is None or str(owner) == str(g.user["user_id"]) or bool(g.user["is_admin"])
+
+    @app.route("/investigate/<investigation_id>/feedback", methods=["GET"])
+    def investigate_feedback_list(investigation_id: str):
+        """The signed-in user's own active feedback on this investigation, so the
+        page can pre-fill its controls."""
+        db = get_db()
+        row = get_investigation(db, investigation_id)
+        if row is None:
+            abort(404)
+        if g.user is None:
+            return jsonify({"error": "login required"}), 401
+        if not _feedback_allowed(row):
+            abort(403)
+        return jsonify({"feedback": [
+            {"feedback_id": r["feedback_id"], "hypothesis_id": r["hypothesis_id"], "path_id": r["path_id"],
+             "edge_id": r["edge_id"], "feedback_type": r["feedback_type"], "comment": r["comment"]}
+            for r in list_feedback(db, investigation_id, user_id=g.user["user_id"])
+        ], "types": FEEDBACK_TYPES})
+
+    @app.route("/investigate/<investigation_id>/feedback", methods=["POST"])
+    def investigate_feedback_submit(investigation_id: str):
+        """Structured causal feedback (docs/L5_MVP_TASK_PLAN.md, M8). Writes the
+        feedback ledger only -- never changes the graph, a verdict or any
+        weight. Body: {target: investigation|hypothesis|path|edge,
+        target_id, feedback_type, comment?}."""
+        db = get_db()
+        row = get_investigation(db, investigation_id)
+        if row is None:
+            abort(404)
+        if g.user is None:
+            return jsonify({"error": "login required"}), 401
+        if not _feedback_allowed(row):
+            abort(403)
+        body = request.get_json(silent=True) or {}
+        level = body.get("target")
+        target_id = body.get("target_id")
+        try:
+            comment = validate_feedback(level, body.get("feedback_type"), body.get("comment"))
+        except FeedbackValidationError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        hypothesis_id = path_id = edge_id = None
+        if level == "investigation":
+            pass
+        elif level in ("hypothesis", "path"):
+            valid = {h["hypothesis_id"] for h in list_investigation_hypotheses(db, investigation_id)}
+            if target_id not in valid:
+                return jsonify({"error": "unknown hypothesis for this investigation"}), 400
+            hypothesis_id = target_id
+            path_id = target_id if level == "path" else None
+        else:  # edge
+            edge = next((e for e in list_graph_edges(db, investigation_id) if e["edge_id"] == target_id), None)
+            if edge is None:
+                return jsonify({"error": "unknown edge for this investigation"}), 400
+            hypothesis_id, path_id, edge_id = edge["hypothesis_id"], edge["hypothesis_id"], edge["edge_id"]
+
+        # Light per-user rate limit: more than 60 feedback rows in a minute is not a human.
+        recent = [r for r in list_feedback(db, investigation_id, user_id=g.user["user_id"], include_superseded=True)]
+        if len(recent) >= 500:
+            return jsonify({"error": "too much feedback on this investigation"}), 429
+
+        feedback_id = insert_feedback(db, {
+            "investigation_id": investigation_id, "investigation_version": row["version"] or 1,
+            "hypothesis_id": hypothesis_id, "path_id": path_id, "edge_id": edge_id,
+            "feedback_type": body["feedback_type"], "comment": comment, "user_id": g.user["user_id"],
+            "user_class": "internal" if g.user["is_admin"] else "ordinary",
+            "engine_version": row["engine_version"] or ENGINE_VERSION, "graph_version": GRAPH_VERSION,
+            **_feedback_context(db, row),
+        })
+        return jsonify({"ok": True, "feedback_id": feedback_id})
+
     def _render_investigation(investigation_id: str):
         db = get_db()
         investigation_row = get_investigation(db, investigation_id)
@@ -4460,7 +4602,9 @@ def create_app() -> Flask:
                 "hidden_at": investigation_row["hidden_at"], "deleted_at": investigation_row["deleted_at"],
             }
             hypotheses = artifact["hypotheses"]
+            dynamic_chain_result = artifact.get("dynamic_chain")
         else:
+            dynamic_chain_result = None
             hypotheses = []
             for h in list_investigation_hypotheses(db, investigation_id):
                 evidence = [dict(e) for e in list_investigation_hypothesis_evidence(db, h["hypothesis_id"])]
@@ -4499,7 +4643,29 @@ def create_app() -> Flask:
         # touched or duplicated -- see reports/schema/investigation_report.py.
         report = from_investigation_data(investigation, hypotheses, cost)
 
-        return render_template("deep_dive/report.html", report=report)
+        # Structured causal feedback controls: only when this investigation has a
+        # persisted graph and the viewer may give feedback (signed in).
+        feedback_view = None
+        if g.user is not None and _feedback_allowed(investigation_row):
+            nodes = {n["node_id"]: n["label"] for n in list_graph_nodes(db, investigation_id)}
+            edges_by_hypothesis: dict[str, list[dict]] = {}
+            for e in list_graph_edges(db, investigation_id):
+                edges_by_hypothesis.setdefault(e["hypothesis_id"], []).append({
+                    "edge_id": e["edge_id"],
+                    "label": f"{nodes.get(e['source_node_id'], '?')} \u2192 {nodes.get(e['target_node_id'], '?')}",
+                })
+            mine = {
+                (r["hypothesis_id"], r["edge_id"]): r["feedback_type"]
+                for r in list_feedback(db, investigation_id, user_id=g.user["user_id"])
+            }
+            feedback_view = {
+                "investigation_id": investigation_id, "types": FEEDBACK_TYPES,
+                "edges": edges_by_hypothesis, "mine": {f"{k[0]}|{k[1] or ''}": v for k, v in mine.items()},
+            }
+
+        return render_template(
+            "deep_dive/report.html", report=report, feedback=feedback_view, dynamic_chain_result=dynamic_chain_result
+        )
 
     INVESTIGATIONS_PAGE_SIZE = 20
 

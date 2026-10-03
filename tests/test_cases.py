@@ -375,8 +375,10 @@ def test_natural_shorthand_company_names_resolve_via_the_llm_fallback(tmp_path: 
     from types import SimpleNamespace
 
     responses = iter([
+        # Scope resolution (research/scope_resolver.py) runs in the request, before
+        # Jev's classification of the resolved scope.
+        '{"company_ids": ["IDFCFIRSTB", "FEDERALBNK"], "groups": []}',
         '{"complexity_level": 4, "confidence": 0.9, "reason": "comparison question"}',
-        '{"company_ids": ["IDFCFIRSTB", "FEDERALBNK"]}',
         # 2 companies now resolved -> _compute_answer_question's own
         # aggregate-intent check (research/aggregate_query.py) fires next,
         # before falling through to the real per-company answer below.

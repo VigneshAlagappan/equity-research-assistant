@@ -75,8 +75,8 @@
       return null;
     }
 
-    function openDoc(typeLabel, periodLabel, docInfo) {
-      state.doc = Object.assign({ typeLabel, periodLabel }, docInfo);
+    function openDoc(typeLabel, periodLabel, docInfo, addTarget) {
+      state.doc = Object.assign({ typeLabel, periodLabel, addTarget }, docInfo);
     }
 
     function openAdd(periodId, typeKey) {
@@ -147,9 +147,10 @@
       const docInfo = qtr.docs[type.key];
       if (docInfo) {
         const mine = !!docInfo.added_by_user;
+        const count = docInfo.items ? docInfo.items.length : 0;
         return docPillHtml(
           `docs-doc-pill ${mine ? "is-mine" : "is-published"}`,
-          type.label,
+          count > 1 ? `${type.label} (${count})` : type.label,
           mine ? "Added by " + docInfo.added_by_user : "Open " + type.label,
           "open-doc",
           `data-action="open-doc" data-scope="quarter" data-qid="${qtr.id}" data-type="${type.key}"`
@@ -285,7 +286,7 @@
               ${isUpload
                 ? `<label class="docs-field">
                      <span class="docs-field-label">File</span>
-                     <input type="file" class="input docs-select" data-field="file">
+                     <input type="file" class="input docs-select" data-field="file"${state.add.typeKey === "other" ? ' accept=".pdf,.xls,.xlsx,.doc,.docx"' : ""}>
                      ${state.addFile ? `<span class="docs-file-chosen">${escapeHtml(state.addFile.name)}</span>` : ""}
                    </label>`
                 : `<label class="docs-field">
@@ -310,10 +311,18 @@
       }
       const d = state.doc;
       const attribution = d.added_by_user ? "Added by " + escapeHtml(d.added_by_user) : "Officially sourced";
-      const openLink = d.file_url
-        ? `<a href="${escapeHtml(d.file_url)}" target="_blank" rel="noopener noreferrer">Open file</a>`
-        : d.source_url
-        ? `<a href="${escapeHtml(d.source_url)}" target="_blank" rel="noopener noreferrer">Open link</a>`
+      const linkFor = (x, label) => x.file_url
+        ? `<a href="${escapeHtml(x.file_url)}" target="_blank" rel="noopener noreferrer">${label || "Open file"}</a>`
+        : x.source_url
+        ? `<a href="${escapeHtml(x.source_url)}" target="_blank" rel="noopener noreferrer">${label || "Open link"}</a>`
+        : "";
+      const openLink = linkFor(d);
+      // "Other" can hold several documents per quarter: list them all and
+      // let the user add another.
+      const multiBody = d.items
+        ? `<ul class="docs-other-list">${d.items.map((x) => `<li>${linkFor(x, "Open " + (x.file_url ? "file" : "link")) || "No file or link"}
+             <span class="muted">· ${escapeHtml(x.added_by_user || "Officially sourced")}${x.retrieved_at ? " · " + escapeHtml(localDate(x.retrieved_at)) : ""}</span></li>`).join("")}</ul>
+           <p><button type="button" class="docs-pill" data-action="add-another" data-qid="${escapeHtml(d.addTarget.qid)}" data-type="${escapeHtml(d.addTarget.type)}">+ Add another</button></p>`
         : "";
       modalHost.innerHTML = `
         <div class="docs-modal-backdrop">
@@ -327,7 +336,7 @@
               <button type="button" class="docs-modal-close" data-action="close-doc">Close</button>
             </div>
             <div class="docs-modal-body">
-              ${openLink ? `<p>${openLink}</p>` : `<p class="muted">No file or link on record for this document.</p>`}
+              ${multiBody || (openLink ? `<p>${openLink}</p>` : `<p class="muted">No file or link on record for this document.</p>`)}
             </div>
           </div>
         </div>`;
@@ -338,6 +347,7 @@
         if (!y.annual) return { qid: y.period_id, type: "annual" };
         for (const q of y.quarters) {
           for (const t of state.data.types) {
+            if (t.key === "other") continue; // optional uploads are never a "gap"
             if (!q.docs[t.key]) return { qid: q.id, type: t.key };
           }
         }
@@ -425,7 +435,7 @@
         } else {
           const qtr = findQuarter(el.dataset.qid);
           const type = state.data.types.find((t) => t.key === el.dataset.type);
-          openDoc(type.label, qtr.label, qtr.docs[type.key]);
+          openDoc(type.label, qtr.label, qtr.docs[type.key], { qid: qtr.id, type: type.key });
         }
       } else if (action === "open-add") {
         e.preventDefault();
@@ -444,6 +454,12 @@
         return;
       }
       const el = e.target.closest("[data-action]");
+      if (el && el.dataset.action === "add-another") {
+        state.doc = null;
+        openAdd(el.dataset.qid, el.dataset.type);
+        render();
+        return;
+      }
       if (el && el.dataset.action === "close-doc") {
         state.doc = null;
         render();

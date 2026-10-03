@@ -48,10 +48,14 @@ canonical_financials row, web/app.py's company_report()).
 from __future__ import annotations
 
 import calendar
+import re
 from storage.db_types import DBConnection
 from datetime import date
 
 from companies.registry import get_company
+from web.company_kind import is_financial_company
+from web.income_derivations import derive_income_rows, finalize_income_rows
+from web.share_adjustment import restate_to_latest_share_basis, share_multiplier
 from financials.ratios import MissingDataError, SectorMismatchError, roa_for_company, roe_for_company
 from storage.company_repository import select_corporate_actions
 from storage.price_repository import get_avg_volume, get_close_as_of_range
@@ -71,8 +75,10 @@ _RAW_METRIC_KEYS = (
     "net_profit", "total_assets", "total_revenue", "other_income", "interest_expended",
     "tax", "profit_before_tax", "operating_expenses", "depreciation",
     "equity_share_capital", "reserves", "borrowings", "investments",
-    "deposits", "advances", "eps", "book_value", "dividend_per_share", "sales_per_share",
+    "deposits", "advances", "eps", "diluted_eps", "book_value", "dividend_per_share", "sales_per_share",
     "shares_outstanding", "total_shareholders_funds", "interest_earned",
+    "operating_profit", "cost_of_revenue", "selling_general_admin", "research_and_development", "depreciation_amortization",
+    "cost_of_materials_consumed", "purchases_of_stock_in_trade", "changes_in_inventories", "employee_benefit_expense", "other_expenses", "current_tax", "deferred_tax",
 )
 
 
@@ -141,6 +147,84 @@ def _corporate_actions_by_period(
                 buckets[i].append({"action_type": row["action_type"], "subject": row["subject"], "ex_date": ex_date})
                 break
     return buckets
+
+
+_DIVIDEND_AMOUNT = re.compile(r"(?:\b(?:rs|re|usd)\.?\s*|\$\s*)(\d+(?:\.\d+)?)(?=[^\d.]|$)")
+
+
+# A dividend amount written with no currency prefix at all -- real NSE rows:
+# "Special Dividend- 130 Per Share" (Abbott India), "Dividend 12.50/-+Special
+# Dividend 0.50/-". Not a percentage ("Dividend 185%" is percent of face value).
+_BARE_AMOUNT = re.compile(r"dividend\s*[-:]?\s*(\d+(?:\.\d+)?)(?!\s*%)(?=[^\d.]|$)")
+_PER_SHARE_AFTER = re.compile(r"^[\s/\-]*per\s+(?:equity\s+)?sh")
+
+
+def _dividend_amount_per_share(subject: str) -> float | None:
+    """Rupees per share out of NSE's free-text dividend subject --
+    "Dividend - Rs 13 Per Share", "Interim Dividend - Re 0.70 Per Share",
+    "Annual General Meeting/Dividend - Rs 2.50 Per Share", older
+    "Agm/Div-Rs.12/- Per Share". A subject naming several amounts (a regular
+    plus a special dividend in one row -- "Rs 525 Per Share & Special
+    Dividend Rs 131", "Rs 145 Per Share/Special Dividend- 130 Per Share")
+    sums them: an amount counts when "Per [Equity] Share" follows it, when it
+    is written as a special dividend, or when it follows the word "dividend"
+    with no currency prefix. One with no recognisable amount at all (the old
+    "Div185%" percent-of-face-value style) returns None rather than
+    guessing."""
+    s = subject.lower()
+    matches = list(_DIVIDEND_AMOUNT.finditer(s))
+    bare = list(_BARE_AMOUNT.finditer(s))
+    if not matches and not bare:
+        return None
+
+    def qualified(m: re.Match) -> bool:
+        return bool(_PER_SHARE_AFTER.match(s[m.end():])) or bool(re.search(r"special\s+dividend\s*[-:]?\s*$", s[:m.start()]))
+
+    counted = [float(m.group(1)) for m in matches if qualified(m)]
+    # a bare amount is the same figure as an "Rs" match when "Rs" sits between
+    # the word and the digits -- the patterns can't overlap, so just add them
+    counted += [float(m.group(1)) for m in bare]
+    if counted:
+        return sum(counted)
+    return float(matches[0].group(1))
+
+
+def dividends_from_corporate_actions(
+    conn: DBConnection, company_id: str, fiscal_year_end_month: int, period_keys: list[tuple[int, int]]
+) -> dict[tuple[int, int], float]:
+    """Per-share dividend declared in each fiscal period, summed from the
+    Corporate Actions feed (interim + final + special, by ex-date falling in
+    the period's date range -- same period placement as
+    _corporate_actions_by_period()). Used only to fill periods where
+    canonical_financials has no dividend_per_share, since filings often
+    trail the NSE corporate-actions feed. A period with no parseable
+    dividend action is omitted (stays blank), not reported as 0."""
+    ranges = {pk: _period_date_range(fiscal_year_end_month, pk[0], pk[1]) for pk in period_keys}
+    out: dict[tuple[int, int], float] = {}
+    actions = list(select_corporate_actions(conn, company_id))
+    # Splits/bonuses that happen AFTER a dividend but inside the same period:
+    # the period-level restatement (share_adjustment.py) only covers splits
+    # after the period ends, so such a dividend is put on the post-split
+    # basis here, by its own ex-date.
+    splits = [
+        (r["ex_date"], share_multiplier(r["action_type"], r["subject"]))
+        for r in actions
+        if r["action_type"] in ("bonus", "fv_split", "split") and r["ex_date"]
+    ]
+    for row in actions:
+        if row["action_type"] != "dividend" or not row["ex_date"]:
+            continue
+        amount = _dividend_amount_per_share(row["subject"])
+        if amount is None:
+            continue
+        for pk, (start, end) in ranges.items():
+            if start.isoformat() <= row["ex_date"] <= end.isoformat():
+                for split_ex, mult in splits:
+                    if mult and mult > 1 and row["ex_date"] < split_ex <= end.isoformat():
+                        amount /= mult
+                out[pk] = out.get(pk, 0.0) + amount
+                break
+    return out
 
 
 def _period_label(fiscal_year: str, quarter: str | None) -> str:
@@ -265,6 +349,17 @@ def build_charts_feed(
     company = get_company(conn, company_id)
     raw = {key: _series_by_period(conn, company_id, key, period_type, statement_type) for key in _RAW_METRIC_KEYS}
     period_keys = sorted({pk for series in raw.values() for pk in series})
+    dividend_filled = False
+    if period_type == "annual" and company is not None:
+        from_actions = dividends_from_corporate_actions(conn, company_id, company["fiscal_year_end_month"], period_keys)
+        missing = {pk: v for pk, v in from_actions.items() if pk not in raw["dividend_per_share"]}
+        if missing:
+            raw["dividend_per_share"] = {**raw["dividend_per_share"], **missing}
+            dividend_filled = True
+    restated: set[str] = set()
+    if company is not None and period_keys:
+        period_ends = {pk: _period_date_range(company["fiscal_year_end_month"], pk[0], pk[1])[1] for pk in period_keys}
+        restated = restate_to_latest_share_basis(conn, company_id, period_ends, raw)
     # fiscal_year/quarter text per period_key, for ROE/ROA lookups (annual
     # only) and for building the display label — reconstructed directly from
     # the sorted key rather than threading the original strings through
@@ -315,7 +410,8 @@ def build_charts_feed(
 
     networth = raw["reserves"]
     she = fill_missing(raw["total_shareholders_funds"], add("equity_share_capital", "reserves"))
-    eps_series = fill_missing(raw["eps"], divide("net_profit", "shares_outstanding"))
+    # reported EPS, else the XBRL diluted figure (insurers file one combined basic-and-diluted EPS), else net profit / shares
+    eps_series = fill_missing(raw["eps"], fill_missing(raw["diluted_eps"], divide("net_profit", "shares_outstanding")))
     book_value_series = fill_missing(
         raw["book_value"],
         {
@@ -442,6 +538,8 @@ def build_charts_feed(
     # shape as the _series_by_period() call already made for each of these.
     prov = lambda metric_key: _provenance_by_period(conn, company_id, metric_key, period_type, statement_type)
 
+    derived_income = derive_income_rows(raw, period_keys)
+
     metrics: dict[str, list[dict]] = {
         "balanceSheet": [
             _row("networth", "Networth (reserves only)", "big", period_keys, networth, provenance=prov("reserves")),
@@ -454,18 +552,33 @@ def build_charts_feed(
         ],
         "incomeStatement": [
             _row("earnings", "Earnings (Total Income)", "big", period_keys, raw["total_revenue"], row_type="calc"),
-            _row("expenses", "Expenses", "big", period_keys, raw["operating_expenses"], provenance=prov("operating_expenses")),
-            _row("interestOutgo", "Interest Out-go", "big", period_keys, raw["interest_expended"], provenance=prov("interest_expended")),
-            _row("otherIncome", "Other Income", "big", period_keys, raw["other_income"], provenance=prov("other_income")),
+            _row("expenses", "Expenses", "big", period_keys, {**raw["operating_expenses"], **derived_income["expenses"]}, provenance=prov("operating_expenses")),
+            _row("costOfRevenue", "Cost of revenue", "big", period_keys, raw["cost_of_revenue"]),
+            _row("sellingGeneralAdmin", "SG&A", "big", period_keys, raw["selling_general_admin"]),
+            _row("researchAndDevelopment", "R&D", "big", period_keys, raw["research_and_development"]),
+            _row("materialsCost", "Material cost", "big", period_keys, derived_income["materialsCost"], row_type="calc"),
+            _row("employeeCost", "Employee cost", "big", period_keys, raw["employee_benefit_expense"], provenance=prov("employee_benefit_expense")),
+            _row("otherExpenses", "Other cost", "big", period_keys, raw["other_expenses"], provenance=prov("other_expenses")),
+            _row("ebitda", "EBITDA (operating, excl. other income)", "big", period_keys, derived_income["ebitda"], row_type="calc"),
+            _row("otherIncome", "Other Income", "big", period_keys, {**derived_income["otherIncome"], **raw["other_income"]}, provenance=prov("other_income")),
+            _row("ebitdaInclOther", "EBITDA incl. other income", "big", period_keys, derived_income["ebitdaInclOther"], row_type="calc"),
             _row("depreciation", "Depreciation", "big", period_keys, raw["depreciation"], provenance=prov("depreciation")),
+            _row("ebit", "EBIT (operating, excl. other income)", "big", period_keys, derived_income["ebit"], row_type="calc"),
+            _row("ebitInclOther", "EBIT incl. other income", "big", period_keys, derived_income["ebitInclOther"], row_type="calc"),
+            _row("interestOutgo", "Interest Out-go", "big", period_keys, raw["interest_expended"], provenance=prov("interest_expended")),
+            _row("profitBeforeTax", "Profit before Tax (PBT)", "big", period_keys, raw["profit_before_tax"], provenance=prov("profit_before_tax")),
+            _row("taxExpense", "Tax", "big", period_keys, raw["tax"], provenance=prov("tax")),
+            _row("currentTax", "Current tax", "big", period_keys, raw["current_tax"], provenance=prov("current_tax")),
+            _row("deferredTax", "Deferred tax", "big", period_keys, raw["deferred_tax"], provenance=prov("deferred_tax")),
             _row("netProfit", "Net Profit (PAT)", "big", period_keys, raw["net_profit"], provenance=prov("net_profit")),
         ],
         "perShare": [
             _row("eps", "EPS (Net Profit / share)", "perShare", period_keys, eps_series, row_type="calc"),
+            _row("dilutedEps", "Diluted EPS (XBRL)", "perShare", period_keys, raw["diluted_eps"]),
             _row("bookValue", "Book Value (Networth based)", "perShare", period_keys, book_value_series, row_type="calc"),
-            _row("dividend", "Dividend per share", "perShare", period_keys, raw["dividend_per_share"]),
+            _row("dividend", "Dividend per share", "perShare", period_keys, raw["dividend_per_share"], row_type="calc" if dividend_filled or "dividend_per_share" in restated else "fact"),
             _row("salesPerShare", "Sales (Revenue per share)", "perShare", period_keys, sales_per_share_series, row_type="calc"),
-            _row("shares", "Shares Outstanding", "sharesCount", period_keys, raw["shares_outstanding"]),
+            _row("shares", "Shares Outstanding", "sharesCount", period_keys, raw["shares_outstanding"], row_type="calc" if "shares_outstanding" in restated else "fact"),
         ],
         "profitability": [
             _row("netMargin", "Net Profit Margin", "pct", period_keys, net_margin, row_type="calc"),
@@ -496,6 +609,12 @@ def build_charts_feed(
         metrics["profitability"] = [r for r in metrics["profitability"] if r["key"] != "roe"]
         metrics["bankRatios"] = [r for r in metrics["bankRatios"] if r["key"] != "npAssets"]
 
+    metrics["incomeStatement"] = finalize_income_rows(metrics["incomeStatement"], is_financial_company(company))
+    if not is_financial_company(company):
+        metrics["bankRatios"] = []  # Bank Ratios only apply to banks/financials
+        # Likewise the lending-book lines -- deposits/borrowings/advances
+        # are a bank balance-sheet shape, not a corporate one.
+        metrics["balanceSheet"] = [r for r in metrics["balanceSheet"] if r["key"] not in ("deposits", "borrowings", "advances")]
     currency = company["currency"] if company else "INR"
     periods = [_period_label(fy_by_key[pk], quarter_by_key[pk]) for pk in period_keys]
     # PERIOD_KEYS (parallel to PERIODS, [year, quarter_num] per entry) lets a

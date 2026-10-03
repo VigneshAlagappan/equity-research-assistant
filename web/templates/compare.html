@@ -5,6 +5,8 @@
 {% block page_class %}page-wide{% endblock %}
 
 {% block extra_style %}
+  {% include "_charts_overlay_styles.html" %}
+
   .compare-intro { max-width: 68ch; margin-bottom: var(--space-5); }
 
   /* — Top nav: Quick Comparison / Detailed Comparison / Valuation Model —
@@ -194,6 +196,7 @@
     <nav class="compare-nav" role="tablist">
       <button type="button" class="compare-nav-item active" data-compare-tab="quick">Quick Comparison</button>
       <button type="button" class="compare-nav-item" data-compare-tab="detailed">Detailed Comparison</button>
+      <button type="button" class="compare-nav-item" data-compare-tab="charts">Charts</button>
       <button type="button" class="compare-nav-item" data-compare-tab="valuation">Valuation Model</button>
     </nav>
 
@@ -239,6 +242,17 @@
     <div id="cmp-detailed-table"></div>
   </div>
 
+  <div class="compare-panel" id="compare-panel-charts" data-compare-panel="charts" hidden>
+    <p class="compare-intro muted">
+      The same Charts as each company's own Charts tab, overlaying the companies selected in Quick Comparison.
+      Pick any attributes to plot them over time; each company gets its own line style.
+    </p>
+    <div id="cmp-charts-overlay" class="chart-overlay" data-mode="quick"
+         data-compare-url-template="{{ charts_url_template }}">
+      <p class="muted">Loading chart&hellip;</p>
+    </div>
+  </div>
+
   <div class="compare-panel" id="compare-panel-valuation" data-compare-panel="valuation"
        data-valuation-url-template="{{ valuation_url_template }}" hidden>
     <p class="compare-intro muted">
@@ -280,6 +294,7 @@
           document.querySelectorAll('[data-compare-panel]').forEach((panel) => {
             panel.hidden = panel.dataset.comparePanel !== btn.dataset.compareTab;
           });
+          document.dispatchEvent(new CustomEvent('compare:tab-shown', { detail: btn.dataset.compareTab }));
         });
       });
     })();

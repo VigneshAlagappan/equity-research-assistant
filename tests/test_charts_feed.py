@@ -100,8 +100,9 @@ def test_build_charts_feed_balance_sheet_and_income_statement(company_conn: sqli
     assert networth_row["values"] == [100.0]
     assert networth_row["type"] == "fact"
 
-    deposits_row = next(r for r in feed["METRICS"]["balanceSheet"] if r["key"] == "deposits")
-    assert deposits_row["values"] == [500.0]
+    # Lending-book lines are only shown for financial companies.
+    bs_keys = {r["key"] for r in feed["METRICS"]["balanceSheet"]}
+    assert not bs_keys & {"deposits", "borrowings", "advances"}
 
     net_profit_row = next(r for r in feed["METRICS"]["incomeStatement"] if r["key"] == "netProfit")
     assert net_profit_row["values"] == [50.0]
@@ -111,6 +112,18 @@ def test_build_charts_feed_balance_sheet_and_income_statement(company_conn: sqli
     she_row = next(r for r in feed["METRICS"]["balanceSheet"] if r["key"] == "she")
     assert she_row["type"] == "calc"
     assert "sources" not in she_row
+
+
+def test_build_charts_feed_financial_company_keeps_lending_rows(db_conn: sqlite3.Connection) -> None:
+    register_company(db_conn, "BANKCO", legal_name="Bank Co", display_name="Bank Co")
+    db_conn.execute("UPDATE companies SET sector = 'Financial Services' WHERE company_id = 'BANKCO'")
+    db_conn.commit()
+    _insert_canonical(db_conn, "BANKCO", "deposits", "FY2023", 500.0)
+
+    feed = build_charts_feed(db_conn, "BANKCO")
+
+    deposits_row = next(r for r in feed["METRICS"]["balanceSheet"] if r["key"] == "deposits")
+    assert deposits_row["values"] == [500.0]
 
 
 def test_build_charts_feed_empty_company_has_no_periods(db_conn: sqlite3.Connection) -> None:
@@ -196,3 +209,128 @@ def test_company_has_canonical_financials_false_when_empty(db_conn: sqlite3.Conn
 def test_company_has_canonical_financials_true_with_any_row(company_conn: sqlite3.Connection) -> None:
     _insert_canonical(company_conn, "TESTCO", "reserves", "FY2023", 100.0)
     assert company_has_canonical_financials(company_conn, "TESTCO") is True
+
+
+def test_dividend_amount_parses_nse_subject_styles() -> None:
+    from web.charts_feed import _dividend_amount_per_share as parse
+
+    assert parse("Dividend - Rs 13 Per Share") == 13.0
+    assert parse("Interim Dividend - Re 0.70 Per Share") == 0.7
+    assert parse("Annual General Meeting/Dividend - Rs 2.50 Per Share") == 2.5
+    assert parse("Agm/Div-Rs.12/- Per Share") == 12.0
+    assert parse("Dividend - Rs 5 Per Share And Special Dividend - Rs 2 Per Share") == 7.0
+    assert parse("Div185%") is None
+
+
+def test_dividend_row_filled_from_corporate_actions_when_canonical_missing(company_conn: sqlite3.Connection) -> None:
+    _insert_canonical(company_conn, "TESTCO", "net_profit", "FY2024", 50.0)
+    _insert_canonical(company_conn, "TESTCO", "dividend_per_share", "FY2023", 3.0)
+    company_conn.execute(
+        "INSERT INTO corporate_actions_raw (company_id, subject, ex_date, raw_json, retrieved_at) VALUES "
+        "('TESTCO', 'Interim Dividend - Rs 2 Per Share', '2023-11-10', '{}', 'x'), "
+        "('TESTCO', 'Dividend - Rs 4.50 Per Share', '2024-07-20', '{}', 'x')"
+    )
+    company_conn.execute(
+        "INSERT INTO corporate_actions (raw_id, company_id, action_type, subject, ex_date, classifier_version, created_at) "
+        "SELECT raw_id, company_id, 'dividend', subject, ex_date, 'v3', 'x' FROM corporate_actions_raw"
+    )
+    company_conn.commit()
+    fye = company_conn.execute("SELECT fiscal_year_end_month FROM companies WHERE company_id='TESTCO'").fetchone()[0]
+
+    feed = build_charts_feed(company_conn, "TESTCO")
+
+    row = next(r for r in feed["METRICS"]["perShare"] if r["key"] == "dividend")
+    by_period = dict(zip(feed["PERIODS"], row["values"]))
+    assert by_period["FY2023"] == 3.0  # canonical value wins, never overwritten
+    assert fye == 3
+    assert by_period["FY2024"] == 2.0  # only the Nov-2023 interim falls in Apr23-Mar24
+    assert row["type"] == "calc"
+
+
+@pytest.mark.parametrize(
+    "fye_month, ex_date, expected_fy",
+    [
+        (3, "2024-02-15", 2024),   # India, Apr-Mar: Feb 2024 is in FY2024
+        (3, "2024-04-02", 2025),   # ...and Apr 2024 starts FY2025
+        (12, "2024-12-31", 2024),  # US calendar-year filer
+        (12, "2025-01-02", 2025),
+        (9, "2024-09-30", 2024),   # Apple-style Oct-Sep
+        (9, "2024-10-01", 2025),
+        (6, "2024-07-01", 2025),   # Microsoft-style Jul-Jun
+        (1, "2024-01-31", 2024),   # NVIDIA-style Feb-Jan
+        (1, "2024-02-01", 2025),
+    ],
+)
+def test_dividend_fill_uses_each_companys_own_fiscal_year(fye_month: int, ex_date: str, expected_fy: int) -> None:
+    from web.charts_feed import _period_date_range
+
+    periods = [(2024, 0), (2025, 0)]
+    hit = [
+        y for y, q in periods
+        if (lambda r: r[0].isoformat() <= ex_date <= r[1].isoformat())(_period_date_range(fye_month, y, q))
+    ]
+    assert hit == [expected_fy]
+
+
+def test_dividend_amount_parses_dollar_subjects() -> None:
+    from web.charts_feed import _dividend_amount_per_share as parse
+
+    assert parse("Cash Dividend - $0.24 Per Share") == 0.24
+    assert parse("Dividend - USD 1.10 Per Share") == 1.1
+
+
+def test_diluted_eps_is_its_own_row_next_to_reported_eps(company_conn: sqlite3.Connection) -> None:
+    for fy, eps, diluted in (("FY2023", 10.0, 9.5), ("FY2024", 12.0, None)):
+        _insert_canonical(company_conn, "TESTCO", "eps", fy, eps)
+        if diluted is not None:
+            _insert_canonical(company_conn, "TESTCO", "diluted_eps", fy, diluted)
+
+    feed = build_charts_feed(company_conn, "TESTCO")
+
+    rows = {r["key"]: r for r in feed["METRICS"]["perShare"]}
+    assert dict(zip(feed["PERIODS"], rows["eps"]["values"])) == {"FY2023": 10.0, "FY2024": 12.0}
+    assert dict(zip(feed["PERIODS"], rows["dilutedEps"]["values"])) == {"FY2023": 9.5, "FY2024": None}
+
+
+def test_eps_row_falls_back_to_diluted_eps_when_no_reported_eps(company_conn: sqlite3.Connection) -> None:
+    _insert_canonical(company_conn, "TESTCO", "diluted_eps", "FY2024", 8.87)
+
+    feed = build_charts_feed(company_conn, "TESTCO")
+
+    rows = {r["key"]: r for r in feed["METRICS"]["perShare"]}
+    assert rows["eps"]["values"] == [8.87]
+    assert rows["dilutedEps"]["values"] == [8.87]
+
+
+@pytest.mark.parametrize(
+    "subject, expected",
+    [
+        # real Abbott India corporate-action subjects (NSE)
+        ("Dividend - Rs 525 Per Share & Special Dividend Rs 131 Per Share", 656.0),
+        ("Dividend - Rs 475 Per Share", 475.0),
+        ("Dividend - Rs 180 Per Share/ Special Dividend Rs 145 Per Share", 325.0),
+        ("Annual General Meeting/Dividend - Rs 145 Per Share/Special Dividend- 130 Per Share", 275.0),
+        ("Annual General Meeting/Dividend - Rs 120 Per Share Special Dividend 155 Per Share", 275.0),
+        ("Annual General Meeting/Dividend - Rs 107 Per Share And Special Dividend - Rs 143 Per Share", 250.0),
+        ("Annual General Meeting/ Final Dividend - Rs 50 Per Share/ Special Dividend - Rs 15 Per Share", 65.0),
+        ("Annual General Meeting/Dividend Rs 40/- Per Share", 40.0),
+    ],
+)
+def test_dividend_amount_includes_special_dividends(subject: str, expected: float) -> None:
+    from web.charts_feed import _dividend_amount_per_share as parse
+
+    assert parse(subject) == expected
+
+
+@pytest.mark.parametrize(
+    "subject, expected",
+    [
+        ("Annual General Meeting / Dividend Rs.2/- Per Equity Share + Special Dividend Re.1/- Equity Share", 3.0),
+        ("Annual General Meeting/Dividend 12.50/-+Special Dividend 0.50/- Per Share", 13.0),
+        ("Div185%", None),
+    ],
+)
+def test_dividend_amount_edge_formats(subject: str, expected: float | None) -> None:
+    from web.charts_feed import _dividend_amount_per_share as parse
+
+    assert parse(subject) == expected

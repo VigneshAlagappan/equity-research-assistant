@@ -15,6 +15,13 @@ from retrieval.vector_store import VectorMatch, VectorRecord, VectorStoreUnavail
 from storage.database import init_db
 
 
+@pytest.fixture(autouse=True)
+def _no_real_causal_graph(monkeypatch) -> None:
+    """The L5 causal-chain stage reads the real Neo4j named in .env; tests must never
+    reach it. Tests of the stage itself pass a fake service and flip this back on."""
+    monkeypatch.setattr("config.settings.CAUSAL_CHAIN_ENABLED", False)
+
+
 @pytest.fixture
 def db_conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     """A freshly initialized database with the metric vocabulary seeded, no companies."""
