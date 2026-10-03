@@ -4602,7 +4602,9 @@ def create_app() -> Flask:
                 "hidden_at": investigation_row["hidden_at"], "deleted_at": investigation_row["deleted_at"],
             }
             hypotheses = artifact["hypotheses"]
+            dynamic_chain_result = artifact.get("dynamic_chain")
         else:
+            dynamic_chain_result = None
             hypotheses = []
             for h in list_investigation_hypotheses(db, investigation_id):
                 evidence = [dict(e) for e in list_investigation_hypothesis_evidence(db, h["hypothesis_id"])]
@@ -4661,7 +4663,9 @@ def create_app() -> Flask:
                 "edges": edges_by_hypothesis, "mine": {f"{k[0]}|{k[1] or ''}": v for k, v in mine.items()},
             }
 
-        return render_template("deep_dive/report.html", report=report, feedback=feedback_view)
+        return render_template(
+            "deep_dive/report.html", report=report, feedback=feedback_view, dynamic_chain_result=dynamic_chain_result
+        )
 
     INVESTIGATIONS_PAGE_SIZE = 20
 

@@ -107,6 +107,9 @@ class Investigation:
     as_of: str | None = None
     #: time.monotonic() when run started -- runtime metric only, never persisted as-is.
     started_monotonic: float | None = None
+    #: Result of the dynamic causal-chain stage (research/causal_chain_stage.py): plain data,
+    #: always carries a "status"; None only when the stage never ran.
+    causal_chain: dict | None = None
 
 
 def _persist_evidence_item(hypothesis_id: str, stance: str, item, graph=None) -> dict:
@@ -321,6 +324,15 @@ def _run_investigation_impl(
 
     _enrich_with_link_evidence(conn, investigation, statement_type, fs)
     _gap_fill_untested_links(conn, investigation, question, caps, fs, model, deadline)
+    if case_id is not None:
+        from storage.repositories import update_case_activity
+
+        update_case_activity(conn, case_id, "Tracing causal chains")
+    from research.causal_chain_stage import run_causal_chain_stage
+
+    investigation.causal_chain = run_causal_chain_stage(
+        conn, question, company_ids, investigation_id, statement_type=statement_type, fact_store=fs, as_of=cutoff,
+    )
 
     if case_id is not None:
         from storage.repositories import update_case_activity
@@ -545,6 +557,9 @@ def _persist(
         "hypotheses": hypotheses_json,
     }
     causal = _persist_causal_layer(conn, investigation, graph, hypotheses_json)
+    if investigation.causal_chain is not None:
+        causal["artifact_fields"]["dynamic_chain"] = investigation.causal_chain
+        causal["companion_files"]["dynamic_chain.json"] = investigation.causal_chain
     artifact.update(causal["artifact_fields"])
     store = default_document_store()
     s3_key = investigation_artifact_key(investigation.investigation_id, 1)

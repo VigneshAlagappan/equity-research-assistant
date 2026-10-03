@@ -33,6 +33,7 @@
 {% from "causal_chain.html" import causal_chain %}
 {% from "causal_feedback.html" import causal_feedback, causal_feedback_script %}
 {% from "evidence_matrix.html" import evidence_matrix %}
+{% from "dynamic_chain.html" import dynamic_chain %}
 {% from "follow_up_research.html" import follow_up_research %}
 {% from "research_gaps.html" import research_gaps %}
 {% from "methodology.html" import methodology %}
@@ -103,6 +104,12 @@
         {% endfor %}
       </section>
       {{ causal_feedback_script(feedback) }}
+      {% endif %}
+
+      {% if dynamic_chain_result %}
+      <section class="signal-section" id="section-dynamic-chain">
+        {{ dynamic_chain(dynamic_chain_result) }}
+      </section>
       {% endif %}
 
       {% if report.follow_up_questions or report.additional_evidence_needed %}

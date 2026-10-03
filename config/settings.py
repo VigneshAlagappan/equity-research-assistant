@@ -760,3 +760,12 @@ CHAIN_MIN_EDGE_CONFIDENCE = float(os.environ.get("CHAIN_MIN_EDGE_CONFIDENCE", "0
 CHAIN_MIN_PATH_SCORE = float(os.environ.get("CHAIN_MIN_PATH_SCORE", "0.35"))
 CHAIN_CROSS_SECTOR_MIN_MATERIALITY = float(os.environ.get("CHAIN_CROSS_SECTOR_MIN_MATERIALITY", "0.3"))
 CHAIN_MAX_NARRATIVE_QUERIES = int(os.environ.get("CHAIN_MAX_NARRATIVE_QUERIES", "6"))
+
+# Dynamic causal-chain stage inside the L5 investigation (research/causal_chain_stage.py).
+# Reads the persistent causal graph (Neo4j) and the stored data; failure-soft -- if the
+# graph is unreachable or empty the investigation runs exactly as before. Independent of
+# GRAPH_BACKEND. Evidence found by the stage is attached to graph edges as references
+# (Postgres) only when CAUSAL_CHAIN_ATTACH_EVIDENCE is on; it is off by default so an
+# investigation never leaves anything on the persistent graph's evidence record.
+CAUSAL_CHAIN_ENABLED = os.environ.get("CAUSAL_CHAIN_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+CAUSAL_CHAIN_ATTACH_EVIDENCE = os.environ.get("CAUSAL_CHAIN_ATTACH_EVIDENCE", "false").strip().lower() in ("1", "true", "yes", "on")
