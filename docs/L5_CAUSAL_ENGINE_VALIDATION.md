@@ -122,3 +122,16 @@ Counts are failure instances across the 8 runs (a case can have several). Some f
 - Qdrant returned 403 locally, so narrative search was FTS5-only; semantic retrieval might change the narrative results.
 - Failure counts are my classification and are open to review; MISSED_CONTRADICTION is the least certain.
 - Nothing was written to the graph. Evidence attachment was off for the validation runs.
+
+## Follow-up 2026-10-03: evidence-honesty fixes (step 1 of the recommendation)
+
+Four deterministic, $0 changes, each aimed at a failure above. The same 8 real cases were re-run against live Neon + Aura; the graph, data and seed were not changed.
+
+| Failure | Change | Effect on the real cases |
+|---|---|---|
+| WEAK_EVIDENCE (circular support) | One underlying series counts once however many nodes it stands for (a direct reading wins over a stand-in); an edge test between two nodes reading the same series is skipped; evidence from a stand-in series or a keyword hit in text counts half and can never reach SUPPORTED alone or condemn a path alone. | Maruti volume: the two "SUPPORTED" circular paths are now PLAUSIBLE (support weight 0.5). |
+| FALSE_PREMISE | Premise status (CONSISTENT / CONTRADICTED_BY_DATA / FLAT / UNVERIFIED / NOT_STATED). When the data contradicts the question, paths are tested against the *observed* movement and the warning says so; a flat target is reported as "nothing to explain". | Maruti margin: now 2 retained SUPPORTED paths (Iron Ore -> Steel (Price) -> Auto -> Material Cost -> Margin; material cost share 73.4% -> 72.3%) instead of one untestable lead. |
+| IRRELEVANT_PATH | Sector fit: a path through another sector must be anchored to the company (its own sector, or an edge scoped to it) and must not leave the company's sector for one downstream of it. | Tata Steel: both Auto-routed paths rejected (`leaves_company_sector_downstream`, `foreign_sector_without_company_link`). HDFC "NIM": 2 of 4 paths rejected; the other 2 are WEAK and none retained. Maruti keeps its Steel supplier and Banking financing chains. |
+| WRONG_PATH_RANKING | A path containing an edge whose direction the graph does not state tops out at PLAUSIBLE and lists `untestable_edges`. | The Banking path with `repo -> Banking` (UNKNOWN) is no longer SUPPORTED while its Lending-Rate sibling is WEAK. |
+
+Over the 8 cases the 25 tested paths went from CONTRADICTED 13 / UNRESOLVED 6 / WEAK 4 / SUPPORTED 2 to CONTRADICTED 8 / UNRESOLVED 5 / PLAUSIBLE 6 / WEAK 2 / SUPPORTED 2 (candidate paths: 25 -> 22 after sector fit; the 2 SUPPORTED are now the direct material-cost explanations, not circular ones). Not addressed here, by design: the bank/US yield-channel gap (MISSING_EDGE), missing data links and bank metrics (MISSING_DATA), wrong target for "net interest margin" (MISSING_NODE), geography/sector inference from question text (WRONG_CONTEXT), and cue-word narrative contradiction (still the fixed baseline; it can now only weaken a path, never condemn it). Tests: 1407 passed, 31 skipped.

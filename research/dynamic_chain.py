@@ -60,6 +60,9 @@ class Observation:
     ref_type: str           # EVIDENCE_REF_TYPES
     locator: str
     detail: str
+    #: False when the series only stands in for the node (revenue for vehicle volume):
+    #: such evidence counts for half and can never reach SUPPORTED alone.
+    direct: bool = True
 
 
 class Observer(Protocol):
@@ -112,6 +115,12 @@ class MacroSeriesObserver:
         )
 
 
+def _same_concept(node_name: str, concept_label: str) -> bool:
+    """The node IS the measured concept (every word of one name appears in the other), not a stand-in."""
+    a, b = (set(re.findall(r"[a-z0-9]+", t.lower())) for t in (node_name, concept_label))
+    return bool(a and b) and (a <= b or b <= a)
+
+
 class FinancialObserver:
     """A node whose name maps to a metric we compute from canonical financials."""
 
@@ -136,10 +145,12 @@ class FinancialObserver:
             return None
         direction, y0, y1, first, last = real
         unit = "%" if concept.kind == "ratio" else ""
-        proxy = " (proxy)" if concept.proxy else ""
+        direct = _same_concept(node["display_name"], concept.label)
+        proxy = "" if direct else " (proxy)"
         return Observation(
             node["id"], direction, f"{self._company} {concept.label}{proxy}: {first:,.1f}{unit} -> {last:,.1f}{unit} (FY{y0}-FY{y1})",
             "NEON_OBSERVATION", f"canonical_financials:{self._company}:{concept.key}:FY{y0}-FY{y1}", "annual canonical series",
+            direct=direct,
         )
 
 
@@ -239,9 +250,13 @@ class _Run:
         return self._obs[node["id"]]
 
 
-def _finding(stance: str, kind: str, label: str, ref_type: str, locator: str, edge_id: str | None, detail: str = "") -> dict:
+PROXY_WEIGHT = 0.5  # indirect evidence (a stand-in series, or a keyword hit in text) counts for half
+
+
+def _finding(stance: str, kind: str, label: str, ref_type: str, locator: str, edge_id: str | None, detail: str = "",
+             direct: bool = True) -> dict:
     return {"stance": stance, "kind": kind, "label": label, "ref_type": ref_type, "locator": locator,
-            "edge_id": edge_id, "detail": detail}
+            "edge_id": edge_id, "detail": detail, "direct": direct, "weight": 1.0 if direct else PROXY_WEIGHT}
 
 
 def evaluate_path(path: CandidatePath, nodes: dict[str, dict], run: _Run, target_dir: int | None) -> dict:
@@ -256,6 +271,7 @@ def evaluate_path(path: CandidatePath, nodes: dict[str, dict], run: _Run, target
     findings: list[dict] = []
     unmeasured: list[str] = []
     observed: dict[str, Observation | None] = {}
+    chosen: dict[str, tuple[str, Observation, int]] = {}  # locator -> (node id, observation, expected direction)
     for node_id in ids:
         obs = observed[node_id] = run.observe(nodes[node_id])
         if obs is None:
@@ -265,23 +281,29 @@ def evaluate_path(path: CandidatePath, nodes: dict[str, dict], run: _Run, target
         want = expected.get(node_id)
         if want is None or node_id == ids[-1]:
             continue  # no stated direction, or the target itself: its movement is the question's premise, not evidence for one path
+        held = chosen.get(obs.locator)  # one underlying series is one piece of evidence, however many nodes it stands for
+        if held is None or (obs.direct and not held[1].direct):
+            chosen[obs.locator] = (node_id, obs, want)
+    for node_id, obs, want in chosen.values():
         if obs.direction == want:
             findings.append(_finding("SUPPORTS", "NODE_MOVEMENT", f"{obs.label}: moved {_arrow(obs.direction)} as hypothesised",
-                                     obs.ref_type, obs.locator, edge_for_cause[node_id], obs.detail))
+                                     obs.ref_type, obs.locator, edge_for_cause[node_id], obs.detail, obs.direct))
         else:
             why = "stayed flat" if obs.direction == 0 else f"moved {_arrow(obs.direction)}, not {_arrow(want)}"
             findings.append(_finding("CONTRADICTS", "NODE_MOVEMENT", f"{obs.label}: {why}", obs.ref_type, obs.locator,
-                                     edge_for_cause[node_id], obs.detail))
+                                     edge_for_cause[node_id], obs.detail, obs.direct))
     for edge in edges:  # does the effect move the way the cause implies?
         c, e, sign = observed.get(edge["cause_id"]), observed.get(edge["effect_id"]), _SIGN.get(edge["direction"])
         if c is None or e is None or sign is None or c.direction == 0 or e.direction == 0:
             continue
+        if c.locator == e.locator:
+            continue  # the same series on both ends proves nothing about the link
         ok = e.direction == c.direction * sign
         findings.append(_finding(
             "SUPPORTS" if ok else "CONTRADICTS", "EDGE_CONSISTENCY",
             f"{nodes[edge['cause_id']]['display_name']} {_arrow(c.direction)}, {nodes[edge['effect_id']]['display_name']} "
             f"{_arrow(e.direction)}: {'consistent with' if ok else 'against'} a {edge['direction'].lower()} link",
-            e.ref_type, f"{c.locator}|{e.locator}", edge["edge_id"]))
+            e.ref_type, f"{c.locator}|{e.locator}", edge["edge_id"], "", c.direct and e.direct))
 
     narrative_hits = 0
     if run.narrative and run.ctx.company_id:
@@ -295,23 +317,34 @@ def evaluate_path(path: CandidatePath, nodes: dict[str, dict], run: _Run, target
                 if passage.get("chunk_id") and CONTRADICTION_CUES.search(text):
                     narrative_hits += 1
                     findings.append(_finding("CONTRADICTS", "NARRATIVE", f"Filing text mentions a mitigating factor for {nodes[node_id]['display_name']}",
-                                             "QDRANT_CHUNK", str(passage["chunk_id"]), edge_for_cause[node_id], text[:200]))
+                                             "QDRANT_CHUNK", str(passage["chunk_id"]), edge_for_cause[node_id], text[:200], direct=False))
     supports = [f for f in findings if f["stance"] == "SUPPORTS"]
     contradicts = [f for f in findings if f["stance"] == "CONTRADICTS"]
     run.contradictions_found += len(contradicts)
-    status = classify(len(supports), len(contradicts), path.score, run.limits.min_path_score, len(findings))
+    untestable = [e["edge_id"] for e in edges if e["direction"] not in _SIGN]
+    status = classify(
+        sum(f["weight"] for f in supports), sum(f["weight"] for f in contradicts), path.score, run.limits.min_path_score,
+        len(findings), direct_support=sum(f["direct"] for f in supports), direct_contra=sum(f["direct"] for f in contradicts),
+        untestable=bool(untestable),
+    )
     return {
         "status": status, "supporting": supports, "contradicting": contradicts, "unmeasured_nodes": unmeasured,
-        "expected_direction": {n: d for n, d in expected.items() if d is not None},
+        "expected_direction": {n: d for n, d in expected.items() if d is not None}, "untestable_edges": untestable,
+        "evidence_weight": {"support": sum(f["weight"] for f in supports), "contradict": sum(f["weight"] for f in contradicts)},
     }
 
 
-def classify(supports: int, contradicts: int, score: float, min_score: float, findings: int) -> str:
+def classify(supports: float, contradicts: float, score: float, min_score: float, findings: int, *,
+             direct_support: int = 0, direct_contra: int = 0, untestable: bool = False) -> str:
+    """supports / contradicts are evidence WEIGHTS (direct 1.0, indirect 0.5). Indirect evidence
+    alone can weaken a path but never condemn it, and a path can be SUPPORTED only on direct
+    evidence. A path with an edge whose direction the graph does not state (UNKNOWN or
+    non-monotonic) is partly untestable, so it tops out at PLAUSIBLE."""
     if contradicts and contradicts >= supports:
-        return CONTRADICTED
+        return CONTRADICTED if direct_contra else WEAK
     if supports and contradicts:
         return WEAK  # mixed: more support than contradiction, but not a clean story
-    if supports >= SUPPORTED_MIN_FINDINGS:
+    if supports >= SUPPORTED_MIN_FINDINGS and direct_support >= 1 and not untestable:
         return SUPPORTED
     if supports:
         return PLAUSIBLE
@@ -400,16 +433,29 @@ def build_dynamic_chain(service, question: str, *, company_id: str | None = None
     nodes, candidates = generate_candidate_paths(service, ctx_target["id"], ctx, limits, trace, measurable)
 
     target_obs = run.observe(ctx_target)
-    target_dir = stated_direction(question)
-    premise = {"stated_direction": target_dir, "observed_direction": target_obs.direction if target_obs else None}
-    if target_dir is None and target_obs and target_obs.direction:
-        target_dir = target_obs.direction
-        premise["note"] = "no direction in the question; used the observed movement of the target"
-    if target_dir is None:
-        result["warnings"].append("the question states no direction and the target is not measurable; paths cannot be tested")
-    elif target_obs and target_obs.direction != 0 and premise["stated_direction"] and target_obs.direction != target_dir:
-        result["warnings"].append(f"premise not supported by data: the question implies {ctx_target['display_name']} moved "
-                                  f"{_arrow(target_dir)}, the data shows {_arrow(target_obs.direction)}")
+    stated = stated_direction(question)
+    observed_dir = target_obs.direction if target_obs else None
+    name = ctx_target["display_name"]
+    premise = {"stated_direction": stated, "observed_direction": observed_dir}
+    if stated is None:
+        target_dir = observed_dir or None
+        premise["status"] = "NOT_STATED"
+        if target_dir is None:
+            result["warnings"].append("the question states no direction and the target is not measurable; paths cannot be tested")
+        else:
+            premise["note"] = "no direction in the question; used the observed movement of the target"
+    elif observed_dir is None:
+        target_dir, premise["status"] = stated, "UNVERIFIED"
+    elif observed_dir == stated:
+        target_dir, premise["status"] = stated, "CONSISTENT"
+    elif observed_dir == 0:
+        target_dir, premise["status"] = None, "FLAT"
+        result["warnings"].append(f"premise not supported by data: the question implies {name} moved {_arrow(stated)}, "
+                                  "the data shows no material change; there is no movement to explain")
+    else:
+        target_dir, premise["status"] = observed_dir, "CONTRADICTED_BY_DATA"
+        result["warnings"].append(f"premise not supported by data: the question implies {name} moved {_arrow(stated)}, the data shows "
+                                  f"{_arrow(observed_dir)}; the paths below explain the observed movement")
     result["premise"] = premise
 
     ranked = [(i + 1, p) for i, p in enumerate(candidates)]
@@ -433,6 +479,7 @@ def build_dynamic_chain(service, question: str, *, company_id: str | None = None
                 "cumulative_lag_months": None if path.cumulative_lag_months is None else list(path.cumulative_lag_months),
                 "status": outcome["status"], "supporting": outcome["supporting"], "contradicting": outcome["contradicting"],
                 "unmeasured_nodes": outcome["unmeasured_nodes"], "expected_direction": outcome["expected_direction"],
+                "untestable_edges": outcome["untestable_edges"], "evidence_weight": outcome["evidence_weight"],
             }
             tested.append(h)
         if any(h["status"] == SUPPORTED for h in tested) and len(tested) >= 2:

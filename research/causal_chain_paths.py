@@ -87,6 +87,30 @@ def _foreign_sector(node: dict | None, ctx: Context) -> bool:
     return bool(node) and node["family"] == "Sector" and _norm(node["display_name"]) not in {_norm(s) for s in ctx.sector_names}
 
 
+def sector_fit(ordered_edges: list[dict], node_ids: list[str], nodes: dict[str, dict], ctx: Context) -> str | None:
+    """None if the path suits the company's sector, else the reason it does not.
+
+    Applies only when the company's sectors are known and the path passes through some other
+    sector. Such a path must be anchored to the company: it passes through the company's own
+    sector, or one of its edges is scoped to that sector. And it must not leave the company's
+    sector for one downstream of it (a steelmaker's margin is not explained through the autos
+    it sells to)."""
+    if not ctx.sector_names:
+        return None
+    own = {_norm(s) for s in ctx.sector_names}
+    sector_pos = [(i, _norm(nodes[n]["display_name"])) for i, n in enumerate(node_ids) if nodes[n]["family"] == "Sector"]
+    foreign = [i for i, name in sector_pos if name not in own]
+    if not foreign:
+        return None
+    own_pos = [i for i, name in sector_pos if name in own]
+    scoped = any(_norm((e.get("scope") or {}).get("sector", "")) in own for e in ordered_edges)
+    if not own_pos and not scoped:
+        return "foreign_sector_without_company_link"
+    if own_pos and max(foreign) > min(own_pos):
+        return "leaves_company_sector_downstream"
+    return None
+
+
 def generate_candidate_paths(service, target_id: str, ctx: Context, limits: ChainLimits, trace: Trace,
                              measurable) -> tuple[dict[str, dict], list[CandidatePath]]:
     """Returns (nodes by id, candidate paths best-first). `measurable(cause_node, effect_node)` says
@@ -147,8 +171,11 @@ def generate_candidate_paths(service, target_id: str, ctx: Context, limits: Chai
             ordered = list(reversed(chain))
             lag = path_lag_months(ordered)
             ids = [ordered[0]["cause_id"]] + [e["effect_id"] for e in ordered]
+            misfit = sector_fit(ordered, ids, nodes, ctx)
             if window is not None and lag and lag[0] > window:
                 trace.rejected_paths.append({"path": ids, "reason": "cumulative_lag_exceeds_window"})
+            elif misfit:
+                trace.rejected_paths.append({"path": ids, "reason": misfit})
             else:
                 paths.append(CandidatePath(ids, ordered, path_score([e["score"] for e in ordered]), list(foreign), lag))
             if not causes or nodes[node_id]["family"] in ROOT_FAMILIES:

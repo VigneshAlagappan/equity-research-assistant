@@ -25,8 +25,8 @@ SERVICE_COMPANIES = {"HDFCBANK": "HDFC Bank", "IDFCFIRSTB": "IDFC First Bank", "
 class StubObserver:
     """node id -> direction (+1/-1/0). Nodes not listed cannot be observed."""
 
-    def __init__(self, directions: dict[str, int]):
-        self.directions = directions
+    def __init__(self, directions: dict[str, int], *, indirect: set[str] | frozenset[str] = frozenset(), shared_series: dict[str, str] | None = None):
+        self.directions, self.indirect, self.shared = directions, set(indirect), shared_series or {}
         self.calls: list[str] = []
 
     def can_observe(self, node: dict) -> bool:
@@ -37,7 +37,7 @@ class StubObserver:
 
         self.calls.append(node["id"])
         return Observation(node["id"], self.directions[node["id"]], f"{node['display_name']} stub", "NEON_OBSERVATION",
-                           f"stub:{node['id']}", "stub")
+                           f"stub:{self.shared.get(node['id'], node['id'])}", "stub", direct=node["id"] not in self.indirect)
 
 
 @pytest.fixture
@@ -204,13 +204,18 @@ def test_scope_mismatch_edges_are_rejected(svc) -> None:
 # --- hypothesis testing, contradictions, alternatives -------------------------------
 
 def test_classification_rules() -> None:
-    assert classify(2, 0, 0.8, 0.35, 2) == SUPPORTED
-    assert classify(1, 0, 0.8, 0.35, 1) == PLAUSIBLE
-    assert classify(0, 1, 0.8, 0.35, 1) == CONTRADICTED
-    assert classify(1, 1, 0.8, 0.35, 2) == CONTRADICTED
-    assert classify(2, 1, 0.8, 0.35, 3) == WEAK
+    assert classify(2, 0, 0.8, 0.35, 2, direct_support=2) == SUPPORTED
+    assert classify(1, 0, 0.8, 0.35, 1, direct_support=1) == PLAUSIBLE
+    assert classify(0, 1, 0.8, 0.35, 1, direct_contra=1) == CONTRADICTED
+    assert classify(1, 1, 0.8, 0.35, 2, direct_support=1, direct_contra=1) == CONTRADICTED
+    assert classify(2, 1, 0.8, 0.35, 3, direct_support=2, direct_contra=1) == WEAK
     assert classify(0, 0, 0.8, 0.35, 0) == UNRESOLVED
     assert classify(0, 0, 0.2, 0.35, 0) == WEAK
+    # indirect evidence: never SUPPORTED alone, and never condemns a path alone
+    assert classify(2.0, 0, 0.8, 0.35, 4, direct_support=0) == PLAUSIBLE
+    assert classify(0, 1.0, 0.8, 0.35, 2, direct_contra=0) == WEAK
+    # a partly untestable path (unknown-direction edge) tops out at PLAUSIBLE
+    assert classify(2, 0, 0.8, 0.35, 2, direct_support=2, untestable=True) == PLAUSIBLE
 
 
 def test_supported_path_is_retained_and_contradicted_alternatives_are_rejected(svc) -> None:
@@ -365,3 +370,118 @@ def test_same_inputs_give_the_same_result(svc) -> None:
     a = strip(_run(svc, STEEL_STORY, investigation_id="i", attach_references=False))
     b = strip(_run(svc, STEEL_STORY, investigation_id="i", attach_references=False))
     assert a == b
+
+
+# --- evidence honesty ---------------------------------------------------------------
+
+def _by_labels(out, *must):
+    return next(h for h in out["hypotheses"] if all(m in h["labels"] for m in must))
+
+
+def test_one_series_standing_for_several_nodes_counts_once(svc) -> None:
+    story = {MARGIN: -1, "economic_driver:vehicle_demand": 1, "business_driver:vehicle_volume": -1}
+    shared = {"economic_driver:vehicle_demand": "revenue", "business_driver:vehicle_volume": "revenue"}
+    out = build_dynamic_chain(svc, QUESTION, company_id="MARUTI", geography="IN", attach_references=False,
+                              observers=[StubObserver(story, shared_series=shared, indirect=set(story) - {MARGIN})])
+    h = _by_labels(out, "Vehicle Demand", "Vehicle Volume", "RBI Policy Repo Rate", "Lending Rate")
+    # demand and volume read the same series: one node finding, and no edge test between identical series
+    assert [f["kind"] for f in h["supporting"] + h["contradicting"]].count("NODE_MOVEMENT") == 1
+    assert not any(f["kind"] == "EDGE_CONSISTENCY" and f["locator"].split("|")[0] == f["locator"].split("|")[1] for f in h["supporting"] + h["contradicting"])
+
+
+def test_proxy_only_support_cannot_reach_supported(svc) -> None:
+    story = {MARGIN: -1, "economic_driver:vehicle_demand": -1, "business_driver:vehicle_volume": -1}  # only stand-in series
+    out = build_dynamic_chain(svc, QUESTION, company_id="MARUTI", geography="IN", attach_references=False,
+                              observers=[StubObserver(story, indirect={"economic_driver:vehicle_demand", "business_driver:vehicle_volume"})])
+    h = _by_labels(out, "Vehicle Demand", "Auto Financing Cost", "Lending Rate")
+    assert h["supporting"] and not any(f["direct"] for f in h["supporting"] if f["kind"] == "NODE_MOVEMENT")
+    assert h["evidence_weight"]["support"] >= 1.0 and h["status"] == PLAUSIBLE  # real but indirect: plausible, not supported
+
+
+def test_indirect_contradiction_alone_weakens_but_does_not_condemn(svc) -> None:
+    story = {MARGIN: -1, "business_driver:vehicle_volume": 1}  # volume (via a stand-in series) says "up": the demand story fails
+    out = build_dynamic_chain(svc, QUESTION, company_id="MARUTI", geography="IN", attach_references=False,
+                              observers=[StubObserver(story, indirect={"business_driver:vehicle_volume"})])
+    h = _by_labels(out, "Vehicle Volume", "Vehicle Demand", "Lending Rate")
+    assert h["status"] == WEAK and h["contradicting"] and not any(f["direct"] for f in h["contradicting"] if f["kind"] == "NODE_MOVEMENT")
+
+
+def test_narrative_cue_hits_are_indirect_evidence(svc) -> None:
+    out = _run(svc, STEEL_STORY, narrative=lambda q, c: [{"chunk_id": "c1", "text": "we have hedged this exposure"}] if "Steel Price" in q else [])
+    h = _by_labels(out, "Steel Price", "Material Cost")
+    hit = [f for f in h["contradicting"] if f["kind"] == "NARRATIVE"]
+    assert hit and all(not f["direct"] and f["weight"] == 0.5 for f in hit)
+    assert h["status"] != CONTRADICTED  # a keyword hit alone cannot condemn a path
+
+
+def test_unknown_direction_edge_caps_a_path_at_plausible(svc) -> None:
+    story = {MARGIN: -1, "business_driver:vehicle_volume": -1, "economic_driver:vehicle_demand": -1, "economic_driver:auto_financing_cost": 1}
+    out = _run(svc, story)
+    through_banking = _by_labels(out, "Banking", "Auto Financing Cost", "RBI Policy Repo Rate")
+    assert through_banking["untestable_edges"] and through_banking["status"] != SUPPORTED
+    clean = _by_labels(out, "Lending Rate", "Auto Financing Cost", "RBI Policy Repo Rate")
+    assert not clean["untestable_edges"]
+
+
+# --- false premise ------------------------------------------------------------------
+
+def test_a_premise_the_data_contradicts_is_reported_and_the_observed_movement_is_explained(svc) -> None:
+    story = {MARGIN: 1, "business_driver:material_cost": -1, "economic_driver:steel_price": -1}  # margin ROSE as cost fell
+    out = _run(svc, story)
+    assert out["premise"]["status"] == "CONTRADICTED_BY_DATA" and out["premise"]["observed_direction"] == 1
+    assert any("premise not supported" in w and "explain the observed movement" in w for w in out["warnings"])
+    steel = _by_labels(out, "Steel Price", "Material Cost")
+    assert steel["status"] == SUPPORTED and steel["retained"]  # tested against the real movement, not the claimed one
+    assert steel["expected_direction"][MARGIN] == 1
+
+
+def test_premise_statuses(svc) -> None:
+    assert _run(svc, STEEL_STORY)["premise"]["status"] == "CONSISTENT"
+    assert _run(svc, {"business_driver:material_cost": 1})["premise"]["status"] == "UNVERIFIED"
+    flat = _run(svc, {MARGIN: 0, "business_driver:material_cost": 1})
+    assert flat["premise"]["status"] == "FLAT" and any("no material change" in w for w in flat["warnings"])
+    assert all(h["status"] in (UNRESOLVED, WEAK) for h in flat["hypotheses"])  # nothing moved, so nothing to explain
+    neutral = build_dynamic_chain(svc, "Why did Maruti's operating margin move between FY2023 and FY2026?", company_id="MARUTI",
+                                  geography="IN", attach_references=False, observers=[StubObserver({MARGIN: 1})])
+    assert neutral["premise"]["status"] == "NOT_STATED" and neutral["premise"]["observed_direction"] == 1
+
+
+# --- sector fit ---------------------------------------------------------------------
+
+def test_a_steelmakers_margin_is_not_explained_through_the_autos_it_supplies(svc) -> None:
+    ctx = Context("TATASTEEL", ("Steel",), "IN", (2023, 2026))
+    _, paths, trace = _candidates(svc, ctx=ctx)
+    assert not any("sector:auto" in p.node_ids for p in paths)
+    assert any(r["reason"] == "leaves_company_sector_downstream" for r in trace.rejected_paths)
+
+
+def test_a_bank_does_not_get_auto_or_steel_chains(svc) -> None:
+    ctx = Context("HDFCBANK", ("Banking",), "IN", (2023, 2026))
+    _, paths, trace = _candidates(svc, ctx=ctx)
+    assert not any({"sector:auto", "sector:steel"} & set(p.node_ids) for p in paths)
+    assert any(r["reason"] == "foreign_sector_without_company_link" for r in trace.rejected_paths)
+
+
+def test_an_automaker_keeps_its_supplier_and_financing_chains(svc) -> None:
+    _, paths, trace = _candidates(svc)
+    keys = {p.key for p in paths}
+    assert any("sector:steel>sector:auto" in k for k in keys)  # supplier chain: upstream of its own sector
+    assert any("sector:banking>economic_driver:auto_financing_cost" in k for k in keys)  # anchored by an auto-scoped edge
+    assert not any(r["reason"] in ("leaves_company_sector_downstream", "foreign_sector_without_company_link") for r in trace.rejected_paths)
+
+
+def test_sector_fit_does_not_apply_without_company_sector_context(svc) -> None:
+    _, paths, _ = _candidates(svc, ctx=Context(None, (), None, (2023, 2026)))
+    assert any("sector:auto" in p.node_ids for p in paths) and any("sector:steel" in p.node_ids for p in paths)
+
+
+def test_a_direct_reading_is_not_swallowed_by_a_stand_in_for_the_same_series(svc) -> None:
+    # "Steel Price" and "Material Cost" read the same series; the node that IS the measured concept must win.
+    story = {MARGIN: -1, "economic_driver:steel_price": 1, "business_driver:material_cost": 1}
+    out = build_dynamic_chain(svc, QUESTION, company_id="MARUTI", geography="IN", attach_references=False,
+                              observers=[StubObserver(story, indirect={"economic_driver:steel_price"},
+                                                      shared_series={"economic_driver:steel_price": "mc", "business_driver:material_cost": "mc"})])
+    h = _by_labels(out, "Steel Price", "Material Cost")
+    node_findings = [f for f in h["supporting"] if f["kind"] == "NODE_MOVEMENT"]
+    assert len(node_findings) == 1 and node_findings[0]["direct"] and "Material Cost" in node_findings[0]["label"]
+    assert h["status"] == SUPPORTED
