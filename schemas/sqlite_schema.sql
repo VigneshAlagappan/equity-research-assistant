@@ -1707,3 +1707,58 @@ CREATE TABLE IF NOT EXISTS causal_eval_case_results (
   error_detail TEXT,
   PRIMARY KEY (eval_run_id, case_id)
 );
+
+-- Persistent causal graph (Neo4j) sidecar: history, audit and the references the
+-- graph points at. Neo4j holds the nodes/edges and their current knowledge;
+-- these tables hold what changed, who changed it, and the evidence / validation /
+-- feedback references (config/causal_graph.py). Keyed by Neo4j node_id / edge_id.
+CREATE TABLE IF NOT EXISTS causal_graph_events (
+  event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,        -- causal_node_created | causal_relationship_created | ..._updated | ..._status_changed | causal_evidence_attached | ...
+  node_id TEXT, edge_id TEXT,
+  version INTEGER,                 -- edge version AFTER this event
+  changes_json TEXT,               -- per field: old and new value
+  actor_kind TEXT NOT NULL,        -- seed | human | system | validation | llm
+  actor_id TEXT,
+  source TEXT,                     -- what produced the change (seed id, investigation id, script)
+  reason TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cg_events_edge ON causal_graph_events(edge_id);
+CREATE INDEX IF NOT EXISTS idx_cg_events_node ON causal_graph_events(node_id);
+
+CREATE TABLE IF NOT EXISTS causal_graph_evidence_refs (
+  ref_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  edge_id TEXT NOT NULL,
+  ref_type TEXT NOT NULL,          -- S3 | NEON_OBSERVATION | QDRANT_CHUNK | INVESTIGATION
+  locator TEXT NOT NULL,           -- s3 key | "table:pk" | chunk id | investigation_id; never the content
+  stance TEXT NOT NULL,            -- SUPPORTS | CONTRADICTS
+  note TEXT,
+  added_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cg_evidence_edge ON causal_graph_evidence_refs(edge_id);
+
+CREATE TABLE IF NOT EXISTS causal_graph_validation_refs (
+  validation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  edge_id TEXT NOT NULL,
+  result TEXT NOT NULL,            -- SUPPORT | PARTIAL | CONTRADICT | INCONCLUSIVE
+  method TEXT NOT NULL,            -- e.g. macro_edge_pilot
+  ref TEXT,                        -- run id / report key holding the full result
+  note TEXT,
+  added_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cg_validation_edge ON causal_graph_validation_refs(edge_id);
+
+CREATE TABLE IF NOT EXISTS causal_graph_feedback_refs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  edge_id TEXT,                    -- the graph edge the feedback bears on, when it names one
+  target_kind TEXT NOT NULL,       -- edge | path | hypothesis | investigation
+  target_ref TEXT NOT NULL,        -- edge_id / hypothesis_id / investigation_id
+  feedback_type TEXT NOT NULL,     -- config/causal_feedback.py FEEDBACK_TYPES
+  feedback_id INTEGER,             -- causal_feedback.feedback_id, when it came from the ledger
+  added_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cg_feedback_edge ON causal_graph_feedback_refs(edge_id);
