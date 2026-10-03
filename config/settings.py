@@ -743,3 +743,20 @@ LINK_EVIDENCE_ENABLED = os.environ.get("LINK_EVIDENCE_ENABLED", "true").strip().
 # call each. Bounded per investigation.
 LINK_GAPFILL_ENABLED = os.environ.get("LINK_GAPFILL_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 LINK_GAPFILL_MAX_LINKS = int(os.environ.get("LINK_GAPFILL_MAX_LINKS", "4"))
+
+# Dynamic causal-chain traversal (research/dynamic_chain.py): builds the smallest
+# set of material, evidence-tested causal paths for ONE question from the
+# persistent causal graph (causal_graph/service.py). Every bound below is a hard
+# limit; the investigation never writes to persistent edge confidence.
+CHAIN_MAX_DEPTH = int(os.environ.get("CHAIN_MAX_DEPTH", "5"))
+CHAIN_MAX_BRANCHES_PER_NODE = int(os.environ.get("CHAIN_MAX_BRANCHES_PER_NODE", "4"))
+CHAIN_MAX_NODES = int(os.environ.get("CHAIN_MAX_NODES", "40"))
+CHAIN_MAX_EDGES = int(os.environ.get("CHAIN_MAX_EDGES", "60"))
+CHAIN_MAX_CROSS_SECTOR_HOPS = int(os.environ.get("CHAIN_MAX_CROSS_SECTOR_HOPS", "2"))
+CHAIN_MAX_ITERATIONS = int(os.environ.get("CHAIN_MAX_ITERATIONS", "2"))
+CHAIN_PATHS_PER_ITERATION = int(os.environ.get("CHAIN_PATHS_PER_ITERATION", "4"))
+CHAIN_MAX_RETAINED_PATHS = int(os.environ.get("CHAIN_MAX_RETAINED_PATHS", "4"))
+CHAIN_MIN_EDGE_CONFIDENCE = float(os.environ.get("CHAIN_MIN_EDGE_CONFIDENCE", "0.3"))
+CHAIN_MIN_PATH_SCORE = float(os.environ.get("CHAIN_MIN_PATH_SCORE", "0.35"))
+CHAIN_CROSS_SECTOR_MIN_MATERIALITY = float(os.environ.get("CHAIN_CROSS_SECTOR_MIN_MATERIALITY", "0.3"))
+CHAIN_MAX_NARRATIVE_QUERIES = int(os.environ.get("CHAIN_MAX_NARRATIVE_QUERIES", "6"))

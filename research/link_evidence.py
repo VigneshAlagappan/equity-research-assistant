@@ -226,29 +226,36 @@ def check_links(steps: list[str], loader: Loader, company_label: str) -> list[tu
     return out
 
 
-def link_items_for_hypothesis(conn, hypothesis, statement_type: str, fact_store) -> list[tuple[str, EvidenceItem]]:
-    """Run the checks for each company the hypothesis names (non-financial only)."""
+def make_loader(conn, company_id: str, statement_type: str, fact_store) -> Loader | None:
+    """Annual canonical-series loader for one company, or None for an unknown or
+    financial company (their cost structure is a different taxonomy)."""
     from companies.registry import get_company
     from web.company_kind import is_financial_company
 
+    company = get_company(conn, company_id)
+    if company is None or is_financial_company(company):
+        return None
+
+    def fetch(metric: str) -> Series:
+        series: Series = {}
+        for row in fact_store.get_canonical_series(conn, company_id, metric, "annual", statement_type):
+            try:
+                series[int(str(row["fiscal_year"]).removeprefix("FY"))] = float(row["canonical_value"])
+            except (ValueError, TypeError):
+                continue
+        return series
+
+    return Loader(fetch, (company["currency"] or "INR") == "USD")
+
+
+def link_items_for_hypothesis(conn, hypothesis, statement_type: str, fact_store) -> list[tuple[str, EvidenceItem]]:
+    """Run the checks for each company the hypothesis names (non-financial only)."""
     results: list[tuple[str, EvidenceItem]] = []
     steps = list(getattr(hypothesis, "chain_steps", None) or [])
     if len(steps) < 2:
         return results
     for company_id in getattr(hypothesis, "companies", None) or []:
-        company = get_company(conn, company_id)
-        if company is None or is_financial_company(company):
-            continue
-        is_us = (company["currency"] or "INR") == "USD"
-
-        def fetch(metric: str, _cid=company_id) -> Series:
-            series: Series = {}
-            for row in fact_store.get_canonical_series(conn, _cid, metric, "annual", statement_type):
-                try:
-                    series[int(str(row["fiscal_year"]).removeprefix("FY"))] = float(row["canonical_value"])
-                except (ValueError, TypeError):
-                    continue
-            return series
-
-        results.extend(check_links(steps, Loader(fetch, is_us), company_id))
+        loader = make_loader(conn, company_id, statement_type, fact_store)
+        if loader is not None:
+            results.extend(check_links(steps, loader, company_id))
     return results
